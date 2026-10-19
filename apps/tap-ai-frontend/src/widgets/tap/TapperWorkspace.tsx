@@ -1792,6 +1792,10 @@ export function TapperWorkspace() {
         },
       ];
     };
+    const restoredAgentIds =
+      conversationDetail.data.turns.at(-1)?.input.agentRevisionId == null
+        ? []
+        : [conversationDetail.data.turns.at(-1)!.input.agentRevisionId!];
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.data.conversationId
@@ -1819,17 +1823,25 @@ export function TapperWorkspace() {
                         .input.resolvedResources?.map(
                           (item) => item.sourceId,
                         ) ?? [],
-                    selectedAgentIds:
-                      conversationDetail.data.turns.at(-1)!.input
-                        .agentRevisionId === null
-                        ? []
-                        : [
-                            conversationDetail.data.turns.at(-1)!.input
-                              .agentRevisionId!,
-                          ],
+                    selectedAgentIds: restoredAgentIds,
+                    // The frozen `input.skillRevisionIds` is the server's
+                    // already-merged set (the Agent's bound Skills plus
+                    // whatever was explicitly picked) -- restoring it
+                    // verbatim into `selectedSkillIds` would make the
+                    // Agent's bound Skills look like regular, removable
+                    // selections that outlive deselecting the Agent
+                    // (minor finding). Only the ids *not* bundled by the
+                    // restored Agent go into `selectedSkillIds`; the rest
+                    // reappear as locked chips via `bundledSkillIdsFor`.
                     selectedSkillIds:
-                      conversationDetail.data.turns.at(-1)!.input
-                        .skillRevisionIds,
+                      conversationDetail.data.turns
+                        .at(-1)!
+                        .input.skillRevisionIds.filter(
+                          (id) =>
+                            !bundledSkillIdsFor(restoredAgentIds).includes(
+                              id,
+                            ),
+                        ),
                   }),
             }
           : conversation,
@@ -1845,6 +1857,7 @@ export function TapperWorkspace() {
         : current,
     );
   }, [
+    agentById,
     conversationDetail.data,
     conversationEvents.data,
     conversationEvents.isError,

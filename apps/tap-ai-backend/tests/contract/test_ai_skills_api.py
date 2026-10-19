@@ -472,6 +472,24 @@ def test_import_skill_via_multipart_files() -> None:
     assert response.json()["skills"][0]["name"] == "files-skill"
 
 
+def test_import_skill_multipart_duplicate_filenames_rejected() -> None:
+    # A silent dict-key overwrite would drop one of the two uploaded files
+    # without any signal to the caller.
+    client, _catalog = _app()
+    first = b"first bytes"
+    second = b"second bytes, different content"
+
+    response = client.post(
+        f"{BASE}/skills/imports",
+        files=[
+            ("files", ("demo-skill/SKILL.md", io.BytesIO(first), "text/markdown")),
+            ("files", ("demo-skill/SKILL.md", io.BytesIO(second), "text/markdown")),
+        ],
+    )
+
+    assert response.status_code == 422
+
+
 def test_import_skill_archive_too_large_rejected() -> None:
     client, _catalog = _app()
     oversized = b"0" * (20 * 1024 * 1024 + 1)

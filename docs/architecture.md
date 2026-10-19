@@ -21,7 +21,7 @@
 | `knowledge` | Source/Document 上传、分阶段摄取、切片维护、审阅、检索与带引用回答 |
 | `graph` | 从文档抽取实体与关系、图谱任务与查询 |
 | `chat` | Conversation、不可变 Turn、回答规划与 Turn 处理 |
-| `ai` | Agent/Skill 资产 Revision（含导入的 Skill 包，存 MinIO `skills/{skill_id}/{revision_id}/…`，包内代码不执行）、代码定义的工具注册表（`domain/tools.py`，V1 两项内置）、模型目录、LangGraph 交互图 |
+| `ai` | Agent/Skill 资产 Revision（含导入的 Skill 包，存 MinIO `skills/{skill_id}/{revision_id}/<相对路径的 sha256>`，包内代码不执行）、代码定义的工具注册表（`domain/tools.py`，V1 两项内置）、模型目录、LangGraph 交互图 |
 | `governance` | 审计 |
 | `test_management` | 测试方案生成、校验与发布（V1 冻结） |
 

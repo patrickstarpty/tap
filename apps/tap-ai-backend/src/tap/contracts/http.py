@@ -185,7 +185,11 @@ class SkillImportPreviewItem(ContractModel):
 class SkillImportPreview(ContractModel):
     import_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     expires_at: datetime
-    skills: Annotated[list[SkillImportPreviewItem], Field(max_length=50)]
+    # A package may contain up to 500 files (global constraint); in the
+    # degenerate case of one file (SKILL.md) per Skill, that is up to 500
+    # Skills in a single preview -- align with the package limit rather
+    # than an arbitrary lower cap.
+    skills: Annotated[list[SkillImportPreviewItem], Field(max_length=500)]
 
 
 class SkillImportTextRequest(ContractModel):
@@ -200,11 +204,12 @@ class SkillImportSelection(ContractModel):
 
 
 class SkillImportCommitRequest(ContractModel):
-    selections: Annotated[list[SkillImportSelection], Field(min_length=1, max_length=50)]
+    # See `SkillImportPreview.skills` (package file-count limit).
+    selections: Annotated[list[SkillImportSelection], Field(min_length=1, max_length=500)]
 
 
 class SkillImportCommitResult(ContractModel):
-    revisions: Annotated[list[SkillRevisionDetail], Field(max_length=50)]
+    revisions: Annotated[list[SkillRevisionDetail], Field(max_length=500)]
 
 
 class SkillDraftRequest(ContractModel):

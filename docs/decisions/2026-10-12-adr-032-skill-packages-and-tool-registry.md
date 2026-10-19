@@ -15,7 +15,7 @@ Skills/Agents（V1 能力 4）引入导入 `SKILL.md`/Skill 包、组装 Agent�
 
 ## 决策
 
-- **包作为不可变修订存对象存储**：导入或新建的 Skill 包按 `skills/{skill_id}/{revision_id}/{relative_path}` 原样写入 MinIO，写入后不再修改；元数据（描述、来源、指令正文、已附加的参考文本、frontmatter JSON、文件清单）写入 MySQL（`skill_revision`、`skill_revision_file`）。重新导入同名 Skill 或编辑，生成新修订，旧修订保留，二者共用同一服务端生成的修订 id 命名空间与存储路径规则。暂存导入（`POST /ai/skills/imports`）使用独立的 staging 前缀，24 小时后由清理任务删除，与已提交修订的路径不混用。
+- **包作为不可变修订存对象存储**：导入或新建的 Skill 包写入 MinIO，写入后不再修改；对象标识为 `skills/{skill_id}/{revision_id}/<相对路径的 sha256>`（相对路径可能含对象存储标识不允许的字符，如空格、`+`、前导点，故用其哈希代替原样拼接；原始相对路径仍通过 `skill_revision_file.relative_path` 保留，列表/下载按该字段展示和定位）；元数据（描述、来源、指令正文、已附加的参考文本、frontmatter JSON、文件清单）写入 MySQL（`skill_revision`、`skill_revision_file`）。重新导入同名 Skill 或编辑，生成新修订，旧修订保留。暂存导入（`POST /ai/skills/imports`）使用独立的 staging 前缀，与已提交修订的路径不混用；staging 记录的 24 小时 TTL 由下一次 `stage_import` 调用时的惰性清理（`purge_expired_imports`）回收，而非独立的定时任务。
 - **包内代码永不执行**：`scripts/`、`assets/` 等非 `SKILL.md`/`references/` 文件只存档、可下载，不在任何路径下被解析执行；`SKILL.md` 正文与被引用的 `references/` 文本文件按 64 KB 上限附加进提示词，附加内容仅作为纯文本字符串拼接，不触发任何脚本解释器。
 - **`allowed-tools` frontmatter 字段不授予任何执行权限**：该字段与 `license`、`compatibility`、`metadata` 等其他可选字段一样原样保存在 frontmatter JSON 中并在界面展示，但代码路径中没有任何地方读取它来放宽或收紧工具调用——工具权限只由 Agent 的工具白名单（取自工具注册表）决定。
 - **工具注册表为代码定义的边界，V1 两项内置**：`src/tap/modules/ai/domain/tools.py` 的 `TOOL_REGISTRY` 替代此前在领域模型、Turn 输入、生成治理、模型网关四处硬编码的 `knowledge.search`/`knowledge.answer` 两值闭集；`known_tool_ids()` 当前仍恰好返回这两个内置工具，两者在当前执行路径中都是必需（`required=True`），Agent 表单工具区只读展示，不可取消。注册表引入的是"查表"这一层，不是新增工具；新工具通过在注册表中新增 `ToolDefinition` 接入，无需再改四处硬编码。

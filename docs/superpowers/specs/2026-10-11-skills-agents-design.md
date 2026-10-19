@@ -80,7 +80,7 @@ frontmatter：
 
 ### 1.5 存储
 
-- 对象存储（MinIO）：包按 `skills/{skill_id}/{revision_id}/…` 原样存放，写入后不修改。单个 SKILL.md 导入同样按此结构存放。
+- 对象存储（MinIO）：包按 `skills/{skill_id}/{revision_id}/<相对路径的 sha256>` 存放（相对路径可能含对象标识不允许的字符，故用其哈希代替原样拼接；原始相对路径保留在 `skill_revision_file.relative_path`），写入后不修改。单个 SKILL.md 导入同样按此结构存放。
 - MySQL（新迁移，编号接在实施时最新迁移之后）：
   - `skill_revision` 增加：描述、来源（`imported`、`authored`、`built_in`）、指令正文、附加的参考文本、frontmatter JSON、包摘要。指令摘要覆盖正文与已附加的参考文本。
   - 新表 `skill_revision_file`：相对路径、大小、sha256、类别（`skill`、`reference`、`script`、`asset`、`other`）、是否附加进提示词。
@@ -127,7 +127,7 @@ frontmatter：
 | `POST /ai/skills/imports` | multipart（SKILL.md、zip、多文件）或 JSON 粘贴文本。完成校验与解析，包暂存到对象存储 staging 区，返回 `importId` 与预览：每个 Skill 的路径、frontmatter、文件清单与类别、附加情况、告警、重名情况 |
 | `POST /ai/skills/imports/{importId}/commit` | 提交勾选的 Skill，可指定 `asNewRevisionOf: skillId`。同一 `importId` 重复提交返回同一结果 |
 
-staging 24 小时后由清理任务删除。
+staging 记录 24 小时 TTL，由下一次 `stage_import` 调用时的惰性清理回收（无独立的定时清理任务）。
 
 ### 3.2 Skill 管理
 

@@ -129,6 +129,8 @@ function seedAgentSkillCatalog(
         contentDigest: `sha256:${"1".repeat(64)}`,
         toolAllowlist: ["knowledge.search", "knowledge.answer"],
         outputSchemaDigest: `sha256:${"2".repeat(64)}`,
+        status: "enabled",
+        isLatest: true,
       },
       {
         revisionId: "application-completeness-reviewer",
@@ -137,6 +139,8 @@ function seedAgentSkillCatalog(
         contentDigest: `sha256:${"3".repeat(64)}`,
         toolAllowlist: ["knowledge.search", "knowledge.answer"],
         outputSchemaDigest: `sha256:${"4".repeat(64)}`,
+        status: "enabled",
+        isLatest: true,
       },
     ],
   );
@@ -149,6 +153,8 @@ function seedAgentSkillCatalog(
         displayName: "BDD Scenario Design",
         contentDigest: `sha256:${"5".repeat(64)}`,
         applicableTasks: ["knowledge.answer"],
+        status: "enabled",
+        isLatest: true,
       },
       {
         revisionId: "underwriting-evidence-review",
@@ -156,6 +162,8 @@ function seedAgentSkillCatalog(
         displayName: "Underwriting Evidence Review",
         contentDigest: `sha256:${"6".repeat(64)}`,
         applicableTasks: ["knowledge.answer"],
+        status: "enabled",
+        isLatest: true,
       },
     ],
   );
@@ -2527,6 +2535,8 @@ describe("Tap product workspace interactions", () => {
           outputSchemaDigest: `sha256:${"8".repeat(64)}`,
           defaultModelAlias: overrides.defaultModelAlias ?? null,
           skillRevisionIds: overrides.skillRevisionIds ?? [],
+          status: "enabled",
+          isLatest: true,
         },
       ],
     );
@@ -2539,6 +2549,8 @@ describe("Tap product workspace interactions", () => {
           displayName: "Rules lookup",
           contentDigest: `sha256:${"9".repeat(64)}`,
           applicableTasks: ["knowledge.answer"],
+          status: "enabled",
+          isLatest: true,
         },
       ],
     );

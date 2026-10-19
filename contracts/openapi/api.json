@@ -8967,7 +8967,7 @@
             "items": {
               "$ref": "#/components/schemas/SkillImportSelection"
             },
-            "maxItems": 50,
+            "maxItems": 500,
             "minItems": 1,
             "title": "Selections",
             "type": "array"
@@ -8986,7 +8986,7 @@
             "items": {
               "$ref": "#/components/schemas/SkillRevisionDetail"
             },
-            "maxItems": 50,
+            "maxItems": 500,
             "title": "Revisions",
             "type": "array"
           }
@@ -9015,7 +9015,7 @@
             "items": {
               "$ref": "#/components/schemas/SkillImportPreviewItem"
             },
-            "maxItems": 50,
+            "maxItems": 500,
             "title": "Skills",
             "type": "array"
           }

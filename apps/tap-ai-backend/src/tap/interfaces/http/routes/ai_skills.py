@@ -194,6 +194,10 @@ async def _parse_skill_upload(request: Request) -> ZipUpload | FilesUpload | Tex
     for item in file_items:
         if not item.filename:
             _reject_upload_shape("each uploaded file requires a relative-path filename")
+        if item.filename in files:
+            # A silent overwrite would drop one of the two uploaded files
+            # without any signal to the caller.
+            _reject_upload_shape(f"duplicate uploaded file path {item.filename!r}")
         upload = cast(UploadFile, item)
         files[item.filename] = await _bounded_skill_upload_bytes(upload, budget)
     return FilesUpload(files=files)
