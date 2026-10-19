@@ -45,11 +45,12 @@ from tap.modules.ai.domain.models import (
     ModelResult,
     ModelStreamEvent,
     ModelTextDelta,
+    ModelToolCall,
     ModelUsage,
     schema_digest,
     text_digest,
 )
-from tap.modules.ai.domain.tools import known_tool_ids
+from tap.modules.ai.domain.tools import TOOL_REGISTRY, known_tool_ids
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.platform.budget import current_meter
 from tap.platform.telemetry import current_binding, span
@@ -161,6 +162,34 @@ def _validate_usage_tokens(usage: dict[str, Any]) -> tuple[int | None, int | Non
     ):
         raise ModelGatewayUnavailable()
     return tokens  # type: ignore[return-value]
+
+
+def _parse_message_tool_calls(raw: Any) -> tuple[ModelToolCall, ...]:
+    """Validate and parse the non-streaming `message.tool_calls` array into the
+    gateway's `ModelToolCall` tuple. Shared by `_normalize`'s tool-call branch."""
+
+    if not isinstance(raw, list) or not raw:
+        raise ModelGatewayUnavailable()
+    calls: list[ModelToolCall] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ModelGatewayUnavailable()
+        call_id = item.get("id")
+        function = item.get("function")
+        if not isinstance(function, dict):
+            raise ModelGatewayUnavailable()
+        name = function.get("name")
+        arguments = function.get("arguments")
+        if (
+            not isinstance(call_id, str)
+            or not call_id
+            or not isinstance(name, str)
+            or not name
+            or not isinstance(arguments, str)
+        ):
+            raise ModelGatewayUnavailable()
+        calls.append(ModelToolCall(call_id, name, arguments))
+    return tuple(calls)
 
 
 def _safe_header(headers: httpx.Headers, name: str) -> str | None:
@@ -429,11 +458,41 @@ class LiteLLMModelGateway:
             )
         ):
             raise ModelGatewayRejected()
+        total_request_bytes = 0
         for text in (request.prompt, request.context):
             if not isinstance(text, str) or not text.strip() or len(text.encode()) > 262144:
                 raise ModelGatewayRejected()
+            total_request_bytes += len(text.encode())
             await self._check_redacted(text)
         if request.prompt_digest != text_digest(request.prompt):
+            raise ModelGatewayRejected()
+        if request.tools and operation is not ModelOperation.CHAT:
+            raise ModelGatewayRejected()
+        if request.messages and not request.tools:
+            raise ModelGatewayRejected()
+        for tool_spec in request.tools:
+            definition = TOOL_REGISTRY.get(tool_spec.tool_id)
+            if (
+                definition is None
+                or not definition.model_callable
+                or definition.wire_name != tool_spec.wire_name
+                or (request.tool_allowlist and tool_spec.tool_id not in request.tool_allowlist)
+            ):
+                raise ModelGatewayRejected()
+        for message in request.messages:
+            if (
+                message.role not in {"assistant", "tool"}
+                or not isinstance(message.content, str)
+                or (message.role == "tool" and not message.tool_call_id)
+            ):
+                raise ModelGatewayRejected()
+            total_request_bytes += len(message.content.encode())
+            if message.content:
+                await self._check_redacted(message.content)
+            for call in message.tool_calls:
+                total_request_bytes += len(call.arguments_json.encode())
+                await self._check_redacted(call.arguments_json)
+        if total_request_bytes > 262144:
             raise ModelGatewayRejected()
         governed = bool(request.governance_digests or request.tool_allowlist)
         if (
@@ -614,6 +673,33 @@ class LiteLLMModelGateway:
                         },
                     }
                 )
+            if request.tools:
+                payload["tools"] = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": spec.wire_name,
+                            "description": spec.description,
+                            "parameters": dict(spec.parameters),
+                        },
+                    }
+                    for spec in request.tools
+                ]
+                payload["tool_choice"] = "auto"
+            for message in request.messages:
+                entry: dict[str, Any] = {"role": message.role, "content": message.content}
+                if message.tool_calls:
+                    entry["tool_calls"] = [
+                        {
+                            "id": call.call_id,
+                            "type": "function",
+                            "function": {"name": call.name, "arguments": call.arguments_json},
+                        }
+                        for call in message.tool_calls
+                    ]
+                if message.tool_call_id is not None:
+                    entry["tool_call_id"] = message.tool_call_id
+                payload["messages"].append(entry)
         return request, payload
 
     def _settle_meter(
@@ -749,9 +835,17 @@ class LiteLLMModelGateway:
                                     )
                         else:
                             message = body["choices"][0]["message"]
-                            content = message.get("content")
-                            if isinstance(content, str):
-                                response_text = content
+                            if result.tool_calls:
+                                response_text = json.dumps(
+                                    [
+                                        {"name": call.name, "arguments": call.arguments_json}
+                                        for call in result.tool_calls
+                                    ]
+                                )
+                            else:
+                                content = message.get("content")
+                                if isinstance(content, str):
+                                    response_text = content
                             reasoning = message.get("reasoning_content")
                             if isinstance(reasoning, str):
                                 reasoning_text = reasoning
@@ -855,6 +949,7 @@ class LiteLLMModelGateway:
                     returned_model: str | None = None
                     finish_reason: str | None = None
                     rejected_delta = False
+                    tool_call_fragments: dict[int, dict[str, str | None]] = {}
                     headers = httpx.Headers()
 
                     post_stream = self._post_stream(request, payload, attempts)
@@ -875,8 +970,35 @@ class LiteLLMModelGateway:
                                 if isinstance(content, str) and content:
                                     chunks.append(content)
                                     yield ModelTextDelta(content)
-                                if delta.get("tool_calls") or delta.get("refusal"):
+                                if delta.get("refusal"):
                                     rejected_delta = True
+                                raw_tool_calls = delta.get("tool_calls")
+                                if raw_tool_calls:
+                                    if not request.tools or not isinstance(raw_tool_calls, list):
+                                        rejected_delta = True
+                                    else:
+                                        for fragment in raw_tool_calls:
+                                            if not isinstance(fragment, dict):
+                                                rejected_delta = True
+                                                continue
+                                            index = fragment.get("index")
+                                            if type(index) is not int or index < 0:
+                                                rejected_delta = True
+                                                continue
+                                            entry = tool_call_fragments.setdefault(
+                                                index, {"id": None, "name": None, "arguments": ""}
+                                            )
+                                            if isinstance(fragment.get("id"), str):
+                                                entry["id"] = fragment["id"]
+                                            function = fragment.get("function")
+                                            if isinstance(function, dict):
+                                                if isinstance(function.get("name"), str):
+                                                    entry["name"] = function["name"]
+                                                arguments_fragment = function.get("arguments")
+                                                if isinstance(arguments_fragment, str):
+                                                    entry["arguments"] = (
+                                                        entry["arguments"] or ""
+                                                    ) + arguments_fragment
                             reason = _chunk_finish_reason(chunk)
                             if reason is not None:
                                 finish_reason = reason
@@ -885,13 +1007,40 @@ class LiteLLMModelGateway:
                                 input_tokens, output_tokens = _validate_usage_tokens(usage_field)
 
                     full_text = "".join(chunks)
-                    if not full_text.strip() or rejected_delta:
+                    tool_calls: tuple[ModelToolCall, ...] = ()
+                    if rejected_delta:
                         raise ModelGatewayUnavailable()
-                    if finish_reason == "length":
-                        raise ModelOutputTruncated()
-                    if finish_reason is not None and finish_reason != "stop":
-                        raise ModelGatewayUnavailable()
-                    response_text = full_text
+                    if finish_reason == "tool_calls" and request.tools:
+                        if not tool_call_fragments:
+                            raise ModelGatewayUnavailable()
+                        ordered = [entry for _, entry in sorted(tool_call_fragments.items())]
+                        built_calls: list[ModelToolCall] = []
+                        for entry in ordered:
+                            entry_id = entry["id"]
+                            entry_name = entry["name"]
+                            if entry_id is None or entry_name is None:
+                                raise ModelGatewayUnavailable()
+                            built_calls.append(
+                                ModelToolCall(entry_id, entry_name, entry["arguments"] or "")
+                            )
+                        tool_calls = tuple(built_calls)
+                    else:
+                        if finish_reason == "length":
+                            raise ModelOutputTruncated()
+                        if finish_reason is not None and finish_reason != "stop":
+                            raise ModelGatewayUnavailable()
+                        if not full_text.strip():
+                            raise ModelGatewayUnavailable()
+                    response_text = (
+                        json.dumps(
+                            [
+                                {"name": call.name, "arguments": call.arguments_json}
+                                for call in tool_calls
+                            ]
+                        )
+                        if tool_calls
+                        else full_text
+                    )
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
                     upstream_model = self._upstream_model(headers)
                     actual, provider = _resolve_actual_model(returned_model, upstream_model)
@@ -932,6 +1081,7 @@ class LiteLLMModelGateway:
                         gateway_call_id,
                         call_id,
                         cost_usd,
+                        tool_calls,
                     )
             finally:
                 error_code = error_holder.value
@@ -1096,6 +1246,7 @@ class LiteLLMModelGateway:
             raise ModelGatewayUnavailable()
         normalized_usage = ModelUsage(*_validate_usage_tokens(usage))
         output: str | tuple[float, ...] | dict[str, object]
+        tool_calls: tuple[ModelToolCall, ...] = ()
         if request.operation is ModelOperation.EMBED:
             rows = body["data"]
             if (
@@ -1128,32 +1279,42 @@ class LiteLLMModelGateway:
                 not isinstance(choices, list)
                 or len(choices) != 1
                 or not isinstance(choices[0], dict)
-                or choices[0].get("finish_reason", "stop") != "stop"
                 or not isinstance(choices[0].get("message"), dict)
-                or choices[0]["message"].get("tool_calls")
-                or choices[0]["message"].get("refusal")
             ):
                 raise ModelGatewayUnavailable()
-            content = choices[0]["message"]["content"]
-            if not isinstance(content, str) or not content.strip():
+            message = choices[0]["message"]
+            finish_reason = choices[0].get("finish_reason", "stop")
+            if message.get("refusal"):
                 raise ModelGatewayUnavailable()
-            output = content
-            if request.operation is ModelOperation.STRUCTURED:
-                try:
-                    output = json.loads(content)
-                except json.JSONDecodeError as error:
-                    if error.msg.startswith("Unterminated string") or error.pos >= len(
-                        content.rstrip()
-                    ):
-                        raise ModelOutputTruncated() from None
-                    raise
-                if not isinstance(output, dict):
+            if finish_reason == "tool_calls":
+                if not request.tools:
                     raise ModelGatewayUnavailable()
-                assert request.schema is not None
-                try:
-                    validate_output(request.schema, output)
-                except StructuredOutputOverflow:
-                    raise ModelOutputTruncated() from None
+                tool_calls = _parse_message_tool_calls(message.get("tool_calls"))
+                content = message.get("content")
+                output = content if isinstance(content, str) else ""
+            else:
+                if finish_reason != "stop" or message.get("tool_calls"):
+                    raise ModelGatewayUnavailable()
+                content = message.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise ModelGatewayUnavailable()
+                output = content
+                if request.operation is ModelOperation.STRUCTURED:
+                    try:
+                        output = json.loads(content)
+                    except json.JSONDecodeError as error:
+                        if error.msg.startswith("Unterminated string") or error.pos >= len(
+                            content.rstrip()
+                        ):
+                            raise ModelOutputTruncated() from None
+                        raise
+                    if not isinstance(output, dict):
+                        raise ModelGatewayUnavailable()
+                    assert request.schema is not None
+                    try:
+                        validate_output(request.schema, output)
+                    except StructuredOutputOverflow:
+                        raise ModelOutputTruncated() from None
         audit = ModelCallAudit(
             request.scope,
             request.alias,
@@ -1182,4 +1343,5 @@ class LiteLLMModelGateway:
             audit,
             _safe_header(headers, "x-request-id"),
             _safe_header(headers, "x-litellm-call-id"),
+            tool_calls=tool_calls,
         )

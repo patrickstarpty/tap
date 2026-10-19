@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.domain.tools import known_tool_ids
+from tap.modules.ai.domain.tools import TOOL_REGISTRY, known_tool_ids
 
 
 class ModelCapability(StrEnum):
@@ -37,6 +39,48 @@ class ModelDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelToolSpec:
+    tool_id: str
+    wire_name: str
+    description: str
+    parameters: Mapping[str, object]
+
+
+def model_tool_specs(tool_ids: Sequence[str]) -> tuple[ModelToolSpec, ...]:
+    """Build the model-facing tool specs for the given tool ids, drawn from the
+    built-in tool registry (:mod:`tap.modules.ai.domain.tools`). ``description``
+    uses the registry's English (``en``) description."""
+
+    specs = []
+    for tool_id in tool_ids:
+        definition = TOOL_REGISTRY[tool_id]
+        specs.append(
+            ModelToolSpec(
+                tool_id=definition.tool_id,
+                wire_name=definition.wire_name,
+                description=definition.descriptions["en"],
+                parameters=definition.input_schema,
+            )
+        )
+    return tuple(specs)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelToolCall:
+    call_id: str
+    name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelMessage:
+    role: Literal["assistant", "tool"]
+    content: str = ""
+    tool_calls: tuple[ModelToolCall, ...] = ()
+    tool_call_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelRequest:
     scope: ProjectScopeContext
     alias: str
@@ -56,6 +100,10 @@ class ModelRequest:
     # Completion-token budget for this call; ``None`` keeps the gateway's
     # per-operation default (vision structured output 8192, everything else 2048).
     max_output_tokens: int | None = None
+    # Native tool calling (Task 3): the tools offered to the model this call, and
+    # any prior assistant/tool transcript turns appended after the user message.
+    tools: tuple[ModelToolSpec, ...] = ()
+    messages: tuple[ModelMessage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -118,6 +166,7 @@ class ModelResult:
     gateway_call_id: str | None = None
     call_id: str | None = None
     cost_usd: Decimal | None = None
+    tool_calls: tuple[ModelToolCall, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

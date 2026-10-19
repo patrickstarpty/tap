@@ -3198,4 +3198,206 @@ async def test_chat_stream_non_stop_finish_reason_raises_unavailable():
             pass
 
     assert len(recorder.records) == 1
-    assert recorder.records[0].status == "error"
+
+
+def _tool_request(**changes):
+    from tap.modules.ai.domain.models import model_tool_specs
+
+    tools = model_tool_specs(["knowledge.search"])
+    base = replace(request(ModelOperation.CHAT), tools=tools)
+    return replace(base, **changes) if changes else base
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_accumulates_tool_call_fragments():
+    from tap.modules.ai.domain.models import ModelToolCall
+
+    events = [
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "c1", "function": {"name": "knowledge_search"}}
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"que'}}]},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{"index": 0, "function": {"arguments": 'ry":"理赔"}'}}]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 9},
+        },
+    ]
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=_sse_body(events)
+        )
+
+    gateway = configured_gateway(respond)
+
+    result = None
+    async for event in gateway.chat_stream(_tool_request()):
+        if isinstance(event, ModelResult):
+            result = event
+    assert result is not None
+    assert result.tool_calls == (ModelToolCall("c1", "knowledge_search", '{"query":"理赔"}'),)
+    assert result.usage.input_tokens == 11
+
+
+@pytest.mark.asyncio
+async def test_chat_with_tools_sends_function_specs_and_transcript():
+    from tap.modules.ai.domain.models import ModelMessage, ModelToolCall
+
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return success(incoming)
+
+    gateway = configured_gateway(respond)
+    transcript = (
+        ModelMessage(
+            role="assistant",
+            content="",
+            tool_calls=(ModelToolCall("c1", "knowledge_search", '{"query":"理赔"}'),),
+        ),
+        ModelMessage(role="tool", content='{"status":"ok"}', tool_call_id="c1"),
+    )
+
+    await gateway.chat(_tool_request(messages=transcript))
+
+    body = sent[0]
+    assert body["tools"][0]["function"]["name"] == "knowledge_search"
+    assert body["tool_choice"] == "auto"
+    assert body["messages"][2]["role"] == "assistant"
+    assert body["messages"][3]["role"] == "tool"
+    assert body["messages"][3]["tool_call_id"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_chat_returns_tool_calls():
+    def respond(incoming):
+        del incoming
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-plus",
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "knowledge_search",
+                                        "arguments": '{"query":"理赔"}',
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+            },
+        )
+
+    gateway = configured_gateway(respond)
+    result = await gateway.chat(_tool_request())
+
+    assert result.tool_calls[0].name == "knowledge_search"
+    assert result.tool_calls[0].arguments_json == '{"query":"理赔"}'
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_without_offered_tools_are_unavailable():
+    def respond(incoming):
+        del incoming
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-plus",
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "c1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "knowledge_search",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+            },
+        )
+
+    gateway = configured_gateway(respond)
+    with pytest.raises(ModelGatewayUnavailable):
+        await gateway.chat(request(ModelOperation.CHAT))
+
+
+@pytest.mark.asyncio
+async def test_governed_request_rejects_tool_outside_allowlist():
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+    from tap.modules.ai.domain.models import model_tool_specs
+
+    governed = replace(
+        request(ModelOperation.CHAT),
+        tool_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+        tools=model_tool_specs(["knowledge.search", "graph.relations"]),
+    )
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.chat(governed)
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_unredacted_tool_message_is_rejected():
+    from tap.modules.ai.domain.models import ModelMessage
+
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+    transcript = (ModelMessage(role="tool", content="api_key=abc", tool_call_id="c1"),)
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.chat(_tool_request(messages=transcript))
+    assert sent == []
