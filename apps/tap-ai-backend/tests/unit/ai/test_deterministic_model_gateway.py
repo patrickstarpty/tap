@@ -126,3 +126,51 @@ async def test_deterministic_gateway_folds_skill_marker_into_the_cited_claim() -
     # The marker sits inside the cited sentence, immediately before its own
     # citation marker -- not after it as a separate, uncited fragment.
     assert result.output.endswith("[e2e-skill:demo-token].[S1]")
+
+
+def _planning_input(question: str):
+    from tap.modules.chat.application.plan_answer import PlanningInput
+
+    return PlanningInput(
+        project_id=VALIDATION_SCOPE.project_id,
+        turn_id="turn-a",
+        input_digest=digest("input"),
+        acl_digest=digest("acl"),
+        policy_digest=digest("policy"),
+        original_question=question,
+        model_alias="qwen-plus",
+        source_ids=("source-a",),
+    )
+
+
+def _planner():
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+
+    return ModelGatewayPlanner(_gateway(), scope=VALIDATION_SCOPE, redact=_redact)
+
+
+@pytest.mark.asyncio
+async def test_fake_gateway_keeps_comparison_classification_under_the_planner():
+    """Fix round 1 (I-1): the fake `AnswerPlan`-schema stub must mirror the
+    real planner's deterministic comparison heuristic, not just its
+    relation heuristic -- otherwise a comparison question loses the
+    `comparison` template and `multi_step_qa` agent intent purely because
+    the fake/E2E gateway got consulted every turn (Task 4)."""
+    from tap.modules.chat.application.plan_answer import AnswerPlanner
+
+    plan = await AnswerPlanner(_planner()).plan(_planning_input("比较章节 A 和 B"))
+
+    assert plan.intent == "comparison"
+    assert plan.agent_intent == "multi_step_qa"
+    assert plan.route == "retrieve"
+    assert plan.degradation_reason is None
+
+
+@pytest.mark.asyncio
+async def test_fake_gateway_keeps_relation_routing_under_the_planner():
+    from tap.modules.chat.application.plan_answer import AnswerPlanner
+
+    plan = await AnswerPlanner(_planner()).plan(_planning_input("核保流程和健康告知是什么关系"))
+
+    assert plan.route == "graph"
+    assert plan.degradation_reason is None

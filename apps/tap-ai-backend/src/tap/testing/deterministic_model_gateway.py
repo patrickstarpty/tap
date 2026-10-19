@@ -25,7 +25,10 @@ from tap.modules.ai.domain.models import (
     ModelTextDelta,
 )
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
-from tap.modules.chat.application.plan_answer import _is_relation_question
+from tap.modules.chat.application.plan_answer import (
+    is_comparison_question,
+    is_relation_question,
+)
 from tap.modules.chat.domain.answer_plan import derive_agent_intent
 from tap.testing.deterministic_model import (
     _ANSWER_DELAY_SECONDS,
@@ -353,17 +356,20 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 raw_question = data.get("question")
                 question: str = raw_question if isinstance(raw_question, str) else ""
                 source_ids = [item for item in data.get("sourceIds", []) if isinstance(item, str)]
-                # Mirror the planner's own relation heuristic instead of
-                # hard-coding `retrieve`: a fake suggestion that silently
-                # overrode a relation question's `graph` route to `retrieve`
-                # would change which seam (relation extraction vs. plain
-                # retrieval) the turn exercises, purely because the model
-                # got consulted -- not because any answer actually changed.
-                intent, route = (
-                    ("relation", "graph")
-                    if _is_relation_question(question)
-                    else ("factual_lookup", "retrieve")
-                )
+                # Mirror the planner's own relation/comparison heuristics
+                # (imported, not duplicated) instead of hard-coding
+                # `retrieve`/`factual_lookup`: a fake suggestion that
+                # silently overrode a relation question's `graph` route, or
+                # a comparison question's `comparison` intent and
+                # `multi_step_qa` agent intent, would change which seam the
+                # turn exercises purely because the model got consulted --
+                # not because any answer actually changed.
+                if is_relation_question(question):
+                    intent, route = "relation", "graph"
+                elif is_comparison_question(question):
+                    intent, route = "comparison", "retrieve"
+                else:
+                    intent, route = "factual_lookup", "retrieve"
                 queries = (
                     [
                         {
