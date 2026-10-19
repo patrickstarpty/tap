@@ -652,6 +652,7 @@ class AnswerResponse:
     degraded_mode: bool = False
     degradation_reasons: tuple[str, ...] = ()
     relation: RelationOutcome | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
 
 
 def _validate_retrieval_intent(

@@ -4377,6 +4377,12 @@ export interface components {
             abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
+            /**
+             * Answerkind
+             * @default answer
+             * @enum {string}
+             */
+            answerKind?: "answer" | "clarification";
             /** Citations */
             citations: components["schemas"]["RetrievalCitation"][];
             /** Claims */
@@ -5717,6 +5723,12 @@ export interface components {
             abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
+            /**
+             * Answerkind
+             * @default answer
+             * @enum {string}
+             */
+            answerKind?: "answer" | "clarification";
             /** Citations */
             citations: components["schemas"]["Citation"][];
             /** Claims */
@@ -5863,6 +5875,12 @@ export interface components {
             abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
+            /**
+             * Answerkind
+             * @default answer
+             * @enum {string}
+             */
+            answerKind?: "answer" | "clarification";
             /** Citations */
             citations: components["schemas"]["RetrievalCitation"][];
             /** Claims */

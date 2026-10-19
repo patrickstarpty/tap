@@ -841,6 +841,7 @@ class KnowledgeHttpService:
             degraded_mode=False,
             answer=answer,
             abstained=False,
+            answer_kind="clarification" if plan.route == "clarify" else "answer",
             claims=[],
             citations=[],
             graph_context_status="NOT_SELECTED",

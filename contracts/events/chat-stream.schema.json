@@ -2154,6 +2154,15 @@
           "title": "Answer",
           "type": "string"
         },
+        "answerKind": {
+          "default": "answer",
+          "enum": [
+            "answer",
+            "clarification"
+          ],
+          "title": "Answerkind",
+          "type": "string"
+        },
         "citations": {
           "items": {
             "$ref": "#/$defs/Citation"

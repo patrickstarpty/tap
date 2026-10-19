@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Literal
 
 from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.knowledge.domain.models import (
@@ -133,3 +134,4 @@ class AnswerGeneration:
     gateway_model_id: str | None = None
     provider_model_id: str | None = None
     completion_id: str | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"

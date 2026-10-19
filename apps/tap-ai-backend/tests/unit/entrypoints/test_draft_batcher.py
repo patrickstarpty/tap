@@ -197,6 +197,27 @@ async def test_insufficient_evidence_sentinel_never_reaches_drafts():
     assert final_text == ""
 
 
+@pytest.mark.asyncio
+async def test_leading_clarify_prefix_never_reaches_redis():
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(
+        turn_id="turn-1",
+        attempt=1,
+        drafts=drafts,
+        redact=_identity_redact,
+        max_delay_s=1000,
+        max_chars=1,
+        holdback_chars=0,
+    )
+
+    await batcher.push("CLARIFY: 哪个版本？")
+    final_text = await batcher.close()
+
+    assert all("CLARIFY:" not in text for text in _texts(drafts.calls))
+    assert "".join(_texts(drafts.calls)) == "哪个版本？"
+    assert final_text == "哪个版本？"
+
+
 @pytest.mark.parametrize(
     "half_written",
     [

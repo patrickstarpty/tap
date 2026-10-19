@@ -19,6 +19,7 @@ from tap.modules.knowledge.application.evidence_bundle import (
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
 from tap.modules.knowledge.domain.models import AbstentionReason, AnswerRequest, AnswerResponse
 from tap.modules.knowledge.ports.answers import DocumentStateChanged
+from tap.modules.knowledge.ports.models import AnswerGeneration
 from tests.contract.test_knowledge_api import (
     FakeModelPort,
     FakeSearchPort,
@@ -164,3 +165,32 @@ async def test_generate_answer_forwards_a_non_default_persona_to_the_model_gatew
     await retrieval.generate_answer(prepared, policy, persona=other_persona)
 
     assert model.answer_kwargs[-1]["persona"] is other_persona
+
+
+@pytest.mark.asyncio
+async def test_verify_passes_clarification_without_claims() -> None:
+    model = FakeModelPort()
+    retrieval = _retrieval(FakeSearchPort((search_hit(),)), model)
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    prepared = await retrieval.prepare_answer(request, policy)
+    assert isinstance(prepared, EvidenceBundle)
+
+    generation = AnswerGeneration(
+        text="你指的是哪个产品版本？",
+        claims=(),
+        model_id="tap-answer-v1",
+        profile_id="grounded-answer-v1",
+        provider_request_id="answer-request-1",
+        answer_kind="clarification",
+    )
+
+    response = await retrieval.verify_answer(prepared, generation, policy)
+
+    assert isinstance(response, AnswerResponse)
+    assert response.abstained is False
+    assert response.claims == ()
+    assert response.citations == ()
+    assert response.answer_kind == "clarification"
+    assert response.answer == "你指的是哪个产品版本？"

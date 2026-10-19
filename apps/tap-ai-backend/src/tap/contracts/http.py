@@ -1072,6 +1072,7 @@ class RetrievalAnswerResponse(ContractModel):
     answer: str
     abstained: bool
     abstention_reason: AbstentionReason | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
     claims: list[RetrievalClaim]
     citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
     graph_context_status: Literal[

@@ -735,6 +735,21 @@ class AuthorizedRetrieval:
         self._validate_binding(current, bundle.plan, bundle.context_snapshot)
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
+        if generation.answer_kind == "clarification":
+            return AnswerResponse(
+                trace_id=bundle.response.trace_id,
+                query_plan_id=bundle.response.query_plan_id,
+                context_snapshot_id=bundle.response.context_snapshot_id,
+                corpus_version=bundle.response.corpus_version,
+                retrieval_profile_id=bundle.response.retrieval_profile_id,
+                answer=generation.text,
+                abstained=False,
+                claims=(),
+                citations=(),
+                embedding_provenance=bundle.response.embedding_provenance,
+                answer_provenance=self._generation_provenance(generation),
+                answer_kind="clarification",
+            )
         if bundle.flow_context and any(
             not flowchart_claim_is_consistent(
                 claim.evidence_labels, cast(dict[str, Any], bundle.flow_context)

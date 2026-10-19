@@ -179,6 +179,7 @@ class RetrievalAnswerResponse(StreamContractModel):
     answer: str
     abstained: bool
     abstention_reason: AbstentionReason | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
     claims: list[AnswerClaim]
     citations: list[Citation]
     graph_context_status: Literal[

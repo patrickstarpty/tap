@@ -48,6 +48,7 @@ from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.redaction_patterns import email_local_trailing_run_start
 
 _INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
+_CLARIFY_PREFIX = "CLARIFY:"
 
 # Mirrors `PatternEgressRedactor`'s placeholder markers -> the hit-count key
 # `KnowledgeHttpService._redact_answer_response` records on
@@ -139,6 +140,9 @@ class DraftBatcher:
         # flush -- including a final one where the whole answer is nothing
         # but the sentinel.
         visible_raw = self._raw.replace(_INSUFFICIENT_EVIDENCE_SENTINEL, "")
+        lstripped = visible_raw.lstrip()
+        if lstripped.startswith(_CLARIFY_PREFIX):
+            visible_raw = lstripped[len(_CLARIFY_PREFIX) :].lstrip()
         try:
             redacted = await self._redact(visible_raw)
         except RedactionUnavailable:

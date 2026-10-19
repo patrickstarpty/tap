@@ -346,6 +346,7 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
             if response.abstention_reason is not None
             else None
         ),
+        answer_kind=response.answer_kind,
         claims=[
             HttpClaim(
                 claim_id=item.claim_id,

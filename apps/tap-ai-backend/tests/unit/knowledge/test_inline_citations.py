@@ -346,3 +346,33 @@ async def test_on_text_receives_every_delta() -> None:
 
     assert received == chunks
     assert generation.claims[0].evidence_labels == ("S1",)
+
+
+@pytest.mark.asyncio
+async def test_clarify_prefix_yields_clarification_generation() -> None:
+    class ClarifyGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("  CLARIFY: 你指的是哪个产品版本？")
+            yield _result("  CLARIFY: 你指的是哪个产品版本？")
+
+    generation = await _answer_gateway(ClarifyGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "clarification"
+    assert generation.text == "你指的是哪个产品版本？"
+    assert generation.claims == ()
+
+
+@pytest.mark.asyncio
+async def test_clarify_marker_mid_text_is_ordinary_text() -> None:
+    class MidTextGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("保单生效[S1]。CLARIFY: x")
+            yield _result("保单生效[S1]。CLARIFY: x")
+
+    generation = await _answer_gateway(MidTextGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "answer"

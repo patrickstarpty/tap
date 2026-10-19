@@ -8035,6 +8035,15 @@
             "title": "Answer",
             "type": "string"
           },
+          "answerKind": {
+            "default": "answer",
+            "enum": [
+              "answer",
+              "clarification"
+            ],
+            "title": "Answerkind",
+            "type": "string"
+          },
           "citations": {
             "items": {
               "$ref": "#/components/schemas/RetrievalCitation"
@@ -12088,6 +12097,15 @@
             "title": "Answer",
             "type": "string"
           },
+          "answerKind": {
+            "default": "answer",
+            "enum": [
+              "answer",
+              "clarification"
+            ],
+            "title": "Answerkind",
+            "type": "string"
+          },
           "citations": {
             "items": {
               "$ref": "#/components/schemas/Citation"
@@ -12615,6 +12633,15 @@
           },
           "answer": {
             "title": "Answer",
+            "type": "string"
+          },
+          "answerKind": {
+            "default": "answer",
+            "enum": [
+              "answer",
+              "clarification"
+            ],
+            "title": "Answerkind",
             "type": "string"
           },
           "citations": {
