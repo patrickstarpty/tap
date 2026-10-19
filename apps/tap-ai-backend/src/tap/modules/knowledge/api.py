@@ -266,6 +266,56 @@ class KnowledgeAPI:
                 authorize=authorize,
             )
 
+    async def search_more_frozen(
+        self,
+        bundle,
+        query,
+        source_ids,
+        policy,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """The `knowledge.search` tool's frozen entrypoint (Task 6)."""
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.search_more(
+                bundle,
+                query,
+                source_ids,
+                policy,
+                frozen_policy=True,
+                authorize=authorize,
+            )
+
+    async def relations_frozen(
+        self,
+        bundle,
+        query,
+        policy,
+        *,
+        turn_id=None,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """The `graph.relations` tool's frozen entrypoint (Task 6)."""
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.analyse_relations(
+                bundle,
+                query,
+                authorize=authorize,
+                turn_id=turn_id,
+                policy=policy,
+                frozen_policy=True,
+            )
+
 
 def search_request_from_http(request: HttpSearchRequest) -> SearchRequest:
     """Map the Pydantic browser DTO into a framework-free application request."""

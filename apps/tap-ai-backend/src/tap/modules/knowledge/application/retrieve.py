@@ -39,6 +39,7 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationContext,
     RelationContextStatus,
     RelationEvidence,
+    merge_relation_contexts,
 )
 from tap.modules.knowledge.application.relation_claims import (
     ClaimChunkSection,
@@ -116,6 +117,12 @@ _MAX_EVIDENCE = 20
 # answer should not crowd out other evidence with many augmented chunks.
 _MAX_AUGMENT_MERGE = 5
 _AUGMENT_TOP_K = 20
+
+
+class RelationAnalysisUnavailable(RuntimeError):
+    """Raised by `analyse_relations` when no `RelationAnalysis` port is
+    configured on this `AuthorizedRetrieval` -- the `graph.relations` tool is
+    not available for this turn's knowledge boundary."""
 
 
 class RelationAnalysis(Protocol):
@@ -432,6 +439,7 @@ class AuthorizedRetrieval:
         graph_context: tuple[Mapping[str, object], ...] = (),
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
+        include_relations: bool = True,
     ) -> AnswerResponse | EvidenceBundle:
         answer_input = None
         missing = False
@@ -592,7 +600,7 @@ class AuthorizedRetrieval:
             await authorize()
 
         relation: RelationContext | None = None
-        if self._relation_analysis is not None:
+        if include_relations and self._relation_analysis is not None:
             relation = await self._relation_analysis.analyse(
                 request.query,
                 run.response.evidence,
@@ -607,7 +615,12 @@ class AuthorizedRetrieval:
                 AbstentionReason.CONFLICTING_SOURCES,
                 relation=self._baseline_relation_outcome(relation),
             )
-        if relation is not None and self._retrieval_augment and relation.augment_chunks:
+        if (
+            include_relations
+            and relation is not None
+            and self._retrieval_augment
+            and relation.augment_chunks
+        ):
             run, relation = await self._augment_from_relations(
                 run,
                 relation,
@@ -639,6 +652,155 @@ class AuthorizedRetrieval:
             missing=missing,
             relation_first=relation_first,
         )
+
+    async def search_more(
+        self,
+        bundle: EvidenceBundle,
+        query: str,
+        source_ids: tuple[str, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        authorize=None,
+    ) -> tuple[EvidenceBundle, tuple[Evidence, ...]]:
+        """The `knowledge.search` tool: run one more authorized retrieval
+        against `bundle.request`'s resource selection (replacing only its
+        `query`), restricted to the intersection of `source_ids` and the
+        bundle's already-selected sources (`source_ids == ()` means every
+        already-selected source). New hits are deduped against the pool by
+        `(source_id, revision, chunk_id)` and appended continuing from
+        `S{len(pool) + 1}`; existing labels are never reassigned. Returns the
+        unchanged bundle and `()` once the pool is already at `_MAX_EVIDENCE`
+        or nothing new was found."""
+        capacity = _MAX_EVIDENCE - len(bundle.response.evidence)
+        if capacity <= 0:
+            return bundle, ()
+        plan_source_ids = {resource.source_id for resource in bundle.plan.resources}
+        allowed_source_ids = (
+            plan_source_ids if not source_ids else (set(source_ids) & plan_source_ids)
+        )
+        if not allowed_source_ids:
+            return bundle, ()
+        resource_refs = tuple(
+            ref for ref in bundle.request.resource_refs if ref.source_id in allowed_source_ids
+        )
+        if authorize is not None:
+            await authorize()
+        run = await self._retrieve(
+            replace(
+                bundle.request.as_search_request(),
+                query=query,
+                resource_refs=resource_refs,
+                top_k=capacity,
+            ),
+            policy,
+            frozen_policy=frozen_policy,
+            answer_plan_id=bundle.plan.answer_plan_id,
+            authorize=authorize,
+        )
+        if self._publication_authority is not None and bundle.publication is not None:
+            await self._publication_authority.revalidate(bundle.publication)
+        existing = {
+            (item.source.source_id, item.source.revision, item.chunk_id)
+            for item in bundle.response.evidence
+        }
+        merged = list(bundle.response.evidence)
+        added: list[Evidence] = []
+        for item in run.response.evidence:
+            if len(merged) >= _MAX_EVIDENCE:
+                break
+            identity = (item.source.source_id, item.source.revision, item.chunk_id)
+            if identity in existing:
+                continue
+            existing.add(identity)
+            labeled = replace(item, evidence_label=f"S{len(merged) + 1}")
+            merged.append(labeled)
+            added.append(labeled)
+        if not added:
+            return bundle, ()
+        publication = bundle.publication
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                policy.project_id,
+                tuple(sorted({item.source.revision for item in merged})),
+            )
+        new_bundle = replace(
+            bundle,
+            response=replace(bundle.response, evidence=tuple(merged)),
+            publication=publication,
+        )
+        return new_bundle, tuple(added)
+
+    async def analyse_relations(
+        self,
+        bundle: EvidenceBundle,
+        query: str,
+        *,
+        authorize=None,
+        turn_id: str | None = None,
+        policy: RetrievalPolicyContext | None = None,
+        frozen_policy: bool = False,
+    ) -> tuple[EvidenceBundle, tuple[RelationEvidence, ...]]:
+        """The `graph.relations` tool: run the deterministic relation
+        analysis against the bundle's current evidence pool and merge the
+        result onto `bundle.relation` with `merge_relation_contexts` (R
+        labels continue, never relabel). Raises `RelationAnalysisUnavailable`
+        if this retrieval has no configured relation analysis port.
+        `policy` enables `_augment_from_relations` to re-authorize and fetch
+        `merged.augment_chunks` as fresh S-labeled support (same as the
+        single-shot path); when omitted (no live policy to re-authorize
+        against, e.g. a resumed graph node that only wants the relation
+        labels), augmentation is skipped even if `self._retrieval_augment`
+        is enabled."""
+        if self._relation_analysis is None:
+            raise RelationAnalysisUnavailable("relation analysis is not configured")
+        if authorize is not None:
+            await authorize()
+        new_context = await self._relation_analysis.analyse(
+            query,
+            bundle.response.evidence,
+            tuple(sorted({resource.revision for resource in bundle.plan.resources})),
+            turn_id=turn_id,
+        )
+        merged = merge_relation_contexts(bundle.relation, new_context)
+        existing_labels = (
+            frozenset()
+            if bundle.relation is None
+            else {relation.label for relation in bundle.relation.relations}
+        )
+        added_relations = tuple(
+            relation for relation in merged.relations if relation.label not in existing_labels
+        )
+        new_bundle = replace(bundle, relation=merged)
+        if (
+            policy is not None
+            and self._retrieval_augment
+            and merged.augment_chunks
+            and len(new_bundle.response.evidence) < _MAX_EVIDENCE
+        ):
+            run = _RetrievalRun(
+                response=new_bundle.response,
+                plan=new_bundle.plan,
+                context_snapshot=new_bundle.context_snapshot,
+                policy=policy,
+                publication=new_bundle.publication,
+            )
+            run, merged = await self._augment_from_relations(
+                run,
+                merged,
+                bundle.request,
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=bundle.plan.answer_plan_id,
+                authorize=authorize,
+            )
+            new_bundle = replace(
+                new_bundle,
+                response=run.response,
+                publication=run.publication,
+                relation=merged,
+            )
+        return new_bundle, added_relations
 
     async def generate_answer(
         self,

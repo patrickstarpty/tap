@@ -48,10 +48,12 @@ __all__ = [
     "RelationPath",
     "RelationSupport",
     "SeedNode",
+    "RelationGraphChanged",
     "assemble",
     "expand",
     "expansion_depth",
     "find_paths",
+    "merge_relation_contexts",
     "path_from_subgraph",
     "rank_edges",
     "seed_from_evidence",
@@ -259,6 +261,78 @@ class RelationContext:
 
     def path_summaries(self, limit: int = 3) -> tuple[tuple[str, ...], ...]:
         return tuple(path.node_labels for path in self.paths[:limit])
+
+
+class RelationGraphChanged(ValueError):
+    """Raised by `merge_relation_contexts` when `current` and `new` were
+    analysed against different project graph versions -- a later `graph.relations`
+    tool call cannot be merged onto an evidence pool's existing relation
+    context once the project graph itself has moved underneath the turn."""
+
+
+def merge_relation_contexts(
+    current: RelationContext | None, new: RelationContext
+) -> RelationContext:
+    """Grow an evidence pool's `RelationContext` with a fresh `graph.relations`
+    analysis: `current is None` is the pool's first relation analysis, so
+    `new` is returned unchanged. Otherwise `new` must share `current`'s
+    `graph_version` (raises `RelationGraphChanged` if not); relations are
+    deduped by `edge_id` -- an edge already in `current` keeps its existing
+    label untouched, and each new, not-yet-seen edge is appended continuing
+    from `R{max(current labels) + 1}`, capped at `_MAX_RELATIONS` total.
+    `seeds`/`paths`/`augment_chunks` are unioned (deduped by node id / edge-id
+    path / chunk id) alongside the relabeled relations."""
+    if current is None:
+        return new
+    if current.graph_version != new.graph_version:
+        raise RelationGraphChanged(
+            f"relation graph version changed from {current.graph_version!r} "
+            f"to {new.graph_version!r}"
+        )
+
+    existing_edge_ids = {relation.edge_id for relation in current.relations}
+    next_label_num = max((_label_num(relation.label) for relation in current.relations), default=0)
+    merged_relations = list(current.relations)
+    for relation in new.relations:
+        if relation.edge_id in existing_edge_ids:
+            continue
+        if len(merged_relations) >= _MAX_RELATIONS:
+            break
+        next_label_num += 1
+        merged_relations.append(dataclasses.replace(relation, label=f"R{next_label_num}"))
+        existing_edge_ids.add(relation.edge_id)
+
+    existing_seed_ids = {seed.node_id for seed in current.seeds}
+    merged_seeds = list(current.seeds) + [
+        seed for seed in new.seeds if seed.node_id not in existing_seed_ids
+    ]
+
+    existing_path_edge_ids = {path.edge_ids for path in current.paths}
+    merged_paths = list(current.paths) + [
+        path for path in new.paths if path.edge_ids not in existing_path_edge_ids
+    ]
+
+    existing_augment_chunk_ids = {chunk.chunk_id for chunk in current.augment_chunks}
+    merged_augment_chunks = list(current.augment_chunks) + [
+        chunk for chunk in new.augment_chunks if chunk.chunk_id not in existing_augment_chunk_ids
+    ]
+
+    merged_diagnostics = {**current.diagnostics, **new.diagnostics}
+    status = RelationContextStatus.APPLIED if merged_relations else new.status
+
+    return RelationContext(
+        status=status,
+        graph_version=current.graph_version,
+        seeds=tuple(merged_seeds),
+        relations=tuple(merged_relations),
+        paths=tuple(merged_paths),
+        augment_chunks=tuple(merged_augment_chunks),
+        diagnostics=merged_diagnostics,
+    )
+
+
+def _label_num(label: str) -> int:
+    return int(label[1:])
 
 
 def _source_key(item: NodeSource) -> tuple[object, ...]:

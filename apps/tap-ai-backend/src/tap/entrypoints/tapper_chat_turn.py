@@ -295,6 +295,15 @@ class SingleShotAnswerSteps:
             graph_context_status="NOT_SELECTED",
         )
 
+    async def run_conversation_tool(
+        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+    ):
+        # `prepare` already produced the complete answer in one call (no
+        # `EvidenceBundle` is ever checkpointed here), so this single-shot
+        # adapter never reaches the bounded tool-calling loop that admits a
+        # `knowledge.search`/`graph.relations` call in the first place.
+        raise ValueError("single-shot answer boundary does not support conversation tool calls")
+
 
 class ChatTurnNodes:
     """Binds one claimed chat Turn's resumable answer phases, Insights

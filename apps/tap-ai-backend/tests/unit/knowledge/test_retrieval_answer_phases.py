@@ -7,20 +7,50 @@ including after an `EvidenceBundle` round trip through its JSON codec."""
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 
 import pytest
 
+from tap.modules.access.domain.policy import ResourceGrant
 from tap.modules.ai.domain.persona import TapperPersona
 from tap.modules.knowledge.application.evidence_bundle import (
     EvidenceBundle,
     decode_bundle,
     encode_bundle,
 )
+from tap.modules.knowledge.application.relation_analysis import (
+    RelationContext,
+    RelationContextStatus,
+    RelationEvidence,
+    RelationSupport,
+)
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
-from tap.modules.knowledge.domain.models import AbstentionReason, AnswerRequest, AnswerResponse
+from tap.modules.knowledge.domain.models import (
+    AbstentionReason,
+    AnswerMode,
+    AnswerRequest,
+    AnswerResponse,
+    ContentRole,
+    ContextLayer,
+    ContextLayerKind,
+    ContextSnapshot,
+    DocumentAnchor,
+    Evidence,
+    IndexRevision,
+    ModelCallProvenance,
+    QueryPlan,
+    ResolvedResourceRef,
+    ResourceMode,
+    ResourceRef,
+    RetrievalProfileId,
+    RevisionKind,
+    SearchResponse,
+    SourceFamily,
+    SourceRevisionRef,
+)
 from tap.modules.knowledge.ports.answers import DocumentStateChanged
-from tap.modules.knowledge.ports.models import AnswerGeneration
+from tap.modules.knowledge.ports.models import AnswerGeneration, SearchHit
 from tests.contract.test_knowledge_api import (
     FakeModelPort,
     FakeSearchPort,
@@ -28,6 +58,153 @@ from tests.contract.test_knowledge_api import (
     policy_context,
     search_hit,
 )
+
+_POOL_SOURCE_HASH = "sha256:" + "c" * 64
+
+
+def _pool_hit(
+    index: int,
+    *,
+    source_id: str = "src-a",
+    revision: str = "rev-1",
+    score: float = 0.5,
+) -> SearchHit:
+    content = f"pool content {source_id} {revision} {index}"
+    chunk_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return SearchHit(
+        family=SourceFamily.DOC,
+        chunk_id=f"chunk-{source_id}-{revision}-{index}",
+        logical_chunk_id=f"logical-{source_id}-{revision}-{index}",
+        title="pool.md",
+        content=content,
+        source=SourceRevisionRef(
+            source_id=source_id,
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=revision,
+            source_content_hash=_POOL_SOURCE_HASH,
+            anchor=DocumentAnchor(heading_path=()),
+        ),
+        chunk_content_hash=chunk_hash,
+        content_role=ContentRole.SOURCE,
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1-20260101",
+            schema_version="search-schema-v1",
+            corpus_version="corpus-17",
+        ),
+        embedding_model_version="tap-embedding-v1",
+        score=score,
+    )
+
+
+def _pool_evidence(
+    index: int,
+    *,
+    label: str,
+    source_id: str = "src-a",
+    revision: str = "rev-1",
+) -> Evidence:
+    hit = _pool_hit(index, source_id=source_id, revision=revision)
+    return Evidence(
+        family=hit.family,
+        chunk_id=hit.chunk_id,
+        logical_chunk_id=hit.logical_chunk_id,
+        title=hit.title,
+        content=hit.content,
+        source=hit.source,
+        chunk_content_hash=hit.chunk_content_hash,
+        content_role=hit.content_role,
+        citation_id=f"citation-{source_id}-{revision}-{index}",
+        evidence_label=label,
+        index_revision=hit.index_revision,
+        embedding_model_version=hit.embedding_model_version,
+        acl_decision_id="decision-pool",
+        score=hit.score,
+    )
+
+
+def _resolved_resource(source_id: str = "src-a", revision: str = "rev-1") -> ResolvedResourceRef:
+    return ResolvedResourceRef(
+        family=SourceFamily.DOC,
+        source_id=source_id,
+        mode=ResourceMode.PREFERRED,
+        revision_kind=RevisionKind.BLOB_VERSION,
+        revision=revision,
+        source_content_hash=_POOL_SOURCE_HASH,
+        anchor=None,
+    )
+
+
+def _pool_bundle(
+    evidence: tuple[Evidence, ...],
+    *,
+    resources: tuple[ResolvedResourceRef, ...],
+    resource_refs: tuple[ResourceRef, ...],
+    query: str = "原始问题",
+    relation: RelationContext | None = None,
+) -> EvidenceBundle:
+    plan = QueryPlan(
+        query_plan_id="pool-plan-1",
+        operation_id="pool-operation-1",
+        tenant_id="tenant-a",
+        project_id="project-a",
+        policy_decision_id="decision-17",
+        policy_version="policy-17",
+        acl_digest="sha256:acl-17",
+        answer_mode=AnswerMode.QUICK,
+        retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+        source_families=(SourceFamily.DOC,),
+        resources=resources,
+        effective_environment="production",
+        corpus_version="corpus-17",
+        candidate_limit=20,
+        raw_request_hash="sha256:" + "b" * 64,
+        sanitized_query=query,
+        sanitized_query_hash="sha256:" + "d" * 64,
+        redaction_version="redaction-v1",
+        embedding_model_id="tap-embedding-v1",
+        embedding_dimension=2,
+    )
+    context_snapshot = ContextSnapshot(
+        context_snapshot_id="pool-snapshot-1",
+        operation_id="pool-operation-1",
+        tenant_id="tenant-a",
+        project_id="project-a",
+        policy_decision_id="decision-17",
+        policy_version="policy-17",
+        acl_digest="sha256:acl-17",
+        layers=(
+            ContextLayer(
+                kind=ContextLayerKind.CURRENT_TURN,
+                ref_ids=(),
+                content_hash="sha256:" + "d" * 64,
+                token_count=4,
+            ),
+        ),
+    )
+    return EvidenceBundle(
+        request=AnswerRequest(query=query, resource_refs=resource_refs),
+        generation_query=query,
+        response=SearchResponse(
+            trace_id="pool-trace-1",
+            query_plan_id="pool-plan-1",
+            context_snapshot_id="pool-snapshot-1",
+            corpus_version="corpus-17",
+            retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
+            evidence=evidence,
+            embedding_provenance=ModelCallProvenance("tap-embedding-v1", "embed-pool"),
+        ),
+        plan=plan,
+        context_snapshot=context_snapshot,
+        publication=None,
+        relation=relation,
+        answer_input=None,
+        evidence_map={},
+        graph_context=(),
+        flow_context={},
+        missing=False,
+        relation_first=False,
+    )
 
 
 def _id_factory():
@@ -264,3 +441,238 @@ async def test_verify_abstains_instead_of_completing_an_empty_clarification() ->
     assert response.abstained is True
     assert response.answer_kind == "answer"
     assert response.abstention_reason is AbstentionReason.INSUFFICIENT_EVIDENCE
+
+
+class FakeRelationAnalysis:
+    """Stands in for the `"relation-analysis"` agent subgraph: returns a
+    fixed `RelationContext`, counting how many times it was invoked."""
+
+    def __init__(self, context: RelationContext | None = None) -> None:
+        self.context = context
+        self.calls = 0
+
+    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+        self.calls += 1
+        return self.context
+
+
+def _relation_support(label: str) -> RelationSupport:
+    return RelationSupport(
+        chunk_id=f"chunk-{label}",
+        source_revision_id="rev-1",
+        document_revision_id="rev-1",
+        content_digest="sha256:" + "e" * 64,
+        anchor={"page": 1},
+        evidence_label=label,
+    )
+
+
+def _relation(label: str, edge_id: str, *, support_label: str = "S1") -> RelationEvidence:
+    return RelationEvidence(
+        label=label,
+        edge_id=edge_id,
+        subject_node_id=f"{edge_id}-a",
+        subject_label="节点A",
+        subject_aliases=(),
+        object_node_id=f"{edge_id}-b",
+        object_label="节点B",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(_relation_support(support_label),),
+        on_path=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepare_without_relations_skips_relation_analysis() -> None:
+    """Task 6: `prepare_answer(..., include_relations=False)` -- the graph
+    path's `seed_search` node calling convention -- must never invoke the
+    configured relation analysis port, and the resulting bundle must carry
+    no `RelationContext`."""
+    model = FakeModelPort()
+    relation = FakeRelationAnalysis(
+        RelationContext(status=RelationContextStatus.EMPTY, graph_version="1")
+    )
+    retrieval = AuthorizedRetrieval(
+        search=FakeSearchPort((search_hit(),)),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=_id_factory(),
+        relation_analysis=relation,
+    )
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    prepared = await retrieval.prepare_answer(request, policy, include_relations=False)
+
+    assert isinstance(prepared, EvidenceBundle)
+    assert prepared.relation is None
+    assert relation.calls == 0
+
+
+def _single_source_policy() -> object:
+    return policy_context(
+        resource_grants=(
+            ResourceGrant(
+                family="doc",
+                source_id="src-a",
+                revision_kind="blob_version",
+                revision="rev-1",
+                source_content_hash=_POOL_SOURCE_HASH,
+                allow_all_anchors=True,
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_more_never_relabels_and_caps_pool() -> None:
+    """Task 6, Review Focus 5: an evidence pool near `_MAX_EVIDENCE` only
+    admits as many new hits as there is capacity for, deduped by chunk
+    identity, continuing the S label sequence -- existing labels are never
+    reassigned, and once the pool is full a further call adds nothing."""
+    model = FakeModelPort()
+    existing = tuple(_pool_evidence(index, label=f"S{index}") for index in range(1, 19))
+    resources = (_resolved_resource(),)
+    resource_refs = (
+        ResourceRef(family=SourceFamily.DOC, source_id="src-a", mode=ResourceMode.PREFERRED),
+    )
+    bundle = _pool_bundle(existing, resources=resources, resource_refs=resource_refs)
+
+    duplicate_of_s3 = _pool_hit(3, score=0.95)
+    new_hits = (
+        duplicate_of_s3,
+        _pool_hit(100, score=0.5),
+        _pool_hit(101, score=0.5),
+        _pool_hit(102, score=0.5),
+        _pool_hit(103, score=0.5),
+    )
+    search = FakeSearchPort(new_hits)
+    retrieval = AuthorizedRetrieval(
+        search=search,
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=_id_factory(),
+    )
+    policy = _single_source_policy()
+
+    new_bundle, added = await retrieval.search_more(bundle, "更多信息", (), policy)
+
+    assert [item.evidence_label for item in added] == ["S19", "S20"]
+    assert len(new_bundle.response.evidence) == 20
+    assert new_bundle.response.evidence[:18] == existing
+
+    exhausted_bundle, more_added = await retrieval.search_more(new_bundle, "更多信息", (), policy)
+    assert more_added == ()
+    assert exhausted_bundle is new_bundle
+
+
+@pytest.mark.asyncio
+async def test_search_more_restricts_to_requested_sources() -> None:
+    """Task 6: `source_ids` restricts the retrieval to the intersection with
+    the bundle's own already-selected resources -- the underlying SearchPort
+    must only see the requested source."""
+    model = FakeModelPort()
+    existing = (_pool_evidence(1, label="S1"),)
+    resources = (_resolved_resource("src-a"), _resolved_resource("src-b"))
+    resource_refs = (
+        ResourceRef(family=SourceFamily.DOC, source_id="src-a", mode=ResourceMode.PREFERRED),
+        ResourceRef(family=SourceFamily.DOC, source_id="src-b", mode=ResourceMode.PREFERRED),
+    )
+    bundle = _pool_bundle(existing, resources=resources, resource_refs=resource_refs)
+    search = FakeSearchPort((_pool_hit(50, source_id="src-b"),))
+    retrieval = AuthorizedRetrieval(
+        search=search,
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=_id_factory(),
+    )
+    policy = policy_context(
+        resource_grants=(
+            ResourceGrant(
+                family="doc",
+                source_id="src-a",
+                revision_kind="blob_version",
+                revision="rev-1",
+                source_content_hash=_POOL_SOURCE_HASH,
+                allow_all_anchors=True,
+            ),
+            ResourceGrant(
+                family="doc",
+                source_id="src-b",
+                revision_kind="blob_version",
+                revision="rev-1",
+                source_content_hash=_POOL_SOURCE_HASH,
+                allow_all_anchors=True,
+            ),
+        )
+    )
+
+    await retrieval.search_more(bundle, "更多信息", ("src-b",), policy)
+
+    execution = search.executions[-1]
+    assert {resource.source_id for resource in execution.plan.resources} == {"src-b"}
+
+
+@pytest.mark.asyncio
+async def test_analyse_relations_merges_and_continues_r_labels() -> None:
+    """Task 6: a second `graph.relations` call merges onto the pool's
+    existing relation context -- an edge already cited keeps its label, and
+    only genuinely new edges continue the R label sequence."""
+    model = FakeModelPort()
+    existing_evidence = (_pool_evidence(1, label="S1"),)
+    resources = (_resolved_resource(),)
+    resource_refs = (
+        ResourceRef(family=SourceFamily.DOC, source_id="src-a", mode=ResourceMode.PREFERRED),
+    )
+    existing_relation = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="7",
+        relations=(_relation("R1", "edge-1"), _relation("R2", "edge-2")),
+    )
+    bundle = _pool_bundle(
+        existing_evidence,
+        resources=resources,
+        resource_refs=resource_refs,
+        relation=existing_relation,
+    )
+    new_context = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="7",
+        relations=(
+            _relation("R1", "edge-2"),
+            _relation("R1", "edge-3"),
+            _relation("R1", "edge-4"),
+        ),
+    )
+    relation_port = FakeRelationAnalysis(new_context)
+    retrieval = AuthorizedRetrieval(
+        search=FakeSearchPort(()),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=_id_factory(),
+        relation_analysis=relation_port,
+    )
+
+    new_bundle, added = await retrieval.analyse_relations(bundle, "A与B的关系是什么")
+
+    assert [relation.label for relation in new_bundle.relation.relations] == [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+    ]
+    assert new_bundle.relation.relations[0] == existing_relation.relations[0]
+    assert new_bundle.relation.relations[1] == existing_relation.relations[1]
+    assert [relation.label for relation in added] == ["R3", "R4"]

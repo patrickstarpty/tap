@@ -7,6 +7,7 @@ import dataclasses
 import json
 import time
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -103,6 +104,18 @@ def _retrieval_hits_payload(response: Any, relation: Any | None) -> dict[str, ob
     }
 
 
+def _tool_call_summary(tool_id: str, query: str, labels: tuple[str, ...], *, unit: str) -> str:
+    """`run_conversation_tool`'s `summary` text: `tool_id “<query, first 60
+    chars>” → +N 条<unit>（<first label>–<last label>）`, or `→ 无新<unit>`
+    when nothing new was admitted into the pool (already full, or every
+    candidate deduped against an existing label)."""
+    prefix = f"{tool_id} “{query[:60]}”"
+    if not labels:
+        return f"{prefix} → 无新{unit}"
+    label_range = labels[0] if labels[0] == labels[-1] else f"{labels[0]}–{labels[-1]}"
+    return f"{prefix} → +{len(labels)} 条{unit}（{label_range}）"
+
+
 class DocumentOperations(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
@@ -138,6 +151,10 @@ class AnswerOperations(Protocol):
 
     async def resolve_conversation_selection(self, revision_ids): ...
 
+    async def search_more_frozen(self, *args, **kwargs): ...
+
+    async def relations_frozen(self, *args, **kwargs): ...
+
 
 class CitationOperations(Protocol):
     @property
@@ -172,6 +189,7 @@ class KnowledgeHttpService:
         models: Any | None = None,
         answer_planner: Any | None = None,
         redactor: Any | None = None,
+        relations_available: bool = False,
     ) -> None:
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
@@ -181,6 +199,12 @@ class KnowledgeHttpService:
         self._searches = searches
         self._sources = sources
         self._corpus_version = corpus_version
+        # Task 6: whether the underlying `AuthorizedRetrieval` this service's
+        # `answers` boundary was built with has a configured relation
+        # analysis port -- i.e. whether `graph.relations` can ever succeed
+        # for this deployment. Set by the composition root that wires
+        # `AuthorizedRetrieval(relation_analysis=...)`.
+        self.relations_available = relations_available
         self._models = models
         self.answer_planner = answer_planner
         self._redactor = redactor
@@ -862,6 +886,132 @@ class KnowledgeHttpService:
             citations=[],
             graph_context_status="NOT_SELECTED",
         )
+
+    async def run_conversation_tool(
+        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+    ):
+        """Grow a `"prepared"` step's evidence pool through one admitted
+        `knowledge.search`/`graph.relations` tool call: re-authorize from
+        `frozen_input` (same recheck every other resumable phase performs),
+        then delegate to `search_more_frozen`/`relations_frozen`.
+
+        `SearchUnavailable`/`ModelUnavailable` propagate uncaught (transient,
+        PR 2's retry policy owns them); `RelationAnalysisUnavailable`,
+        `RelationGraphChanged`, and a relation result that never reached
+        `APPLIED` are soft failures -- the step/pool is returned unchanged
+        and `status="failed"`, so the turn can keep going instead of failing
+        outright over one tool call."""
+        from tap.modules.knowledge.application.evidence_bundle import decode_bundle, encode_bundle
+        from tap.modules.knowledge.application.relation_analysis import RelationGraphChanged
+        from tap.modules.knowledge.application.retrieve import RelationAnalysisUnavailable
+        from tap.modules.knowledge.domain.models import RelationContextStatus
+
+        if call.tool_id not in {"knowledge.search", "graph.relations"}:
+            raise ValueError(f"run_conversation_tool does not support {call.tool_id!r}")
+
+        async with self._plan_deadline(answer_plan):
+            context = await self._authorized_frozen_context(
+                original_question=frozen_input.message,
+                frozen_input=frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+            )
+            if isinstance(context, RetrievalAnswerResponse):
+                raise ValueError("resumed step no longer matches a retrieval route")
+            revisions, policy, _governance = context
+            answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            bundle = decode_bundle(step["bundle"])
+            query = str(call.arguments.get("query", ""))
+            summary_query = query[:60]
+            transcript = step.get("transcript", [])
+
+            if call.tool_id == "knowledge.search":
+                source_ids = tuple(call.arguments.get("sourceIds") or ())
+                new_bundle, added = await self._answers.search_more_frozen(
+                    bundle,
+                    query,
+                    source_ids,
+                    revisions,
+                    policy,
+                    answer_execution=answer_execution,
+                    authorize=authorize,
+                )
+                added_labels = [item.evidence_label for item in added]
+                retrieval_hits = _retrieval_hits_payload(
+                    SimpleNamespace(evidence=added, trace_id=new_bundle.response.trace_id), None
+                )
+                return {
+                    "step": {
+                        "kind": "prepared",
+                        "bundle": encode_bundle(new_bundle),
+                        "transcript": transcript,
+                    },
+                    "status": "completed",
+                    "summary": _tool_call_summary(
+                        "knowledge.search", summary_query, tuple(added_labels), unit="证据"
+                    ),
+                    "added_labels": added_labels,
+                    "retrieval_hits": retrieval_hits,
+                }
+
+            # graph.relations
+            try:
+                new_bundle, added_relations = await self._answers.relations_frozen(
+                    bundle,
+                    query,
+                    revisions,
+                    policy,
+                    authorize=authorize,
+                    turn_id=None if answer_plan is None else answer_plan.turn_id,
+                    answer_execution=answer_execution,
+                )
+            except (RelationAnalysisUnavailable, RelationGraphChanged):
+                return {
+                    "step": step,
+                    "status": "failed",
+                    "summary": f'graph.relations "{summary_query}" → 关系分析不可用',
+                    "added_labels": [],
+                    "retrieval_hits": None,
+                }
+            if (
+                new_bundle.relation is None
+                or new_bundle.relation.status is not RelationContextStatus.APPLIED
+            ):
+                return {
+                    "step": step,
+                    "status": "failed",
+                    "summary": f'graph.relations "{summary_query}" → 无新关系',
+                    "added_labels": [],
+                    "retrieval_hits": None,
+                }
+            added_labels = [relation.label for relation in added_relations]
+            existing_identity = {
+                (item.source.source_id, item.source.revision, item.chunk_id)
+                for item in bundle.response.evidence
+            }
+            added_evidence = tuple(
+                item
+                for item in new_bundle.response.evidence
+                if (item.source.source_id, item.source.revision, item.chunk_id)
+                not in existing_identity
+            )
+            retrieval_hits = _retrieval_hits_payload(
+                SimpleNamespace(evidence=added_evidence, trace_id=new_bundle.response.trace_id),
+                SimpleNamespace(relations=added_relations) if added_relations else None,
+            )
+            return {
+                "step": {
+                    "kind": "prepared",
+                    "bundle": encode_bundle(new_bundle),
+                    "transcript": transcript,
+                },
+                "status": "completed",
+                "summary": _tool_call_summary(
+                    "graph.relations", summary_query, tuple(added_labels), unit="关系"
+                ),
+                "added_labels": added_labels,
+                "retrieval_hits": retrieval_hits,
+            }
 
     @staticmethod
     def _generation_governance(frozen_input):

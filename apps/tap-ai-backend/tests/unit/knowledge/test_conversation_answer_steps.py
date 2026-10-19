@@ -1065,3 +1065,153 @@ async def test_prepared_step_carries_retrieval_hits_labels_for_evidence_and_rela
         {"label": "S1", "title": "理赔手册.pdf", "location": "理赔流程 / 提交材料"},
         {"label": "R1", "title": "核保流程 需要 健康告知", "location": None},
     ]
+
+
+class ToolPhaseAnswers(PhaseAnswers):
+    """A `PhaseAnswers` double additionally standing in for the `knowledge.search`
+    /`graph.relations` tool surface (`search_more_frozen`/`relations_frozen`),
+    for `run_conversation_tool` tests."""
+
+    def __init__(
+        self,
+        *,
+        search_result: object = None,
+        relations_result: object = None,
+        relations_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self._search_result = search_result
+        self._relations_result = relations_result
+        self._relations_error = relations_error
+        self.search_calls: list[dict[str, object]] = []
+        self.relations_calls: list[dict[str, object]] = []
+
+    async def search_more_frozen(
+        self, bundle, query, source_ids, revisions, policy, *, answer_execution=None, authorize=None
+    ):
+        self.search_calls.append({"bundle": bundle, "query": query, "source_ids": source_ids})
+        if authorize is not None:
+            await authorize()
+        return self._search_result
+
+    async def relations_frozen(
+        self,
+        bundle,
+        query,
+        revisions,
+        policy,
+        *,
+        authorize=None,
+        turn_id=None,
+        answer_execution=None,
+    ):
+        self.relations_calls.append({"bundle": bundle, "query": query, "turn_id": turn_id})
+        if authorize is not None:
+            await authorize()
+        if self._relations_error is not None:
+            raise self._relations_error
+        return self._relations_result
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_tool_search_returns_prepared_step_and_hits() -> None:
+    """Task 6: a `knowledge.search` tool call grows the evidence pool and
+    returns a fresh `"prepared"` step; `retrieval_hits` carries only the
+    newly added labels, and the summary reports the count and label range."""
+    from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+    from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+    from tap.modules.knowledge.domain.models import (
+        ContentRole,
+        DocumentAnchor,
+        Evidence,
+        IndexRevision,
+        RevisionKind,
+        SourceFamily,
+        SourceRevisionRef,
+    )
+
+    frozen, plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    step = {
+        "kind": "prepared",
+        "bundle": encode_bundle(bundle),
+        "retrieval_hits": {},
+        "transcript": [],
+    }
+
+    source_hash = "sha256:" + "a" * 64
+    chunk_hash = "sha256:" + "b" * 64
+
+    def new_evidence_item(index: int) -> Evidence:
+        return Evidence(
+            family=SourceFamily.DOC,
+            chunk_id=f"h_{index}" + "1" * 60,
+            logical_chunk_id=f"h_{index}" + "2" * 60,
+            title="新文档.pdf",
+            content="新检索到的内容。",
+            source=SourceRevisionRef(
+                source_id="doc-a",
+                source_type="document",
+                revision_kind=RevisionKind.BLOB_VERSION,
+                revision="rev-1",
+                source_content_hash=source_hash,
+                anchor=DocumentAnchor(heading_path=("章节",)),
+            ),
+            chunk_content_hash=chunk_hash,
+            content_role=ContentRole.SOURCE,
+            citation_id=f"citation-new-{index}",
+            evidence_label=f"S{index}",
+            index_revision=IndexRevision(
+                physical_index="kb-doc-v1", schema_version="search-schema-v1", corpus_version="v1"
+            ),
+            embedding_model_version="tap-embed-fixed-v1",
+            acl_decision_id="decision-1",
+            score=0.8,
+        )
+
+    new_evidence = tuple(new_evidence_item(index) for index in (5, 6, 7))
+    new_bundle = replace(bundle, response=replace(bundle.response, evidence=new_evidence))
+
+    answers = ToolPhaseAnswers(search_result=(new_bundle, new_evidence))
+    service = _service(answers)
+    call = AdmittedToolCall(
+        call_id="call-1", tool_id="knowledge.search", arguments={"query": "更多信息"}
+    )
+
+    result = await service.run_conversation_tool(step, frozen, call, answer_plan=plan)
+
+    assert result["status"] == "completed"
+    assert result["step"]["kind"] == "prepared"
+    assert result["added_labels"] == ["S5", "S6", "S7"]
+    assert "+3" in result["summary"]
+    assert [item["label"] for item in result["retrieval_hits"]["labels"]] == ["S5", "S6", "S7"]
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_tool_relations_unavailable_fails_softly() -> None:
+    """Task 6: when the `graph.relations` tool fails (no configured relation
+    analysis port here), `run_conversation_tool` must not raise -- it reports
+    `status="failed"` and leaves the step's `bundle` untouched."""
+    from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+    from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+    from tap.modules.knowledge.application.retrieve import RelationAnalysisUnavailable
+
+    frozen, plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    step = {
+        "kind": "prepared",
+        "bundle": encode_bundle(bundle),
+        "retrieval_hits": {},
+        "transcript": [],
+    }
+
+    answers = ToolPhaseAnswers(relations_error=RelationAnalysisUnavailable("not configured"))
+    service = _service(answers)
+    call = AdmittedToolCall(
+        call_id="call-1", tool_id="graph.relations", arguments={"query": "关系"}
+    )
+
+    result = await service.run_conversation_tool(step, frozen, call, answer_plan=plan)
+
+    assert result["status"] == "failed"
+    assert result["step"]["bundle"] == step["bundle"]

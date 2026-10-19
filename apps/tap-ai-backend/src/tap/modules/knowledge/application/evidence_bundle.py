@@ -45,6 +45,10 @@ class EvidenceBundle:
     flow_context: Mapping[str, object]
     missing: bool
     relation_first: bool
+    # Task 8: `insights.query` results accumulate here as I-labeled records
+    # (pool cap 20, same discipline as S/R); defaults empty so every existing
+    # `EvidenceBundle(...)` construction site needs no change.
+    insights_records: tuple[Mapping[str, object], ...] = ()
 
 
 def encode_bundle(bundle: EvidenceBundle) -> dict[str, object]:

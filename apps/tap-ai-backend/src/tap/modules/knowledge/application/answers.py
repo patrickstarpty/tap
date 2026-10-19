@@ -295,6 +295,63 @@ class AnswerService:
         await self._revalidate_publication(publication)
         return response
 
+    async def search_more_frozen(
+        self,
+        bundle,
+        query: str,
+        source_ids: tuple[str, ...],
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """Task 6: the `knowledge.search` tool's frozen entrypoint, re-authorizing
+        the accepted revision selection the same way every other `*_frozen`
+        phase above does before delegating to the Knowledge boundary."""
+        publication = await self._authorize_frozen_selection(revisions, policy)
+        knowledge_search_more = getattr(self._knowledge, "search_more_frozen", None)
+        if knowledge_search_more is None:
+            raise ValueError("planned answers require the authorized Knowledge boundary")
+        result = await knowledge_search_more(
+            bundle,
+            query,
+            source_ids,
+            policy,
+            answer_execution=answer_execution,
+            authorize=self._reauthorize(publication, authorize),
+        )
+        await self._revalidate_publication(publication)
+        return result
+
+    async def relations_frozen(
+        self,
+        bundle,
+        query: str,
+        revisions: tuple[ReadyDocumentRevision, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        authorize=None,
+        turn_id: str | None = None,
+        answer_execution=None,
+    ):
+        """Task 6: the `graph.relations` tool's frozen entrypoint, same
+        re-authorization discipline as `search_more_frozen`."""
+        publication = await self._authorize_frozen_selection(revisions, policy)
+        knowledge_relations = getattr(self._knowledge, "relations_frozen", None)
+        if knowledge_relations is None:
+            raise ValueError("planned answers require the authorized Knowledge boundary")
+        result = await knowledge_relations(
+            bundle,
+            query,
+            policy,
+            turn_id=turn_id,
+            answer_execution=answer_execution,
+            authorize=self._reauthorize(publication, authorize),
+        )
+        await self._revalidate_publication(publication)
+        return result
+
     async def save_frozen(
         self,
         response: AnswerResponse,
