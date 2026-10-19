@@ -2185,14 +2185,32 @@ export function TapperWorkspace() {
   const activeLockedSkillIds = bundledSkillIdsFor(
     activeConversation.selectedAgentIds,
   );
+  // A durable conversation's `selectedSkillIds` is prefilled from its last
+  // turn's frozen `input.skillRevisionIds` (see the restore effect above) so
+  // the composer defaults to "same Skill as last time" -- before the
+  // enabled-catalog filter effect (also above) has had a chance to drop a
+  // since-disabled id. Querying detail for a now-disabled revision 404s
+  // (the detail endpoint only resolves enabled revisions); gate on `skills`
+  // (the same enabled-catalog set `allowedSkillIds` below uses at send time)
+  // so that unavoidable one-render race never reaches the network, instead
+  // of just reacting to the error.
+  const allowedSkillRevisionIds = useMemo(
+    () => new Set(skills.map((item) => item.id)),
+    [skills],
+  );
   const activeTurnSkillIds = useMemo(
-    () => [
-      ...new Set([
-        ...activeConversation.selectedSkillIds,
-        ...activeLockedSkillIds,
-      ]),
+    () =>
+      [
+        ...new Set([
+          ...activeConversation.selectedSkillIds,
+          ...activeLockedSkillIds,
+        ]),
+      ].filter((id) => allowedSkillRevisionIds.has(id)),
+    [
+      activeConversation.selectedSkillIds,
+      activeLockedSkillIds,
+      allowedSkillRevisionIds,
     ],
-    [activeConversation.selectedSkillIds, activeLockedSkillIds],
   );
   // Per-turn Skill text budget (global-constraints.md: 96 KB), summed
   // across every Skill the turn would bring in — bundled from an Agent or

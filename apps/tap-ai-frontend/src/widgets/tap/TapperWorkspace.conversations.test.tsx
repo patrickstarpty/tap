@@ -545,3 +545,115 @@ it("resolves a retrieval hit to its published document name", async () => {
     await screen.findByRole("link", { name: "policy.md" }),
   ).toBeInTheDocument();
 });
+
+it("never fetches Skill detail for a last-used Skill the catalog no longer lists as enabled", async () => {
+  // Regression: a durable conversation's composer selection is prefilled
+  // from its last turn's frozen `input.skillRevisionIds` (restore effect
+  // in TapperWorkspace) before the enabled-catalog filter effect has run.
+  // If that prefilled id was since disabled (e.g. a built-in Skill
+  // retired between an E2E journey's restart phases), the per-turn
+  // Skill-budget lookup must not blindly fetch its detail -- the detail
+  // endpoint only resolves *enabled* revisions and 404s for a disabled
+  // one, which showed up as a stray console network error with no
+  // user-visible symptom (`tests/e2e/persistence.spec.ts`).
+  const skillDetailRequests: string[] = [];
+  // The real race: the composer's prefill from the conversation's last
+  // turn (fast -- already in the conversation-detail response) lands
+  // before the enabled-catalog list (a separate, independently-timed
+  // query) ever resolves. Hold the catalog list back so that ordering is
+  // forced here too, instead of letting a synchronous mock collapse both
+  // into the same render.
+  let releaseSkillsCatalog: (() => void) | undefined;
+  vi.stubGlobal("fetch", async (request: Request | string) => {
+    // The Agent/Skill catalog reads (`readCatalog` in `aiAssets.ts`) call
+    // the bare global `fetch("/api/...")` with a relative string, not a
+    // `Request` object -- unlike the `knowledgeClient`'s requests, which
+    // all pass a `Request`. Handle both call shapes.
+    const url = typeof request === "string" ? request : request.url;
+    const method = typeof request === "string" ? "GET" : request.method;
+    const path = new URL(url, "http://localhost").pathname;
+    if (path.endsWith("/ai/agents") && method === "GET")
+      return json({ items: [] });
+    if (path.endsWith("/ai/skills") && method === "GET") {
+      await new Promise<void>((resolve) => {
+        releaseSkillsCatalog = resolve;
+      });
+      return json({ items: [] });
+    }
+    if (path.endsWith("/ai/skills/retired-citation-skill")) {
+      skillDetailRequests.push(path);
+      return json({ code: "asset-revision-unavailable" }, 404);
+    }
+    if (path.endsWith("/conversations") && method === "GET")
+      return json({
+        items: [
+          {
+            conversationId: "conversation-a",
+            title: "What is the rule?",
+            createdAt: "2026-09-29T08:00:00Z",
+            updatedAt: "2026-09-29T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a"))
+      return json({
+        conversationId: "conversation-a",
+        title: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        updatedAt: "2026-09-29T08:00:01Z",
+        turns: [
+          {
+            turnId: "turn-1",
+            state: "completed",
+            attempt: 1,
+            traceId: null,
+            inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+            answerEvidenceSnapshotDigest: null,
+            input: {
+              message: "What is the rule?",
+              modelAlias: "qwen-plus",
+              sourceRevisionIds: [],
+              documentRevisionIds: [],
+              resolvedResources: [],
+              agentRevisionId: null,
+              agentLabel: null,
+              skillRevisionIds: ["retired-citation-skill"],
+              skillLabels: ["Citation skill"],
+              insightsQueryId: null,
+            },
+          },
+        ],
+      });
+    if (path.endsWith("/conversations/conversation-a/events"))
+      return json({
+        items: [
+          {
+            eventId: "event-1",
+            sequence: 1,
+            turnId: "turn-1",
+            occurredAt: "2026-09-29T08:00:00Z",
+            eventType: "turn.completed",
+            payload: { answer: ANSWER },
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a/turns/turn-1/trace"))
+      return json({ code: "not-found" }, 404);
+    throw new Error(`Unexpected API call: ${method} ${url}`);
+  });
+  renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+  // The turn (and its prefill of the retired Skill id) is visible while
+  // the enabled-catalog list is still in flight.
+  await screen.findByRole("button", { name: "Regenerate" });
+  await waitFor(() => expect(releaseSkillsCatalog).toBeDefined());
+  expect(skillDetailRequests).toEqual([]);
+
+  releaseSkillsCatalog!();
+  // Let the now-resolved catalog settle and any (wrongly) already-fired
+  // detail query finish, then confirm it still never happened.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(skillDetailRequests).toEqual([]);
+});
