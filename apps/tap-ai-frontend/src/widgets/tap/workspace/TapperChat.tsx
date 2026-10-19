@@ -1265,7 +1265,11 @@ export function TapperChat({
                     }
                     aria-selected={pickerConfig.selectedIds.includes(item.id)}
                     aria-disabled={notApplicable}
-                    title={notApplicable ? copy.composer.skillNotApplicable : undefined}
+                    title={
+                      notApplicable
+                        ? copy.composer.skillNotApplicable
+                        : undefined
+                    }
                     disabled={notApplicable}
                     onClick={() => {
                       if (notApplicable) return;
@@ -1274,7 +1278,9 @@ export function TapperChat({
                     }}
                   >
                     {picker === "library" ? (
-                      <FileTypeIcon type={item.name.split(".").pop() ?? "FILE"} />
+                      <FileTypeIcon
+                        type={item.name.split(".").pop() ?? "FILE"}
+                      />
                     ) : null}
                     {item.name}
                     {notApplicable ? (
