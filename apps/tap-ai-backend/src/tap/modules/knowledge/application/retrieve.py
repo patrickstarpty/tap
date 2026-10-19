@@ -1028,6 +1028,7 @@ class AuthorizedRetrieval:
                     degradation_reasons=bundle.response.degradation_reasons,
                     answer_kind=generation.answer_kind,
                     insights_facts=insights_facts,
+                    relation=self._baseline_relation_outcome(bundle.relation),
                 )
 
         relation_outcome: RelationOutcome | None = None

@@ -900,6 +900,31 @@ def test_skill_budget_exceeded_over_96kb_returns_skill_problem():
     assert conversations.repository.values == {}
 
 
+@pytest.mark.parametrize(
+    "insights_report_refs",
+    [["report-1", "report-1"], [" "], [""]],
+)
+def test_create_turn_rejects_invalid_insights_report_refs_as_a_422(insights_report_refs):
+    """Fix round 1, I-1: a duplicate or blank `insightsReportRefs` item must
+    fail the HTTP contract itself (422) -- not reach `TurnInput.__post_init__`,
+    whose `ValueError` the catch-all handler would otherwise surface as a
+    misleading 503. This never touches knowledge/model services, so request
+    parsing alone must reject it."""
+    client, _conversations = _model_selection_client(_SelectableModels())
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={
+            "message": "Hello",
+            "modelAlias": "qwen-plus",
+            "insightsReportRefs": insights_report_refs,
+        },
+        headers={"Idempotency-Key": "insights-refs-invalid"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_create_turn_freezes_insights_report_refs_without_query():
     """Task 8, user decision B: a plain conversation Turn may freeze
     `insightsReportRefs` alone (no historical `insights_query_id` -- that

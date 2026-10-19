@@ -778,6 +778,11 @@ async def test_insights_only_claim_completes_without_knowledge_citations() -> No
         evidence,
         resources=resources,
         resource_refs=resource_refs,
+        # Fix round 1 (controller ruling): the insights-only early return
+        # must still surface a baseline relation outcome, like every other
+        # short-circuit path (clarification/flowchart/abstain) does, rather
+        # than silently defaulting to `None`.
+        relation=RelationContext(status=RelationContextStatus.EMPTY, graph_version="v1"),
         insights_records=(
             {
                 "label": "I1",
@@ -826,3 +831,5 @@ async def test_insights_only_claim_completes_without_knowledge_citations() -> No
     assert response.citations == ()
     assert response.answer == "首次通过率为92%。"
     assert [fact.label for fact in response.insights_facts] == ["I1"]
+    assert response.relation is not None
+    assert response.relation.status is RelationContextStatus.EMPTY

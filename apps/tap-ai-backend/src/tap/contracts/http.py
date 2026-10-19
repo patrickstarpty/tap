@@ -1235,9 +1235,17 @@ class ConversationCreateRequest(ContractModel):
     # Task 8: a plain conversation Turn may freeze `insightsReportRefs` alone
     # (no historical `insights_query_id` -- that field has no HTTP entry
     # point yet, joint analysis is covered by integration tests only, user
-    # decision B). Still bounded/unique/nonblank the same as
-    # `TurnInput.insights_report_refs`.
-    insights_report_refs: Annotated[list[str], Field(max_length=20)] = []
+    # decision B). Bounded/unique/nonblank the same as
+    # `TurnInput.insights_report_refs` -- per-item constraints below (not
+    # just the list-level `max_length`) so a blank or duplicate ref fails
+    # here as a 4xx validation error, not `TurnInput.__post_init__`'s
+    # `ValueError` surfacing as a misleading 503 (fix round 1, I-1).
+    insights_report_refs: Annotated[
+        list[
+            Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+        ],
+        Field(max_length=20),
+    ] = []
 
     @field_validator("message")
     @classmethod
@@ -1245,6 +1253,13 @@ class ConversationCreateRequest(ContractModel):
         if not value.strip():
             raise ValueError("message must be nonblank")
         return value
+
+    @field_validator("insights_report_refs")
+    @classmethod
+    def unique_insights_report_refs(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("insights report refs must be unique")
+        return values
 
 
 class ConversationResolvedResourceView(ContractModel):

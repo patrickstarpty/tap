@@ -1400,6 +1400,92 @@ async def test_partly_grounded_answer_output_keeps_the_grounded_claims():
 
 
 @pytest.mark.asyncio
+async def test_insights_records_reach_untrusted_context_and_extra_labels():
+    """Task 8 fix round 1, I-2(a): `insights_records` must reach the model
+    only through the single `untrusted_context` assembly point (redacted the
+    same as every other untrusted section, never at the top level), and the
+    `_INSIGHTS_ANSWER_PROMPT` section must only be added when records are
+    present."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    models, captured = _capturing_model_gateway()
+    insights_records = (
+        {
+            "label": "I1",
+            "queryId": "query-a",
+            "metricVersion": "insights-metrics-v1",
+            "metricId": "first_pass_rate",
+            "value": 0.5,
+            "asOf": "2026-09-25T08:00:00+00:00",
+        },
+    )
+
+    await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        insights_records=insights_records,
+    )
+
+    top = json.loads(captured[0].context)
+    assert "insights" not in top
+    assert top["untrusted"]["insights"][0]["metricId"] == "first_pass_rate"
+    assert top["untrusted"]["insights"][0]["label"] == "I1"
+    assert "Insights evidence items are structured metric records" in captured[0].prompt
+
+    captured.clear()
+    await models.answer("query", (_claim_resolution_evidence(),), "quick-hybrid-v1")
+    assert "Insights evidence items are structured metric records" not in captured[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_insights_cited_claim_parses_from_model_output():
+    """Task 8 fix round 1, I-2(a): when `insights_records` are supplied, an
+    `[I1]` marker in the model's raw output resolves to a claim labelled
+    `I1` -- the same way `[S1]`/`[R1]` already do."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    insights_records = (
+        {
+            "label": "I1",
+            "queryId": "query-a",
+            "metricVersion": "insights-metrics-v1",
+            "metricId": "first_pass_rate",
+            "value": 0.5,
+            "asOf": "2026-09-25T08:00:00+00:00",
+        },
+    )
+
+    generation = await _answering_model_gateway("首次通过率为92%[I1]。").answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        insights_records=insights_records,
+    )
+
+    assert generation.text == "首次通过率为92%。"
+    assert len(generation.claims) == 1
+    assert generation.claims[0].evidence_labels == ("I1",)
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_insights_marker_is_stripped_without_a_claim():
+    """Task 8 fix round 1, I-2(b): an `[I1]` marker in the model's output
+    when no `insights_records` were supplied must not resolve to a claim --
+    `I1` is simply not in `extra_labels` -- but the marker itself is still
+    removed from the rendered text, same as any other unknown-label marker."""
+    from test_knowledge_api import _claim_resolution_evidence
+
+    generation = await _answering_model_gateway("合同效力中止[I1]。合同生效[S1]。").answer(
+        "query", (_claim_resolution_evidence(),), "quick-hybrid-v1"
+    )
+
+    assert "[I1]" not in generation.text
+    assert generation.text == "合同效力中止。合同生效。"
+    assert tuple(claim.evidence_labels for claim in generation.claims) == (("S1",),)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "reason"),
     [
