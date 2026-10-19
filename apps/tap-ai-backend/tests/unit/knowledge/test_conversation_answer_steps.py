@@ -9,12 +9,14 @@ import json
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from test_answer_service import MemoryAnswerRepository, answer_response, ready
 
 from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
+from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.domain.persona import TAPPER_PERSONA_V1, UnknownPersonaVersion
@@ -1457,12 +1459,16 @@ class _CurrentPolicyVerifier:
         return expected
 
 
-def _real_chain_search_hit(revision) -> SearchHit:
-    content = "错误码 E104 代表核保材料缺失。"
+def _real_chain_search_hit(revision, *, variant: int = 1) -> SearchHit:
+    content = (
+        "错误码 E104 代表核保材料缺失。"
+        if variant == 1
+        else "错误码 E104 需补充体检报告后方可继续核保。"
+    )
     return SearchHit(
         family=SourceFamily.DOC,
-        chunk_id="h_" + "3" * 64,
-        logical_chunk_id="h_" + "4" * 64,
+        chunk_id="h_" + str(variant) + "3" * 63,
+        logical_chunk_id="h_" + str(variant) + "4" * 63,
         title="理赔手册.pdf",
         content=content,
         source=SourceRevisionRef(
@@ -1529,3 +1535,165 @@ async def test_generate_conversation_answer_threads_tools_through_the_real_chain
         {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
     ]
     assert answers_port.answer_kwargs[-1]["tools"] == ("knowledge.search",)
+
+
+class _RoundAwareRealChainSearch:
+    """`SearchPort` double returning a distinct hit per call (I-2 fix round
+    1): `seed_search`'s initial retrieval and the `knowledge.search` tool
+    round each call `search()` once, and the test must prove the tool
+    round actually grows the evidence pool through the real pipeline, not
+    just a deduped repeat of the seed hit."""
+
+    def __init__(self, hits: tuple[SearchHit, ...]) -> None:
+        self._hits = hits
+        self.calls = 0
+
+    async def search(self, execution) -> tuple[SearchHit, ...]:
+        hit = self._hits[min(self.calls, len(self._hits) - 1)]
+        self.calls += 1
+        return (hit,)
+
+
+class _RealChainToolThenTextAnswers:
+    """Model gateway double at the bottom of the real `AnswerService` ->
+    `KnowledgeAPI` -> `AuthorizedRetrieval` chain: the first `.answer()`
+    call asks to call `knowledge.search` (regardless of what `tools` it
+    was offered), the second returns a grounded text answer -- recording
+    every kwarg (`tools`, `transcript`, ...) each call received so the
+    test can assert the second call's `transcript` actually carries the
+    first round's tool result."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.answer_kwargs: list[dict[str, object]] = []
+
+    async def answer(self, query, evidence, profile_id, **kwargs: object) -> AnswerGeneration:
+        del query, evidence, profile_id
+        self.calls += 1
+        self.answer_kwargs.append(kwargs)
+        if self.calls == 1:
+            return AnswerGeneration(
+                "",
+                (),
+                "qwen-plus",
+                "quick-hybrid-v1",
+                "provider-request-real-chain-loop-1",
+                tool_calls=(GeneratedToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+        return AnswerGeneration(
+            "The rule is grounded.",
+            (GeneratedClaim("The rule is grounded.", ("S1",)),),
+            "qwen-plus",
+            "quick-hybrid-v1",
+            "provider-request-real-chain-loop-2",
+        )
+
+
+class _EmittingConversations:
+    """Minimal `conversations` double for `ChatTurnNodes`: just enough to
+    satisfy `_emit_committed`'s `conversations.emit` call (`seed_search`'s
+    `retrieval.hits_ready` and `tools`' `task.step` events)."""
+
+    scope = VALIDATION_SCOPE
+
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict[str, object]]] = []
+
+    async def emit(self, conversation_id, turn_id, event_type, payload, *, lease_token=None):
+        self.emitted.append((event_type, dict(payload)))
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_runs_through_the_real_chain_and_informs_the_second_model_call() -> None:
+    """I-2 fix round 1: drive the bounded tool-calling loop through *real*
+    `ChatTurnNodes` -> `KnowledgeHttpService` -> `AnswerService` ->
+    `KnowledgeAPI` -> `AuthorizedRetrieval`, faking only the model gateway
+    and the search port. `model` returns `tool_calls`, `tools` actually
+    runs `knowledge.search` through the real retrieval pipeline and grows
+    the evidence pool, and the second `model` call must see the first
+    round's tool result message in the `transcript` it forwards to the
+    model gateway."""
+    frozen, _unused_plan = await _retrieve_route()
+    revision = ready()
+
+    answers_port = _RealChainToolThenTextAnswers()
+    search_port = _RoundAwareRealChainSearch(
+        (
+            _real_chain_search_hit(revision, variant=1),
+            _real_chain_search_hit(revision, variant=2),
+        )
+    )
+    knowledge_api = KnowledgeAPI(
+        search=search_port,
+        embeddings=_RealChainEmbeddings(),
+        answers=answers_port,
+        policy_verifier=_CurrentPolicyVerifier(),
+        redactor=_PassthroughRedactor(),
+        id_factory=lambda: str(uuid4()),
+    )
+    repository = MemoryAnswerRepository((revision,))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    answer_service = AnswerService(repository=repository, knowledge=knowledge_api)
+    service = _service(answer_service)
+
+    async def require_authorized() -> None:
+        return None
+
+    turn = SimpleNamespace(
+        turn_id="turn-real-chain-loop",
+        lease_token="lease-real-chain-loop",
+        attempt=1,
+        input_snapshot=SimpleNamespace(snapshot_id="snapshot-real-chain-loop", value=frozen),
+    )
+    conversations = _EmittingConversations()
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-real-chain-loop",
+        turn=turn,
+        conversations=conversations,
+        steps=service,
+        planner=None,
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+    )
+
+    state: dict[str, object] = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+    }
+    state.update(await nodes.seed_search(state))
+    assert state["step"]["kind"] == "prepared"
+
+    state.update(await nodes.model(state))
+    assert state["step"]["kind"] == "tool_calls"
+    assert state["step"]["pending_tool_calls"] == [
+        {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+    ]
+
+    state.update(await nodes.tools(state))
+    assert state["step"]["kind"] == "prepared"
+    assert state["step"]["transcript"][-1]["role"] == "tool"
+    tool_message = json.loads(state["step"]["transcript"][-1]["content"])
+    assert tool_message["status"] == "completed"
+    assert search_port.calls == 2
+
+    # The graph's own `_run_budgeted` normally folds `tool_rounds_delta`
+    # into `budget_used.toolRounds` between node calls; driving nodes
+    # directly here, the test advances it itself before the second `model`
+    # call so `tool_rounds_used < maxToolRounds` still holds.
+    state["budget_used"] = {"modelCalls": 0, "costMicros": 0, "toolRounds": 1}
+    state.update(await nodes.model(state))
+
+    assert state["step"]["kind"] == "generated"
+    assert answers_port.calls == 2
+    second_call_transcript = answers_port.answer_kwargs[-1]["transcript"]
+    assert [item["role"] for item in second_call_transcript] == ["assistant", "tool"]
+    assert json.loads(second_call_transcript[-1]["content"])["status"] == "completed"
+
+    task_step_statuses = [
+        payload["status"]
+        for event_type, payload in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert task_step_statuses == ["running", "completed"]

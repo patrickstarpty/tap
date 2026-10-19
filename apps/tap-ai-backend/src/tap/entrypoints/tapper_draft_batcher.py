@@ -78,6 +78,7 @@ class DraftBatcher:
         max_delay_s: float = 0.05,
         max_chars: int = 32,
         holdback_chars: int = 48,
+        start_seq: int = 0,
     ) -> None:
         self._turn_id = turn_id
         self._attempt = attempt
@@ -90,7 +91,16 @@ class DraftBatcher:
         self._unflushed_chars = 0
         self._last_flush_at = time.monotonic()
         self._sent_text = ""
-        self._seq = 0
+        # PR 5 (Task 9 fix round 1, C-1): the `model` graph node constructs a
+        # fresh `DraftBatcher` per tool-calling round, but every round for
+        # one Turn attempt shares the same `turn_id`/`attempt` draft stream
+        # key -- `seq` must keep increasing across rounds (never restart at
+        # 0), or `RedisDraftStream.replay`/`partial_text` (which sort by
+        # `seq` then cut before the *last* `reset` chunk) and the frontend
+        # reducer (which drops any `seq <= current.seq`) both corrupt a
+        # second round's chunks. The caller threads the last round's
+        # `current_seq` back in here as `start_seq`.
+        self._seq = start_seq
         self._degraded = drafts is None
         # Set only when `_redact` raised `RedactionUnavailable` on a *final*
         # flush (`close()`): no more raw text is ever coming for this
@@ -101,6 +111,13 @@ class DraftBatcher:
         # authoritative decision for the saved/returned answer either way.
         self._redaction_unavailable = False
         self._last_redacted = ""
+
+    @property
+    def current_seq(self) -> int:
+        """The last `seq` used (or `start_seq` if nothing was ever sent
+        yet) -- callers thread this back in as the next round's
+        `start_seq` so `seq` keeps increasing across rounds (C-1)."""
+        return self._seq
 
     async def push(self, text: str) -> None:
         if not text:

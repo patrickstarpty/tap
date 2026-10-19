@@ -60,6 +60,12 @@ class ChatGraphState(TypedDict, total=False):
     persona_version: str
     agent: dict[str, object] | None
     tools: list[str]
+    # PR 5 (Task 9 fix round 1, C-1): the next `seq` the `model` node's
+    # `DraftBatcher` should start from -- carries the draft stream's
+    # monotonic counter across separate `DraftBatcher` instances (one per
+    # tool-calling round) for the same Turn attempt, and across a
+    # checkpoint resume.
+    draft_seq: int
     # PR 3: stream event types already committed early (via `conversations.
     # emit`) by `seed_search`/`verify`, so `finalize`'s own `streamEvents`
     # batch never repeats them.

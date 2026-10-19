@@ -1391,8 +1391,12 @@ async def test_disallowed_tool_call_is_rejected_without_execution() -> None:
         for _c, _t, event_type, payload, _lease in conversations.emitted
         if event_type == "task.step"
     ]
-    assert len(task_step_events) == 1
-    assert task_step_events[0][0] == "rejected"
+    # Fix round 1 (Review Focus 3): a rejected call still gets a `running`
+    # event before its terminal `rejected` -- the same two-event shape as
+    # an admitted call -- and `tool` is the canonical tool id (resolved
+    # from the known wire name), not the raw wire name.
+    assert [status for status, _payload in task_step_events] == ["running", "rejected"]
+    assert {payload["tool"] for _status, payload in task_step_events} == {"knowledge.search"}
     transcript = result["step"]["transcript"]
     content = json.loads(transcript[-1]["content"])
     assert content == {"status": "rejected", "reason": "source-out-of-scope"}
@@ -1415,6 +1419,65 @@ async def test_final_round_offers_no_tools_after_max_rounds() -> None:
     await nodes.model(state)
 
     assert steps.tools_seen == ()
+
+
+@pytest.mark.asyncio
+async def test_final_round_tool_calls_fallback_does_not_fail_turn() -> None:
+    """Review Focus 4 fix round 1: if the model ignores the final round's
+    empty tool offer (`tools=()`) and still returns a `tool_calls` step,
+    `model` must not route into `tools` (which would raise
+    `TurnBudgetExhausted("tool-rounds")`) -- it falls back to the existing
+    out-of-scope-style abstention path instead, so the Turn still
+    completes rather than failing outright."""
+    turn = _frozen_turn_for_planning(turn_id="turn-final-round-fallback")
+    conversations = _Conversations(turn)
+
+    class _NonCompliantSteps(_StepsKnowledge):
+        async def generate_conversation_answer(
+            self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        ):
+            self.generate_calls += 1
+            return {
+                "kind": "tool_calls",
+                "bundle": step.get("bundle", {}),
+                "transcript": [],
+                "pending_tool_calls": [
+                    {
+                        "callId": "call-1",
+                        "name": "knowledge_search",
+                        "argumentsJson": json.dumps({"query": "x"}),
+                    }
+                ],
+            }
+
+    steps = _NonCompliantSteps()
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=steps,
+        planner=object(),
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=_require_authorized_noop,
+    )
+    plan = _plan(deadline_at=time.time() + 30, remaining_seconds=30)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 1},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
+        "answer_plan": plan.to_dict(),
+        "plan_attempt": turn.attempt,
+        "step": {"kind": "prepared", "bundle": {}, "transcript": []},
+    }
+
+    result = await nodes.model(state)
+
+    assert steps.generate_calls == 1
+    assert result["step"]["kind"] == "final"
+    assert result["step"]["response"]["abstained"] is True
+    assert steps.refuse_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1558,23 +1621,41 @@ async def test_resume_after_tools_node_does_not_repeat_tool_calls_or_steps() -> 
 
 @pytest.mark.asyncio
 async def test_tool_round_preamble_is_discarded_from_draft() -> None:
+    from tap.modules.chat.adapters.redis_drafts import _drop_before_last_reset
     from tap.modules.chat.application.ports import DraftChunk
 
     class _FakeDrafts:
+        """Seq-aware double matching `RedisDraftStream`'s real `replay`/
+        `partial_text` semantics (C-1 fix round 1): both sort every chunk
+        for an attempt by `seq`, then drop everything before the *last*
+        `reset` chunk -- so a bug that lets a later round's `seq` restart
+        below an earlier round's would corrupt ordering here exactly as it
+        would against real Redis."""
+
         def __init__(self) -> None:
             self.appended: list[DraftChunk] = []
 
         async def append(self, turn_id, *, attempt, seq, text, reset=False):
             self.appended.append(DraftChunk(attempt, seq, text, reset))
 
-        async def replay(self, turn_id, *, attempt):  # pragma: no cover - unused
-            raise NotImplementedError
+        async def replay(self, turn_id, *, attempt):
+            chunks = [chunk for chunk in self.appended if chunk.attempt == attempt]
+            chunks.sort(key=lambda chunk: chunk.seq)
+            return tuple(_drop_before_last_reset(chunks)), "0-0"
 
         async def read(self, keys, *, block_ms):  # pragma: no cover - unused
             raise NotImplementedError
 
-        async def partial_text(self, turn_id):  # pragma: no cover - unused
-            raise NotImplementedError
+        async def partial_text(self, turn_id):
+            if not self.appended:
+                return None
+            latest_attempt = max(chunk.attempt for chunk in self.appended)
+            ordered = sorted(
+                (chunk for chunk in self.appended if chunk.attempt == latest_attempt),
+                key=lambda chunk: chunk.seq,
+            )
+            kept = _drop_before_last_reset(ordered)
+            return latest_attempt, "".join(chunk.text for chunk in kept)
 
         async def request_cancel(self, turn_id):  # pragma: no cover - unused
             raise NotImplementedError
@@ -1615,6 +1696,22 @@ async def test_tool_round_preamble_is_discarded_from_draft() -> None:
     final_text = "".join(chunk.text for chunk in after_reset)
     assert final_text == "final answer"
     assert "preamble" not in final_text
+
+    # C-1 fix round 1: `seq` must keep increasing across the preamble round
+    # and the final round -- never restart -- so `replay`/`partial_text`
+    # (which both sort by `seq` then cut before the *last* reset) resolve
+    # correctly instead of corrupting chunk order.
+    seqs = [chunk.seq for chunk in drafts.appended]
+    assert seqs == sorted(seqs)
+    assert len(set(seqs)) == len(seqs)
+
+    replayed, _last_id = await drafts.replay(turn.turn_id, attempt=turn.attempt)
+    assert "".join(chunk.text for chunk in replayed) == final_text
+
+    partial = await drafts.partial_text(turn.turn_id)
+    assert partial is not None
+    _latest_attempt, partial_text = partial
+    assert partial_text == final_text
 
 
 async def _identity(text: str) -> str:
@@ -1676,16 +1773,27 @@ async def test_built_in_agent_turn_can_call_graph_relations() -> None:
     ]
     assert task_steps[-1]["status"] == "completed"
 
-    # Control: an Agent frozen with the v2 allowlist cannot see `graph.relations`.
-    conversations_v2 = _Conversations(turn)
+    # Control (I-3 fix round 1): a *separate* Turn actually frozen with the
+    # v2 Agent's own allowlist, with `tools` taken from a real `ingress`
+    # call on that Turn -- not the v3 Turn's `tools` hand-overridden in the
+    # test -- cannot see `graph.relations`.
+    turn_v2 = _frozen_turn_for_planning(
+        turn_id="turn-v2-agent",
+        agent_revision_id=_v2.revision_id,
+        agent_revision_digest=_digest("20"),
+        agent_tool_allowlist=tuple(_v2.tool_allowlist),
+    )
+    conversations_v2 = _Conversations(turn_v2)
     steps_v2 = _ToolLoopSteps()
     nodes_v2 = _tool_loop_nodes(
-        turn=turn,
+        turn=turn_v2,
         steps=steps_v2,
         conversations=conversations_v2,
         knowledge=_RelationsKnowledge(),
     )
-    state_v2 = {**state, "tools": ["knowledge.search", "knowledge.answer"]}
+    ingress_result_v2 = await nodes_v2.ingress({})
+    assert ingress_result_v2["tools"] == ["knowledge.search"]
+    state_v2 = {**state, "tools": ingress_result_v2["tools"]}
     result_v2 = await nodes_v2.tools(state_v2)
     assert steps_v2.run_tool_calls == []
     task_steps_v2 = [
@@ -1761,3 +1869,54 @@ async def test_insights_tool_failure_is_soft() -> None:
     assert result["step"]["kind"] == "prepared"
     transcript = result["step"]["transcript"]
     assert json.loads(transcript[-1]["content"])["status"] == "failed"
+
+    # Fix round 1: the soft failure above must not just leave `tools`'s own
+    # return value healthy -- the whole Turn, driven through the real
+    # `GenerationWorker`/`ChatGraph`, must actually reach `verify` and
+    # complete rather than failing outright.
+    full_turn = _turn(turn_id="turn-insights-soft-e2e")
+    full_conversations = _Conversations(full_turn)
+    full_knowledge = _ScriptedToolCallKnowledge(
+        rounds=[
+            {
+                "tool_call": {
+                    "callId": "call-1",
+                    "name": "insights_query",
+                    "argumentsJson": json.dumps(
+                        {
+                            "metricIds": ["first_pass_rate"],
+                            "filters": {},
+                            "from": "2026-01-01",
+                            "to": "2026-01-02",
+                            "timezone": "UTC",
+                            "asOf": "2026-01-02T00:00:00Z",
+                        }
+                    ),
+                }
+            },
+            {},
+        ]
+    )
+    full_insights = _QueryMetricsInsights(
+        error=InsightsAuthorizationChanged("Insights result changed")
+    )
+    full_turn.input_snapshot.value.insights_report_refs = ("report-1",)
+    worker = GenerationWorker(
+        full_conversations,
+        full_knowledge,
+        checkpointer=InMemorySaver(),
+        insights_explanation=full_insights,
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert len(full_conversations.completed) == 1
+    _conversation_id, _turn_id, evidence, _kwargs = full_conversations.completed[0]
+    assert evidence.outcome == "completed"
+    assert full_knowledge.generate_calls == 2
+    full_task_steps = [
+        payload
+        for _c, _t, event_type, payload, _lease in full_conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert full_task_steps[-1]["status"] == "failed"

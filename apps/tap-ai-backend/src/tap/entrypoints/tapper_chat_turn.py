@@ -38,7 +38,7 @@ from tap.modules.ai.domain.tool_calls import (
     admit_tool_calls,
 )
 from tap.modules.ai.domain.tool_calls import step_id as _tool_step_id
-from tap.modules.ai.domain.tools import visible_tool_ids
+from tap.modules.ai.domain.tools import tool_for_wire_name, visible_tool_ids
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged, InsightsQueryUnavailable
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.ports import ConversationAnswerStep, ConversationAnswerSteps
@@ -629,6 +629,22 @@ class ChatTurnNodes:
         except RedactionUnavailable:
             return False, None
 
+    async def _redact_summary(self, text: str) -> str:
+        """PR 5 (Task 9 fix round 1): every `task.step` `summary` can carry
+        model-controlled text (the running query, a rejected call's own
+        wire-format name, `run_conversation_tool`'s echoed query) -- it must
+        pass through the same v2 conversation-egress redactor as the final
+        answer before it is ever emitted, truncated to `TaskStepPayload`'s
+        200-char bound *after* redaction (so a redaction placeholder is
+        never itself cut off). `RedactionUnavailable` (an unterminated
+        credential-looking value) must never fail the Turn over a status
+        summary -- it degrades to a safe, content-free placeholder."""
+        try:
+            redacted = await self._redact(text)
+        except RedactionUnavailable:
+            return "内容已隐去（无法安全脱敏）"
+        return redacted[:200]
+
     async def _emit_committed(
         self, state: ChatGraphState, event_type: str, payload: Mapping[str, object] | None
     ) -> list[str] | None:
@@ -673,6 +689,7 @@ class ChatTurnNodes:
             attempt=self._turn.attempt,
             drafts=self._drafts,
             redact=self._redact,
+            start_seq=int(state.get("draft_seq", 0)),
         )
         budget = state.get("budget") or {}
         budget_used = state.get("budget_used") or {}
@@ -690,12 +707,28 @@ class ChatTurnNodes:
         )
         if step.get("kind") == "tool_calls":
             await batcher.discard()
+            if not offered:
+                # Review Focus 4 fix round 1: the final round offered no
+                # tools (`offered == ()`), yet the model still requested
+                # one -- structurally this should be unreachable (the
+                # gateway declares no callable functions when `tools` is
+                # empty), but a non-compliant model must still never fail
+                # the Turn outright. Fall back to the existing out-of-
+                # scope-style abstention path instead of entering `tools`
+                # (which would raise `TurnBudgetExhausted("tool-rounds")`).
+                response = await self._steps.refuse_out_of_scope(
+                    self._turn.input_snapshot.value, answer_plan=active_plan
+                )
+                step = {
+                    "kind": "final",
+                    "response": response.model_dump(mode="json", by_alias=True),
+                }
         else:
             await batcher.close()
         if not offered and visible_tools:
             audit_span = self._turn_span if self._turn_span is not None else get_current_span()
             audit_span.set_attribute("tap.agent.tool_rounds_exhausted", True)
-        return {"step": step}
+        return {"step": step, "draft_seq": batcher.current_seq}
 
     async def tools(self, state: ChatGraphState) -> dict[str, object]:
         """Execute one bounded tool-calling round (PR 5 Task 9): admits the
@@ -753,12 +786,33 @@ class ChatTurnNodes:
         for index, outcome in enumerate(outcomes):
             this_step_id = _tool_step_id(self._turn.turn_id, round_number, index)
             if isinstance(outcome, RejectedToolCall):
-                summary = f"{outcome.name} → 已拒绝（{outcome.reason}）"[:200]
+                # Fix round 1: `outcome.name` is the model's own (possibly
+                # unknown) wire-format function name -- resolve it to a
+                # canonical tool id for the `tool` field when it names a
+                # real tool, else a safe non-empty placeholder; the raw
+                # name only ever appears inside the (redacted) summary.
+                definition = tool_for_wire_name(outcome.name)
+                tool_identifier = definition.tool_id if definition is not None else "unknown"
+                summary = await self._redact_summary(f"{outcome.name} → 已拒绝（{outcome.reason}）")
+                # Fix round 1 (Review Focus 3): a rejected call never runs,
+                # but still reports `running` before its terminal status --
+                # the same two-event shape every admitted call gets.
                 await emit(
                     "task.step",
                     {
                         "stepId": this_step_id,
-                        "tool": outcome.name,
+                        "tool": tool_identifier,
+                        "status": "running",
+                        "summary": summary,
+                        "durationMs": 0,
+                        "toolRound": round_number,
+                    },
+                )
+                await emit(
+                    "task.step",
+                    {
+                        "stepId": this_step_id,
+                        "tool": tool_identifier,
                         "status": "rejected",
                         "summary": summary,
                         "durationMs": 0,
@@ -778,20 +832,47 @@ class ChatTurnNodes:
             call = cast(AdmittedToolCall, outcome)
             started_at = time.monotonic()
             running_query = str(call.arguments.get("query", ""))[:60]
+            running_summary = await self._redact_summary(f'{call.tool_id} "{running_query}"')
             await emit(
                 "task.step",
                 {
                     "stepId": this_step_id,
                     "tool": call.tool_id,
                     "status": "running",
-                    "summary": f'{call.tool_id} "{running_query}"'[:200],
+                    "summary": running_summary,
                     "durationMs": 0,
                     "toolRound": round_number,
                 },
             )
 
             if call.tool_id == "insights.query":
-                assert self._insights_explanation is not None
+                if self._insights_explanation is None:
+                    # Fix round 1: no Insights runtime is configured for
+                    # this deployment -- a structurally impossible call
+                    # given `visible_tool_ids`'s `insights_available` gate,
+                    # but still a soft per-call failure, never an
+                    # `AssertionError` that would crash the Turn.
+                    summary = await self._redact_summary("insights.query → 查询服务不可用")
+                    await emit(
+                        "task.step",
+                        {
+                            "stepId": this_step_id,
+                            "tool": call.tool_id,
+                            "status": "failed",
+                            "summary": summary,
+                            "durationMs": 0,
+                            "toolRound": round_number,
+                        },
+                    )
+                    transcript.append(
+                        {
+                            "role": "tool",
+                            "toolCallId": call.call_id,
+                            "toolId": call.tool_id,
+                            "content": json.dumps({"status": "failed", "summary": summary}),
+                        }
+                    )
+                    continue
                 try:
                     records = await self._insights_explanation.query_metrics(
                         self._conversations.scope,
@@ -800,7 +881,7 @@ class ChatTurnNodes:
                     )
                 except InsightsAuthorizationChanged:
                     duration_ms = int((time.monotonic() - started_at) * 1000)
-                    summary = "insights.query → 查询授权已变更"[:200]
+                    summary = await self._redact_summary("insights.query → 查询授权已变更")
                     await emit(
                         "task.step",
                         {
@@ -826,11 +907,11 @@ class ChatTurnNodes:
                 )
                 current_step = dict(new_step)
                 duration_ms = int((time.monotonic() - started_at) * 1000)
-                summary = (
+                summary = await self._redact_summary(
                     f"insights.query → +{len(added_labels)} 条指标"
                     if added_labels
                     else "insights.query → 无新指标"
-                )[:200]
+                )
                 await emit(
                     "task.step",
                     {
@@ -868,7 +949,7 @@ class ChatTurnNodes:
             current_step = dict(tool_result["step"])
             duration_ms = int((time.monotonic() - started_at) * 1000)
             status = tool_result["status"]
-            summary = str(tool_result["summary"])[:200]
+            summary = await self._redact_summary(str(tool_result["summary"]))
             await emit(
                 "task.step",
                 {
