@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Mapping
 from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -255,6 +256,8 @@ class AnswerService:
         authorize=None,
         on_text=None,
         persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ):
         publication = await self._authorize_frozen_selection(revisions, policy)
         knowledge_generate = getattr(self._knowledge, "generate_frozen", None)
@@ -269,6 +272,8 @@ class AnswerService:
             authorize=self._reauthorize(publication, authorize),
             persona=persona,
             **({"on_text": on_text} if on_text is not None else {}),
+            **({"tools": tools} if tools else {}),
+            **({"transcript": transcript} if transcript else {}),
         )
         await self._revalidate_publication(publication)
         return generation

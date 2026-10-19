@@ -4,13 +4,15 @@ phase on its own, checkpointing `ConversationAnswerStep` between them."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
-from test_answer_service import answer_response, ready
+from test_answer_service import MemoryAnswerRepository, answer_response, ready
 
 from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
@@ -24,22 +26,36 @@ from tap.modules.chat.domain.conversations import (
     TurnInputSnapshot,
     content_digest,
 )
+from tap.modules.knowledge.api import KnowledgeAPI
+from tap.modules.knowledge.application.answers import AnswerService
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     AnswerRequest,
     Claim,
+    ContentRole,
     ContextLayer,
     ContextLayerKind,
     ContextSnapshot,
+    DocumentAnchor,
+    IndexRevision,
     ModelCallProvenance,
     QueryPlan,
     RetrievalProfileId,
+    RevisionKind,
     SearchResponse,
     SourceFamily,
+    SourceRevisionRef,
 )
-from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim, GeneratedToolCall
+from tap.modules.knowledge.ports.models import (
+    AnswerGeneration,
+    Embedding,
+    GeneratedClaim,
+    GeneratedToolCall,
+    RedactionResult,
+    SearchHit,
+)
 
 
 def _bundle(*, query: str) -> EvidenceBundle:
@@ -1322,3 +1338,141 @@ async def test_generate_with_tools_yields_tool_calls_step() -> None:
     assert step["transcript"][-1]["role"] == "assistant"
     assert step["transcript"][-1]["toolCalls"] == step["pending_tool_calls"]
     assert answers.generate_tools[-1] == ("knowledge.search",)
+
+
+class _RealChainEmbeddings:
+    """A minimal embedding port for the real-chain C-1 test below -- only the
+    model gateway (`answers`) and search port are meant to be fakes; this
+    embedding double exists purely so `AuthorizedRetrieval.prepare_answer`'s
+    real retrieval pipeline has something to embed the query with."""
+
+    embedding_model_id = "tap-embedding-v1"
+    embedding_dimension = 2
+
+    async def embed(self, query: str) -> Embedding:
+        return Embedding(
+            vector=(0.1, 0.2), model_id=self.embedding_model_id, provider_request_id="embed-1"
+        )
+
+
+class _RealChainSearch:
+    def __init__(self, hits: tuple[SearchHit, ...]) -> None:
+        self._hits = hits
+
+    async def search(self, execution) -> tuple[SearchHit, ...]:
+        return self._hits
+
+
+class _RealChainToolAnswers:
+    """Stands in for the model gateway at the bottom of the real
+    `AnswerService` -> `KnowledgeAPI` -> `AuthorizedRetrieval` chain: records
+    every `.answer()` kwarg it receives (so the test can assert `tools`/
+    `transcript` actually arrived) and returns tool calls whenever `tools`
+    is non-empty, exactly like a model asking to call a tool mid-turn."""
+
+    def __init__(self) -> None:
+        self.answer_kwargs: list[dict[str, object]] = []
+
+    async def answer(self, query, evidence, profile_id, **kwargs: object) -> AnswerGeneration:
+        del query, evidence, profile_id
+        self.answer_kwargs.append(kwargs)
+        if kwargs.get("tools"):
+            return AnswerGeneration(
+                "",
+                (),
+                "qwen-plus",
+                "quick-hybrid-v1",
+                "provider-request-real-chain",
+                tool_calls=(GeneratedToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+        return AnswerGeneration(
+            "The rule is grounded.",
+            (GeneratedClaim("The rule is grounded.", ("S1",)),),
+            "qwen-plus",
+            "quick-hybrid-v1",
+            "provider-request-real-chain",
+        )
+
+
+class _PassthroughRedactor:
+    async def redact(self, text: str) -> RedactionResult:
+        return RedactionResult(sanitized_text=text, redaction_version="redaction-v1")
+
+
+class _CurrentPolicyVerifier:
+    async def verify_current(self, expected):
+        return expected
+
+
+def _real_chain_search_hit(revision) -> SearchHit:
+    content = "错误码 E104 代表核保材料缺失。"
+    return SearchHit(
+        family=SourceFamily.DOC,
+        chunk_id="h_" + "3" * 64,
+        logical_chunk_id="h_" + "4" * 64,
+        title="理赔手册.pdf",
+        content=content,
+        source=SourceRevisionRef(
+            source_id=revision.source_id,
+            source_type="document",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=revision.revision_id,
+            source_content_hash=revision.source_content_hash,
+            anchor=DocumentAnchor(heading_path=("理赔流程",)),
+        ),
+        # Must equal the real `sha256:`-prefixed hash of `content` --
+        # `AuthorizedRetrieval._hit_has_compatible_provenance` checks this
+        # before admitting the hit as evidence.
+        chunk_content_hash="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        content_role=ContentRole.SOURCE,
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1",
+            schema_version="search-schema-v1",
+            corpus_version="tapper-demo-v1",
+        ),
+        embedding_model_version="tap-embedding-v1",
+        score=0.9,
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_answer_threads_tools_through_the_real_chain() -> None:
+    """C-1 (Task 7 fix round 1): `KnowledgeHttpService.generate_conversation_answer`
+    must thread `tools`/`transcript` all the way through the *real*
+    `AnswerService` -> `KnowledgeAPI` -> `AuthorizedRetrieval` chain (only the
+    model gateway and search port are fakes here) without either
+    intermediate layer raising `TypeError` for an unexpected kwarg -- and the
+    model gateway at the bottom must actually receive what was offered."""
+    frozen, plan = await _retrieve_route()
+    revision = ready()
+
+    answers_port = _RealChainToolAnswers()
+    knowledge_api = KnowledgeAPI(
+        search=_RealChainSearch((_real_chain_search_hit(revision),)),
+        embeddings=_RealChainEmbeddings(),
+        answers=answers_port,
+        policy_verifier=_CurrentPolicyVerifier(),
+        redactor=_PassthroughRedactor(),
+        id_factory=lambda: str(uuid4()),
+    )
+    repository = MemoryAnswerRepository((revision,))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    answer_service = AnswerService(repository=repository, knowledge=knowledge_api)
+    service = _service(answer_service)
+
+    request = RetrievalAnswerRequest(query=frozen.message)
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    assert step["kind"] == "prepared"
+
+    step = await service.generate_conversation_answer(
+        step,
+        frozen,
+        answer_plan=plan,
+        tools=("knowledge.search",),
+    )
+
+    assert step["kind"] == "tool_calls"
+    assert step["pending_tool_calls"] == [
+        {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+    ]
+    assert answers_port.answer_kwargs[-1]["tools"] == ("knowledge.search",)

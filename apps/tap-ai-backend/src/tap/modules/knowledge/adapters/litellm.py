@@ -463,7 +463,21 @@ class KnowledgeModelGateway:
                 else frozenset()
             )
             tool_specs = model_tool_specs(tools) if tools else ()
-            messages = await self._transcript_messages(transcript) if transcript else ()
+            # I-3 (Task 7 fix round 1): the gateway's native tool-calling protocol
+            # rejects `messages` offered without `tools` (`_validate` in
+            # `ai/adapters/litellm.py`: "messages without tools"), which a final
+            # no-more-tool-rounds call hits -- `tools=()` but a non-empty
+            # `transcript` from earlier rounds. Rather than relax that gateway
+            # rule, fold the transcript into a short plain-text prompt section
+            # instead of native `ModelMessage`s; the evidence pool itself is
+            # unchanged and still arrives via `untrusted` as usual.
+            messages: tuple[ModelMessage, ...] = ()
+            transcript_prompt_section: str | None = None
+            if transcript:
+                if tool_specs:
+                    messages = await self._transcript_messages(transcript)
+                else:
+                    transcript_prompt_section = await self._flatten_transcript_text(transcript)
             # Governed (Agent/Skill) and pinned-template answers stream Markdown
             # with inline markers exactly like the plain path below: the gateway
             # now accepts a governed `ModelOperation.CHAT` request (schema=None)
@@ -514,8 +528,21 @@ class KnowledgeModelGateway:
                 )
                 # A pinned template digest makes this a governed answer; declare the capability.
                 tool_allowlist = tool_allowlist | {"knowledge.answer"}
+                # I-2 (Task 7 fix round 1): a *non-governed* templated request has
+                # no Agent allowlist of its own, so widen it to admit the tools
+                # actually offered this round -- otherwise `_validate` in
+                # `ai/adapters/litellm.py` rejects every offered `tool_spec`
+                # whose `tool_id` isn't in a non-empty `tool_allowlist`. A
+                # *governed* request keeps the Agent's own allowlist unchanged:
+                # the caller is responsible for only offering `tools` that are
+                # already visible to that Agent (`visible_tool_ids`), so widening
+                # here would bypass that restriction instead of honoring it.
+                if governance is None:
+                    tool_allowlist = tool_allowlist | frozenset(tools)
             if tool_specs:
                 prompt = "\n\n".join((prompt, _TOOL_LOOP_PROMPT))
+            elif transcript_prompt_section is not None:
+                prompt = "\n\n".join((prompt, transcript_prompt_section))
             plan_id = None if answer_input is None else answer_input.context.get("planId")
             request = ModelRequest(
                 self.scope,
@@ -545,10 +572,7 @@ class KnowledgeModelGateway:
             if stream_result is None:
                 raise ModelGatewayUnavailable()
             result = stream_result
-            # `getattr` (not `result.tool_calls`): some older test doubles for
-            # `ModelResult` predate Task 3's `tool_calls` field and construct a
-            # bare `SimpleNamespace` without it.
-            result_tool_calls = getattr(result, "tool_calls", ())
+            result_tool_calls = result.tool_calls
             if result_tool_calls:
                 return AnswerGeneration(
                     "",
@@ -630,37 +654,89 @@ class KnowledgeModelGateway:
         result JSON Task 9 writes into the transcript; it is redacted the
         same way every other model-bound text is before it leaves this
         adapter. An assistant message's `toolCalls` carry the same
-        `{callId, name, argumentsJson}` shape `pending_tool_calls` uses."""
+        `{callId, name, argumentsJson}` shape `pending_tool_calls` uses.
+
+        A malformed entry (unknown `role`, or a `toolCalls`/`toolCallId` entry
+        missing its required string field) raises `ValueError` -- the `answer`
+        caller's enclosing `try`/`except ValueError` turns this into a
+        deterministic `AnswerUnavailable` rather than silently dropping or
+        blanking the field (fix round 1, folded minor)."""
 
         messages: list[ModelMessage] = []
         for entry in transcript:
             role = entry.get("role")
             if role == "assistant":
                 raw_calls = entry.get("toolCalls", ())
-                calls = tuple(
-                    ModelToolCall(
-                        str(call.get("callId", "")),
-                        str(call.get("name", "")),
-                        str(call.get("argumentsJson", "")),
+                calls = []
+                for call in cast(Sequence[Mapping[str, object]], raw_calls):
+                    call_id, name, arguments_json = (
+                        call.get("callId"),
+                        call.get("name"),
+                        call.get("argumentsJson"),
                     )
-                    for call in cast(Sequence[Mapping[str, object]], raw_calls)
-                )
+                    if (
+                        not isinstance(call_id, str)
+                        or not call_id
+                        or not isinstance(name, str)
+                        or not name
+                        or not isinstance(arguments_json, str)
+                    ):
+                        raise ValueError(
+                            "assistant transcript tool call is missing callId/name/argumentsJson"
+                        )
+                    calls.append(ModelToolCall(call_id, name, arguments_json))
                 messages.append(
                     ModelMessage(
-                        role="assistant", content=str(entry.get("content", "")), tool_calls=calls
+                        role="assistant",
+                        content=str(entry.get("content", "")),
+                        tool_calls=tuple(calls),
                     )
                 )
             elif role == "tool":
-                content = await self._redact(str(entry.get("content", "")))
                 tool_call_id = entry.get("toolCallId")
+                if not isinstance(tool_call_id, str) or not tool_call_id:
+                    raise ValueError("tool transcript entry is missing toolCallId")
+                content = await self._redact(str(entry.get("content", "")))
                 messages.append(
-                    ModelMessage(
-                        role="tool",
-                        content=content,
-                        tool_call_id=None if tool_call_id is None else str(tool_call_id),
-                    )
+                    ModelMessage(role="tool", content=content, tool_call_id=tool_call_id)
                 )
+            else:
+                raise ValueError(f"unknown transcript role: {role!r}")
         return tuple(messages)
+
+    async def _flatten_transcript_text(self, transcript: tuple[Mapping[str, object], ...]) -> str:
+        """I-3 (Task 7 fix round 1): the final tool-calling round offers no
+        tools (`maxToolRounds` reached), so the gateway's native `messages`
+        protocol cannot be used (it rejects `messages` without `tools`).
+        Earlier rounds' tool activity still needs to reach the model, so it
+        is flattened into a short, redacted plain-text prompt section
+        instead -- the evidence pool itself is unaffected; it still arrives
+        through `untrusted` exactly as it does every other round. Shares
+        `_transcript_messages`'s fail-fast validation on malformed entries."""
+
+        lines = [
+            "Tool activity earlier this turn (for context only; the evidence "
+            "pool above is authoritative -- cite only labels present there):"
+        ]
+        for entry in transcript:
+            role = entry.get("role")
+            if role == "assistant":
+                raw_calls = entry.get("toolCalls", ())
+                for call in cast(Sequence[Mapping[str, object]], raw_calls):
+                    name, arguments_json = call.get("name"), call.get("argumentsJson")
+                    if not isinstance(name, str) or not name or not isinstance(arguments_json, str):
+                        raise ValueError(
+                            "assistant transcript tool call is missing name/argumentsJson"
+                        )
+                    lines.append(f"- called {name}({await self._redact(arguments_json)})")
+            elif role == "tool":
+                if not isinstance(entry.get("toolCallId"), str) or not entry.get("toolCallId"):
+                    raise ValueError("tool transcript entry is missing toolCallId")
+                content = await self._redact(str(entry.get("content", "")))
+                lines.append(f"- result: {content}")
+            else:
+                raise ValueError(f"unknown transcript role: {role!r}")
+        return "\n".join(lines)
 
     async def _evidence_payload(self, item: Evidence) -> dict[str, object]:
         payload: dict[str, object] = {"label": item.evidence_label}

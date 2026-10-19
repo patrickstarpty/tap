@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -229,6 +229,8 @@ class KnowledgeAPI:
         authorize=None,
         on_text=None,
         persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ):
         import asyncio
 
@@ -244,6 +246,8 @@ class KnowledgeAPI:
                 authorize=authorize,
                 on_text=on_text,
                 persona=persona,
+                tools=tools,
+                transcript=transcript,
             )
 
     async def verify_frozen(

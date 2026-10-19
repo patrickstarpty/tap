@@ -3516,3 +3516,172 @@ async def test_unredacted_tool_message_is_rejected():
     with pytest.raises(ModelGatewayRejected):
         await gateway.chat(_tool_request(messages=transcript))
     assert sent == []
+
+
+def _knowledge_evidence():
+    from tap.modules.knowledge.domain.models import (
+        CodeAnchor,
+        ContentRole,
+        Evidence,
+        IndexRevision,
+        RevisionKind,
+        SourceFamily,
+        SourceRevisionRef,
+    )
+
+    return Evidence(
+        family=SourceFamily.CODE,
+        chunk_id="h_" + "1" * 64,
+        logical_chunk_id="h_" + "2" * 64,
+        title="authorize",
+        content="Current policy is required.",
+        source=SourceRevisionRef(
+            source_id="repo:checkout:payment.py",
+            source_type="code",
+            revision_kind=RevisionKind.GIT_COMMIT,
+            revision="a" * 40,
+            source_content_hash="sha256:" + "a" * 64,
+            anchor=CodeAnchor(
+                repo="checkout", path="payment.py", symbol="authorize", line_start=10, line_end=25
+            ),
+        ),
+        chunk_content_hash="sha256:" + "b" * 64,
+        content_role=ContentRole.SOURCE,
+        citation_id="citation-1",
+        evidence_label="S1",
+        index_revision=IndexRevision(
+            physical_index="kb-code-v1-20260824",
+            schema_version="search-schema-v1",
+            corpus_version="corpus-17",
+        ),
+        embedding_model_version="tap-embed-fixed-v1",
+        acl_decision_id="decision-17",
+        score=1 / 61,
+    )
+
+
+def _knowledge_gateway(stream_gateway):
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+
+    async def redact_text(text: str) -> str:
+        return text
+
+    return KnowledgeModelGateway(
+        stream_gateway,
+        scope=VALIDATION_SCOPE,
+        redact=redact_text,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+
+def _plain_text_stream(text: str) -> bytes:
+    return _sse_body(
+        [
+            {
+                "model": "dashscope/qwen-plus",
+                "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": "stop"}],
+            },
+            {
+                "model": "dashscope/qwen-plus",
+                "choices": [],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 3},
+            },
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_knowledge_templated_answer_with_tools_is_accepted_by_real_gateway():
+    """I-2 (Task 7 fix round 1): on the templated (`answer_input`), non-governed
+    path, `KnowledgeModelGateway.answer` must widen `tool_allowlist` to admit
+    the tools offered this round -- otherwise the *real* gateway's
+    `_validate` (not a fake that skips it) rejects every offered `tool_spec`
+    whose `tool_id` isn't already in a non-empty `tool_allowlist`
+    (`{"knowledge.answer"}` alone, before this fix)."""
+    from tap.modules.knowledge.application.answer_templates import (
+        assemble_answer,
+        get_template,
+        latest_template_version,
+    )
+
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_plain_text_stream("答案成立[S1]。"),
+        )
+
+    gateway = configured_gateway(respond)
+    knowledge = _knowledge_gateway(gateway)
+
+    version = latest_template_version("general")
+    selected = get_template("general", version)
+    assembled = assemble_answer(
+        template_id="general",
+        template_version=version,
+        template_digest=selected.digest,
+        original_question="query",
+        standalone_question="query",
+        evidence_map={"q1": ("S1",)},
+    )
+
+    generation = await knowledge.answer(
+        "query",
+        (_knowledge_evidence(),),
+        "quick-hybrid-v1",
+        answer_input=assembled,
+        tools=("knowledge.search",),
+    )
+
+    assert generation.text == "答案成立。"
+    assert sent[0]["tools"][0]["function"]["name"] == "knowledge_search"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_final_round_flattens_transcript_for_real_gateway():
+    """I-3 (Task 7 fix round 1): when `tools=()` but `transcript` is non-empty
+    (the final tool-calling round, after `maxToolRounds` is reached), the
+    knowledge adapter must not send native `ModelMessage`s -- the real
+    gateway's `_validate` rejects `messages` offered without `tools`
+    ("messages without tools"). Confirms through the real gateway that no
+    native tool messages reach the wire and the flattened, redacted tool
+    activity reaches the prompt instead."""
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_plain_text_stream("答案成立[S1]。"),
+        )
+
+    gateway = configured_gateway(respond)
+    knowledge = _knowledge_gateway(gateway)
+    transcript = (
+        {
+            "role": "assistant",
+            "toolCalls": [
+                {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+            ],
+        },
+        {"role": "tool", "toolCallId": "c1", "content": "search found nothing new"},
+    )
+
+    generation = await knowledge.answer(
+        "query",
+        (_knowledge_evidence(),),
+        "quick-hybrid-v1",
+        tools=(),
+        transcript=transcript,
+    )
+
+    assert generation.text == "答案成立。"
+    assert sent[0].get("tools") in (None, [])
+    assert "search found nothing new" in json.dumps(sent[0], ensure_ascii=False)
