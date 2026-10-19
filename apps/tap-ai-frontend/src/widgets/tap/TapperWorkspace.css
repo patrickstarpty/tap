@@ -1757,7 +1757,7 @@
 
 .tap-catalog-list > li {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 16px;
   min-height: 150px;
@@ -1862,7 +1862,12 @@
 
 .tap-catalog-dialog {
   width: min(540px, 100%);
-  max-height: calc(var(--tap-workspace-height) - 40px);
+  /* AccessibleDialog portals to document.body, outside `.tap-product-shell`
+   * where `--tap-workspace-height` is defined, so the var is unset here —
+   * the `100dvh` fallback keeps this valid (and the dialog's own scrollbar
+   * working) instead of the whole `max-height` declaration being dropped
+   * and the dialog growing to its unconstrained content height. */
+  max-height: calc(var(--tap-workspace-height, 100dvh) - 40px);
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 22px 64px 8px rgb(17 24 39 / 24%);
@@ -1895,6 +1900,348 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* Skills / Agents dialogs and drawers share the `.tap-catalog-dialog`
+ * surface (width, radius, background, shadow, padding) via a second class
+ * on the AccessibleDialog root — the rules below add the header, tab,
+ * list, fieldset and banner treatments specific to their content. */
+.tap-skill-form-dialog,
+.tap-agent-form-dialog,
+.tap-skill-detail-drawer,
+.tap-agent-detail-drawer,
+.tap-skill-import-dialog {
+  width: min(640px, 100%);
+}
+
+.tap-catalog-dialog header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tap-catalog-dialog header h2 {
+  margin: 0;
+}
+
+.tap-catalog-dialog header p {
+  margin: 6px 0 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tap-catalog-dialog [role="tablist"] {
+  display: flex;
+  gap: 24px;
+  margin: 18px 0 16px;
+  border-bottom: 1px solid var(--tap-line);
+}
+
+.tap-catalog-dialog [role="tab"] {
+  position: relative;
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tap-muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.tap-catalog-dialog [role="tab"][aria-selected="true"] {
+  color: var(--tap-accent-dark);
+}
+
+.tap-catalog-dialog [role="tab"][aria-selected="true"]::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--tap-accent);
+  content: "";
+}
+
+.tap-catalog-dialog [role="tabpanel"] {
+  margin-bottom: 16px;
+}
+
+.tap-catalog-dialog [role="tabpanel"] pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--tap-workbench-line);
+  border-radius: 10px;
+  background: var(--tap-surface);
+  padding: 14px;
+  color: var(--tap-ink);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tap-catalog-dialog [role="tabpanel"] ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 10px;
+  background: var(--tap-surface);
+  padding: 10px 12px;
+  list-style: none;
+  color: var(--tap-ink);
+  font-size: 12px;
+}
+
+.tap-catalog-dialog [role="tabpanel"] dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.tap-catalog-dialog [role="tabpanel"] dt {
+  color: var(--tap-muted);
+  font-weight: 700;
+}
+
+.tap-catalog-dialog [role="tabpanel"] dd {
+  margin: 0;
+  color: var(--tap-ink);
+  overflow-wrap: anywhere;
+}
+
+.tap-agent-skill-updates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  border: 1px solid var(--tap-accent-soft);
+  border-radius: 10px;
+  background: var(--tap-accent-soft);
+  padding: 10px 14px;
+  color: var(--tap-accent-dark);
+  font-size: 12px;
+}
+
+.tap-agent-skill-updates p {
+  margin: 0;
+}
+
+.tap-catalog-dialog fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.tap-catalog-dialog legend {
+  padding: 0 4px;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tap-catalog-dialog fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.tap-catalog-dialog fieldset label[aria-disabled="true"] {
+  color: var(--tap-muted);
+  opacity: 0.6;
+}
+
+.tap-catalog-dialog fieldset label input[type="checkbox"],
+.tap-catalog-dialog fieldset label input[type="radio"] {
+  margin: 0;
+}
+
+.tap-agent-skill-revision {
+  color: var(--tap-muted);
+  font-size: 10px;
+}
+
+.tap-agent-tools-readonly {
+  margin-top: 4px;
+  border-radius: 9px;
+  background: var(--tap-surface);
+  padding: 10px 12px;
+}
+
+.tap-agent-tools-readonly strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--tap-muted);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tap-agent-tools-readonly p {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.tap-skills-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tap-skill-import-sources {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.tap-skill-import-list {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0;
+  padding: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.tap-skill-import-list > li {
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: var(--tap-surface);
+  padding: 14px 16px;
+}
+
+.tap-skill-import-list h3 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 14px;
+}
+
+.tap-skill-import-list > li > article > p {
+  margin: 6px 0 10px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tap-skill-import-list strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--tap-muted);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tap-skill-import-list ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-skill-import-list ul li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.tap-skill-import-file-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--tap-ink);
+}
+
+.tap-skill-import-file-category {
+  flex-shrink: 0;
+  color: var(--tap-muted);
+}
+
+.tap-skill-import-list [role="group"] {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  border-top: 1px solid var(--tap-line);
+  padding-top: 10px;
+}
+
+.tap-skill-import-list [role="group"] > p {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tap-skill-import-list [role="group"] label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.tap-migration-banner {
+  margin-bottom: 20px;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: var(--tap-surface);
+  padding: 14px 18px;
+}
+
+.tap-migration-banner p {
+  margin: 0 0 10px;
+  color: var(--tap-ink);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.tap-migration-banner ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-migration-banner li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.tap-migration-banner li > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tap-migration-banner li > [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--tap-accent-dark);
+  font-size: 11px;
 }
 
 .tap-library-toolbar .tap-section-tabs {
@@ -2940,11 +3287,7 @@
   }
 
   .tap-catalog-list > li {
-    grid-template-columns: 42px minmax(0, 1fr);
-  }
-
-  .tap-catalog-actions {
-    grid-column: 2;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .tap-library-filters {

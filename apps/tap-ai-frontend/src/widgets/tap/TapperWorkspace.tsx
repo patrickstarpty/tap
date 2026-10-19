@@ -1,5 +1,5 @@
 import { Alert, Button } from "antd";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -13,7 +13,9 @@ import {
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
-import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
+import { AgentsWorkspace } from "./workspace/agents/AgentsWorkspace";
+import { LocalDraftMigrationBanner } from "./workspace/agents/LocalDraftMigrationBanner";
+import { SkillsWorkspace } from "./workspace/skills/SkillsWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
 import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
 import {
@@ -30,9 +32,17 @@ import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
 import type { PromptSuggestionItem } from "../../features/knowledge/api/types";
 import {
+  aiAssetKeys,
   aiAssetPresentation,
+  fetchSkillRevisionDetail,
   useAiAssetCatalog,
+  type SkillRevisionDetail,
 } from "../../features/knowledge/api/aiAssets";
+import {
+  buildSkillMarkdown,
+  SKILL_TURN_BUDGET_BYTES,
+  utf8ByteLength,
+} from "./workspace/skills/skillMarkdown";
 import {
   useAppendConversation,
   useCancelTurn,
@@ -108,9 +118,13 @@ function durableTestPlanPath(): { planId: string; revisionId: string } | null {
 function TurnContext({
   copy,
   turn,
+  onOpenAgentRevision,
+  onOpenSkillRevision,
 }: {
   copy: WorkspaceCopy;
   turn: AssistantTurn;
+  onOpenAgentRevision?: (revisionId: string) => void;
+  onOpenSkillRevision?: (revisionId: string) => void;
 }) {
   const labels =
     turn.contextLabels ?? turn.sourceReferences.map((item) => item.name);
@@ -146,12 +160,44 @@ function TurnContext({
         ) : null}
         {agentLabel ? (
           <p>
-            <strong>Agent:</strong> {agentLabel}
+            <strong>Agent:</strong>{" "}
+            {onOpenAgentRevision !== undefined &&
+            turn.agentRevisionId != null ? (
+              <button
+                type="button"
+                className="tap-turn-context-revision-link"
+                onClick={() => onOpenAgentRevision(turn.agentRevisionId!)}
+              >
+                {agentLabel}
+              </button>
+            ) : (
+              agentLabel
+            )}
           </p>
         ) : null}
         {skillLabels.length > 0 ? (
           <p>
-            <strong>Skills:</strong> {skillLabels.join(", ")}
+            <strong>Skills:</strong>{" "}
+            {skillLabels.map((label, index) => {
+              const skillRevisionId = turn.skillRevisionIds?.[index];
+              return (
+                <span key={`${label}-${index}`}>
+                  {index > 0 ? ", " : ""}
+                  {onOpenSkillRevision !== undefined &&
+                  skillRevisionId !== undefined ? (
+                    <button
+                      type="button"
+                      className="tap-turn-context-revision-link"
+                      onClick={() => onOpenSkillRevision(skillRevisionId)}
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    label
+                  )}
+                </span>
+              );
+            })}
           </p>
         ) : null}
       </details>
@@ -179,6 +225,40 @@ type ActivityEvent = {
   eventType: string;
   payload: { [key: string]: unknown };
 };
+
+/**
+ * The server emits skill selection notices as closed codes
+ * (`skill_disabled:<revisionId>`, `skill_inapplicable:<revisionId>`) rather
+ * than prose (I-2) -- map each to localized copy naming the Skill. The raw
+ * code is never shown (N-2): `skillById` only ever carries each Skill's
+ * *latest* revision (C-1), so a notice naming an older bound revision
+ * (e.g. an Agent pinned to a Skill revision superseded since) can't be
+ * resolved to a name there -- a generic (nameless) sentence is used
+ * instead for that case, and for any code whose kind isn't recognized at
+ * all.
+ */
+function formatSkillNotice(
+  code: string,
+  skillById: ReadonlyMap<string, { displayName: string }>,
+  copy: WorkspaceCopy,
+): string {
+  const [kind, revisionId] = code.split(":", 2);
+  const skillName =
+    revisionId !== undefined
+      ? skillById.get(revisionId)?.displayName
+      : undefined;
+  if (kind === "skill_disabled") {
+    return skillName !== undefined
+      ? copy.composer.skillDisabledNotice(skillName)
+      : copy.composer.skillDisabledNoticeGeneric;
+  }
+  if (kind === "skill_inapplicable") {
+    return skillName !== undefined
+      ? copy.composer.skillInapplicableNotice(skillName)
+      : copy.composer.skillInapplicableNoticeGeneric;
+  }
+  return copy.composer.skillDisabledNoticeGeneric;
+}
 
 /**
  * Shared by `AnswerActivity` (no trace yet) and `AnswerGraphSummary` (trace
@@ -630,6 +710,8 @@ function AssistantResponse({
   onResend,
   onGenerateTestPlan,
   activityEvents = [],
+  onOpenAgentRevision,
+  onOpenSkillRevision,
 }: {
   contentCopy: WorkspaceCopy;
   turn: AssistantTurn;
@@ -644,6 +726,8 @@ function AssistantResponse({
   onResend?: () => void;
   onGenerateTestPlan?: () => void;
   activityEvents?: readonly ActivityEvent[];
+  onOpenAgentRevision?: (revisionId: string) => void;
+  onOpenSkillRevision?: (revisionId: string) => void;
 }) {
   // Hooks run before any of this component's early returns below, so the
   // edge citations' supporting-passage queries are always resolved in the
@@ -816,7 +900,12 @@ function AssistantResponse({
             historicalCitationQueryFor={historicalCitationQueryFor}
             onPreviewCitation={onPreviewCitation}
           />
-          <TurnContext copy={contentCopy} turn={turn} />
+          <TurnContext
+            copy={contentCopy}
+            turn={turn}
+            onOpenAgentRevision={onOpenAgentRevision}
+            onOpenSkillRevision={onOpenSkillRevision}
+          />
           {onResend === undefined ||
           turn.status === "queued" ||
           turn.status === "running" ? null : (
@@ -899,9 +988,9 @@ function toggleSelection(values: readonly string[], id: string): string[] {
 }
 
 const TAPPER_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
-  agents: "#agent-heading",
+  agents: "#agents-heading",
   library: "#library-heading",
-  skills: "#skill-heading",
+  skills: "#skills-heading",
 };
 
 type PendingFocusTarget = { kind: "selector"; selector: string };
@@ -1359,6 +1448,29 @@ export function TapperWorkspace() {
   );
   const resetCancelTurn = cancelTurnMutation.reset;
   const aiAssets = useAiAssetCatalog(projectId);
+  // Keyed by the composer's `agents` CatalogItem ids (= each agent's
+  // approved revisionId), so a composer selection can look up the agent's
+  // own `defaultModelAlias`/`skillRevisionIds` — fields the presentation
+  // layer below strips off `agents` (the CatalogItem[] `aiAssetPresentation`
+  // builds for the chip UI) to just name/description/instructions.
+  const agentById = useMemo(
+    () =>
+      new Map(
+        (aiAssets.agents.data ?? []).map((item) => [item.revisionId, item]),
+      ),
+    [aiAssets.agents.data],
+  );
+  // Keyed the same way, but kept unfiltered (unlike the composer's
+  // selectable `skills` list above) so a `skill_disabled:<id>`/
+  // `skill_inapplicable:<id>` notice (I-2) can still name a Skill that is
+  // no longer selectable.
+  const skillById = useMemo(
+    () =>
+      new Map(
+        (aiAssets.skills.data ?? []).map((item) => [item.revisionId, item]),
+      ),
+    [aiAssets.skills.data],
+  );
   const initialDurableSelection = useRef(false);
   const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
     planId: string;
@@ -1413,6 +1525,20 @@ export function TapperWorkspace() {
   );
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
+  // One-time composer notice: an Agent's default model fell back to the
+  // global default, or the last turn's `skillNotices`. Replaced/cleared by
+  // whichever fires next; dismissible by the person in the meantime.
+  const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  const shownSkillNoticeTurnId = useRef<string | null>(null);
+  // Set when a turn's "Sources and settings" names an Agent/Skill revision
+  // to open; AgentsWorkspace/SkillsWorkspace open that revision's detail
+  // drawer once, on the render after the module switch below lands.
+  const [pendingAgentRevisionId, setPendingAgentRevisionId] = useState<
+    string | null
+  >(null);
+  const [pendingSkillRevisionId, setPendingSkillRevisionId] = useState<
+    string | null
+  >(null);
   const [insightsHandoff, setInsightsHandoff] =
     useState<InsightsHandoff | null>(null);
   const [insightsError, setInsightsError] = useState("");
@@ -1451,40 +1577,55 @@ export function TapperWorkspace() {
     if (aiAssets.skills.isError) setSkills([]);
     if (aiAssets.agents.data !== undefined) {
       setAgents(
-        aiAssets.agents.data.map((item) => {
-          const presentation = aiAssetPresentation(
-            "agent",
-            locale,
-            item.toolAllowlist,
-          );
-          return {
-            id: item.revisionId,
-            kind: "agent",
-            origin: "built-in",
-            name: item.displayName,
-            description: presentation.description,
-            instructions: presentation.instructions,
-          };
-        }),
+        aiAssets.agents.data
+          // `GET /ai/agents` returns one row per asset (its latest
+          // revision) regardless of enabled/disabled status (C-1/C-2), so
+          // the Skills/Agents workspace pages can show a "Disabled"
+          // filter. The composer must only ever offer selectable (latest
+          // + enabled) Agents.
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => {
+            const presentation = aiAssetPresentation(
+              "agent",
+              locale,
+              item.toolAllowlist,
+            );
+            return {
+              id: item.revisionId,
+              kind: "agent",
+              origin: "built-in",
+              name: item.displayName,
+              description: presentation.description,
+              instructions: presentation.instructions,
+            };
+          }),
       );
     }
     if (aiAssets.skills.data !== undefined) {
       setSkills(
-        aiAssets.skills.data.map((item) => {
-          const presentation = aiAssetPresentation(
-            "skill",
-            locale,
-            item.applicableTasks,
-          );
-          return {
-            id: item.revisionId,
-            kind: "skill",
-            origin: "built-in",
-            name: item.displayName,
-            description: presentation.description,
-            instructions: presentation.instructions,
-          };
-        }),
+        aiAssets.skills.data
+          // See the Agents filter above (C-1/C-2).
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => {
+            const presentation = aiAssetPresentation(
+              "skill",
+              locale,
+              item.applicableTasks,
+            );
+            return {
+              id: item.revisionId,
+              kind: "skill",
+              origin: "built-in",
+              name: item.displayName,
+              description: presentation.description,
+              instructions: presentation.instructions,
+              // I-2 / spec §4.4: a Skill not scoped to knowledge.answer
+              // can't do anything on a knowledge-answer turn -- grey it
+              // out in the composer picker instead of letting it be
+              // picked and silently ignored.
+              notApplicable: !item.applicableTasks.includes("knowledge.answer"),
+            };
+          }),
       );
     }
     if (
@@ -1625,6 +1766,7 @@ export function TapperWorkspace() {
         answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
         agentRevisionId: turn.input.agentRevisionId,
         skillRevisionIds: turn.input.skillRevisionIds,
+        skillNotices: turn.input.skillNotices,
       };
     });
     // The detail refetch after a send can land after the accepted turn is
@@ -1669,6 +1811,10 @@ export function TapperWorkspace() {
         },
       ];
     };
+    const restoredAgentIds =
+      conversationDetail.data.turns.at(-1)?.input.agentRevisionId == null
+        ? []
+        : [conversationDetail.data.turns.at(-1)!.input.agentRevisionId!];
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.data.conversationId
@@ -1696,17 +1842,22 @@ export function TapperWorkspace() {
                         .input.resolvedResources?.map(
                           (item) => item.sourceId,
                         ) ?? [],
-                    selectedAgentIds:
-                      conversationDetail.data.turns.at(-1)!.input
-                        .agentRevisionId === null
-                        ? []
-                        : [
-                            conversationDetail.data.turns.at(-1)!.input
-                              .agentRevisionId!,
-                          ],
-                    selectedSkillIds:
-                      conversationDetail.data.turns.at(-1)!.input
-                        .skillRevisionIds,
+                    selectedAgentIds: restoredAgentIds,
+                    // The frozen `input.skillRevisionIds` is the server's
+                    // already-merged set (the Agent's bound Skills plus
+                    // whatever was explicitly picked) -- restoring it
+                    // verbatim into `selectedSkillIds` would make the
+                    // Agent's bound Skills look like regular, removable
+                    // selections that outlive deselecting the Agent
+                    // (minor finding). Only the ids *not* bundled by the
+                    // restored Agent go into `selectedSkillIds`; the rest
+                    // reappear as locked chips via `bundledSkillIdsFor`.
+                    selectedSkillIds: conversationDetail.data.turns
+                      .at(-1)!
+                      .input.skillRevisionIds.filter(
+                        (id) =>
+                          !bundledSkillIdsFor(restoredAgentIds).includes(id),
+                      ),
                   }),
             }
           : conversation,
@@ -1722,6 +1873,7 @@ export function TapperWorkspace() {
         : current,
     );
   }, [
+    agentById,
     conversationDetail.data,
     conversationEvents.data,
     conversationEvents.isError,
@@ -2020,6 +2172,22 @@ export function TapperWorkspace() {
           ...activeConversation,
           turns: [...activeConversation.turns, localInsightsTurn.turn],
         };
+  useEffect(() => {
+    const lastTurn = activeConversation.turns.at(-1);
+    if (
+      lastTurn === undefined ||
+      lastTurn.skillNotices === undefined ||
+      lastTurn.skillNotices.length === 0 ||
+      shownSkillNoticeTurnId.current === lastTurn.id
+    )
+      return;
+    shownSkillNoticeTurnId.current = lastTurn.id;
+    setComposerNotice(
+      lastTurn.skillNotices
+        .map((code) => formatSkillNotice(code, skillById, copy))
+        .join(" "),
+    );
+  }, [activeConversation.turns, skillById, copy]);
   const generateTestPlan = (
     conversation: Conversation,
     turn: AssistantTurn,
@@ -2074,6 +2242,128 @@ export function TapperWorkspace() {
           : conversation,
       ),
     );
+  };
+
+  // A selected Agent's bundled Skills are never written into
+  // `selectedSkillIds` — they're derived from `selectedAgentIds` here, so
+  // deselecting the Agent (the only way to drop them) always takes them
+  // with it instead of leaving them stuck selected and still sent.
+  const bundledSkillIdsFor = (agentIds: readonly string[]): string[] => {
+    const ids = new Set<string>();
+    for (const agentId of agentIds) {
+      for (const id of agentById.get(agentId)?.skillRevisionIds ?? [])
+        ids.add(id);
+    }
+    return [...ids];
+  };
+  const activeLockedSkillIds = bundledSkillIdsFor(
+    activeConversation.selectedAgentIds,
+  );
+  // A durable conversation's `selectedSkillIds` is prefilled from its last
+  // turn's frozen `input.skillRevisionIds` (see the restore effect above) so
+  // the composer defaults to "same Skill as last time" -- before the
+  // enabled-catalog filter effect (also above) has had a chance to drop a
+  // since-disabled id. Querying detail for a now-disabled revision 404s
+  // (the detail endpoint only resolves enabled revisions); gate on `skills`
+  // (the same enabled-catalog set `allowedSkillIds` below uses at send time)
+  // so that unavoidable one-render race never reaches the network, instead
+  // of just reacting to the error.
+  const allowedSkillRevisionIds = useMemo(
+    () => new Set(skills.map((item) => item.id)),
+    [skills],
+  );
+  const activeTurnSkillIds = useMemo(
+    () =>
+      [
+        ...new Set([
+          ...activeConversation.selectedSkillIds,
+          ...activeLockedSkillIds,
+        ]),
+      ].filter((id) => allowedSkillRevisionIds.has(id)),
+    [
+      activeConversation.selectedSkillIds,
+      activeLockedSkillIds,
+      allowedSkillRevisionIds,
+    ],
+  );
+  // Per-turn Skill text budget (global-constraints.md: 96 KB), summed
+  // across every Skill the turn would bring in — bundled from an Agent or
+  // manually added alike — so the composer can warn/block the same way
+  // `AgentForm` does for an Agent's own Skill set.
+  const turnSkillDetailQueries = useQueries({
+    queries:
+      projectId === null
+        ? []
+        : activeTurnSkillIds.map((revisionId) => ({
+            queryKey: aiAssetKeys.skill(projectId, revisionId),
+            queryFn: () => fetchSkillRevisionDetail(projectId, revisionId),
+            staleTime: 30_000,
+          })),
+  });
+  const composerSkillBudget = useMemo(() => {
+    if (activeTurnSkillIds.length === 0) return undefined;
+    const sized = turnSkillDetailQueries
+      .map((query) => query.data)
+      .filter((detail): detail is SkillRevisionDetail => detail !== undefined)
+      .map((detail) => ({
+        displayName: detail.displayName,
+        bytes: utf8ByteLength(
+          buildSkillMarkdown({
+            name: detail.displayName,
+            description: detail.description ?? "",
+            instructions: detail.instructions ?? "",
+          }),
+        ),
+      }));
+    // Until every selected Skill's size has resolved, the real total isn't
+    // known yet — omit the budget rather than reporting an understated
+    // "0 bytes used" that would never block Send.
+    if (sized.length !== activeTurnSkillIds.length) return undefined;
+    return {
+      usedBytes: sized.reduce((sum, item) => sum + item.bytes, 0),
+      limitBytes: SKILL_TURN_BUDGET_BYTES,
+      largest: [...sized]
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, 3)
+        .map((item) => item.displayName),
+    };
+  }, [activeTurnSkillIds, turnSkillDetailQueries]);
+
+  // Selecting an Agent prefills the composer with its own default model
+  // (falling back to the global default when that alias is no longer in
+  // the model catalog, and surfacing a one-time notice when it does) and
+  // brings its bundled Skills along as locked chips (see
+  // `bundledSkillIdsFor` above), without overriding a model the person
+  // already picked for this turn on a later toggle. Returns `conversation`
+  // unchanged when the Agent was already selected — only the first
+  // selection prefills.
+  const selectComposerAgent = (
+    conversation: Conversation,
+    agentId: string,
+  ): Conversation => {
+    if (conversation.selectedAgentIds.includes(agentId)) return conversation;
+    const agent = agentById.get(agentId);
+    const defaultAlias = agent?.defaultModelAlias ?? null;
+    const fellBack =
+      defaultAlias !== null &&
+      selectableModelAliases !== null &&
+      !selectableModelAliases.has(defaultAlias);
+    const resolvedAlias =
+      defaultAlias === null
+        ? conversation.modelId
+        : fellBack
+          ? (modelCatalog.data?.defaultAlias ?? conversation.modelId)
+          : defaultAlias;
+    if (fellBack) {
+      setComposerNotice(
+        copy.composer.agentModelFallback(agent?.displayName ?? ""),
+      );
+    }
+    return {
+      ...conversation,
+      selectedAgentIds: [...conversation.selectedAgentIds, agentId],
+      modelId: resolvedAlias,
+    };
   };
 
   // `GraphOverview` already resolves published-source revision ids to real
@@ -2253,8 +2543,17 @@ export function TapperWorkspace() {
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
       context?.agentIds ?? activeConversation.selectedAgentIds;
-    const selectedSkillIds =
-      context?.skillIds ?? activeConversation.selectedSkillIds;
+    // A resend's `context.skillIds` already captures the full set the
+    // original turn used (bundled-from-Agent skills included), so it's
+    // authoritative as-is; the live path has to add the currently
+    // selected Agents' bundled skills back in itself, since they're never
+    // stored in `selectedSkillIds` (see `bundledSkillIdsFor`).
+    const selectedSkillIds = context?.skillIds ?? [
+      ...new Set([
+        ...activeConversation.selectedSkillIds,
+        ...bundledSkillIdsFor(activeConversation.selectedAgentIds),
+      ]),
+    ];
     if (
       createConversationMutation.isPending ||
       appendConversationMutation.isPending ||
@@ -2451,14 +2750,20 @@ export function TapperWorkspace() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    updateActiveConversation((conversation) => {
-      const selectedKey =
-        kind === "agent" ? "selectedAgentIds" : "selectedSkillIds";
-      const selectedIds = conversation[selectedKey];
-      return selectedIds.includes(itemId)
-        ? conversation
-        : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
-    });
+    if (kind === "agent") {
+      updateActiveConversation((conversation) =>
+        selectComposerAgent(conversation, itemId),
+      );
+    } else {
+      updateActiveConversation((conversation) =>
+        conversation.selectedSkillIds.includes(itemId)
+          ? conversation
+          : {
+              ...conversation,
+              selectedSkillIds: [...conversation.selectedSkillIds, itemId],
+            },
+      );
+    }
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -2544,6 +2849,16 @@ export function TapperWorkspace() {
               copy={copy}
               isInert={compactSourcesDrawerOpen}
               locale={locale}
+              lockedSkillIds={activeLockedSkillIds}
+              skillBudget={composerSkillBudget}
+              composerNotice={
+                composerNotice === null
+                  ? undefined
+                  : {
+                      text: composerNotice,
+                      onDismiss: () => setComposerNotice(null),
+                    }
+              }
               message={messageDraft}
               onMessageChange={(value) => {
                 setMessageDraft(value);
@@ -2587,13 +2902,17 @@ export function TapperWorkspace() {
                   cancelTurnMutation.mutate(turnId);
               }}
               onToggleAgent={(agentId) =>
-                updateActiveConversation((conversation) => ({
-                  ...conversation,
-                  selectedAgentIds: toggleSelection(
-                    conversation.selectedAgentIds,
-                    agentId,
-                  ),
-                }))
+                updateActiveConversation((conversation) =>
+                  conversation.selectedAgentIds.includes(agentId)
+                    ? {
+                        ...conversation,
+                        selectedAgentIds: toggleSelection(
+                          conversation.selectedAgentIds,
+                          agentId,
+                        ),
+                      }
+                    : selectComposerAgent(conversation, agentId),
+                )
               }
               onToggleSkill={(skillId) =>
                 updateActiveConversation((conversation) => ({
@@ -2631,6 +2950,14 @@ export function TapperWorkspace() {
                   activityEvents={(conversationEvents.data?.items ?? []).filter(
                     (event) => event.turnId === turn.id,
                   )}
+                  onOpenAgentRevision={(revisionId) => {
+                    setPendingAgentRevisionId(revisionId);
+                    setActiveModule("agents");
+                  }}
+                  onOpenSkillRevision={(revisionId) => {
+                    setPendingSkillRevisionId(revisionId);
+                    setActiveModule("skills");
+                  }}
                   onOpenCitation={(citationId, trigger) => {
                     const citation = turn.response?.citations.find(
                       (item) => item.citationId === citationId,
@@ -2773,22 +3100,48 @@ export function TapperWorkspace() {
           </div>
         </div>
         {activeModule === "agents" ? (
-          <CatalogWorkspace
-            kind="agent"
-            copy={copy}
-            items={agents}
-            onUse={(itemId) => useCatalogItem("agent", itemId)}
-            projectId={projectId ?? undefined}
-          />
+          projectId !== null ? (
+            <>
+              <LocalDraftMigrationBanner
+                key={`agent-drafts-${projectId}`}
+                projectId={projectId}
+                kind="agent"
+                copy={copy}
+              />
+              <AgentsWorkspace
+                key={projectId}
+                projectId={projectId}
+                copy={copy}
+                onUse={(revisionId) => useCatalogItem("agent", revisionId)}
+                initialDetailRevisionId={pendingAgentRevisionId}
+                onInitialDetailConsumed={() => setPendingAgentRevisionId(null)}
+              />
+            </>
+          ) : (
+            <p role="status">{copy.agentsWorkspace.unavailable}</p>
+          )
         ) : null}
         {activeModule === "skills" ? (
-          <CatalogWorkspace
-            kind="skill"
-            copy={copy}
-            items={skills}
-            onUse={(itemId) => useCatalogItem("skill", itemId)}
-            projectId={projectId ?? undefined}
-          />
+          projectId !== null ? (
+            <>
+              <LocalDraftMigrationBanner
+                key={`skill-drafts-${projectId}`}
+                projectId={projectId}
+                kind="skill"
+                copy={copy}
+              />
+              <SkillsWorkspace
+                key={projectId}
+                projectId={projectId}
+                copy={copy}
+                onUse={(revisionId) => useCatalogItem("skill", revisionId)}
+                initialDetailRevisionId={pendingSkillRevisionId}
+                onInitialDetailConsumed={() => setPendingSkillRevisionId(null)}
+              />
+            </>
+          ) : (
+            <p role="status">{copy.skillsWorkspace.unavailable}</p>
+          )
         ) : null}
         {activeModule === "library" ? (
           projectId !== null ? (

@@ -156,6 +156,7 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
                 output_schema_json=json.dumps(
                     VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":")
                 ),
+                source_kind="built_in",
             ),
         ),
         skills=(
@@ -168,6 +169,7 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
                 instruction_template_digest=text_digest(VALIDATION_SKILL_INSTRUCTION),
                 applicable_tasks=frozenset({"knowledge.answer"}),
                 instruction_template=VALIDATION_SKILL_INSTRUCTION,
+                source_kind="built_in",
             ),
         ),
     )

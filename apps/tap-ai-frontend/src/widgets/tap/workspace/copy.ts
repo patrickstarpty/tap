@@ -117,6 +117,24 @@ export interface WorkspaceCopy {
     attachmentFailed: string;
     reviewInLibrary: string;
     removeAttachment: string;
+    fromAgent: string;
+    skillBudgetWarning: string;
+    skillBudgetExceeded: string;
+    largestSkills: string;
+    agentModelFallback(agentName: string): string;
+    skillDisabledNotice(skillName: string): string;
+    skillInapplicableNotice(skillName: string): string;
+    /** N-2: `skillById` only ever carries the latest revision of each
+     * Skill (C-1), so a `skill_disabled:<id>`/`skill_inapplicable:<id>`
+     * notice naming an older bound revision can't be resolved to a name
+     * -- these generic (nameless) sentences are the fallback so the raw
+     * wire code is never shown to begin with. */
+    skillDisabledNoticeGeneric: string;
+    skillInapplicableNoticeGeneric: string;
+    /** Label/tooltip shown on a greyed-out, unselectable Skill option in
+     * the composer picker (spec §4.4) when it doesn't apply to knowledge
+     * Q&A. */
+    skillNotApplicable: string;
   };
   catalog: {
     agents: string;
@@ -140,6 +158,192 @@ export interface WorkspaceCopy {
     noResults: string;
     agentCatalog: string;
     skillCatalog: string;
+  };
+  skillsWorkspace: {
+    heading: string;
+    description: string;
+    importSkill: string;
+    createSkill: string;
+    filterAll: string;
+    filterBuiltIn: string;
+    filterCustom: string;
+    filterDisabled: string;
+    noResults: string;
+    applicableTasks: string;
+    revision: string;
+    useInChat: string;
+    edit: string;
+    /** Imported skills aren't offered Edit (I-3): editing would rebuild a
+     * SKILL.md-only package and silently drop the original package's
+     * references/scripts/assets. This points at re-importing instead. */
+    editUnavailableImported: string;
+    enable: string;
+    disable: string;
+    statusEnabled: string;
+    statusDisabled: string;
+    copyAsCustom: string;
+    unavailable: string;
+    cancel: string;
+    close: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    download: string;
+    savedNotExecuted: string;
+    attachedReferences: string;
+    noAttachedReferences: string;
+    tabs: {
+      instructions: string;
+      files: string;
+      metadata: string;
+      revisions: string;
+    };
+    taskLabels: {
+      "knowledge.answer": string;
+      "test-plan.generate": string;
+      "automation.generate": string;
+    };
+    import: {
+      step1Title: string;
+      step1Description: string;
+      browseFiles: string;
+      browseFolder: string;
+      pasteLabel: string;
+      pastePlaceholder: string;
+      next: string;
+      back: string;
+      commit: string;
+      step2Title: string;
+      frontmatter: string;
+      files: string;
+      warnings: string;
+      category: {
+        skill: string;
+        referenceAttached: string;
+        referenceUnattached: string;
+        script: string;
+        asset: string;
+      };
+      nameConflict: string;
+      importAsNewRevision: string;
+      skip: string;
+      stageFailed: string;
+      commitFailed: string;
+      /** Maps the server's closed error-code vocabulary (I-8) to prose;
+       * an unlisted code falls back to `stageFailed`/`commitFailed`. */
+      errors: {
+        skill_package_too_large: string;
+        skill_path_rejected: string;
+        skill_frontmatter_invalid: string;
+        skill_not_found_in_package: string;
+        skill_name_conflict: string;
+        revision_conflict: string;
+        import_expired: string;
+        skill_built_in_immutable: string;
+      };
+    };
+    form: {
+      createTitle: string;
+      editTitle: string;
+      copyTitle: string;
+      name: string;
+      description: string;
+      applicableTasks: string;
+      instructions: string;
+      preview: string;
+      save: string;
+      cancel: string;
+      nameInvalid: string;
+      descriptionRequired: string;
+      instructionsRequired: string;
+      budgetExceeded: string;
+      revisionConflict: string;
+      saveFailed: string;
+    };
+  };
+  agentsWorkspace: {
+    heading: string;
+    description: string;
+    createAgent: string;
+    filterAll: string;
+    filterBuiltIn: string;
+    filterCustom: string;
+    filterDisabled: string;
+    noResults: string;
+    useInChat: string;
+    edit: string;
+    enable: string;
+    disable: string;
+    upgrade: string;
+    close: string;
+    revision: string;
+    defaultModel: string;
+    defaultModelGlobal: string;
+    skills: string;
+    toolsLabel: string;
+    toolsBuiltIn: string;
+    hasSkillUpdates: string;
+    boundSkillDisabledWarning: string;
+    statusEnabled: string;
+    statusDisabled: string;
+    copyAsCustom: string;
+    unavailable: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    upgradeFailed: string;
+    revisionConflict: string;
+    tabs: {
+      overview: string;
+      skills: string;
+      revisions: string;
+    };
+    form: {
+      createTitle: string;
+      editTitle: string;
+      copyTitle: string;
+      name: string;
+      description: string;
+      systemInstruction: string;
+      defaultModel: string;
+      defaultModelGlobal: string;
+      skills: string;
+      searchSkills: string;
+      noSkills: string;
+      boundSkillDisabled: string;
+      /** N-1: shown for a bound Skill whose revision is no longer latest
+       * but is still enabled (the ordinary "Skill was revised since
+       * binding" case) -- distinct from `boundSkillDisabled` so an
+       * outdated-but-enabled binding is never mislabeled as disabled. */
+      boundSkillOutdated: string;
+      removeSkill: string;
+      toolsLabel: string;
+      toolsBuiltIn: string;
+      save: string;
+      cancel: string;
+      nameInvalid: string;
+      descriptionRequired: string;
+      descriptionTooLong: string;
+      systemInstructionRequired: string;
+      systemInstructionTooLarge: string;
+      budgetCalculating: string;
+      budgetUnavailable: string;
+      budgetWarning: string;
+      budgetExceeded: string;
+      largestSkills: string;
+      nameConflict: string;
+      revisionConflict: string;
+      saveFailed: string;
+    };
+  };
+  migrationBanner: {
+    heading: string;
+    descriptionAgent: string;
+    descriptionSkill: string;
+    import: string;
+    dismiss: string;
+    importing: string;
+    importFailed: string;
   };
   library: {
     listView: string;
@@ -377,6 +581,23 @@ export const WORKSPACE_COPY = {
       attachmentFailed: "Upload failed",
       reviewInLibrary: "Open in Library",
       removeAttachment: "Remove attachment",
+      fromAgent: "From Agent",
+      skillBudgetWarning:
+        "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+      skillBudgetExceeded:
+        "Selected skills exceed the per-turn budget. Remove some before sending.",
+      largestSkills: "Largest skills",
+      agentModelFallback: (agentName: string) =>
+        `${agentName}'s default model is no longer available; using the global default instead.`,
+      skillDisabledNotice: (skillName: string) =>
+        `Skill "${skillName}" is disabled and was skipped for this answer.`,
+      skillInapplicableNotice: (skillName: string) =>
+        `Skill "${skillName}" does not apply to knowledge Q&A and was skipped for this answer.`,
+      skillDisabledNoticeGeneric:
+        "A selected skill is disabled and was skipped for this answer.",
+      skillInapplicableNoticeGeneric:
+        "A selected skill does not apply to knowledge Q&A and was skipped for this answer.",
+      skillNotApplicable: "Doesn't apply to knowledge Q&A",
     },
     catalog: {
       agents: "Agents",
@@ -402,6 +623,202 @@ export const WORKSPACE_COPY = {
       noResults: "No matching items",
       agentCatalog: "Agent catalog",
       skillCatalog: "Skill catalog",
+    },
+    skillsWorkspace: {
+      heading: "Skills",
+      description: "Reusable instructions and files for every conversation.",
+      importSkill: "Import skill",
+      createSkill: "New skill",
+      filterAll: "All",
+      filterBuiltIn: "Built-in",
+      filterCustom: "Custom",
+      filterDisabled: "Disabled",
+      noResults: "No skills match this filter.",
+      applicableTasks: "Applicable tasks",
+      revision: "Revision",
+      useInChat: "Use in chat",
+      edit: "Edit",
+      editUnavailableImported:
+        "Imported skills can't be edited in place — import the updated package as a new revision instead.",
+      enable: "Enable",
+      disable: "Disable",
+      statusEnabled: "Enabled",
+      statusDisabled: "Disabled",
+      copyAsCustom: "Copy as custom",
+      unavailable: "Skills are not available for this chat yet.",
+      cancel: "Cancel",
+      close: "Close",
+      loading: "Loading…",
+      loadFailed: "This skill could not be loaded.",
+      retry: "Retry",
+      download: "Download",
+      savedNotExecuted: "Saved, not executed",
+      attachedReferences: "Attached reference text",
+      noAttachedReferences: "No reference text was attached.",
+      tabs: {
+        instructions: "Instructions",
+        files: "Files",
+        metadata: "Metadata",
+        revisions: "Revision history",
+      },
+      taskLabels: {
+        "knowledge.answer": "Knowledge answers",
+        "test-plan.generate": "Test plan generation",
+        "automation.generate": "Automation generation",
+      },
+      import: {
+        step1Title: "Import a skill",
+        step1Description:
+          "Drop a SKILL.md file, a zip archive or a folder, or paste the file content below.",
+        browseFiles: "Browse files",
+        browseFolder: "Browse folder",
+        pasteLabel: "Paste SKILL.md content",
+        pastePlaceholder: "Paste the SKILL.md content here",
+        next: "Preview",
+        back: "Back",
+        commit: "Import selected",
+        step2Title: "Review before import",
+        frontmatter: "Frontmatter",
+        files: "Files",
+        warnings: "Warnings",
+        category: {
+          skill: "Instructions",
+          referenceAttached: "Reference · attached",
+          referenceUnattached: "Reference · not attached",
+          script: "Script · saved, not executed",
+          asset: "Asset",
+        },
+        nameConflict: "A skill with this name already exists.",
+        importAsNewRevision: "Import as a new revision",
+        skip: "Skip",
+        stageFailed: "This import could not be read.",
+        commitFailed: "The selected skills could not be imported.",
+        errors: {
+          skill_package_too_large: "This package is over the 20 MB limit.",
+          skill_path_rejected:
+            'This package contains an unsafe path (absolute path, "..", or a symlink).',
+          skill_frontmatter_invalid:
+            "SKILL.md's frontmatter is missing a required field or is invalid.",
+          skill_not_found_in_package:
+            "No SKILL.md was found at the selected location in this package.",
+          skill_name_conflict:
+            'A skill with this name already exists. Choose "Import as a new revision" or skip it.',
+          revision_conflict:
+            "This skill was updated elsewhere. Go back and import again.",
+          import_expired:
+            "This staged import has expired. Start the import again.",
+          skill_built_in_immutable:
+            "Built-in skills cannot receive an imported revision.",
+        },
+      },
+      form: {
+        createTitle: "New skill",
+        editTitle: "Edit skill",
+        copyTitle: "Copy as a custom skill",
+        name: "Name",
+        description: "Description",
+        applicableTasks: "Applicable tasks",
+        instructions: "Instructions",
+        preview: "SKILL.md preview",
+        save: "Save",
+        cancel: "Cancel",
+        nameInvalid: "Enter a lowercase, hyphenated name up to 64 characters.",
+        descriptionRequired: "Enter a description.",
+        instructionsRequired: "Enter instructions.",
+        budgetExceeded: "SKILL.md is over the 256 KB limit.",
+        revisionConflict: "This content was updated elsewhere. Please refresh.",
+        saveFailed: "This skill could not be saved.",
+      },
+    },
+    agentsWorkspace: {
+      heading: "Agents",
+      description:
+        "Focused collaborators with a system prompt, a default model and bundled skills.",
+      createAgent: "New agent",
+      filterAll: "All",
+      filterBuiltIn: "Built-in",
+      filterCustom: "Custom",
+      filterDisabled: "Disabled",
+      noResults: "No agents match this filter.",
+      useInChat: "Use in chat",
+      edit: "Edit",
+      enable: "Enable",
+      disable: "Disable",
+      upgrade: "Upgrade",
+      close: "Close",
+      revision: "Revision",
+      defaultModel: "Default model",
+      defaultModelGlobal: "Use the global default model",
+      skills: "Skills",
+      toolsLabel: "Built-in tools",
+      toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
+      hasSkillUpdates: "A bundled skill has a newer revision.",
+      boundSkillDisabledWarning:
+        "A bundled skill has been disabled and will be skipped when this agent answers.",
+      statusEnabled: "Enabled",
+      statusDisabled: "Disabled",
+      copyAsCustom: "Copy as custom",
+      unavailable: "Agents are not available for this chat yet.",
+      loading: "Loading agents…",
+      loadFailed: "Agents could not be loaded.",
+      retry: "Retry",
+      upgradeFailed: "This agent could not be upgraded.",
+      revisionConflict: "This content was updated elsewhere. Please refresh.",
+      tabs: {
+        overview: "Overview",
+        skills: "Skills",
+        revisions: "Revision history",
+      },
+      form: {
+        createTitle: "New agent",
+        editTitle: "Edit agent",
+        copyTitle: "Copy as a custom agent",
+        name: "Name",
+        description: "Description",
+        systemInstruction: "System instruction",
+        defaultModel: "Default model",
+        defaultModelGlobal: "Use the global default model",
+        skills: "Skills",
+        searchSkills: "Search skills",
+        noSkills: "No enabled skills available.",
+        boundSkillDisabled:
+          "This bound Skill has been disabled and will be skipped when the Agent answers.",
+        boundSkillOutdated:
+          "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
+        removeSkill: "Remove",
+        toolsLabel: "Built-in tools",
+        toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
+        save: "Save",
+        cancel: "Cancel",
+        nameInvalid: "Enter a name up to 128 characters.",
+        descriptionRequired: "Enter a description.",
+        descriptionTooLong: "Description is over the 1,024 character limit.",
+        systemInstructionRequired: "Enter a system instruction.",
+        systemInstructionTooLarge:
+          "System instruction is over the 32 KB limit.",
+        budgetCalculating: "Calculating the Skill budget…",
+        budgetUnavailable:
+          "The Skill budget could not be calculated. Try again.",
+        budgetWarning:
+          "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+        budgetExceeded:
+          "Selected skills exceed the per-turn budget. Remove some before saving.",
+        largestSkills: "Largest skills",
+        nameConflict: "An agent with this name already exists.",
+        revisionConflict: "This content was updated elsewhere. Please refresh.",
+        saveFailed: "This agent could not be saved.",
+      },
+    },
+    migrationBanner: {
+      heading: "Local drafts found",
+      descriptionAgent:
+        "Markdown agent drafts saved on this device can be imported as real agents.",
+      descriptionSkill:
+        "Markdown skill drafts saved on this device can be imported as real skills.",
+      import: "Import",
+      dismiss: "Dismiss",
+      importing: "Importing…",
+      importFailed: "This draft could not be imported.",
     },
     library: {
       listView: "List view",
@@ -640,6 +1057,21 @@ export const WORKSPACE_COPY = {
       attachmentFailed: "上传失败",
       reviewInLibrary: "在知识库中打开",
       removeAttachment: "移除附件",
+      fromAgent: "来自 Agent",
+      skillBudgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
+      skillBudgetExceeded:
+        "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再发送。",
+      largestSkills: "占用最大的 Skill",
+      agentModelFallback: (agentName: string) =>
+        `${agentName} 的默认模型已不可用，已改用全局默认模型。`,
+      skillDisabledNotice: (skillName: string) =>
+        `Skill「${skillName}」已停用，本次回答未使用。`,
+      skillInapplicableNotice: (skillName: string) =>
+        `Skill「${skillName}」不适用于知识问答，本次回答未使用。`,
+      skillDisabledNoticeGeneric: "有一个选用的 Skill 已停用，本次回答未使用。",
+      skillInapplicableNoticeGeneric:
+        "有一个选用的 Skill 不适用于知识问答，本次回答未使用。",
+      skillNotApplicable: "不适用于知识问答",
     },
     catalog: {
       agents: "智能体",
@@ -663,6 +1095,192 @@ export const WORKSPACE_COPY = {
       noResults: "没有匹配项",
       agentCatalog: "智能体目录",
       skillCatalog: "技能目录",
+    },
+    skillsWorkspace: {
+      heading: "技能",
+      description: "可在每次对话中复用的指令与文件。",
+      importSkill: "导入 Skill",
+      createSkill: "新建 Skill",
+      filterAll: "全部",
+      filterBuiltIn: "内置",
+      filterCustom: "自定义",
+      filterDisabled: "已停用",
+      noResults: "没有符合筛选条件的 Skill。",
+      applicableTasks: "适用任务",
+      revision: "修订",
+      useInChat: "在对话中使用",
+      edit: "编辑",
+      editUnavailableImported:
+        "导入的 Skill 不能直接编辑，请将更新后的包作为新修订重新导入。",
+      enable: "启用",
+      disable: "停用",
+      statusEnabled: "已启用",
+      statusDisabled: "已停用",
+      copyAsCustom: "复制为自定义",
+      unavailable: "本次对话暂不支持使用 Skill。",
+      cancel: "取消",
+      close: "关闭",
+      loading: "加载中…",
+      loadFailed: "无法加载该 Skill。",
+      retry: "重试",
+      download: "下载",
+      savedNotExecuted: "已保存，不执行",
+      attachedReferences: "已附加的参考文本",
+      noAttachedReferences: "未附加参考文本。",
+      tabs: {
+        instructions: "指令",
+        files: "文件",
+        metadata: "元数据",
+        revisions: "修订历史",
+      },
+      taskLabels: {
+        "knowledge.answer": "知识问答",
+        "test-plan.generate": "测试计划生成",
+        "automation.generate": "自动化生成",
+      },
+      import: {
+        step1Title: "导入 Skill",
+        step1Description:
+          "拖入 SKILL.md、zip 压缩包或文件夹，或在下方粘贴文本。",
+        browseFiles: "选择文件",
+        browseFolder: "选择文件夹",
+        pasteLabel: "粘贴 SKILL.md 内容",
+        pastePlaceholder: "在此粘贴 SKILL.md 内容",
+        next: "预览",
+        back: "返回",
+        commit: "导入所选",
+        step2Title: "导入前确认",
+        frontmatter: "元数据",
+        files: "文件",
+        warnings: "告警",
+        category: {
+          skill: "指令",
+          referenceAttached: "参考·已附加",
+          referenceUnattached: "参考·未附加",
+          script: "脚本·已保存不执行",
+          asset: "资源",
+        },
+        nameConflict: "已存在同名 Skill。",
+        importAsNewRevision: "作为新修订导入",
+        skip: "跳过",
+        stageFailed: "无法读取此次导入。",
+        commitFailed: "无法导入所选 Skill。",
+        errors: {
+          skill_package_too_large: "压缩包超过 20 MB 上限。",
+          skill_path_rejected:
+            "压缩包内含不安全路径（绝对路径、“..” 或符号链接）。",
+          skill_frontmatter_invalid:
+            "SKILL.md 的 frontmatter 缺少必需字段或不合法。",
+          skill_not_found_in_package: "在该位置未找到 SKILL.md。",
+          skill_name_conflict:
+            "已存在同名 Skill，请选择“作为新修订导入”或跳过。",
+          revision_conflict: "该 Skill 已在别处更新，请返回重新导入。",
+          import_expired: "此次暂存的导入已过期，请重新导入。",
+          skill_built_in_immutable: "内置 Skill 不能接收导入的修订。",
+        },
+      },
+      form: {
+        createTitle: "新建 Skill",
+        editTitle: "编辑 Skill",
+        copyTitle: "复制为自定义 Skill",
+        name: "名称",
+        description: "描述",
+        applicableTasks: "适用任务",
+        instructions: "指令",
+        preview: "SKILL.md 预览",
+        save: "保存",
+        cancel: "取消",
+        nameInvalid: "请输入小写连字符名称，最多 64 个字符。",
+        descriptionRequired: "请填写描述。",
+        instructionsRequired: "请填写指令。",
+        budgetExceeded: "SKILL.md 超过 256 KB 限制。",
+        revisionConflict: "内容已被他人更新，请刷新。",
+        saveFailed: "无法保存该 Skill。",
+      },
+    },
+    agentsWorkspace: {
+      heading: "智能体",
+      description: "带有系统提示词、默认模型与已绑定 Skill 的专注协作者。",
+      createAgent: "新建 Agent",
+      filterAll: "全部",
+      filterBuiltIn: "内置",
+      filterCustom: "自定义",
+      filterDisabled: "已停用",
+      noResults: "没有符合筛选条件的 Agent。",
+      useInChat: "在对话中使用",
+      edit: "编辑",
+      enable: "启用",
+      disable: "停用",
+      upgrade: "升级",
+      close: "关闭",
+      revision: "修订",
+      defaultModel: "默认模型",
+      defaultModelGlobal: "使用全局默认模型",
+      skills: "Skill",
+      toolsLabel: "内置工具",
+      toolsBuiltIn: "知识检索、知识回答（始终启用）",
+      hasSkillUpdates: "已绑定的 Skill 有新修订。",
+      boundSkillDisabledWarning: "已绑定的 Skill 已停用，回答时将跳过。",
+      statusEnabled: "已启用",
+      statusDisabled: "已停用",
+      copyAsCustom: "复制为自定义",
+      unavailable: "本次对话暂不支持使用 Agent。",
+      loading: "正在加载 Agent…",
+      loadFailed: "无法加载 Agent。",
+      retry: "重试",
+      upgradeFailed: "无法升级该 Agent。",
+      revisionConflict: "内容已被他人更新，请刷新。",
+      tabs: {
+        overview: "概览",
+        skills: "Skill",
+        revisions: "修订历史",
+      },
+      form: {
+        createTitle: "新建 Agent",
+        editTitle: "编辑 Agent",
+        copyTitle: "复制为自定义 Agent",
+        name: "名称",
+        description: "描述",
+        systemInstruction: "系统提示词",
+        defaultModel: "默认模型",
+        defaultModelGlobal: "使用全局默认模型",
+        skills: "Skill",
+        searchSkills: "搜索 Skill",
+        noSkills: "暂无可用的已启用 Skill。",
+        boundSkillDisabled: "此绑定的 Skill 已停用，回答时将跳过。",
+        boundSkillOutdated:
+          "此绑定的 Skill 有新修订，Agent 仍使用绑定时的修订。",
+        removeSkill: "移除",
+        toolsLabel: "内置工具",
+        toolsBuiltIn: "知识检索、知识回答（始终启用）",
+        save: "保存",
+        cancel: "取消",
+        nameInvalid: "请输入不超过 128 个字符的名称。",
+        descriptionRequired: "请填写描述。",
+        descriptionTooLong: "描述超过 1024 个字符限制。",
+        systemInstructionRequired: "请填写系统提示词。",
+        systemInstructionTooLarge: "系统提示词超过 32 KB 限制。",
+        budgetCalculating: "正在计算 Skill 预算…",
+        budgetUnavailable: "无法计算 Skill 预算，请重试。",
+        budgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
+        budgetExceeded:
+          "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再保存。",
+        largestSkills: "占用最大的 Skill",
+        nameConflict: "已存在同名 Agent。",
+        revisionConflict: "内容已被他人更新，请刷新。",
+        saveFailed: "无法保存该 Agent。",
+      },
+    },
+    migrationBanner: {
+      heading: "发现本地草稿",
+      descriptionAgent:
+        "此设备上保存的 Markdown Agent 草稿，可导入为正式 Agent。",
+      descriptionSkill:
+        "此设备上保存的 Markdown Skill 草稿，可导入为正式 Skill。",
+      import: "导入",
+      dismiss: "忽略",
+      importing: "正在导入…",
+      importFailed: "无法导入该草稿。",
     },
     library: {
       listView: "列表视图",

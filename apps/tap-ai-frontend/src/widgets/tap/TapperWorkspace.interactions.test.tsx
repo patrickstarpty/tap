@@ -31,6 +31,7 @@ import {
   useGraphSearch,
 } from "../../features/graph/api/queries";
 import { pushGraphHighlight } from "../../features/graph/model/highlight";
+import { aiAssetKeys } from "../../features/knowledge/api/aiAssets";
 import { TapperWorkspace } from "./TapperWorkspace";
 
 const workspaceStyles = readFileSync(
@@ -128,6 +129,8 @@ function seedAgentSkillCatalog(
         contentDigest: `sha256:${"1".repeat(64)}`,
         toolAllowlist: ["knowledge.search", "knowledge.answer"],
         outputSchemaDigest: `sha256:${"2".repeat(64)}`,
+        status: "enabled",
+        isLatest: true,
       },
       {
         revisionId: "application-completeness-reviewer",
@@ -136,6 +139,8 @@ function seedAgentSkillCatalog(
         contentDigest: `sha256:${"3".repeat(64)}`,
         toolAllowlist: ["knowledge.search", "knowledge.answer"],
         outputSchemaDigest: `sha256:${"4".repeat(64)}`,
+        status: "enabled",
+        isLatest: true,
       },
     ],
   );
@@ -148,6 +153,8 @@ function seedAgentSkillCatalog(
         displayName: "BDD Scenario Design",
         contentDigest: `sha256:${"5".repeat(64)}`,
         applicableTasks: ["knowledge.answer"],
+        status: "enabled",
+        isLatest: true,
       },
       {
         revisionId: "underwriting-evidence-review",
@@ -155,15 +162,64 @@ function seedAgentSkillCatalog(
         displayName: "Underwriting Evidence Review",
         contentDigest: `sha256:${"6".repeat(64)}`,
         applicableTasks: ["knowledge.answer"],
+        status: "enabled",
+        isLatest: true,
       },
     ],
   );
+}
+
+// The Agents/Skills management pages (AgentsWorkspace/SkillsWorkspace) read
+// their own catalog through `useAgents`/`useSkills` (query keys under
+// `aiAssetKeys`), independent of the composer-facing
+// `["ai-agent-catalog"]`/`["skill-catalog"]` keys `seedAgentSkillCatalog`
+// seeds above. Seed both shapes a single built-in item so cases that open
+// those management pages see a stable, non-digest item to assert against.
+function seedAiAssetWorkspaces(
+  queryClient: ReturnType<typeof createTestQueryClient>,
+  projectId: string,
+) {
+  queryClient.setQueryData(aiAssetKeys.agents(projectId), [
+    {
+      revisionId: "life-underwriting-analyst",
+      agentId: "life-underwriting-analyst",
+      assetId: "life-underwriting-analyst",
+      displayName: "Life Underwriting Analyst",
+      description: "Reviews life underwriting evidence.",
+      contentDigest: `sha256:${"1".repeat(64)}`,
+      outputSchemaDigest: `sha256:${"2".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
+    },
+  ]);
+  queryClient.setQueryData(aiAssetKeys.skills(projectId), [
+    {
+      revisionId: "bdd-scenario-design",
+      skillId: "bdd-scenario-design",
+      assetId: "bdd-scenario-design",
+      displayName: "BDD Scenario Design",
+      description: "Turns underwriting rules into BDD scenarios.",
+      contentDigest: `sha256:${"5".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+    },
+  ]);
 }
 
 function renderWorkspace() {
   const api = defaultKnowledgeClient();
   const queryClient = createTestQueryClient();
   seedAgentSkillCatalog(queryClient, api.projectId);
+  seedAiAssetWorkspaces(queryClient, api.projectId);
   // Switching to Test Management in durable/api mode mounts the real
   // TestPlanLibrary, whose Ant Design Spin uses a deprecated `tip` prop that
   // logs a console warning while its test-plans query is pending (a
@@ -483,31 +539,40 @@ function stubConversationHistory(total: number) {
 it("shows approved Agent and Skill meaning instead of integrity digests", async () => {
   const api = fakeKnowledgeClient();
   const queryClient = createTestQueryClient();
-  queryClient.setQueryData(
-    ["ai-agent-catalog", api.projectId],
-    [
-      {
-        revisionId: "validation-knowledge-agent-v2",
-        assetId: "validation-knowledge-agent",
-        displayName: "Knowledge agent",
-        contentDigest: `sha256:${"a".repeat(64)}`,
-        toolAllowlist: ["knowledge.search", "knowledge.answer"],
-        outputSchemaDigest: `sha256:${"b".repeat(64)}`,
-      },
-    ],
-  );
-  queryClient.setQueryData(
-    ["skill-catalog", api.projectId],
-    [
-      {
-        revisionId: "validation-citation-skill-v2",
-        assetId: "validation-citation-skill",
-        displayName: "Citation skill",
-        contentDigest: `sha256:${"c".repeat(64)}`,
-        applicableTasks: ["knowledge.answer"],
-      },
-    ],
-  );
+  queryClient.setQueryData(aiAssetKeys.agents(api.projectId), [
+    {
+      revisionId: "validation-knowledge-agent-v2",
+      agentId: "validation-knowledge-agent",
+      assetId: "validation-knowledge-agent",
+      displayName: "Knowledge agent",
+      description: "Searches sources and answers questions.",
+      contentDigest: `sha256:${"a".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"b".repeat(64)}`,
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
+    },
+  ]);
+  queryClient.setQueryData(aiAssetKeys.skills(api.projectId), [
+    {
+      revisionId: "validation-citation-skill-v2",
+      skillId: "validation-citation-skill",
+      assetId: "validation-citation-skill",
+      displayName: "Citation skill",
+      description: "Cites the strongest evidence for knowledge answers.",
+      contentDigest: `sha256:${"c".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+    },
+  ]);
   renderKnowledgeApp(<TapperWorkspace />, {
     api,
     queryClient,
@@ -516,12 +581,16 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
 
   await user.click(screen.getByRole("button", { name: "Agents" }));
   expect(
-    await screen.findByText("Searches sources · Answers questions"),
+    await screen.findByText("Searches sources and answers questions."),
   ).toBeVisible();
   expect(screen.queryByText(/sha256:/)).toBeNull();
 
   await user.click(screen.getByRole("button", { name: "Skills" }));
-  expect(await screen.findByText("For knowledge answers")).toBeVisible();
+  expect(
+    await screen.findByText(
+      "Cites the strongest evidence for knowledge answers.",
+    ),
+  ).toBeVisible();
   expect(screen.queryByText(/sha256:/)).toBeNull();
 });
 
@@ -2444,6 +2513,619 @@ describe("Tap product workspace interactions", () => {
     ).toBeVisible();
   });
 
+  it("greys out and blocks selecting a Skill that doesn't apply to knowledge Q&A (I-2, spec §4.4)", async () => {
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["ai-agent-catalog", api.projectId], []);
+    queryClient.setQueryData(
+      ["skill-catalog", api.projectId],
+      [
+        {
+          revisionId: "bdd-scenario-design",
+          assetId: "bdd-scenario-design",
+          displayName: "BDD Scenario Design",
+          contentDigest: `sha256:${"5".repeat(64)}`,
+          applicableTasks: ["knowledge.answer"],
+          status: "enabled",
+          isLatest: true,
+        },
+        {
+          revisionId: "test-plan-outline",
+          assetId: "test-plan-outline",
+          displayName: "Test Plan Outline",
+          contentDigest: `sha256:${"a".repeat(64)}`,
+          applicableTasks: ["test-plan.generate"],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    const picker = screen.getByRole("dialog", { name: "Use Skills" });
+
+    const applicable = within(picker).getByRole("option", {
+      name: "BDD Scenario Design",
+    });
+    expect(applicable).toBeEnabled();
+
+    const notApplicable = within(picker).getByRole("option", {
+      name: "Test Plan Outline (Doesn't apply to knowledge Q&A)",
+    });
+    expect(notApplicable).toBeDisabled();
+    expect(notApplicable).toHaveAttribute("aria-disabled", "true");
+
+    await user.click(notApplicable);
+    expect(screen.getByRole("dialog", { name: "Use Skills" })).toBeVisible();
+    expect(notApplicable).toHaveAttribute("aria-selected", "false");
+  });
+
+  // `renderWorkspace()`'s `seedAgentSkillCatalog` doesn't carry
+  // `defaultModelAlias`/`skillRevisionIds` (its Agents never prefill or
+  // bundle anything), so these cases seed the composer's own catalog keys
+  // directly with an Agent that does.
+  function renderWorkspaceWithComposerAgent(overrides: {
+    defaultModelAlias?: string | null;
+    skillRevisionIds?: string[];
+  }) {
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      ["ai-agent-catalog", api.projectId],
+      [
+        {
+          revisionId: "underwriting-reviewer",
+          assetId: "underwriting-reviewer",
+          displayName: "Underwriting reviewer",
+          contentDigest: `sha256:${"7".repeat(64)}`,
+          toolAllowlist: ["knowledge.search", "knowledge.answer"],
+          outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+          defaultModelAlias: overrides.defaultModelAlias ?? null,
+          skillRevisionIds: overrides.skillRevisionIds ?? [],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(
+      ["skill-catalog", api.projectId],
+      [
+        {
+          revisionId: "rules-lookup",
+          assetId: "rules-lookup",
+          displayName: "Rules lookup",
+          contentDigest: `sha256:${"9".repeat(64)}`,
+          applicableTasks: ["knowledge.answer"],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    return renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+  }
+
+  it("brings in the selected Agent's bundled Skill as a locked chip and drops it when the Agent is deselected", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ skillRevisionIds: ["rules-lookup"] });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    expect(within(composer).getByText("Rules lookup")).toBeVisible();
+    expect(within(composer).getByText("From Agent")).toBeVisible();
+    // A locked chip has no remove button — only deselecting the Agent drops it.
+    expect(
+      within(composer).queryByRole("button", { name: "Remove Rules lookup" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(composer).getByRole("button", {
+        name: "Remove Underwriting reviewer",
+      }),
+    );
+    expect(
+      within(composer).queryByText("Rules lookup"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefills the composer model from the selected Agent's default model", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "qwen-max" });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: /current model Qwen Max/,
+      }),
+    ).toBeVisible();
+  });
+
+  it("falls back to the global default model and shows a one-time notice when the Agent's default model left the catalog", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "retired-model" });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /current model Qwen Plus/ }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /default model is no longer available; using the global default instead/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows the model-fallback notice in Chinese when the UI locale is Chinese", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "retired-model" });
+    await user.click(screen.getByRole("button", { name: "中文" }));
+
+    await user.click(screen.getByRole("button", { name: "添加到消息" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "添加到消息" })).getByRole(
+        "menuitem",
+        { name: "使用智能体" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "使用智能体" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByText(/的默认模型已不可用，已改用全局默认模型/),
+    ).toBeVisible();
+  });
+
+  it("warns and disables Send when selected Skills exceed the per-turn budget", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (/\/ai\/skills\/rules-lookup$/u.test(input)) {
+          return Response.json({
+            revisionId: "rules-lookup",
+            skillId: "rules-lookup",
+            assetId: "rules-lookup",
+            displayName: "Rules lookup",
+            description: "",
+            instructions: "a".repeat(100 * 1024),
+            applicableTasks: ["knowledge.answer"],
+            sourceKind: "authored",
+            builtIn: false,
+            status: "enabled",
+            isLatest: true,
+          });
+        }
+        if (/\/ai\/(agents|skills)$/u.test(input))
+          return Response.json({ items: [] });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({});
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Skills" })).getByRole(
+        "option",
+        { name: "Rules lookup" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+
+    expect(
+      await screen.findByText(
+        "Selected skills exceed the per-turn budget. Remove some before sending.",
+      ),
+    ).toBeVisible();
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    // Enter submits the form directly (`requestSubmit()`), bypassing the
+    // disabled Send button — the over-budget guard has to live in
+    // `submit()` itself, not just the button's `disabled` attribute.
+    await user.keyboard("{Enter}");
+    // A successful send clears the composer (see `submit()`'s
+    // `setMessage("")`); the draft staying in place is the signal nothing
+    // was sent.
+    expect(composer).toHaveValue("What evidence is needed?");
+  });
+
+  it("shows the turn's skillNotices once and links Sources and settings to the Agent/Skill revision", async () => {
+    const AGENT_SUMMARY = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
+    };
+    const SKILL_SUMMARY = {
+      revisionId: "citation-skill-rev-1",
+      assetId: "citation-skill",
+      skillId: "citation-skill",
+      displayName: "Citation skill",
+      description: "Cites evidence labels.",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      builtIn: true,
+      status: "disabled",
+      isLatest: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        // aiAssets.ts calls `fetch(relativePath)` with a bare string, which
+        // a real browser resolves against the document — but wrapping that
+        // string in `new Request()` here (Node's undici implementation, no
+        // implicit document base) throws on a relative URL. Resolve it
+        // against `window.location.origin` instead of constructing a
+        // `Request` at all.
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [AGENT_SUMMARY] });
+        if (path.endsWith("/ai/agents/underwriting-reviewer"))
+          return Response.json({
+            ...AGENT_SUMMARY,
+            systemInstruction: "Review the evidence.",
+          });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: [SKILL_SUMMARY] });
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          return Response.json(
+            {
+              conversationId: "conversation-notices",
+              turnId: "conversation-notices-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-notices")) {
+          return Response.json({
+            conversationId: "conversation-notices",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-notices-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  skillNotices: ["skill_disabled:citation-skill-rev-1"],
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-notices-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-notices-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(
+        'Skill "Citation skill" is disabled and was skipped for this answer.',
+      ),
+    ).toBeVisible();
+
+    await user.click(screen.getByText(/Sources and settings used/));
+    await user.click(
+      screen.getByRole("button", { name: "Underwriting reviewer" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Underwriting reviewer" }),
+    ).toBeVisible();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Reviews underwriting evidence.",
+    );
+
+    // Closing the drawer, leaving the Agents module and coming back must
+    // not reopen the same linked revision — only following the link again
+    // should.
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Close",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("never shows the raw skill_disabled:<id> wire code, even when the id names an older revision not in the latest-only skill list (N-2)", async () => {
+    // `skillById` (built from `GET /ai/skills`, latest-per-asset only) has
+    // no entry for "citation-skill-rev-OLD" -- the Agent is pinned to a
+    // revision superseded since, the ordinary case a disabled-skill
+    // notice can still name. The notice must fall back to a generic
+    // sentence, never the raw code.
+    const AGENT_SUMMARY = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: ["citation-skill-rev-NEW"],
+    };
+    const SKILL_SUMMARY = {
+      revisionId: "citation-skill-rev-NEW",
+      assetId: "citation-skill",
+      skillId: "citation-skill",
+      displayName: "Citation skill",
+      description: "Cites evidence labels.",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      builtIn: true,
+      status: "enabled",
+      isLatest: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [AGENT_SUMMARY] });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: [SKILL_SUMMARY] });
+        if (path.endsWith("/ai/skills/citation-skill-rev-NEW"))
+          return Response.json({
+            ...SKILL_SUMMARY,
+            instructions: "Cite every claim.",
+            attachedReferences: null,
+          });
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          return Response.json(
+            {
+              conversationId: "conversation-old-rev-notice",
+              turnId: "conversation-old-rev-notice-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-old-rev-notice")) {
+          return Response.json({
+            conversationId: "conversation-old-rev-notice",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-old-rev-notice-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  skillNotices: ["skill_disabled:citation-skill-rev-OLD"],
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-old-rev-notice-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-old-rev-notice-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(
+        "A selected skill is disabled and was skipped for this answer.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/skill_disabled:citation-skill-rev-OLD/),
+    ).toBeNull();
+  });
+
   it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -2552,299 +3234,67 @@ describe("Tap product workspace interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  // The Agents and Skills catalogs manage custom items as downloadable
-  // local Markdown draft files: the create/edit dialog requires a
-  // kebab-case Name plus a non-empty Description (not just Instructions)
-  // before Save enables, custom items show a "Local draft" badge and a
-  // "Download Markdown" action instead of "Custom" and "Use in chat", and
-  // built-in (approved) items have no Edit button.
-  it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
+  it("manages agents through the Agents workspace and gates Save on required fields", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
     expect(screen.getByRole("heading", { name: "Agents" })).toBeVisible();
-    await user.type(
-      screen.getByRole("textbox", { name: "Search agents" }),
-      "underwriting",
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Create agent draft" }),
-    );
 
-    const createDialog = screen.getByRole("dialog", { name: "Create agent" });
-    expect(
-      within(createDialog).getByRole("button", { name: "Save agent" }),
-    ).toBeDisabled();
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
-      "life-underwriting-reviewer",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Description" }),
-      "Reviews life underwriting evidence before escalation.",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Instructions" }),
-      "Review the selected evidence before escalating an application.",
-    );
-    await user.click(
-      within(createDialog).getByRole("button", { name: "Save agent" }),
-    );
-    const customAgent = screen.getByRole("listitem", {
-      name: "life-underwriting-reviewer",
-    });
-    expect(
-      within(customAgent).getByRole("heading", {
-        name: "life-underwriting-reviewer",
-      }),
-    ).toBeVisible();
-    expect(within(customAgent).getByText("Local draft")).toBeVisible();
-    expect(
-      within(customAgent).getByText(
-        "Review the selected evidence before escalating an application.",
-      ),
-    ).toBeVisible();
     const builtInAgent = screen.getByRole("listitem", {
       name: "Life Underwriting Analyst",
     });
     expect(within(builtInAgent).getByText("Built-in")).toBeVisible();
     expect(
-      within(builtInAgent).queryByRole("button", {
-        name: "Edit Life Underwriting Analyst",
-      }),
+      within(builtInAgent).queryByRole("button", { name: "Edit" }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Edit life-underwriting-reviewer" }),
-    );
-    const editDialog = screen.getByRole("dialog", { name: "Edit agent" });
-    const description = within(editDialog).getByRole("textbox", {
-      name: "Description",
-    });
-    await user.clear(description);
-    await user.type(description, "Escalates high-risk life applications.");
-    await user.click(
-      within(editDialog).getByRole("button", { name: "Save agent" }),
-    );
-    expect(
-      screen.getByText("Escalates high-risk life applications."),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        "Review the selected evidence before escalating an application.",
-      ),
-    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    const createDialog = screen.getByRole("dialog", { name: "New agent" });
+    const save = within(createDialog).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
 
-    // A local draft has no "Use in chat" action in durable/api mode — it is
-    // a downloadable file, not yet an approved, chat-usable Agent revision.
-    expect(
-      screen.queryByRole("button", {
-        name: "Use life-underwriting-reviewer in chat",
-      }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(customAgent).getByRole("button", { name: "Download Markdown" }),
-    ).toBeVisible();
-  });
-
-  it("localizes catalog list labels instead of composing English aria text", async () => {
-    const user = userEvent.setup();
-    renderWorkspace();
-
-    await user.click(screen.getByRole("button", { name: "中文" }));
-    await user.click(screen.getByRole("button", { name: "智能体" }));
-    expect(screen.getByRole("list", { name: "智能体目录" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "技能" }));
-    expect(screen.getByRole("list", { name: "技能目录" })).toBeVisible();
-  });
-
-  it("contains create-dialog focus, hides the product background, and restores the Create trigger", async () => {
-    const user = userEvent.setup();
-    const { container } = renderWorkspace();
-
-    await user.click(screen.getByRole("button", { name: "Agents" }));
-    // Durable/api mode's create trigger reads "Create agent draft" (local
-    // Markdown draft file), but the dialog itself keeps the plain "Create
-    // agent" accessible name (CatalogWorkspace.tsx:323 only ever passes
-    // createLabel, without the "draft" suffix, as the dialog's aria-label).
-    const trigger = screen.getByRole("button", { name: "Create agent draft" });
-    await user.click(trigger);
-
-    const dialog = screen.getByRole("dialog", { name: "Create agent" });
-    const name = within(dialog).getByRole("textbox", {
-      name: "Name (kebab-case)",
-    });
-    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
-    expect(name).toHaveFocus();
-    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(screen.queryByRole("navigation", { name: "Product" })).toBeNull();
-
-    await user.tab({ shift: true });
-    expect(cancel).toHaveFocus();
-    await user.tab();
-    expect(name).toHaveFocus();
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
-    expect(trigger).toHaveFocus();
-    expect(container.querySelector(".tap-product-shell")).not.toHaveAttribute(
-      "aria-hidden",
-    );
-  });
-
-  // Built-in (approved) catalog items have no Edit action at all — only a
-  // locally-created draft can be edited, so this case first creates one
-  // instead of editing the seeded "Life Underwriting Analyst" built-in.
-  it("contains edit-dialog focus and restores the exact Edit trigger", async () => {
-    const user = userEvent.setup();
-    const { container } = renderWorkspace();
-
-    await user.click(screen.getByRole("button", { name: "Agents" }));
-    await user.click(
-      screen.getByRole("button", { name: "Create agent draft" }),
-    );
-    const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
+      within(createDialog).getByRole("textbox", { name: "Name" }),
       "life-underwriting-reviewer",
     );
+    expect(save).toBeDisabled();
     await user.type(
       within(createDialog).getByRole("textbox", { name: "Description" }),
       "Reviews life underwriting evidence before escalation.",
     );
+    expect(save).toBeDisabled();
     await user.type(
-      within(createDialog).getByRole("textbox", { name: "Instructions" }),
+      within(createDialog).getByRole("textbox", { name: "System instruction" }),
       "Review the selected evidence before escalating an application.",
     );
+    expect(save).toBeEnabled();
+
     await user.click(
-      within(createDialog).getByRole("button", { name: "Save agent" }),
+      within(createDialog).getByRole("button", { name: "Cancel" }),
     );
-
-    const trigger = screen.getByRole("button", {
-      name: "Edit life-underwriting-reviewer",
-    });
-    await user.click(trigger);
-
-    const dialog = screen.getByRole("dialog", { name: "Edit agent" });
-    const name = within(dialog).getByRole("textbox", {
-      name: "Name (kebab-case)",
-    });
-    const save = within(dialog).getByRole("button", { name: "Save agent" });
-    expect(name).toHaveFocus();
-    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-
-    await user.tab({ shift: true });
-    expect(save).toHaveFocus();
-    await user.tab();
-    expect(name).toHaveFocus();
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
-    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole("dialog", { name: "New agent" })).toBeNull();
   });
 
-  // Same durable/api draft-file behavior as the Agents case above, applied
-  // to Skills.
-  it("searches, creates, and edits reusable underwriting skills", async () => {
+  it("manages skills through the Skills workspace without the retired local-draft flow", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Skills" }));
     expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
-    await user.type(
-      screen.getByRole("textbox", { name: "Search skills" }),
-      "underwriting",
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Create skill draft" }),
-    );
+    expect(screen.getByRole("button", { name: "Import skill" })).toBeVisible();
 
-    const createDialog = screen.getByRole("dialog", { name: "Create skill" });
-    expect(
-      within(createDialog).getByRole("button", { name: "Save skill" }),
-    ).toBeDisabled();
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
-      "underwriting-rules-lookup",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Description" }),
-      "Looks up underwriting rules for the selected source.",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Instructions" }),
-      "Find relevant rules and cite the selected source.",
-    );
-    await user.click(
-      within(createDialog).getByRole("button", { name: "Save skill" }),
-    );
-    const customSkill = screen.getByRole("listitem", {
-      name: "underwriting-rules-lookup",
-    });
-    expect(
-      within(customSkill).getByRole("heading", {
-        name: "underwriting-rules-lookup",
-      }),
-    ).toBeVisible();
-    expect(within(customSkill).getByText("Local draft")).toBeVisible();
-    expect(
-      within(customSkill).getByText(
-        "Find relevant rules and cite the selected source.",
-      ),
-    ).toBeVisible();
-    // Unlike the fixture-only BDD Scenario Design copy ("Turns underwriting
-    // rules into..."), the api-mode presentation text derived from the
-    // seeded catalog's capabilities doesn't mention "underwriting", so clear
-    // the still-active search before looking for it.
-    await user.clear(screen.getByRole("textbox", { name: "Search skills" }));
     const builtInSkill = screen.getByRole("listitem", {
       name: "BDD Scenario Design",
     });
     expect(within(builtInSkill).getByText("Built-in")).toBeVisible();
     expect(
-      within(builtInSkill).queryByRole("button", {
-        name: "Edit BDD Scenario Design",
-      }),
+      within(builtInSkill).queryByRole("button", { name: "Edit" }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Edit underwriting-rules-lookup" }),
-    );
-    const editDialog = screen.getByRole("dialog", { name: "Edit skill" });
-    const description = within(editDialog).getByRole("textbox", {
-      name: "Description",
-    });
-    await user.clear(description);
-    await user.type(description, "Retrieves rule evidence before a decision.");
-    await user.click(
-      within(editDialog).getByRole("button", { name: "Save skill" }),
-    );
     expect(
-      screen.getByText("Retrieves rule evidence before a decision."),
-    ).toBeVisible();
-    expect(
-      screen.getByText("Find relevant rules and cite the selected source."),
-    ).toBeVisible();
-
-    // A local draft skill has no "Use in chat" action in durable/api mode —
-    // it is a downloadable SKILL.md file, not yet an approved, chat-usable
-    // Skill revision.
-    expect(
-      screen.queryByRole("button", {
-        name: "Use underwriting-rules-lookup in chat",
-      }),
+      screen.queryByRole("textbox", { name: "Search skills" }),
     ).not.toBeInTheDocument();
-    expect(
-      within(customSkill).getByRole("button", { name: "Download Markdown" }),
-    ).toBeVisible();
   });
 
   it("uploads a Library file without making processing documents selectable", async () => {

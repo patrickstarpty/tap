@@ -14,6 +14,7 @@ from tap.contracts.http import (
 from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
+from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.models import (
     ModelCapability,
     ModelDescriptor,
@@ -291,7 +292,11 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
                 instruction_template="frozen skill instruction",
                 instruction_template_digest=text_digest("frozen skill instruction"),
                 applicable_tasks=frozenset({"knowledge.answer"}),
+                status=AssetRevisionStatus.ENABLED,
             )
+
+        async def resolve_historical_skill(self, scope, identity):
+            return await self.get_skill(scope, identity)
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -445,6 +450,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         "agentLabel": None,
         "skillRevisionIds": [],
         "skillLabels": [],
+        "skillNotices": [],
         "insightsQueryId": None,
     }
     serialized = json.dumps(detail.json())
@@ -627,3 +633,268 @@ def test_conversation_event_item_accepts_graph_context_ready() -> None:
         }
     )
     assert item.event_type == "graph.context_ready"
+
+
+def _asset_catalog_for_merge_tests():
+    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, ApprovedAssetCatalog
+    from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision, text_digest
+    from tap.modules.ai.domain.models import schema_digest
+
+    schema = VALIDATION_OUTPUT_SCHEMA
+    agent = AiAgentRevision(
+        revision_id="agent-1",
+        asset_id="agent-1-asset",
+        display_name="Demo agent",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("agent-1-content"),
+        system_instruction_digest=text_digest("agent system instruction"),
+        tool_allowlist=frozenset({"knowledge.answer"}),
+        output_schema_digest=schema_digest(schema),
+        system_instruction="agent system instruction",
+        output_schema_json=json.dumps(schema, sort_keys=True, separators=(",", ":")),
+        skill_revision_ids=("skill-bound", "skill-disabled-bound"),
+    )
+    bound_skill = SkillRevision(
+        revision_id="skill-bound",
+        asset_id="skill-bound-asset",
+        display_name="Bound skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("skill-bound-content"),
+        instruction_template_digest=text_digest("bound skill instruction"),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template="bound skill instruction",
+    )
+    disabled_bound_skill = SkillRevision(
+        revision_id="skill-disabled-bound",
+        asset_id="skill-disabled-bound-asset",
+        display_name="Disabled bound skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("skill-disabled-bound-content"),
+        instruction_template_digest=text_digest("disabled bound skill instruction"),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        status=AssetRevisionStatus.DISABLED,
+        instruction_template="disabled bound skill instruction",
+    )
+    requested_skill = SkillRevision(
+        revision_id="skill-requested",
+        asset_id="skill-requested-asset",
+        display_name="Requested skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("skill-requested-content"),
+        instruction_template_digest=text_digest("requested skill instruction"),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template="requested skill instruction",
+    )
+    catalog = ApprovedAssetCatalog(
+        agents=(agent,),
+        skills=(bound_skill, disabled_bound_skill, requested_skill),
+    )
+    catalog.scope = VALIDATION_SCOPE
+    return catalog
+
+
+def test_turn_view_lists_frozen_revisions_and_skill_notices():
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            return (), SimpleNamespace(
+                acl_digest="sha256:" + "0" * 64,
+                decision_id="decision-1",
+                policy_version="policy-1",
+                active_corpus_version="tapper-demo-v1",
+            )
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        asset_catalog=_asset_catalog_for_merge_tests(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={
+            "message": "question",
+            "modelAlias": "qwen-plus",
+            "agentRevisionId": "agent-1",
+            "skillRevisionIds": ["skill-requested", "skill-bound"],
+        },
+        headers={"Idempotency-Key": "turn-view-merge"},
+    )
+    assert response.status_code == 202, response.text
+
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    # Agent-bound skills precede the explicitly requested skill; the explicit
+    # re-request of the already-bound "skill-bound" is a no-op (deduped); the
+    # disabled bound skill is skipped with a notice instead of failing the turn.
+    assert frozen.skill_revision_ids == ("skill-bound", "skill-requested")
+    assert frozen.skill_notices == ("skill_disabled:skill-disabled-bound",)
+
+    detail = client.get(
+        f"/api/v1/projects/tapper-demo/conversations/{response.json()['conversationId']}"
+    )
+    view = detail.json()["turns"][0]["input"]
+    assert view["agentRevisionId"] == "agent-1"
+    assert view["skillRevisionIds"] == ["skill-bound", "skill-requested"]
+    assert view["skillNotices"] == ["skill_disabled:skill-disabled-bound"]
+
+
+def test_idempotency_replay_with_a_different_skill_request_is_a_conflict():
+    """I-2 (fix round 1): the frozen Turn's `skillRevisionIds` is the merged/
+    applied set, not a 1:1 echo of the request -- comparing it against a
+    replay's raw `skillRevisionIds` would let two different requests share an
+    Idempotency-Key whenever their merged results happened to collide. This
+    checks the fast `_matches_replay` pre-check catches a genuine mismatch,
+    including when the *merged* result would otherwise be identical: the
+    Agent here binds "skill-bound", so an implicit (`[]`) and an explicit
+    (`["skill-bound"]`) request apply the exact same Skill, but are still two
+    different requests."""
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            return (), SimpleNamespace(
+                acl_digest="sha256:" + "0" * 64,
+                decision_id="decision-1",
+                policy_version="policy-1",
+                active_corpus_version="tapper-demo-v1",
+            )
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        asset_catalog=_asset_catalog_for_merge_tests(),
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+    headers = {"Idempotency-Key": "replay-skill-mismatch"}
+    base_body = {
+        "message": "question",
+        "modelAlias": "qwen-plus",
+        "agentRevisionId": "agent-1",
+    }
+
+    first = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": []},
+        headers=headers,
+    )
+    assert first.status_code == 202, first.text
+
+    same_applied_different_request = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": ["skill-bound"]},
+        headers=headers,
+    )
+    assert same_applied_different_request.status_code == 409, same_applied_different_request.text
+    assert same_applied_different_request.json()["type"].endswith("/idempotency-conflict")
+
+    genuinely_different = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": ["skill-requested"]},
+        headers=headers,
+    )
+    assert genuinely_different.status_code == 409, genuinely_different.text
+
+    exact_replay = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**base_body, "skillRevisionIds": []},
+        headers=headers,
+    )
+    assert exact_replay.status_code == 202, exact_replay.text
+    assert exact_replay.json() == first.json()
+
+
+def test_skill_budget_exceeded_over_96kb_returns_skill_problem():
+    from tap.modules.ai.application.assets import ApprovedAssetCatalog
+    from tap.modules.ai.domain.assets import SkillRevision, text_digest
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_conversation_selection(self, _revision_ids):
+            raise AssertionError("A rejected skill budget must fail before Knowledge selection")
+
+    oversized_instruction = "x" * (96 * 1024 + 1)
+    oversized_skill = SkillRevision(
+        revision_id="skill-oversized",
+        asset_id="skill-oversized-asset",
+        display_name="Oversized skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("skill-oversized-content"),
+        instruction_template_digest=text_digest(oversized_instruction),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template=oversized_instruction,
+    )
+    asset_catalog = ApprovedAssetCatalog(agents=(), skills=(oversized_skill,))
+    asset_catalog.scope = VALIDATION_SCOPE
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        asset_catalog=asset_catalog,
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={
+            "message": "question",
+            "modelAlias": "qwen-plus",
+            "skillRevisionIds": ["skill-oversized"],
+        },
+        headers={"Idempotency-Key": "skill-budget-exceeded"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "skill_budget_exceeded"
+    assert conversations.repository.values == {}

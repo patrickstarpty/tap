@@ -9,6 +9,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.tools import known_tool_ids
 
 
 class ModelCapability(StrEnum):
@@ -68,6 +69,13 @@ class GenerationGovernance:
     output_schema: dict[str, object]
     output_schema_digest: str
     revision_digests: tuple[str, ...]
+    # Readable identities for the trace (`tap.agent.revision_id`, `tap.skill.revision_ids`)
+    # and for wrapping each skill instruction in a `<skill name=... revision=...>` prompt
+    # block (Task 7); optional so existing callers that only need enforcement, not
+    # display, can omit them.
+    agent_revision_id: str | None = None
+    skill_names: tuple[str, ...] = ()
+    skill_revision_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -81,9 +89,14 @@ class GenerationGovernance:
                     self.skill_instructions, self.skill_instruction_digests, strict=True
                 )
             )
-            or not self.tool_allowlist <= {"knowledge.search", "knowledge.answer"}
+            or not self.tool_allowlist <= known_tool_ids()
             or self.output_schema_digest != schema_digest(self.output_schema)
             or not self.revision_digests
+            or (self.skill_names and len(self.skill_names) != len(self.skill_instructions))
+            or (
+                self.skill_revision_ids
+                and len(self.skill_revision_ids) != len(self.skill_instructions)
+            )
         ):
             raise ModelGatewayRejected()
 

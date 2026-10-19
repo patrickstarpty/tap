@@ -75,3 +75,54 @@ async def test_deterministic_chat_stream_yields_deltas_then_the_full_result():
     assert all(len(delta.text) <= 8 for delta in deltas)
     assert "".join(delta.text for delta in deltas) == results[0].output
     assert results[0].output == "Grounded"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_folds_skill_marker_into_the_cited_claim() -> None:
+    """A Skill's instruction text (wrapped in `_skill_blocks`, see
+    `modules/knowledge/adapters/litellm.py`) lands in the model *prompt*, not the
+    *context* the `[e2e-cancel]`/`[e2e-abstain]` markers use -- so an isolated
+    E2E journey asserting a selected Skill reached the model needs its own
+    prompt-side marker. It is folded into the *cited* claim's own sentence
+    (before its closing punctuation) rather than appended as a separate,
+    uncited trailing fragment: `parse_inline_answer`'s rendering is
+    claim-driven (PR 3), so only text inside a validated claim is guaranteed
+    to reach the rendered answer -- an orphaned trailing fragment is not."""
+
+    import json
+
+    gateway = _gateway()
+    context = json.dumps(
+        {
+            "untrusted": {
+                "evidence": [
+                    {
+                        "label": "S1",
+                        "content": "Authorization requires the verified project policy.",
+                    }
+                ]
+            }
+        }
+    )
+    prompt = (
+        'You are Tapper.\n\n<skill name="Demo" revision="skill-1">\n'
+        "[e2e-skill:demo-token]\n</skill>"
+    )
+    request = ModelRequest(
+        scope=VALIDATION_SCOPE,
+        alias="qwen-plus",
+        operation=ModelOperation.CHAT,
+        prompt=prompt,
+        prompt_digest=digest(prompt),
+        context=context,
+        timeout_seconds=1,
+        idempotency_key="deterministic-skill-marker-1",
+    )
+
+    result = await gateway.chat(request)
+
+    assert "[e2e-skill:demo-token]" in result.output
+    assert "[S1]" in result.output
+    # The marker sits inside the cited sentence, immediately before its own
+    # citation marker -- not after it as a separate, uncited fragment.
+    assert result.output.endswith("[e2e-skill:demo-token].[S1]")

@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
@@ -41,7 +41,7 @@ from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
 from tap.modules.access.domain.policy import AuthorizationDenied
-from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, resolve_skill_selection
+from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import (
     ModelCapability,
@@ -62,6 +62,7 @@ from tap.modules.chat.application.ports import (
     draft_stream_key,
     wake_stream_key,
 )
+from tap.modules.chat.application.skill_selection import SkillBudgetExceeded, merge_skill_selection
 from tap.modules.chat.domain.conversations import TurnInput
 from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
@@ -77,6 +78,17 @@ router = APIRouter(
 
 
 def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
+    """A cheap pre-check for the obvious-mismatch case, so an unmistakably different
+    replay body fails fast without the asset/knowledge lookups `_input` would do.
+    The frozen Turn's `skill_revision_ids` is `merge_skill_selection`'s *applied*
+    set (Agent-bound ids first, deduped, with disabled/inapplicable ids skipped),
+    not `body.skill_revision_ids` verbatim, so it is compared against
+    `requested_skill_revision_ids` (the caller's raw request, frozen alongside it
+    for exactly this check) instead -- fix round 1, I-2. `_validate_replay`'s full
+    recomputation and dataclass equality below still catches a genuine mismatch
+    this quick check would miss.
+    """
+
     value = turn.input_snapshot.value
     return (
         value.message == body.message
@@ -84,7 +96,7 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
         and value.source_revision_ids == tuple(body.source_revision_ids)
         and value.document_revision_ids == tuple(body.document_revision_ids)
         and value.agent_revision_id == body.agent_revision_id
-        and value.skill_revision_ids == tuple(body.skill_revision_ids)
+        and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
     )
 
 
@@ -100,6 +112,7 @@ async def _validate_replay(turn, body: ConversationCreateRequest, request: Reque
         ModelGatewayRejected,
         ModelGatewayUnavailable,
         ModelNotSelectable,
+        SkillBudgetExceeded,
     ):
         return
     if current != turn.input_snapshot.value:
@@ -120,6 +133,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             raise ModelNotSelectable
     elif body.model_alias:
         raise KnowledgeRuntimeUnavailable
+    agent: Any = None
     agent_digest = None
     if body.agent_revision_id is not None:
         if services.asset_catalog is None:
@@ -131,22 +145,22 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
         )
         agent_digest = agent.content_digest
-    skills = (
-        []
-        if services.asset_catalog is None
-        else [
-            resolve_skill_selection(
-                await services.asset_catalog.get_skill(scope, revision_id),
-                task="knowledge.answer",
-            )
-            for revision_id in body.skill_revision_ids
-        ]
-    )
-    if body.skill_revision_ids and services.asset_catalog is None:
+    bound_skill_ids = tuple(getattr(agent, "skill_revision_ids", ()) or ())
+    candidate_skill_ids = list(dict.fromkeys((*bound_skill_ids, *body.skill_revision_ids)))
+    if candidate_skill_ids and services.asset_catalog is None:
         raise KnowledgeRuntimeUnavailable
+    candidate_skills = [
+        # Tolerant of a disabled Skill (unlike `get_skill`): `merge_skill_selection`
+        # decides whether to skip it with a notice, rather than this failing the
+        # whole turn for a Skill the Agent bound before it was disabled.
+        await services.asset_catalog.resolve_historical_skill(scope, revision_id)
+        for revision_id in candidate_skill_ids
+    ]
+    selection = merge_skill_selection(agent, candidate_skills, task="knowledge.answer")
+    skills = selection.applied
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
-    selection = await freeze_conversation_selection(
+    selection_facts = await freeze_conversation_selection(
         services.knowledge,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
@@ -158,7 +172,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         model_alias=body.model_alias,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
-        resolved_resources=selection.resolved_resources,
+        resolved_resources=selection_facts.resolved_resources,
         agent_revision_id=body.agent_revision_id,
         agent_revision_digest=agent_digest,
         agent_label=(
@@ -166,12 +180,11 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             if body.agent_revision_id is None
             else getattr(agent, "display_name", body.agent_revision_id)
         ),
-        skill_revision_ids=tuple(body.skill_revision_ids),
+        skill_revision_ids=tuple(item.revision_id for item in skills),
         skill_revision_digests=tuple(item.content_digest for item in skills),
-        skill_labels=tuple(
-            getattr(item, "display_name", revision_id)
-            for item, revision_id in zip(skills, body.skill_revision_ids, strict=True)
-        ),
+        skill_labels=tuple(getattr(item, "display_name", item.revision_id) for item in skills),
+        skill_notices=selection.notices,
+        requested_skill_revision_ids=tuple(body.skill_revision_ids),
         agent_system_instruction=(
             None if body.agent_revision_id is None else agent.system_instruction
         ),
@@ -187,12 +200,16 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         agent_output_schema_digest=None
         if body.agent_revision_id is None
         else agent.output_schema_digest,
-        skill_instruction_templates=tuple(cast(str, item.instruction_template) for item in skills),
+        skill_instruction_templates=tuple(
+            cast(str, item.instruction_template)
+            + (getattr(item, "attached_references", None) or "")
+            for item in skills
+        ),
         skill_instruction_template_digests=tuple(
             item.instruction_template_digest for item in skills
         ),
-        acl_digest=selection.acl_digest,
-        retrieval_policy_digest=selection.retrieval_policy_digest,
+        acl_digest=selection_facts.acl_digest,
+        retrieval_policy_digest=selection_facts.retrieval_policy_digest,
     )
 
 
@@ -240,6 +257,7 @@ def _turn(value, *, feedback: AnswerFeedback | None = None):
             agent_label=frozen.agent_label or frozen.agent_revision_id,
             skill_revision_ids=list(frozen.skill_revision_ids),
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
+            skill_notices=list(frozen.skill_notices),
             insights_query_id=frozen.insights_query_id,
         ),
         trace_id=trace_id_of(value.traceparent),

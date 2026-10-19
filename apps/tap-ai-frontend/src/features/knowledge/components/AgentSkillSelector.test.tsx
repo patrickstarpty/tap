@@ -172,4 +172,98 @@ describe("AgentSkillSelector", () => {
     expect(skillsChange).not.toHaveBeenCalled();
     expect(agentChange).not.toHaveBeenCalled();
   });
+
+  it("locks a Skill bundled from the selected Agent with a From Agent tag", async () => {
+    const user = userEvent.setup();
+    const skillsChange = vi.fn();
+    render(
+      <AgentSkillSelector
+        agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+        skills={[{ revisionId: "skill-v1", displayName: "Citation skill" }]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={() => {}}
+        onSkillsChange={skillsChange}
+        lockedSkillRevisionIds={["skill-v1"]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    const checkbox = screen.getByRole("checkbox", { name: /Citation skill/ });
+    expect(checkbox).toBeChecked();
+    expect(checkbox).toBeDisabled();
+    expect(screen.getByText("From Agent")).toBeVisible();
+
+    await user.click(checkbox);
+    expect(skillsChange).not.toHaveBeenCalled();
+  });
+
+  it("warns near the per-turn Skill budget and blocks with the largest skills over it", () => {
+    const base = {
+      agents: [{ revisionId: "agent-v1", displayName: "Knowledge agent" }],
+      skills: [{ revisionId: "skill-v1", displayName: "Citation skill" }],
+      agentRevisionId: "agent-v1" as const,
+      skillRevisionIds: ["skill-v1"],
+      onAgentChange: () => {},
+      onSkillsChange: () => {},
+    };
+    const { rerender } = render(
+      <AgentSkillSelector
+        {...base}
+        skillBudget={{ usedBytes: 90_000, limitBytes: 96 * 1024, largest: [] }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Selected skills are near the per-turn budget.",
+    );
+
+    rerender(
+      <AgentSkillSelector
+        {...base}
+        skillBudget={{
+          usedBytes: 100 * 1024,
+          limitBytes: 96 * 1024,
+          largest: ["Citation skill"],
+        }}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Selected skills exceed the per-turn budget.",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Largest skills: Citation skill",
+    );
+  });
+
+  it("localizes the locked-skill tag and budget hints through the labels prop", async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentSkillSelector
+        agents={[{ revisionId: "agent-v1", displayName: "Knowledge agent" }]}
+        skills={[{ revisionId: "skill-v1", displayName: "Citation skill" }]}
+        agentRevisionId="agent-v1"
+        skillRevisionIds={["skill-v1"]}
+        onAgentChange={() => {}}
+        onSkillsChange={() => {}}
+        lockedSkillRevisionIds={["skill-v1"]}
+        skillBudget={{
+          usedBytes: 100 * 1024,
+          limitBytes: 96 * 1024,
+          largest: ["Citation skill"],
+        }}
+        labels={{
+          fromAgent: "来自 Agent",
+          skillBudgetExceeded: "所选 Skill 已超出单轮预算上限。",
+          largestSkills: "占用最大的 Skill",
+        }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByText("来自 Agent")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "所选 Skill 已超出单轮预算上限。",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "占用最大的 Skill: Citation skill",
+    );
+  });
 });

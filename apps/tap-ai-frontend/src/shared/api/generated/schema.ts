@@ -9,7 +9,60 @@ export interface paths {
         /** List Agents */
         get: operations["ai_list_agent_revisions"];
         put?: never;
-        post?: never;
+        /** Create Agent */
+        post: operations["ai_create_agent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Agent */
+        post: operations["ai_disable_agent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Agent */
+        post: operations["ai_enable_agent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Revision History */
+        get: operations["ai_list_agent_revision_history"];
+        put?: never;
+        /** Revise Agent */
+        post: operations["ai_revise_agent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -60,7 +113,42 @@ export interface paths {
         /** List Skills */
         get: operations["ai_list_skill_revisions"];
         put?: never;
-        post?: never;
+        /** Create Skill */
+        post: operations["ai_create_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Skill */
+        post: operations["ai_import_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/imports/{import_id}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit Skill Import */
+        post: operations["ai_commit_skill_import"];
         delete?: never;
         options?: never;
         head?: never;
@@ -76,6 +164,92 @@ export interface paths {
         };
         /** Get Skill */
         get: operations["ai_get_skill_revision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{revision_id}/files/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Skill File */
+        get: operations["ai_download_skill_file"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{skill_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Skill */
+        post: operations["ai_disable_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{skill_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Skill */
+        post: operations["ai_enable_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{skill_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Skill Revision History */
+        get: operations["ai_list_skill_revision_history"];
+        put?: never;
+        /** Revise Skill */
+        post: operations["ai_revise_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tools */
+        get: operations["ai_list_tools"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1387,6 +1561,82 @@ export interface components {
          * @enum {string}
          */
         AbstentionReason: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch" | "out_of_scope";
+        /** AgentDraftRequest */
+        AgentDraftRequest: {
+            /** Defaultmodelalias */
+            defaultModelAlias?: string | null;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Skillrevisionids */
+            skillRevisionIds?: string[];
+            /** Systeminstruction */
+            systemInstruction: string;
+            /** Toolids */
+            toolIds?: string[];
+        };
+        /** AgentReviseRequest */
+        AgentReviseRequest: {
+            /** Baserevisionid */
+            baseRevisionId: string;
+            /** Defaultmodelalias */
+            defaultModelAlias?: string | null;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Skillrevisionids */
+            skillRevisionIds?: string[];
+            /** Systeminstruction */
+            systemInstruction: string;
+            /** Toolids */
+            toolIds?: string[];
+        };
+        /** AiAgentRevisionDetail */
+        AiAgentRevisionDetail: {
+            /** Agentid */
+            agentId: string;
+            /** Assetid */
+            assetId: string;
+            /** Builtin */
+            builtIn: boolean;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Defaultmodelalias */
+            defaultModelAlias?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Displayname */
+            displayName: string;
+            /**
+             * Hasskillupdates
+             * @default false
+             */
+            hasSkillUpdates?: boolean;
+            /** Islatest */
+            isLatest: boolean;
+            /** Outputschemadigest */
+            outputSchemaDigest: string;
+            /** Revisionid */
+            revisionId: string;
+            /** Skillrevisionids */
+            skillRevisionIds?: string[];
+            /**
+             * Sourcekind
+             * @enum {string}
+             */
+            sourceKind: "imported" | "authored" | "built_in";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
+            /** Systeminstruction */
+            systemInstruction?: string | null;
+            /** Toolallowlist */
+            toolAllowlist: string[];
+        };
         /** AiAgentRevisionPage */
         AiAgentRevisionPage: {
             /** Items */
@@ -1394,18 +1644,51 @@ export interface components {
         };
         /** AiAgentRevisionSummary */
         AiAgentRevisionSummary: {
+            /** Agentid */
+            agentId: string;
             /** Assetid */
             assetId: string;
+            /** Builtin */
+            builtIn: boolean;
             /** Contentdigest */
             contentDigest: string;
+            /**
+             * Defaultmodelalias
+             * @default null
+             */
+            defaultModelAlias?: string | null;
+            /**
+             * Description
+             * @default null
+             */
+            description?: string | null;
             /** Displayname */
             displayName: string;
+            /**
+             * Hasskillupdates
+             * @default false
+             */
+            hasSkillUpdates?: boolean;
+            /** Islatest */
+            isLatest: boolean;
             /** Outputschemadigest */
             outputSchemaDigest: string;
             /** Revisionid */
             revisionId: string;
+            /** Skillrevisionids */
+            skillRevisionIds?: string[];
+            /**
+             * Sourcekind
+             * @enum {string}
+             */
+            sourceKind: "imported" | "authored" | "built_in";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
             /** Toolallowlist */
-            toolAllowlist: ("knowledge.search" | "knowledge.answer")[];
+            toolAllowlist: string[];
         };
         /** AnswerClaim */
         AnswerClaim: {
@@ -1885,6 +2168,11 @@ export interface components {
             resolvedResources: components["schemas"]["ConversationResolvedResourceView"][];
             /** Skilllabels */
             skillLabels: string[];
+            /**
+             * Skillnotices
+             * @default []
+             */
+            skillNotices?: string[];
             /** Skillrevisionids */
             skillRevisionIds: string[];
             /** Sourcerevisionids */
@@ -4381,6 +4669,142 @@ export interface components {
             /** Projectid */
             projectId: string;
         };
+        /** SkillDraftRequest */
+        SkillDraftRequest: {
+            /** Applicabletasks */
+            applicableTasks?: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[] | null;
+            /** Description */
+            description: string;
+            /** Instructions */
+            instructions: string;
+            /** Name */
+            name: string;
+        };
+        /** SkillFileView */
+        SkillFileView: {
+            /** Attached */
+            attached: boolean;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "skill" | "reference" | "script" | "asset" | "other";
+            /** Relativepath */
+            relativePath: string;
+            /** Sha256 */
+            sha256: string;
+            /** Sizebytes */
+            sizeBytes: number;
+        };
+        /** SkillImportCommitRequest */
+        SkillImportCommitRequest: {
+            /** Selections */
+            selections: components["schemas"]["SkillImportSelection"][];
+        };
+        /** SkillImportCommitResult */
+        SkillImportCommitResult: {
+            /** Revisions */
+            revisions: components["schemas"]["SkillRevisionDetail"][];
+        };
+        /** SkillImportPreview */
+        SkillImportPreview: {
+            /**
+             * Expiresat
+             * Format: date-time
+             */
+            expiresAt: string;
+            /** Importid */
+            importId: string;
+            /** Skills */
+            skills: components["schemas"]["SkillImportPreviewItem"][];
+        };
+        /** SkillImportPreviewItem */
+        SkillImportPreviewItem: {
+            /** Conflictskillid */
+            conflictSkillId?: string | null;
+            /** Description */
+            description: string;
+            /** Files */
+            files: components["schemas"]["SkillFileView"][];
+            /** Frontmatter */
+            frontmatter: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Name */
+            name: string;
+            /** Root */
+            root: string;
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** SkillImportSelection */
+        SkillImportSelection: {
+            /** Asnewrevisionof */
+            asNewRevisionOf?: string | null;
+            /** Root */
+            root: string;
+        };
+        /** SkillProblem */
+        SkillProblem: {
+            /** Code */
+            code: string;
+            /** Detail */
+            detail: string;
+        };
+        /** SkillReviseRequest */
+        SkillReviseRequest: {
+            /** Applicabletasks */
+            applicableTasks?: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[] | null;
+            /** Baserevisionid */
+            baseRevisionId: string;
+            /** Description */
+            description: string;
+            /** Instructions */
+            instructions: string;
+            /** Name */
+            name: string;
+        };
+        /** SkillRevisionDetail */
+        SkillRevisionDetail: {
+            /** Applicabletasks */
+            applicableTasks: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[];
+            /** Assetid */
+            assetId: string;
+            /** Attachedreferences */
+            attachedReferences?: string | null;
+            /** Builtin */
+            builtIn: boolean;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Description */
+            description?: string | null;
+            /** Displayname */
+            displayName: string;
+            /** Files */
+            files?: components["schemas"]["SkillFileView"][];
+            /** Frontmatter */
+            frontmatter?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Instructions */
+            instructions?: string | null;
+            /** Islatest */
+            isLatest: boolean;
+            /** Revisionid */
+            revisionId: string;
+            /** Skillid */
+            skillId: string;
+            /**
+             * Sourcekind
+             * @enum {string}
+             */
+            sourceKind: "imported" | "authored" | "built_in";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
+        };
         /** SkillRevisionPage */
         SkillRevisionPage: {
             /** Items */
@@ -4392,12 +4816,33 @@ export interface components {
             applicableTasks: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[];
             /** Assetid */
             assetId: string;
+            /** Builtin */
+            builtIn: boolean;
             /** Contentdigest */
             contentDigest: string;
+            /**
+             * Description
+             * @default null
+             */
+            description?: string | null;
             /** Displayname */
             displayName: string;
+            /** Islatest */
+            isLatest: boolean;
             /** Revisionid */
             revisionId: string;
+            /** Skillid */
+            skillId: string;
+            /**
+             * Sourcekind
+             * @enum {string}
+             */
+            sourceKind: "imported" | "authored" | "built_in";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -4987,6 +5432,22 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ToolDescriptor */
+        ToolDescriptor: {
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Required */
+            required: boolean;
+            /** Toolid */
+            toolId: string;
+        };
+        /** ToolPage */
+        ToolPage: {
+            /** Items */
+            items: components["schemas"]["ToolDescriptor"][];
+        };
         /** TraceSpanView */
         TraceSpanView: {
             /** Attempt */
@@ -5491,6 +5952,335 @@ export interface operations {
             };
         };
     };
+    ai_create_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionDetail"];
+                };
+            };
+            /** @description Agent draft rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent name conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_disable_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_enable_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_agent_revision_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_revise_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReviseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionDetail"];
+                };
+            };
+            /** @description Agent draft rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in agent is immutable */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     ai_get_agent_revision: {
         parameters: {
             query?: never;
@@ -5509,7 +6299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AiAgentRevisionSummary"];
+                    "application/json": components["schemas"]["AiAgentRevisionDetail"];
                 };
             };
             /** @description Project scope or authorization denied */
@@ -5648,6 +6438,216 @@ export interface operations {
             };
         };
     };
+    ai_create_skill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionDetail"];
+                };
+            };
+            /** @description Skill frontmatter invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_import_skill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillImportPreview"];
+                };
+            };
+            /** @description Skill package rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill package too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_commit_skill_import: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                import_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportCommitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillImportCommitResult"];
+                };
+            };
+            /** @description Skill not found in package */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill name or revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Staged import expired */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     ai_get_skill_revision: {
         parameters: {
             query?: never;
@@ -5666,7 +6666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SkillRevisionSummary"];
+                    "application/json": components["schemas"]["SkillRevisionDetail"];
                 };
             };
             /** @description Project scope or authorization denied */
@@ -5698,6 +6698,357 @@ export interface operations {
             };
             /** @description Knowledge runtime unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_download_skill_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                path: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Skill file path rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_disable_skill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_enable_skill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionSummary"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_skill_revision_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_revise_skill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillReviseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionDetail"];
+                };
+            };
+            /** @description Skill frontmatter invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_tools: {
+        parameters: {
+            query?: {
+                locale?: ("en" | "zh") | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

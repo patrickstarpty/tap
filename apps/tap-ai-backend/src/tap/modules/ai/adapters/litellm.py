@@ -49,6 +49,7 @@ from tap.modules.ai.domain.models import (
     schema_digest,
     text_digest,
 )
+from tap.modules.ai.domain.tools import known_tool_ids
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.platform.budget import current_meter
 from tap.platform.telemetry import current_binding, span
@@ -437,7 +438,7 @@ class LiteLLMModelGateway:
         governed = bool(request.governance_digests or request.tool_allowlist)
         if (
             type(request.tool_allowlist) is not frozenset
-            or not request.tool_allowlist <= {"knowledge.search", "knowledge.answer"}
+            or not request.tool_allowlist <= known_tool_ids()
             or type(request.governance_digests) is not tuple
             or any(
                 not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None

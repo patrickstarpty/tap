@@ -56,31 +56,182 @@ class ModelCatalogPage(ContractModel):
 class AiAgentRevisionSummary(ContractModel):
     revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    agent_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)] | None = None
     content_digest: CanonicalSha256
     tool_allowlist: Annotated[
-        list[Literal["knowledge.search", "knowledge.answer"]], Field(max_length=2)
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=32),
     ]
     output_schema_digest: CanonicalSha256
+    source_kind: Literal["imported", "authored", "built_in"]
+    built_in: StrictBool
+    status: Literal["enabled", "disabled"]
+    is_latest: StrictBool
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
+        None
+    )
+    has_skill_updates: StrictBool = False
+
+
+class AiAgentRevisionDetail(AiAgentRevisionSummary):
+    # Optional (unlike AgentDraftRequest's required field below): every
+    # agent created/revised through this API always has one (validated at
+    # write time), but a revision read back whose stored value is absent
+    # must not 500 against a `min_length=1` requirement — mirrors
+    # `description`'s `| None` pattern above.
+    system_instruction: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=40_000)] | None
+    ) = None
 
 
 class AiAgentRevisionPage(ContractModel):
-    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+    # Also backs the revision-history endpoint (`GET /ai/agents/{agentId}/revisions`),
+    # whose item count is a revision count, not an asset count -- bounded well above
+    # the asset-list cap so a long-lived Agent's full history still fits (C-1).
+    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=1000)]
+
+
+class AgentDraftRequest(ContractModel):
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=40_000)]
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    tool_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=32),
+    ] = Field(default_factory=list)
+    default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
+        None
+    )
+
+
+class AgentReviseRequest(AgentDraftRequest):
+    base_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+
+
+class ToolDescriptor(ContractModel):
+    tool_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    required: StrictBool
+
+
+class ToolPage(ContractModel):
+    items: Annotated[list[ToolDescriptor], Field(max_length=32)]
 
 
 class SkillRevisionSummary(ContractModel):
     revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    skill_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)] | None = None
     content_digest: CanonicalSha256
     applicable_tasks: Annotated[
         list[Literal["knowledge.answer", "test-plan.generate", "automation.generate"]],
         Field(min_length=1, max_length=3),
     ]
+    source_kind: Literal["imported", "authored", "built_in"]
+    built_in: StrictBool
+    status: Literal["enabled", "disabled"]
+    is_latest: StrictBool
 
 
 class SkillRevisionPage(ContractModel):
-    items: Annotated[list[SkillRevisionSummary], Field(max_length=64)]
+    # Also backs the revision-history endpoint (`GET /ai/skills/{skillId}/revisions`);
+    # see `AiAgentRevisionPage` (C-1).
+    items: Annotated[list[SkillRevisionSummary], Field(max_length=1000)]
+
+
+class SkillFileView(ContractModel):
+    relative_path: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    size_bytes: Annotated[int, Field(strict=True, ge=0)]
+    sha256: Annotated[
+        str, Field(strict=True, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    ]
+    category: Literal["skill", "reference", "script", "asset", "other"]
+    attached: StrictBool
+
+
+class SkillRevisionDetail(SkillRevisionSummary):
+    instructions: Annotated[str, Field(strict=True, max_length=300_000)] | None = None
+    attached_references: Annotated[str, Field(strict=True, max_length=100_000)] | None = None
+    frontmatter: dict[str, JsonValue] | None = None
+    files: Annotated[list[SkillFileView], Field(max_length=500)] = Field(default_factory=list)
+
+
+class SkillImportPreviewItem(ContractModel):
+    root: Annotated[str, Field(strict=True, max_length=255)]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    frontmatter: dict[str, JsonValue]
+    files: Annotated[list[SkillFileView], Field(max_length=500)]
+    warnings: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=512)]],
+        Field(max_length=50),
+    ] = Field(default_factory=list)
+    conflict_skill_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+
+
+class SkillImportPreview(ContractModel):
+    import_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    expires_at: datetime
+    # A package may contain up to 500 files (global constraint); in the
+    # degenerate case of one file (SKILL.md) per Skill, that is up to 500
+    # Skills in a single preview -- align with the package limit rather
+    # than an arbitrary lower cap.
+    skills: Annotated[list[SkillImportPreviewItem], Field(max_length=500)]
+
+
+class SkillImportTextRequest(ContractModel):
+    text: Annotated[str, Field(strict=True, min_length=1, max_length=300_000)]
+
+
+class SkillImportSelection(ContractModel):
+    root: Annotated[str, Field(strict=True, max_length=255)]
+    as_new_revision_of: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = (
+        None
+    )
+
+
+class SkillImportCommitRequest(ContractModel):
+    # See `SkillImportPreview.skills` (package file-count limit).
+    selections: Annotated[list[SkillImportSelection], Field(min_length=1, max_length=500)]
+
+
+class SkillImportCommitResult(ContractModel):
+    revisions: Annotated[list[SkillRevisionDetail], Field(max_length=500)]
+
+
+class SkillDraftRequest(ContractModel):
+    name: Annotated[str, Field(strict=True, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=64)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    instructions: Annotated[str, Field(strict=True, min_length=1, max_length=300_000)]
+    applicable_tasks: (
+        Annotated[
+            list[Literal["knowledge.answer", "test-plan.generate", "automation.generate"]],
+            Field(min_length=1, max_length=3),
+        ]
+        | None
+    ) = None
+
+
+class SkillReviseRequest(SkillDraftRequest):
+    base_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+
+
+class SkillProblem(ContractModel):
+    code: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    detail: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
 
 
 class SourceFamily(str, Enum):
@@ -1094,6 +1245,7 @@ class ConversationTurnInputView(ContractModel):
     agent_label: str | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
+    skill_notices: list[str] = []
     insights_query_id: str | None = None
 
 

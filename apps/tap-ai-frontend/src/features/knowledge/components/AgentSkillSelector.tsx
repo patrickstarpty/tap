@@ -6,6 +6,31 @@ export interface ApprovedAiAsset {
   readonly displayName: string;
 }
 
+export interface SkillBudgetSummary {
+  /** UTF-8 bytes the currently-selected Skills would add to this turn. */
+  usedBytes: number;
+  /** Server-enforced per-turn Skill text budget (96 KB). */
+  limitBytes: number;
+  /** Display names of the largest selected Skills, biggest first. */
+  largest: readonly string[];
+}
+
+export interface AgentSkillSelectorLabels {
+  fromAgent: string;
+  skillBudgetWarning: string;
+  skillBudgetExceeded: string;
+  largestSkills: string;
+}
+
+const DEFAULT_LABELS: AgentSkillSelectorLabels = {
+  fromAgent: "From Agent",
+  skillBudgetWarning:
+    "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+  skillBudgetExceeded:
+    "Selected skills exceed the per-turn budget. Remove some before saving.",
+  largestSkills: "Largest skills",
+};
+
 export function AgentSkillSelector({
   agents,
   skills,
@@ -16,6 +41,12 @@ export function AgentSkillSelector({
   loading = false,
   error = null,
   onRetry,
+  // Skills the selected Agent bundles in: shown with a "From Agent" tag and
+  // not individually removable from here — deselecting the Agent is what
+  // drops them, matching the composer's own agent-bundled-skill behavior.
+  lockedSkillRevisionIds = [],
+  skillBudget,
+  labels,
 }: {
   agents: readonly ApprovedAiAsset[];
   skills: readonly ApprovedAiAsset[];
@@ -26,7 +57,13 @@ export function AgentSkillSelector({
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  lockedSkillRevisionIds?: readonly string[];
+  skillBudget?: SkillBudgetSummary;
+  /** Localized copy for the locked-skill tag and budget hints; defaults to
+   * English when the consumer doesn't localize this component yet. */
+  labels?: Partial<AgentSkillSelectorLabels>;
 }) {
+  const text = { ...DEFAULT_LABELS, ...labels };
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [retiredSkillsRemoved, setRetiredSkillsRemoved] = useState(false);
   const selected = agents.find((item) => item.revisionId === agentRevisionId);
@@ -98,12 +135,13 @@ export function AgentSkillSelector({
         <fieldset aria-label="Skills">
           {skills.map((item) => {
             const checked = activeSkills.includes(item.revisionId);
+            const locked = lockedSkillRevisionIds.includes(item.revisionId);
             return (
               <label key={item.revisionId}>
                 <input
                   type="checkbox"
-                  checked={checked}
-                  disabled={loading}
+                  checked={checked || locked}
+                  disabled={loading || locked}
                   onChange={() =>
                     onSkillsChange(
                       checked
@@ -113,11 +151,23 @@ export function AgentSkillSelector({
                   }
                 />
                 {item.displayName}
+                {locked && <span>{text.fromAgent}</span>}
               </label>
             );
           })}
         </fieldset>
       )}
+      {skillBudget && skillBudget.usedBytes > skillBudget.limitBytes ? (
+        <div role="alert">
+          <p>{text.skillBudgetExceeded}</p>
+          <p>
+            {text.largestSkills}: {skillBudget.largest.join(", ")}
+          </p>
+        </div>
+      ) : skillBudget &&
+        skillBudget.usedBytes >= skillBudget.limitBytes * 0.9 ? (
+        <p role="status">{text.skillBudgetWarning}</p>
+      ) : null}
     </div>
   );
 }
