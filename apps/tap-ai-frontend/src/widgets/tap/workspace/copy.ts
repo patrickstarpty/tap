@@ -66,6 +66,27 @@ export interface WorkspaceCopy {
     seedEntities(count: number): string;
     relationPaths: string;
     noRelationEvidence: string;
+    toolStepRow(
+      toolRound: number,
+      toolName: string,
+      summary: string,
+      durationMs: number,
+    ): string;
+    toolName(toolId: string): string;
+    stepStatus: {
+      running: string;
+      completed: string;
+      rejected: string;
+      failed: string;
+    };
+    clarificationLabel: string;
+    insightsMetricsHeading: string;
+    insightsFactRow(
+      label: string,
+      metricId: string,
+      value: number | null,
+      asOf: string,
+    ): string;
   };
   sources: {
     heading: string;
@@ -318,7 +339,6 @@ export interface WorkspaceCopy {
       boundSkillOutdated: string;
       removeSkill: string;
       toolsLabel: string;
-      toolsBuiltIn: string;
       save: string;
       cancel: string;
       nameInvalid: string;
@@ -527,6 +547,34 @@ export const WORKSPACE_COPY = {
       relationPaths: "Relation paths",
       noRelationEvidence:
         "No direct relation evidence was found; the answer below is grounded in source passages.",
+      toolStepRow: (
+        toolRound: number,
+        toolName: string,
+        summary: string,
+        durationMs: number,
+      ) => `Round ${toolRound} · ${toolName} · ${summary} · ${durationMs} ms`,
+      toolName: (toolId: string) =>
+        (
+          ({
+            "knowledge.search": "Knowledge search",
+            "graph.relations": "Relation analysis",
+            "insights.query": "Insights query",
+          }) as Record<string, string>
+        )[toolId] ?? toolId,
+      stepStatus: {
+        running: "Running",
+        completed: "Done",
+        rejected: "Rejected",
+        failed: "Failed",
+      },
+      clarificationLabel: "Needs more information",
+      insightsMetricsHeading: "Insights metrics",
+      insightsFactRow: (
+        label: string,
+        metricId: string,
+        value: number | null,
+        asOf: string,
+      ) => `${label} · ${metricId} = ${value ?? "—"} (as of ${asOf})`,
     },
     sources: {
       heading: "Knowledge sources",
@@ -786,8 +834,7 @@ export const WORKSPACE_COPY = {
         boundSkillOutdated:
           "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
         removeSkill: "Remove",
-        toolsLabel: "Built-in tools",
-        toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
+        toolsLabel: "Tools",
         save: "Save",
         cancel: "Cancel",
         nameInvalid: "Enter a name up to 128 characters.",
@@ -1006,6 +1053,34 @@ export const WORKSPACE_COPY = {
       seedEntities: (count: number) => `${count} 个种子实体`,
       relationPaths: "关系路径",
       noRelationEvidence: "未找到直接关系证据，以下为资料原文依据",
+      toolStepRow: (
+        toolRound: number,
+        toolName: string,
+        summary: string,
+        durationMs: number,
+      ) => `第 ${toolRound} 轮 · ${toolName} · ${summary} · ${durationMs} ms`,
+      toolName: (toolId: string) =>
+        (
+          ({
+            "knowledge.search": "知识检索",
+            "graph.relations": "关系分析",
+            "insights.query": "Insights 查询",
+          }) as Record<string, string>
+        )[toolId] ?? toolId,
+      stepStatus: {
+        running: "运行中",
+        completed: "完成",
+        rejected: "已拒绝",
+        failed: "失败",
+      },
+      clarificationLabel: "需要补充信息",
+      insightsMetricsHeading: "Insights 指标",
+      insightsFactRow: (
+        label: string,
+        metricId: string,
+        value: number | null,
+        asOf: string,
+      ) => `${label} · ${metricId} = ${value ?? "—"}（截至 ${asOf}）`,
     },
     sources: {
       heading: "知识来源",
@@ -1251,8 +1326,7 @@ export const WORKSPACE_COPY = {
         boundSkillOutdated:
           "此绑定的 Skill 有新修订，Agent 仍使用绑定时的修订。",
         removeSkill: "移除",
-        toolsLabel: "内置工具",
-        toolsBuiltIn: "知识检索、知识回答（始终启用）",
+        toolsLabel: "工具",
         save: "保存",
         cancel: "取消",
         nameInvalid: "请输入不超过 128 个字符的名称。",

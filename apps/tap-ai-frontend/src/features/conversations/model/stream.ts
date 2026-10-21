@@ -87,6 +87,22 @@ export interface CitationLabelInfo {
   location: string | null;
 }
 
+/**
+ * One bounded tool-calling round's per-call progress, reduced from
+ * `task.step` SSE frames (LangGraph PR 5, Task 9/10). The same `stepId`
+ * arrives first as `"running"` and later as a terminal status
+ * (`"completed"`/`"rejected"`/`"failed"`) — the terminal frame always
+ * overwrites the running one in place rather than appending a second row.
+ */
+export interface TaskStepView {
+  stepId: string;
+  tool: string;
+  status: "running" | "completed" | "rejected" | "failed";
+  summary: string;
+  durationMs: number;
+  toolRound: number;
+}
+
 export interface StreamTurnState {
   answer: string;
   error: string | null;
@@ -120,6 +136,10 @@ export interface StreamTurnState {
    * `turn.canceled` was recorded, or `null` when the turn was canceled
    * before any draft text existed. */
   partialAnswer: string | null;
+  /** Tool-calling round steps for the current attempt, in first-seen
+   * order; reset to `[]` when a higher-attempt draft arrives (a fresh
+   * attempt's tool rounds are unrelated to a prior attempt's). */
+  steps: readonly TaskStepView[];
 }
 
 export interface ConversationStreamState {
@@ -139,6 +159,7 @@ const emptyTurn = (): StreamTurnState => ({
   citationLabels: {},
   stage: null,
   partialAnswer: null,
+  steps: [],
 });
 
 export function createStreamState(): ConversationStreamState {
@@ -305,12 +326,61 @@ export function reduceStreamEvent(
     const isNewAttempt =
       typeof payload.attempt === "number" &&
       (current.draft === null || payload.attempt > current.draft.attempt);
+    // Unlike `stage` (always null before the first draft, so clearing it
+    // on that first frame is a no-op), tool-round `steps` are routinely
+    // populated *before* the first draft frame of an attempt arrives (a
+    // model's tool calls resolve before it drafts text) — resetting on
+    // `isNewAttempt` would wipe that attempt's own steps the moment its
+    // first draft frame shows up. Only an attempt genuinely higher than
+    // one already tracked by a draft clears the prior attempt's steps.
+    const attemptAdvanced =
+      current.draft !== null &&
+      typeof payload.attempt === "number" &&
+      payload.attempt > current.draft.attempt;
     next = {
       ...current,
       draft,
       status: "running",
       stage: isNewAttempt ? null : current.stage,
+      steps: attemptAdvanced ? [] : current.steps,
     };
+  } else if (event.type === "task.step") {
+    const stepId = payload.stepId;
+    const tool = payload.tool;
+    const status = payload.status;
+    const summary = payload.summary;
+    const durationMs = payload.durationMs;
+    const toolRound = payload.toolRound;
+    if (
+      typeof stepId === "string" &&
+      typeof tool === "string" &&
+      (status === "running" ||
+        status === "completed" ||
+        status === "rejected" ||
+        status === "failed") &&
+      typeof summary === "string" &&
+      typeof durationMs === "number" &&
+      typeof toolRound === "number"
+    ) {
+      const step: TaskStepView = {
+        stepId,
+        tool,
+        status,
+        summary,
+        durationMs,
+        toolRound,
+      };
+      const existingIndex = current.steps.findIndex(
+        (candidate) => candidate.stepId === stepId,
+      );
+      const steps =
+        existingIndex === -1
+          ? [...current.steps, step]
+          : current.steps.map((candidate, index) =>
+              index === existingIndex ? step : candidate,
+            );
+      next = { ...current, steps };
+    }
   } else if (event.type === "retrieval.hits_ready") {
     const labels = payload.labels;
     if (Array.isArray(labels)) {

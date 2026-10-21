@@ -75,9 +75,11 @@ import {
   mergedDraftFacts,
   reduceStreamEvent,
   type GraphContextSummary,
+  type TaskStepView,
 } from "../../features/conversations/model/stream";
 import { DraftAnswer } from "../../features/conversations/components/DraftAnswer";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
+import type { RetrievalAnswerResponse } from "../../features/knowledge/api/types";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import { EvidencePanel } from "../../features/knowledge/components/EvidencePanel";
@@ -369,6 +371,7 @@ export function AnswerActivity({
   chunkCitationCount,
   edgeCitationCount,
   graphContext,
+  steps = [],
 }: {
   events: readonly ActivityEvent[];
   locale: "en" | "zh";
@@ -377,6 +380,7 @@ export function AnswerActivity({
   chunkCitationCount: number;
   edgeCitationCount: number;
   graphContext: GraphContextSummary | null;
+  steps?: readonly TaskStepView[];
 }) {
   const context = events.find(
     (event) => event.eventType === "context.assembled",
@@ -426,7 +430,16 @@ export function AnswerActivity({
     edgeCitationCount,
     graphContext,
   });
-  const allRows = [...rows, ...graphRows];
+  const chatCopy = WORKSPACE_COPY[locale].chat;
+  const stepRows = steps.map((step) =>
+    chatCopy.toolStepRow(
+      step.toolRound,
+      chatCopy.toolName(step.tool),
+      `${chatCopy.stepStatus[step.status]} · ${step.summary}`,
+      step.durationMs,
+    ),
+  );
+  const allRows = [...rows, ...stepRows, ...graphRows];
   if (allRows.length === 0) return null;
   return (
     <details className="tap-answer-activity">
@@ -468,6 +481,63 @@ export function AnswerProgress({
       {sources}
       {action}
     </p>
+  );
+}
+
+/**
+ * A `CLARIFY:`-prefixed answer (`answerKind === "clarification"`, LangGraph
+ * PR 5 Task 5/10): plain body text with a "needs more information" label,
+ * never routed through `GroundedAnswer` -- a clarification's `claims`/
+ * `citations` are always empty by contract, which `GroundedAnswer`'s
+ * `validateAnswerGraph` would otherwise reject as a format error.
+ */
+function ClarificationAnswer({
+  answer,
+  locale,
+}: {
+  answer: string;
+  locale: "en" | "zh";
+}) {
+  const copy = WORKSPACE_COPY[locale].chat;
+  return (
+    <div className="tapper-clarification-answer">
+      <p className="tapper-clarification-label">{copy.clarificationLabel}</p>
+      <p>{answer}</p>
+    </div>
+  );
+}
+
+/**
+ * The Insights metric records (`I<n>`-labeled) a claim actually cited
+ * (LangGraph PR 5 Task 8/10, Decision C) -- shown below the answer
+ * regardless of `answerKind`, since no knowledge citation is ever
+ * generated for an Insights label.
+ */
+function InsightsFactsList({
+  facts,
+  locale,
+}: {
+  facts: NonNullable<RetrievalAnswerResponse["insightsFacts"]>;
+  locale: "en" | "zh";
+}) {
+  if (facts.length === 0) return null;
+  const copy = WORKSPACE_COPY[locale].chat;
+  return (
+    <div className="tapper-insights-facts">
+      <h3>{copy.insightsMetricsHeading}</h3>
+      <ul>
+        {facts.map((fact) => (
+          <li key={fact.label}>
+            {copy.insightsFactRow(
+              fact.label,
+              fact.metricId,
+              fact.value ?? null,
+              fact.asOf,
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -697,7 +767,7 @@ function DurableTracePanel({
   );
 }
 
-function AssistantResponse({
+export function AssistantResponse({
   contentCopy,
   turn,
   insightsClient,
@@ -881,6 +951,7 @@ function AssistantResponse({
               chunkCitationCount={chunkCitationCount}
               edgeCitationCount={edgeCitationCount}
               graphContext={graphContext}
+              steps={turn.steps ?? []}
             />
           )}
           {graphContext !== null &&
@@ -892,13 +963,24 @@ function AssistantResponse({
               title={contentCopy.chat.noRelationEvidence}
             />
           ) : null}
-          <GroundedAnswer
-            response={turn.response}
+          {turn.response.answerKind === "clarification" ? (
+            <ClarificationAnswer
+              answer={turn.response.answer}
+              locale={turn.locale}
+            />
+          ) : (
+            <GroundedAnswer
+              response={turn.response}
+              locale={turn.locale}
+              citationNumbering="shown-order"
+              onOpenCitation={onOpenCitation}
+              historicalCitationQueryFor={historicalCitationQueryFor}
+              onPreviewCitation={onPreviewCitation}
+            />
+          )}
+          <InsightsFactsList
+            facts={turn.response.insightsFacts ?? []}
             locale={turn.locale}
-            citationNumbering="shown-order"
-            onOpenCitation={onOpenCitation}
-            historicalCitationQueryFor={historicalCitationQueryFor}
-            onPreviewCitation={onPreviewCitation}
           />
           <TurnContext
             copy={contentCopy}
@@ -1730,6 +1812,7 @@ export function TapperWorkspace() {
         citationLabels: draftFacts.citationLabels,
         stage: streamed?.stage ?? null,
         partialAnswer: streamed?.partialAnswer ?? null,
+        steps: streamed?.steps ?? [],
         traceId: turn.traceId ?? null,
         myFeedback:
           turn.myFeedback == null

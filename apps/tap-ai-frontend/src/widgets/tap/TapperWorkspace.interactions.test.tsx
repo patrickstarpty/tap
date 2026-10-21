@@ -213,6 +213,42 @@ function seedAiAssetWorkspaces(
       builtIn: true,
     },
   ]);
+  // `AgentForm`'s tool checkboxes (LangGraph PR 5 Task 10) read `GET
+  // /ai/tools` through `useTools` -- seed both locales this fixture's
+  // tests render in so opening the create/edit dialog never depends on an
+  // unmocked network call for `/ai/tools`.
+  for (const locale of ["en", "zh"] as const) {
+    queryClient.setQueryData(aiAssetKeys.tools(projectId, locale), [
+      {
+        toolId: "knowledge.search",
+        name: "Knowledge Search",
+        description: "Searches approved knowledge sources.",
+        required: true,
+        defaultEnabled: true,
+      },
+      {
+        toolId: "knowledge.answer",
+        name: "Knowledge Answer",
+        description: "Produces a governed, citation-grounded answer.",
+        required: true,
+        defaultEnabled: true,
+      },
+      {
+        toolId: "graph.relations",
+        name: "Graph Relations",
+        description: "Explores entity relations.",
+        required: false,
+        defaultEnabled: true,
+      },
+      {
+        toolId: "insights.query",
+        name: "Insights Query",
+        description: "Queries authorized Insights metrics.",
+        required: false,
+        defaultEnabled: true,
+      },
+    ]);
+  }
 }
 
 function renderWorkspace() {

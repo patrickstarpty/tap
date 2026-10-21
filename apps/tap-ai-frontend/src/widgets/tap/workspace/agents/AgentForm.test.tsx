@@ -8,8 +8,10 @@ import {
   AiAssetError,
   useCreateAgent,
   useReviseAgent,
+  useTools,
   type SkillRevision,
   type SkillRevisionDetail,
+  type ToolDescriptor,
 } from "../../../../features/knowledge/api/aiAssets";
 import { WORKSPACE_COPY } from "../copy";
 import { AgentForm, AGENT_SKILLS_BUDGET_BYTES } from "./AgentForm";
@@ -25,9 +27,41 @@ vi.mock(
       ...actual,
       useCreateAgent: vi.fn(),
       useReviseAgent: vi.fn(),
+      useTools: vi.fn(),
     };
   },
 );
+
+const TOOL_DESCRIPTORS: ToolDescriptor[] = [
+  {
+    toolId: "knowledge.search",
+    name: "Knowledge Search",
+    description: "Searches approved knowledge sources.",
+    required: true,
+    defaultEnabled: true,
+  },
+  {
+    toolId: "knowledge.answer",
+    name: "Knowledge Answer",
+    description: "Produces a governed, citation-grounded answer.",
+    required: true,
+    defaultEnabled: true,
+  },
+  {
+    toolId: "graph.relations",
+    name: "Graph Relations",
+    description: "Explores entity relations.",
+    required: false,
+    defaultEnabled: true,
+  },
+  {
+    toolId: "insights.query",
+    name: "Insights Query",
+    description: "Queries authorized Insights metrics.",
+    required: false,
+    defaultEnabled: true,
+  },
+];
 
 function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({
@@ -111,6 +145,7 @@ function renderForm(
     createMutateAsync?: ReturnType<typeof vi.fn>;
     reviseMutateAsync?: ReturnType<typeof vi.fn>;
     onClose?: () => void;
+    tools?: readonly ToolDescriptor[];
   } = {},
 ) {
   const createMutateAsync = overrides.createMutateAsync ?? vi.fn();
@@ -122,6 +157,10 @@ function renderForm(
   vi.mocked(useReviseAgent).mockReturnValue({
     mutateAsync: reviseMutateAsync,
     isPending: false,
+  } as never);
+  vi.mocked(useTools).mockReturnValue({
+    data: overrides.tools ?? TOOL_DESCRIPTORS,
+    isLoading: false,
   } as never);
 
   const onClose = overrides.onClose ?? vi.fn();
@@ -150,12 +189,50 @@ afterEach(() => {
 });
 
 describe("AgentForm fields and tools", () => {
-  it("shows the fixed read-only built-in tools text", () => {
+  it("required tools are checked and disabled; optional tools default on and toggle into toolIds", async () => {
+    const user = userEvent.setup();
     mockFetchSkillDetail({});
-    renderForm();
-    expect(
-      screen.getByText("Knowledge search, Knowledge answer (always enabled)"),
-    ).toBeVisible();
+    const createMutateAsync = vi
+      .fn()
+      .mockResolvedValue({ revisionId: "rev_new" });
+    renderForm({ createMutateAsync });
+
+    const search = screen.getByRole("checkbox", { name: "Knowledge Search" });
+    const answer = screen.getByRole("checkbox", { name: "Knowledge Answer" });
+    const relations = screen.getByRole("checkbox", { name: "Graph Relations" });
+    const insights = screen.getByRole("checkbox", { name: "Insights Query" });
+
+    expect(search).toBeChecked();
+    expect(search).toBeDisabled();
+    expect(answer).toBeChecked();
+    expect(answer).toBeDisabled();
+    expect(relations).toBeChecked();
+    expect(relations).toBeEnabled();
+    expect(insights).toBeChecked();
+    expect(insights).toBeEnabled();
+
+    await user.click(relations);
+    expect(relations).not.toBeChecked();
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "underwriting-helper",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Description" }),
+      "Helps with underwriting.",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "System instruction" }),
+      "Review the evidence.",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(createMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolIds: ["knowledge.search", "knowledge.answer", "insights.query"],
+      }),
+    );
   });
 
   it("grays out a Skill that isn't applicable to knowledge answers", () => {

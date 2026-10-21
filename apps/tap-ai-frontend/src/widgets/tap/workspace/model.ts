@@ -4,6 +4,7 @@ import type {
   CitationLabelInfo,
   DraftState,
   GraphContextSummary,
+  TaskStepView,
 } from "../../../features/conversations/model/stream";
 import type { FeedbackValue } from "../../../features/conversations/feedback/AnswerFeedback";
 
@@ -56,6 +57,7 @@ export interface AssistantTurn {
   citationLabels?: Readonly<Record<string, CitationLabelInfo>>;
   stage?: "verify" | null;
   partialAnswer?: string | null;
+  steps?: readonly TaskStepView[];
   traceId?: string | null;
   myFeedback?: FeedbackValue | null;
   attempt?: number;

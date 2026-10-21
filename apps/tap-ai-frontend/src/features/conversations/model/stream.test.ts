@@ -599,6 +599,137 @@ describe("conversation stream reducer", () => {
   });
 });
 
+describe("task.step reduction", () => {
+  it("reduces task.step running then completed into one step", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      }),
+    );
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      },
+    ]);
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "completed",
+        summary: "Found 3 hits",
+        durationMs: 120,
+        toolRound: 1,
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "completed",
+        summary: "Found 3 hits",
+        durationMs: 120,
+        toolRound: 1,
+      },
+    ]);
+  });
+
+  it("steps reset on a newer attempt", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "attempt one",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "graph.relations",
+        status: "completed",
+        summary: "done",
+        durationMs: 10,
+        toolRound: 1,
+      }),
+    );
+    expect(state.turns["turn-1"]?.steps).toHaveLength(1);
+
+    state = reduceStreamEvent(
+      state,
+      envelope(3, "turn-1", "answer.draft", {
+        attempt: 2,
+        seq: 1,
+        text: "attempt two",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.steps).toEqual([]);
+  });
+
+  it("keeps a tool round's steps when the attempt's first draft frame arrives afterward", () => {
+    // Realistic ordering: tool-round steps resolve before the model drafts
+    // any answer text, so the *first* draft frame of an attempt must not
+    // be treated as a "newer attempt" that wipes the steps it itself
+    // produced.
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "completed",
+        summary: "done",
+        durationMs: 5,
+        toolRound: 1,
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "first draft of attempt one",
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.steps).toHaveLength(1);
+  });
+
+  it("hits_ready with stepId merges labels", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 1,
+        stepId: "turn-1:r1:c0",
+        labels: [{ label: "S1", title: "Policy handbook", location: null }],
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.citationLabels).toEqual({
+      S1: { title: "Policy handbook", location: null },
+    });
+  });
+});
+
 describe("mergedDraftFacts", () => {
   it("takes the draft from the live stream (never the recovered record) after a reconnect mid-generation", () => {
     // Simulates a page reload while a turn is still generating: the
