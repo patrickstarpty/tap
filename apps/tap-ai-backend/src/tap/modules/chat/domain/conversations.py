@@ -435,6 +435,14 @@ class ConversationEvent:
             "stage.completed",
             "retrieval.hits_ready",
             "graph.context_ready",
+            # PR 5 (Task 9): one `task.step` per native tool call (running,
+            # then a terminal completed/rejected/failed), emitted by the
+            # `tools` graph node. Missing from this closed set is a
+            # production bug -- every real `task.step` emission through
+            # `ConversationService.emit` would raise the same
+            # `ValueError("unknown conversation event")` this MySQL
+            # integration test caught (Task 12).
+            "task.step",
             "rerank.completed",
             # C-1: no code writes this anymore (PR 3 moved the model's answer
             # to Redis drafts), but older `develop`/`main` builds persisted it

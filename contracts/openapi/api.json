@@ -1572,6 +1572,7 @@
               "retrieval.hits_ready",
               "graph.context_ready",
               "rerank.completed",
+              "task.step",
               "citation.resolved",
               "turn.completed",
               "turn.abstained",

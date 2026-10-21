@@ -837,3 +837,245 @@ test("an abstained answer replaces the draft", async ({ page }) => {
   );
   expect(deleted.status()).toBe(204);
 });
+
+test("multi-step tool calls show steps before the cited answer", async ({
+  page,
+}) => {
+  // LangGraph PR 5 Task 12: `[e2e-tool:knowledge.search:<argument text>]`
+  // is matched by `DeterministicModelGateway`'s fake tool-calling path
+  // (`apps/tap-ai-backend/src/tap/testing/deterministic_model_gateway.py`)
+  // against the question text, forcing one native `knowledge.search` tool
+  // call before the model's final answer -- exercising the real
+  // `model -> tools -> model` round trip end to end (`task.step`
+  // running/completed, `retrieval.hits_ready`, then the cited answer),
+  // not just the deterministic single-shot answer path the other tests
+  // in this file cover.
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  const sourceFilename = `multi-step-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `multi-step-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Multi-step evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as { source: { sourceId: string } };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(sourceFilename, "u") })
+    .check();
+
+  const prompt = `What does the identity policy require ${Date.now()} [e2e-tool:knowledge.search:verified identity evidence]`;
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  // The deterministic turn's tool round can complete within one Playwright
+  // polling interval (same reasoning as the durable-conversation test
+  // above): record every DOM commit instead of polling for the transient
+  // `.tap-task-steps` row.
+  await page.evaluate(() => {
+    const seen = { stepRow: false };
+    (
+      window as unknown as { tapperStepRowSeen: typeof seen }
+    ).tapperStepRowSeen = seen;
+    new MutationObserver(() => {
+      if (document.querySelector(".tap-task-steps")) seen.stepRow = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+
+  const stepRowSeen = await page.evaluate(
+    () =>
+      (window as unknown as { tapperStepRowSeen?: { stepRow: boolean } })
+        .tapperStepRowSeen?.stepRow ?? false,
+  );
+  expect(stepRowSeen).toBe(true);
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: {
+        tool?: string;
+        status?: string;
+        answer?: { citations?: Array<{ citationId: string }> };
+      };
+    }>;
+  };
+  const toolSteps = eventPage.items.filter(
+    (item) => item.eventType === "task.step",
+  );
+  expect(toolSteps.some((item) => item.payload.status === "completed")).toBe(
+    true,
+  );
+  const completedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  );
+  expect(
+    completedEvent?.payload.answer?.citations?.length ?? 0,
+  ).toBeGreaterThan(0);
+
+  // The finalized answer still shows a citation badge after the tool
+  // round -- the same accessible chip every other grounded answer in this
+  // file asserts on.
+  await expect(
+    page
+      .getByRole("button", {
+        name: /Open source citation 1|打开来源引用 1/u,
+      })
+      .first(),
+  ).toBeVisible({ timeout: 5_000 });
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `multi-step-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
+});
+
+test("a clarification reply renders without citations", async ({ page }) => {
+  // LangGraph PR 5 Task 5/10/12: `[e2e-clarify]` forces the deterministic
+  // fake model to reply with a `CLARIFY:`-prefixed answer -- the Turn
+  // completes with `answerKind = "clarification"` and no claims/citations
+  // (spec gap ruling), rendered through `ClarificationAnswer` instead of
+  // `GroundedAnswer`.
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+
+  const prompt = `Which product do you mean ${Date.now()} [e2e-clarify]`;
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: {
+        answer?: { answerKind?: string; citations?: unknown[] };
+      };
+    }>;
+  };
+  const completedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  );
+  expect(completedEvent?.payload.answer?.answerKind).toBe("clarification");
+  expect(completedEvent?.payload.answer?.citations).toEqual([]);
+
+  await expect(
+    page.getByText(/^(Needs more information|需要补充信息)$/u),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/请说明你指的是哪个产品或版本|which product or version/iu),
+  ).toBeVisible();
+  // No citation chip and no redaction/injection warning should ever
+  // appear on a clarification -- `claims`/`citations` are contractually
+  // empty.
+  await expect(
+    page.getByRole("button", { name: /Open source citation/u }),
+  ).toHaveCount(0);
+});

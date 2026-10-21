@@ -1412,6 +1412,10 @@ class ConversationEventItem(ContractModel):
         "retrieval.hits_ready",
         "graph.context_ready",
         "rerank.completed",
+        # PR 5 (Task 9/12): one `task.step` per native tool call, persisted
+        # the same way every other mid-turn event is (see `ConversationEvent`,
+        # `modules/chat/domain/conversations.py`).
+        "task.step",
         "citation.resolved",
         "turn.completed",
         "turn.abstained",
