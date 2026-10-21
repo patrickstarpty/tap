@@ -261,7 +261,15 @@ class AnswerSnapshot:
         # are always empty by construction (`AuthorizedRetrieval.verify_answer`),
         # so the ordinary "every non-abstained answer must carry a grounded
         # claim" invariant below does not apply to it.
-        if not response.abstained and response.answer_kind != "clarification":
+        # An insights-only answer (final review C-1, Decision C) likewise
+        # carries no knowledge claim or citation: its facts are the cited
+        # `I<n>` records in `insights_facts`, already shape-checked by
+        # `_validate_gateway_response`.
+        if (
+            not response.abstained
+            and response.answer_kind != "clarification"
+            and not is_insights_only_answer(response)
+        ):
             if not response.claims or any(
                 not claim.citation_ids or not set(claim.citation_ids) <= citation_ids
                 for claim in response.claims
@@ -318,6 +326,18 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
     if anchor.bbox:
         value["bbox"] = list(anchor.bbox)
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def is_insights_only_answer(response: AnswerResponse) -> bool:
+    """A non-abstained ordinary answer whose only cited evidence is Insights
+    records (Decision C): no claims, at least one `insights_facts` entry."""
+
+    return (
+        not response.abstained
+        and response.answer_kind == "answer"
+        and not response.claims
+        and bool(response.insights_facts)
+    )
 
 
 def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str) -> None:
@@ -412,6 +432,19 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
             or not isinstance(response.answer_provenance, ModelCallProvenance)
         ):
             raise ValueError("gateway clarification shape is inconsistent")
+        return
+    if not response.claims and response.insights_facts:
+        # An insights-only answer (final review C-1, Decision C): every cited
+        # fact is an Insights `I<n>` record surfaced through
+        # `insights_facts`, so it carries no knowledge claim and no
+        # citation. Every other claim-less non-abstained shape stays invalid.
+        if (
+            not response.answer
+            or response.citations
+            or response.abstention_reason is not None
+            or not isinstance(response.answer_provenance, ModelCallProvenance)
+        ):
+            raise ValueError("gateway insights-only answer shape is inconsistent")
         return
     if (
         not response.answer

@@ -336,6 +336,76 @@ async def test_frozen_clarification_persists_without_claims_or_citations():
     assert len(repository.snapshots) == 1
 
 
+def _insights_only(**overrides):
+    from tap.modules.knowledge.domain.models import InsightsFact
+
+    values = dict(
+        answer="上周回归通过率为 92%。",
+        claims=(),
+        citations=(),
+        insights_facts=(
+            InsightsFact(
+                label="I1",
+                query_id="insq_1",
+                metric_id="pass_rate",
+                value=0.92,
+                as_of="2026-10-18T00:00:00Z",
+            ),
+        ),
+    )
+    values.update(overrides)
+    return replace(answer_response(), **values)
+
+
+@pytest.mark.asyncio
+async def test_frozen_insights_only_answer_persists_without_claims_or_citations():
+    """Final review C-1: a non-abstained answer whose only cited evidence is
+    Insights (`I<n>`) records carries no knowledge claims or citations by
+    construction (Decision C) -- `save_frozen` must accept it."""
+    answer_service, repository, _gateway = service(response=_insights_only())
+    frozen = (ready(),)
+    from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+
+    response = await answer_service.answer_frozen(
+        request_for("doc_a"), frozen, build_demo_policy_context(frozen), governance=None
+    )
+
+    assert response.claims == ()
+    assert response.insights_facts[0].label == "I1"
+    assert len(repository.snapshots) == 1
+    assert repository.snapshots[0].citations == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"insights_facts": ()},
+        {"answer": ""},
+        {"answer_provenance": None},
+    ],
+)
+def test_snapshot_rejects_malformed_insights_only_answers(overrides) -> None:
+    async def scenario() -> None:
+        answer_service, repository, _gateway = service(response=_insights_only(**overrides))
+        with pytest.raises(AnswerSnapshotUnavailable):
+            await answer_service.answer(request_for("doc_a"))
+        assert repository.snapshots == []
+
+    asyncio.run(scenario())
+
+
+def test_snapshot_rejects_insights_only_answer_with_uncited_citations() -> None:
+    async def scenario() -> None:
+        answer_service, repository, _gateway = service(
+            response=_insights_only(citations=answer_response().citations)
+        )
+        with pytest.raises(AnswerSnapshotUnavailable):
+            await answer_service.answer(request_for("doc_a"))
+        assert repository.snapshots == []
+
+    asyncio.run(scenario())
+
+
 def test_snapshot_still_rejects_an_ordinary_non_abstained_answer_without_claims() -> None:
     """The invariant fix round 1 narrowed (clarification only) must still
     hold for every ordinary (`answer_kind == "answer"`) non-abstained

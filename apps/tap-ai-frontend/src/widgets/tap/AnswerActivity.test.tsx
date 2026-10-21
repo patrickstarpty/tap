@@ -310,6 +310,91 @@ it("clarification answer shows needs-more-information label without citation war
   expect(screen.queryByText("回答格式无法核验，请重新提问。")).toBeNull();
 });
 
+it("insights-only answer shows body and Insights metrics without citation warning", () => {
+  const turn: AssistantTurn = {
+    id: "turn-1",
+    intent: "answer",
+    locale: "zh",
+    modelId: "model-1",
+    prompt: "本周首次通过率如何？",
+    sourceReferences: [],
+    status: "completed",
+    response: {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "本周首次通过率为 0.92。",
+      answerKind: "answer",
+      abstained: false,
+      claims: [],
+      citations: [],
+      insightsFacts: [
+        {
+          label: "I1",
+          queryId: "insq-1",
+          metricId: "first_pass_rate",
+          value: 0.92,
+          asOf: "2026-01-31T00:00:00Z",
+        },
+      ],
+    },
+  };
+  render(
+    createElement(AssistantResponse, {
+      contentCopy: WORKSPACE_COPY.zh,
+      turn,
+      onOpenCitation: () => {},
+      onRetryConversation: () => {},
+    }),
+    { wrapper: queryWrapper },
+  );
+
+  expect(screen.getByText("本周首次通过率为 0.92。")).toBeVisible();
+  expect(screen.getByText("Insights 指标")).toBeVisible();
+  expect(screen.getByText(/first_pass_rate/)).toBeVisible();
+  expect(screen.queryByText("回答格式无法核验，请重新提问。")).toBeNull();
+});
+
+it("a claim-less answer without Insights facts still shows the citation format warning", () => {
+  const turn: AssistantTurn = {
+    id: "turn-1",
+    intent: "answer",
+    locale: "zh",
+    modelId: "model-1",
+    prompt: "本周首次通过率如何？",
+    sourceReferences: [],
+    status: "completed",
+    response: {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "没有依据的回答。",
+      answerKind: "answer",
+      abstained: false,
+      claims: [],
+      citations: [],
+      insightsFacts: [],
+    },
+  };
+  render(
+    createElement(AssistantResponse, {
+      contentCopy: WORKSPACE_COPY.zh,
+      turn,
+      onOpenCitation: () => {},
+      onRetryConversation: () => {},
+    }),
+    { wrapper: queryWrapper },
+  );
+
+  expect(screen.getByText("回答格式无法核验，请重新提问。")).toBeVisible();
+});
+
 it("gates the answer feedback control to a completed turn with a durable conversation", () => {
   expect(
     shouldShowAnswerFeedback({ status: "completed" }, "conversation-1"),

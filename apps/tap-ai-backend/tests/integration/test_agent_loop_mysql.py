@@ -617,6 +617,70 @@ async def test_insights_joint_analysis_with_fake_port(owned_project_mysql) -> No
 
 
 @pytest.mark.asyncio
+async def test_insights_only_answer_completes_persists_and_replays(owned_project_mysql) -> None:
+    """Final review C-1: an answer whose only cited evidence is an Insights
+    (`I<n>`) record has no claims/citations (Decision C). It must complete
+    the Turn through the production chain (verify -> finalize -> save_frozen),
+    persist, and replay through the real SSE stream route from a fresh
+    repository -- not fail as `AnswerSnapshotUnavailable`."""
+    import json
+    from dataclasses import replace
+
+    import httpx
+
+    from tap.interfaces.http.app import create_app
+    from tests.conftest import validation_http_services
+
+    setup, engine = await _setup(owned_project_mysql, insights_report_ref="report-1")
+    replay_engine = create_async_engine(
+        owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+    )
+    try:
+        question = "本周的首次通过率如何 [e2e-tool:insights.query:ignored] [e2e-insights-only]"
+        frozen = _frozen(question, insights_report_refs=("report-1",))
+        await setup.conversations.create(
+            "chat-insights-only", "turn-insights-only", "request-insights-only", frozen
+        )
+        loaded = await _run_until_completed(setup, "chat-insights-only")
+        assert loaded.turns[0].state == "completed"
+        completed = next(event for event in loaded.events if event.event_type == "turn.completed")
+        answer = completed.payload["answer"]
+        assert answer["abstained"] is False
+        assert answer["answerKind"] == "answer"
+        assert answer["claims"] == []
+        assert answer["citations"] == []
+        assert answer["insightsFacts"][0]["metricId"] == "first_pass_rate"
+        assert answer["answer"].strip()
+
+        fresh = ConversationService(
+            MysqlConversationRepository(
+                async_sessionmaker(replay_engine, expire_on_commit=False),
+                scope=VALIDATION_SCOPE,
+            ),
+            scope=VALIDATION_SCOPE,
+        )
+        app = create_app(replace(validation_http_services(), conversations=fresh))
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resumed = await client.get(
+                "/api/v1/projects/tapper-demo/conversations/chat-insights-only/stream",
+                headers={"Last-Event-ID": "0"},
+            )
+        assert resumed.status_code == 200
+        frames = [
+            json.loads(line[6:]) for line in resumed.text.splitlines() if line.startswith("data: ")
+        ]
+        replayed = next(frame for frame in frames if frame["event"]["type"] == "turn.completed")
+        replayed_answer = replayed["event"]["payload"]["answer"]
+        assert replayed_answer["claims"] == []
+        assert replayed_answer["insightsFacts"] == answer["insightsFacts"]
+    finally:
+        await replay_engine.dispose()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_clarification_reply_completes_without_citations(owned_project_mysql) -> None:
     setup, engine = await _setup(owned_project_mysql)
     try:

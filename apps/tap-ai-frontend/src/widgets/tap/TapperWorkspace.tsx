@@ -554,6 +554,34 @@ function ClarificationAnswer({
 }
 
 /**
+ * An insights-only answer (final review C-1, Decision C): non-abstained, no
+ * knowledge claims, and at least one cited Insights (`I<n>`) record. Its
+ * facts live in `insightsFacts` (rendered by `InsightsFactsList` below), so
+ * it is never routed through `GroundedAnswer`, whose `validateAnswerGraph`
+ * requires knowledge claims and citations. Every other claim-less shape still
+ * goes to `GroundedAnswer` and its format warning.
+ */
+function isInsightsOnlyAnswer(response: RetrievalAnswerResponse): boolean {
+  return (
+    !response.abstained &&
+    response.answerKind !== "clarification" &&
+    typeof response.answer === "string" &&
+    response.answer.length > 0 &&
+    Array.isArray(response.claims) &&
+    response.claims.length === 0 &&
+    (response.insightsFacts?.length ?? 0) > 0
+  );
+}
+
+function InsightsOnlyAnswer({ answer }: { answer: string }) {
+  return (
+    <div className="tapper-insights-only-answer">
+      <p>{answer}</p>
+    </div>
+  );
+}
+
+/**
  * The Insights metric records (`I<n>`-labeled) a claim actually cited
  * (LangGraph PR 5 Task 8/10, Decision C) -- shown below the answer
  * regardless of `answerKind`, since no knowledge citation is ever
@@ -1015,6 +1043,8 @@ export function AssistantResponse({
               answer={turn.response.answer}
               locale={turn.locale}
             />
+          ) : isInsightsOnlyAnswer(turn.response) ? (
+            <InsightsOnlyAnswer answer={turn.response.answer} />
           ) : (
             <GroundedAnswer
               response={turn.response}

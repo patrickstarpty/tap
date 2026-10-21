@@ -76,6 +76,12 @@ _TOOL_MARKER_PREFIX = "[e2e-tool:"
 _CLARIFY_MARKER = "[e2e-clarify]"
 _CLARIFY_REPLY = "CLARIFY: 请说明你指的是哪个产品或版本？"
 
+# Final review C-1: `[e2e-insights-only]` makes the grounded answer cite only
+# the Insights (`I<n>`) records in the pool -- no S/R claim at all -- so the
+# insights-only answer shape (Decision C: no claims, non-empty
+# `insightsFacts`) is exercised end to end without a real model.
+_INSIGHTS_ONLY_MARKER = "[e2e-insights-only]"
+
 # Task 12: one marker produces one native tool call per model round --
 # `[e2e-tool:<toolId>:<argument text>]`, matched in the order it appears in
 # the question. `toolId` is the dotted tool id (`knowledge.search`,
@@ -356,6 +362,9 @@ def _grounded_claims_from_context(context: str) -> list[dict[str, Any]]:
         insights = []
     claims: list[dict[str, Any]] = []
     used: set[str] = set()
+    if _INSIGHTS_ONLY_MARKER in _question_from_context(context):
+        evidence = []
+        relations = []
     # A relation question's fake answer must still cite the edge
     # (`R1`), not only chunk evidence, or the `R`-label reconciliation
     # in `relation_claims.py` strips every edge citation and the
