@@ -5768,6 +5768,23 @@ export interface components {
             /** Nodeid */
             nodeId: string;
         };
+        /**
+         * InsightsFactView
+         * @description Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited
+         *     `I<n>` Insights metric record, in citation order.
+         */
+        tap__contracts__chat_stream__InsightsFactView: {
+            /** Asof */
+            asOf: string;
+            /** Label */
+            label: string;
+            /** Metricid */
+            metricId: string;
+            /** Queryid */
+            queryId: string;
+            /** Value */
+            value?: number | null;
+        };
         /** OpenApiAnchor */
         tap__contracts__chat_stream__OpenApiAnchor: {
             /** Jsonpointer */
@@ -5816,6 +5833,8 @@ export interface components {
             graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
+            /** Insightsfacts */
+            insightsFacts?: components["schemas"]["tap__contracts__chat_stream__InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -5920,6 +5939,25 @@ export interface components {
             /** Nodeid */
             nodeId: string;
         };
+        /**
+         * InsightsFactView
+         * @description One `I<n>`-labeled Insights metric record a claim actually cited
+         *     (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+         *     Insights label -- a cited record surfaces here instead, in citation
+         *     order.
+         */
+        tap__contracts__http__InsightsFactView: {
+            /** Asof */
+            asOf: string;
+            /** Label */
+            label: string;
+            /** Metricid */
+            metricId: string;
+            /** Queryid */
+            queryId: string;
+            /** Value */
+            value?: number | null;
+        };
         /** OpenApiAnchor */
         tap__contracts__http__OpenApiAnchor: {
             /** Jsonpointer */
@@ -5969,7 +6007,7 @@ export interface components {
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
             /** Insightsfacts */
-            insightsFacts?: components["schemas"]["InsightsFactView"][] | null;
+            insightsFacts?: components["schemas"]["tap__contracts__http__InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */

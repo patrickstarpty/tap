@@ -878,6 +878,55 @@
       "title": "GraphEndpointView",
       "type": "object"
     },
+    "InsightsFactView": {
+      "additionalProperties": false,
+      "description": "Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited\n`I<n>` Insights metric record, in citation order.",
+      "properties": {
+        "asOf": {
+          "minLength": 1,
+          "title": "Asof",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "metricId": {
+          "minLength": 1,
+          "title": "Metricid",
+          "type": "string"
+        },
+        "queryId": {
+          "minLength": 1,
+          "title": "Queryid",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "label",
+        "queryId",
+        "metricId",
+        "asOf"
+      ],
+      "title": "InsightsFactView",
+      "type": "object"
+    },
     "OpenApiAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -2242,6 +2291,21 @@
           ],
           "default": null,
           "title": "Graphsnapshotid"
+        },
+        "insightsFacts": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/InsightsFactView"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Insightsfacts"
         },
         "queryPlanId": {
           "minLength": 1,

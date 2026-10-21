@@ -168,6 +168,17 @@ class GraphContextSummaryView(StreamContractModel):
     relation_count: int = Field(ge=0)
 
 
+class InsightsFactView(StreamContractModel):
+    """Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited
+    `I<n>` Insights metric record, in citation order."""
+
+    label: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    value: float | int | None = None
+    as_of: str = Field(min_length=1)
+
+
 class RetrievalAnswerResponse(StreamContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -187,6 +198,7 @@ class RetrievalAnswerResponse(StreamContractModel):
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
     graph_context: GraphContextSummaryView | None = None
+    insights_facts: list[InsightsFactView] | None = None
 
 
 class TurnStartedPayload(StreamContractModel):

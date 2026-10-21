@@ -12204,6 +12204,54 @@
         "title": "GraphEndpointView",
         "type": "object"
       },
+      "tap__contracts__chat_stream__InsightsFactView": {
+        "additionalProperties": false,
+        "description": "Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited\n`I<n>` Insights metric record, in citation order.",
+        "properties": {
+          "asOf": {
+            "minLength": 1,
+            "title": "Asof",
+            "type": "string"
+          },
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "metricId": {
+            "minLength": 1,
+            "title": "Metricid",
+            "type": "string"
+          },
+          "queryId": {
+            "minLength": 1,
+            "title": "Queryid",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "label",
+          "queryId",
+          "metricId",
+          "asOf"
+        ],
+        "title": "InsightsFactView",
+        "type": "object"
+      },
       "tap__contracts__chat_stream__OpenApiAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -12343,6 +12391,20 @@
               }
             ],
             "title": "Graphsnapshotid"
+          },
+          "insightsFacts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/tap__contracts__chat_stream__InsightsFactView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insightsfacts"
           },
           "queryPlanId": {
             "minLength": 1,
@@ -12739,6 +12801,54 @@
         "title": "GraphEndpointView",
         "type": "object"
       },
+      "tap__contracts__http__InsightsFactView": {
+        "additionalProperties": false,
+        "description": "One `I<n>`-labeled Insights metric record a claim actually cited\n(LangGraph PR 5, Task 8). No knowledge citation is ever generated for an\nInsights label -- a cited record surfaces here instead, in citation\norder.",
+        "properties": {
+          "asOf": {
+            "minLength": 1,
+            "title": "Asof",
+            "type": "string"
+          },
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "metricId": {
+            "minLength": 1,
+            "title": "Metricid",
+            "type": "string"
+          },
+          "queryId": {
+            "minLength": 1,
+            "title": "Queryid",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "label",
+          "queryId",
+          "metricId",
+          "asOf"
+        ],
+        "title": "InsightsFactView",
+        "type": "object"
+      },
       "tap__contracts__http__OpenApiAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -12887,7 +12997,7 @@
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/components/schemas/InsightsFactView"
+                  "$ref": "#/components/schemas/tap__contracts__http__InsightsFactView"
                 },
                 "type": "array"
               },
