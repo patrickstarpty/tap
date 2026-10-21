@@ -60,6 +60,78 @@ it("keeps an explicit New chat when durable history arrives afterwards", async (
   );
 });
 
+it("keeps New chat sendable when it is clicked as durable history auto-selects", async () => {
+  // E2E regression: history loads, the workspace auto-selects the most
+  // recent conversation, and New chat is clicked in the same instant --
+  // after that selection commits but before its follow-up effect flushes.
+  // The draft must survive, so the composer still creates a conversation.
+  const created: string[] = [];
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.endsWith("/conversations")) {
+      return json({
+        items: [
+          {
+            conversationId: "conversation-old",
+            title: "Earlier question",
+            createdAt: "2026-09-28T08:00:00Z",
+            updatedAt: "2026-09-28T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    }
+    if (request.method === "POST" && url.pathname.endsWith("/conversations")) {
+      created.push(url.pathname);
+      return json(
+        {
+          conversationId: "conversation-new",
+          turnId: "turn-new",
+          state: "queued",
+        },
+        202,
+      );
+    }
+    // Durable detail/events/stream stay in flight, as in the E2E race.
+    return new Promise<Response>(() => undefined);
+  });
+  renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+  const newChat = screen.getByRole("button", { name: "New chat" });
+  let clicked = false;
+  const observer = new MutationObserver(() => {
+    if (clicked) return;
+    const restored = Array.from(
+      document.querySelectorAll('[aria-current="page"]'),
+    ).some((element) => element.textContent?.includes("Earlier question"));
+    if (restored) {
+      clicked = true;
+      newChat.click();
+    }
+  });
+  observer.observe(document.body, {
+    attributes: true,
+    attributeFilter: ["aria-current"],
+    childList: true,
+    subtree: true,
+  });
+  try {
+    await waitFor(() => expect(clicked).toBe(true));
+  } finally {
+    observer.disconnect();
+  }
+
+  const user = userEvent.setup();
+  await user.type(
+    screen.getByRole("textbox", { name: "Message Tapper" }),
+    "After the race",
+  );
+  await user.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  expect(screen.queryByText(/Message was not sent/u)).toBeNull();
+});
+
 const ANSWER = {
   traceId: "trace-1",
   queryPlanId: "plan-1",

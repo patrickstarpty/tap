@@ -1469,7 +1469,17 @@ export function TapperWorkspace() {
       return changed ? next : current;
     });
   }, [projectId, publishedSourcesQuery.data, publishedSourcesQuery.isSuccess]);
-  const [activeConversationId, setActiveConversationId] = useState("draft");
+  const [activeConversationId, setActiveConversationIdState] =
+    useState("draft");
+  // The most recent selection, readable by a `setConversations` updater that
+  // an effect queued from an older render: history auto-selection and a New
+  // chat click can land in the same instant, and that stale updater must not
+  // drop the draft the user just switched to.
+  const latestActiveConversationId = useRef("draft");
+  const setActiveConversationId = useCallback((id: string) => {
+    latestActiveConversationId.current = id;
+    setActiveConversationIdState(id);
+  }, []);
   const insightsClient = useConversationClient(projectId);
   const queryClient = useQueryClient();
   const conversationList = useConversationList(projectId);
@@ -1792,11 +1802,10 @@ export function TapperWorkspace() {
     if (conversationList.data === undefined) return;
     const summaries = conversationList.data.pages.flatMap((page) => page.items);
     setConversations((current) => {
+      const activeId = latestActiveConversationId.current;
       if (
         summaries.length === 0 &&
-        current.some(
-          (item) => item.id === activeConversationId && item.id !== "draft",
-        )
+        current.some((item) => item.id === activeId && item.id !== "draft")
       )
         return current;
       const restored = summaries.map((summary) => {
@@ -1808,7 +1817,7 @@ export function TapperWorkspace() {
           : { ...existing, title: summary.title };
       });
       const draft = current.find((item) => item.id === "draft");
-      return (activeConversationId === "draft" || summaries.length === 0) &&
+      return (activeId === "draft" || summaries.length === 0) &&
         draft !== undefined
         ? [draft, ...restored]
         : restored;
