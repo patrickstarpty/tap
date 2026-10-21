@@ -151,9 +151,10 @@ class TurnInput:
     # `None` means every Turn frozen before this field existed, and reads as
     # `tapper-persona-v1` (`persona_for(None)`) -- the only persona that ever
     # existed, so this is not a behavior change for them. Dropped from
-    # `material()` below (same pattern as `skill_notices` /
-    # `requested_skill_revision_ids`) so an old Turn's persisted digest does
-    # not retroactively change when this field is added.
+    # `material()` below only when it is `None` (same pattern as
+    # `skill_notices` / `requested_skill_revision_ids`), so an old Turn's
+    # persisted digest does not retroactively change when this field is
+    # added; a pinned version is part of the digest.
     persona_version: str | None = None
 
     def __post_init__(self) -> None:

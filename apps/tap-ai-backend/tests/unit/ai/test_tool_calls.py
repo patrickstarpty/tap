@@ -111,3 +111,36 @@ def test_insights_query_admits_partial_filters_and_rejects_unknown_filter_key() 
     assert rejected == (
         RejectedToolCall(call_id="c1", name="insights_query", reason="invalid-arguments"),
     )
+
+
+def test_requested_calls_beyond_the_round_total_are_too_many_even_when_invalid() -> None:
+    """Final review M-8: rejected calls do not count toward the 3-call
+    execution cap, so a round's *requested* calls are also capped
+    (`MAX_REQUESTED_TOOL_CALLS_PER_ROUND`): every call past it is
+    `too-many-calls`, whatever else is wrong with it."""
+    from tap.modules.ai.domain.tool_calls import MAX_REQUESTED_TOOL_CALLS_PER_ROUND
+
+    assert MAX_REQUESTED_TOOL_CALLS_PER_ROUND == 10
+    calls = [
+        RequestedToolCall(call_id=f"c{i}", name="delete_all", arguments_json="{}")
+        for i in range(12)
+    ]
+    result = admit_tool_calls(calls, visible=("knowledge.search",), selected_source_ids=frozenset())
+    assert [item.reason for item in result[:10]] == ["unknown-tool"] * 10
+    assert [item.reason for item in result[10:]] == ["too-many-calls"] * 2
+
+
+def test_duplicate_call_ids_within_a_round_are_rejected() -> None:
+    """Final review M-9: a repeated model `call_id` is rejected with its own
+    reason code and never executed."""
+    calls = [
+        RequestedToolCall(call_id="c0", name="knowledge_search", arguments_json='{"query": "x"}'),
+        RequestedToolCall(call_id="c0", name="knowledge_search", arguments_json='{"query": "y"}'),
+        RequestedToolCall(call_id="c1", name="knowledge_search", arguments_json='{"query": "z"}'),
+    ]
+    result = admit_tool_calls(calls, visible=("knowledge.search",), selected_source_ids=frozenset())
+    assert result == (
+        AdmittedToolCall(call_id="c0", tool_id="knowledge.search", arguments={"query": "x"}),
+        RejectedToolCall(call_id="c0", name="knowledge_search", reason="duplicate-call-id"),
+        AdmittedToolCall(call_id="c1", tool_id="knowledge.search", arguments={"query": "z"}),
+    )

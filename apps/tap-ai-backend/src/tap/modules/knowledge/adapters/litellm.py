@@ -104,6 +104,10 @@ def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
 
 _INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
 _CLARIFY_PREFIX = "CLARIFY:"
+# Final review M-5: only a single line of at most this many characters after
+# the prefix is a clarification; anything longer or multi-line is handled as an
+# ordinary answer and goes through grounding.
+_CLARIFY_MAX_CHARS = 300
 _ANSWER_PROMPT = (
     "Answer the query directly and minimally using only supplied evidence; omit ancillary "
     "facts. If evidence conflicts or cannot answer the query, output exactly "
@@ -622,8 +626,17 @@ class KnowledgeModelGateway:
                     ),
                 )
             raw_text = result.output if isinstance(result.output, str) else "".join(chunks)
-            if raw_text.lstrip().startswith(_CLARIFY_PREFIX):
-                answer = raw_text.lstrip()[len(_CLARIFY_PREFIX) :].strip()
+            clarification = (
+                raw_text.lstrip()[len(_CLARIFY_PREFIX) :].strip()
+                if raw_text.lstrip().startswith(_CLARIFY_PREFIX)
+                else None
+            )
+            if clarification is not None and (
+                len(clarification) > _CLARIFY_MAX_CHARS or len(clarification.splitlines()) > 1
+            ):
+                clarification = None
+            if clarification is not None:
+                answer = clarification
                 if answer:
                     return AnswerGeneration(
                         answer,

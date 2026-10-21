@@ -1975,3 +1975,80 @@ async def test_running_task_step_summary_redacts_before_truncating() -> None:
     )
     assert "[REDACTED_ID]" in running["summary"]
     assert "1101011990" not in running["summary"]
+
+
+def _tools_state(pending: list[dict[str, str]]) -> dict[str, object]:
+    return {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": pending,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_node_bounds_steps_for_an_oversized_round() -> None:
+    """Final review M-8: a round requesting 12 calls executes at most 3,
+    emits `task.step` events only for the first 10 requested calls, and
+    still answers every call id in the transcript (`too-many-calls`)."""
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-oversized", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+    pending = [
+        {"callId": f"call-{i}", "name": "knowledge_search", "argumentsJson": '{"query": "x"}'}
+        for i in range(12)
+    ]
+
+    result = await nodes.tools(_tools_state(pending))
+
+    assert len(steps.run_tool_calls) == 3
+    step_events = [
+        payload
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert {payload["stepId"] for payload in step_events} == {
+        f"turn-tools-oversized:r1:c{i}" for i in range(10)
+    }
+    assert len(step_events) == 20
+    tool_messages = [entry for entry in result["step"]["transcript"] if entry["role"] == "tool"]
+    assert [entry["toolCallId"] for entry in tool_messages] == [f"call-{i}" for i in range(12)]
+    assert json.loads(tool_messages[-1]["content"]) == {
+        "status": "rejected",
+        "reason": "too-many-calls",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_node_rejects_a_duplicate_call_id_without_running_it() -> None:
+    """Final review M-9."""
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-duplicate", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+    pending = [
+        {"callId": "call-1", "name": "knowledge_search", "argumentsJson": '{"query": "x"}'},
+        {"callId": "call-1", "name": "knowledge_search", "argumentsJson": '{"query": "y"}'},
+    ]
+
+    result = await nodes.tools(_tools_state(pending))
+
+    assert [call.arguments["query"] for call in steps.run_tool_calls] == ["x"]
+    statuses = [
+        (payload["stepId"], payload["status"])
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert statuses[-1] == ("turn-tools-duplicate:r1:c1", "rejected")
+    content = json.loads(result["step"]["transcript"][-1]["content"])
+    assert content == {"status": "rejected", "reason": "duplicate-call-id"}

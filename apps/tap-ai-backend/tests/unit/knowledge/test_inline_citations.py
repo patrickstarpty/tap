@@ -503,3 +503,47 @@ async def test_transcript_reaches_model_messages_redacted() -> None:
     assert isinstance(request.messages[-1], ModelMessage)
     assert request.messages[-1].role == "tool"
     assert "[REDACTED_EMAIL]" in request.messages[-1].content
+
+
+def _text_gateway(text: str):
+    class TextGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(text)
+            yield _result(text)
+
+    return TextGateway()
+
+
+@pytest.mark.asyncio
+async def test_clarify_reply_at_the_300_character_bound_is_a_clarification() -> None:
+    question = "你" * 299 + "？"
+    generation = await _answer_gateway(_text_gateway(f"CLARIFY: {question}\n")).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "clarification"
+    assert generation.text == question
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "CLARIFY: " + "你" * 301,
+        "CLARIFY: 你指的是哪个版本？\n保单生效[S1]。",
+    ],
+)
+async def test_long_or_multiline_clarify_reply_is_a_grounded_answer(reply) -> None:
+    """Final review M-5: only a single line of at most 300 characters after
+    `CLARIFY:` is a clarification; a longer or multi-line reply is handled
+    as an ordinary answer and goes through inline-citation grounding, so a
+    model cannot bypass grounding with a `CLARIFY:` prefix."""
+    generation = await _answer_gateway(_text_gateway(reply)).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "answer"
+    if "[S1]" in reply:
+        assert generation.claims and generation.claims[0].evidence_labels == ("S1",)
+    else:
+        assert generation.claims == ()

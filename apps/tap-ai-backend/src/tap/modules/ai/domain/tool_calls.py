@@ -14,6 +14,15 @@ from typing import Literal, Mapping, Sequence
 from tap.modules.ai.domain.tools import tool_for_wire_name
 
 MAX_TOOL_CALLS_PER_ROUND = 3
+# Final review M-8: rejected calls never count toward the 3-call execution cap
+# above, so a model could otherwise request an unbounded number of (invalid)
+# calls per round, each costing two `task.step` events. Every requested call
+# past this total is rejected as `too-many-calls` whatever else is wrong with
+# it, and `ChatTurnNodes.tools` emits `task.step` events only for the first
+# `MAX_REQUESTED_TOOL_CALLS_PER_ROUND` calls -- the rest are still answered in
+# the transcript (so every model call id gets its tool reply) but never run
+# and never surface as steps.
+MAX_REQUESTED_TOOL_CALLS_PER_ROUND = 10
 
 RejectionReason = Literal[
     "unknown-tool",
@@ -21,6 +30,7 @@ RejectionReason = Literal[
     "invalid-arguments",
     "source-out-of-scope",
     "too-many-calls",
+    "duplicate-call-id",
 ]
 
 
@@ -122,7 +132,22 @@ def admit_tool_calls(
 ) -> tuple[AdmittedToolCall | RejectedToolCall, ...]:
     results: list[AdmittedToolCall | RejectedToolCall] = []
     admitted_count = 0
-    for call in calls:
+    seen_call_ids: set[str] = set()
+    for position, call in enumerate(calls):
+        if position >= MAX_REQUESTED_TOOL_CALLS_PER_ROUND:
+            results.append(
+                RejectedToolCall(call_id=call.call_id, name=call.name, reason="too-many-calls")
+            )
+            continue
+        # Final review M-9: a repeated call id within one round is ambiguous
+        # (its tool reply could not be paired with one call) -- rejected,
+        # never executed.
+        if call.call_id in seen_call_ids:
+            results.append(
+                RejectedToolCall(call_id=call.call_id, name=call.name, reason="duplicate-call-id")
+            )
+            continue
+        seen_call_ids.add(call.call_id)
         if admitted_count >= MAX_TOOL_CALLS_PER_ROUND:
             results.append(
                 RejectedToolCall(call_id=call.call_id, name=call.name, reason="too-many-calls")

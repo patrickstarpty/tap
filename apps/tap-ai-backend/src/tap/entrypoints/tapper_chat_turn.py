@@ -32,6 +32,7 @@ from tap.entrypoints.tapper_draft_batcher import DraftBatcher
 from tap.modules.ai.application.chat_graph import ChatGraphNodes, ChatGraphState
 from tap.modules.ai.domain.persona import persona_for
 from tap.modules.ai.domain.tool_calls import (
+    MAX_REQUESTED_TOOL_CALLS_PER_ROUND,
     AdmittedToolCall,
     RejectedToolCall,
     RequestedToolCall,
@@ -785,6 +786,24 @@ class ChatTurnNodes:
 
         for index, outcome in enumerate(outcomes):
             this_step_id = _tool_step_id(self._turn.turn_id, round_number, index)
+            if (
+                isinstance(outcome, RejectedToolCall)
+                and index >= MAX_REQUESTED_TOOL_CALLS_PER_ROUND
+            ):
+                # Final review M-8: past the requested-call total, a call is
+                # answered in the transcript (every model call id needs its
+                # tool reply) but emits no `task.step` events -- the round's
+                # step count stays bounded however many calls the model asks
+                # for.
+                transcript.append(
+                    {
+                        "role": "tool",
+                        "toolCallId": outcome.call_id,
+                        "toolId": outcome.name,
+                        "content": json.dumps({"status": "rejected", "reason": outcome.reason}),
+                    }
+                )
+                continue
             if isinstance(outcome, RejectedToolCall):
                 # Fix round 1: `outcome.name` is the model's own (possibly
                 # unknown) wire-format function name -- resolve it to a
