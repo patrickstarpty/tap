@@ -513,3 +513,28 @@ async def test_fake_mode_surfaces_the_planners_agent_intent_not_the_heuristic_de
     assert model_called is True
     assert plan.degradation_reason is None
     assert plan.agent_intent == "document_analysis"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "question", ["核保流程和健康告知是什么关系", "测试用例评审的通过标准是什么？"]
+)
+async def test_failed_planner_model_is_still_classified_as_fallback(
+    run_module: ModuleType, question: str
+) -> None:
+    """Final review I-1: the planner fallback now keeps the heuristic plan
+    (route/intent/agent_intent) instead of a fixed `comparison` retrieve; the
+    golden script must still observe such a case as `"fallback"` -- it keys
+    on `degradation_reason`, never on the fallback plan's shape."""
+    from tap.quality.intent_golden import GoldenIntentCase
+
+    async def failing(_value, _timeout):
+        raise TimeoutError
+
+    case = GoldenIntentCase(
+        id="fallback-check", question=question, locale="zh", expected_intent="knowledge_qa"
+    )
+    plan, model_called = await run_module._plan_case(case, failing)
+
+    assert model_called is True
+    assert run_module._planner_source(plan, model_called=model_called) == "fallback"

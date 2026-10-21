@@ -767,3 +767,73 @@ async def test_agent_intent_out_of_scope_must_pair_with_legacy_intent():
     plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
     assert plan.degradation_reason == "invalid-plan"
     assert plan.agent_intent != "out_of_scope"
+
+
+async def _planner_raises_timeout(_input, _timeout):
+    raise TimeoutError
+
+
+async def _planner_returns_invalid_plan(_input, _timeout):
+    return {"intent": "relation"}
+
+
+async def _planner_raises_unexpected(_input, _timeout):
+    raise RuntimeError("provider down")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model,reason",
+    [
+        (_planner_raises_timeout, "planner-timeout"),
+        (_planner_returns_invalid_plan, "invalid-plan"),
+        (_planner_raises_unexpected, "planner-unavailable"),
+    ],
+)
+@pytest.mark.parametrize(
+    "message",
+    ["核保流程和健康告知是什么关系", "错误码 E104 如何处理？", "保单的等待期是多久"],
+)
+async def test_planner_model_failure_keeps_the_heuristic_plan(model, reason, message):
+    """Final review I-1: a planner-model failure must degrade to the plan the
+    deterministic heuristic already computed (graph route for a relation
+    question, its own intent for a simple one), not re-plan every Turn as a
+    `comparison` retrieve -- only `degradation_reason` records the failure."""
+    module = planning()
+    heuristic = await module.AnswerPlanner(None).plan(context(message))
+
+    plan = await module.AnswerPlanner(model).plan(context(message))
+
+    assert plan.degradation_reason == reason
+    assert plan.route == heuristic.route
+    assert plan.intent == heuristic.intent
+    assert plan.agent_intent == heuristic.agent_intent
+    assert plan.standalone_query == heuristic.standalone_query
+    assert plan.confidence == heuristic.confidence
+    assert [query.text for query in plan.queries] == [query.text for query in heuristic.queries]
+
+
+@pytest.mark.asyncio
+async def test_production_planner_gateway_failure_keeps_relation_graph_route():
+    """Final review I-1 through the production assembly
+    (`AnswerPlanner(ModelGatewayPlanner(gateway))`, as `tapper_runtime`
+    wires it): a gateway failure keeps the relation question's `graph`
+    route instead of a `comparison` retrieve."""
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+
+    class Gateway:
+        async def generate_structured(self, request):
+            raise RuntimeError("provider down")
+
+    async def redact(text):
+        return text
+
+    planner = planning().AnswerPlanner(
+        ModelGatewayPlanner(Gateway(), scope=VALIDATION_SCOPE, redact=redact)
+    )
+    plan = await planner.plan(context("核保流程和健康告知是什么关系"))
+
+    assert plan.degradation_reason == "planner-unavailable"
+    assert (plan.route, plan.intent) == ("graph", "relation")
+    assert plan.agent_intent != "multi_step_qa"

@@ -295,6 +295,12 @@ class AnswerPlanner:
             timeout = min(3.0, value.remaining_seconds)
             if timeout <= 0:
                 raise TimeoutError("answer budget exhausted")
+            # Final review I-1: a planner-model failure degrades to the plan the
+            # deterministic heuristic above already computed (a relation
+            # question keeps its `graph` route, a simple one its own intent),
+            # restored here because the admission block below reassigns these
+            # before `build()` -- which can itself still reject the plan.
+            heuristic = (route, intent, standalone, confidence, missing)
             try:
                 async with asyncio.timeout(timeout):
                     raw = await self._model(value, timeout)
@@ -371,11 +377,5 @@ class AnswerPlanner:
                 reason = "invalid-plan"
             except Exception:
                 reason = "planner-unavailable"
-            route, intent, standalone, confidence, missing = (
-                "retrieve",
-                "comparison",
-                original,
-                1.0,
-                (),
-            )
+            route, intent, standalone, confidence, missing = heuristic
             return build()
