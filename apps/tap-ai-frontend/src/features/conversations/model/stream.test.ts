@@ -648,7 +648,11 @@ describe("task.step reduction", () => {
     ]);
   });
 
-  it("steps reset on a newer attempt", () => {
+  it("keeps steps from an earlier attempt once a newer attempt's own steps and first draft arrive (review fix round 1)", () => {
+    // `turn.started` carries no `attempt` (`TurnStartedPayload = {state}`
+    // only), so there is no reliable signal to key a reset off — `steps`
+    // is never reset across attempts; `stepId` upsert is the only thing
+    // that keeps live and recovered (durable-replay) state in agreement.
     let state = createStreamState();
     state = reduceStreamEvent(
       state,
@@ -663,53 +667,83 @@ describe("task.step reduction", () => {
       envelope(2, "turn-1", "task.step", {
         stepId: "turn-1:r1:c0",
         tool: "graph.relations",
-        status: "completed",
-        summary: "done",
-        durationMs: 10,
+        status: "running",
+        summary: "",
+        durationMs: 0,
         toolRound: 1,
       }),
     );
-    expect(state.turns["turn-1"]?.steps).toHaveLength(1);
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "graph.relations",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      },
+    ]);
 
+    // Attempt 2's own tool-round steps arrive before its first draft frame
+    // (the realistic ordering: a model's tool calls resolve before it
+    // drafts text).
     state = reduceStreamEvent(
       state,
-      envelope(3, "turn-1", "answer.draft", {
+      envelope(3, "turn-1", "task.step", {
+        stepId: "turn-1:r2:c0",
+        tool: "insights.query",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 2,
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(4, "turn-1", "answer.draft", {
         attempt: 2,
         seq: 1,
         text: "attempt two",
       }),
     );
 
-    expect(state.turns["turn-1"]?.steps).toEqual([]);
-  });
-
-  it("keeps a tool round's steps when the attempt's first draft frame arrives afterward", () => {
-    // Realistic ordering: tool-round steps resolve before the model drafts
-    // any answer text, so the *first* draft frame of an attempt must not
-    // be treated as a "newer attempt" that wipes the steps it itself
-    // produced.
-    let state = createStreamState();
+    // Attempt 1's step is retained, not wiped by attempt 2 starting.
+    expect(
+      state.turns["turn-1"]?.steps.find(
+        (step) => step.stepId === "turn-1:r1:c0",
+      ),
+    ).toBeDefined();
+    // A same-stepId terminal frame still overwrites the running one, not
+    // appends a second row.
     state = reduceStreamEvent(
       state,
-      envelope(1, "turn-1", "task.step", {
-        stepId: "turn-1:r1:c0",
-        tool: "knowledge.search",
+      envelope(5, "turn-1", "task.step", {
+        stepId: "turn-1:r2:c0",
+        tool: "insights.query",
         status: "completed",
-        summary: "done",
-        durationMs: 5,
+        summary: "3 metrics",
+        durationMs: 40,
+        toolRound: 2,
+      }),
+    );
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "graph.relations",
+        status: "running",
+        summary: "",
+        durationMs: 0,
         toolRound: 1,
-      }),
-    );
-    state = reduceStreamEvent(
-      state,
-      envelope(2, "turn-1", "answer.draft", {
-        attempt: 1,
-        seq: 1,
-        text: "first draft of attempt one",
-      }),
-    );
-
-    expect(state.turns["turn-1"]?.steps).toHaveLength(1);
+      },
+      {
+        stepId: "turn-1:r2:c0",
+        tool: "insights.query",
+        status: "completed",
+        summary: "3 metrics",
+        durationMs: 40,
+        toolRound: 2,
+      },
+    ]);
   });
 
   it("hits_ready with stepId merges labels", () => {

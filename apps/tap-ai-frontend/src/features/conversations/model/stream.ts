@@ -136,9 +136,10 @@ export interface StreamTurnState {
    * `turn.canceled` was recorded, or `null` when the turn was canceled
    * before any draft text existed. */
   partialAnswer: string | null;
-  /** Tool-calling round steps for the current attempt, in first-seen
-   * order; reset to `[]` when a higher-attempt draft arrives (a fresh
-   * attempt's tool rounds are unrelated to a prior attempt's). */
+  /** Tool-calling round steps across the whole turn, in first-seen order,
+   * upserted by `stepId` (`f"{turnId}:r{round}:c{index}"`) — never reset on
+   * a new attempt, since `turn.started` carries no `attempt` to key a
+   * reset off (review ruling, fix round 1). */
   steps: readonly TaskStepView[];
 }
 
@@ -326,23 +327,20 @@ export function reduceStreamEvent(
     const isNewAttempt =
       typeof payload.attempt === "number" &&
       (current.draft === null || payload.attempt > current.draft.attempt);
-    // Unlike `stage` (always null before the first draft, so clearing it
-    // on that first frame is a no-op), tool-round `steps` are routinely
-    // populated *before* the first draft frame of an attempt arrives (a
-    // model's tool calls resolve before it drafts text) — resetting on
-    // `isNewAttempt` would wipe that attempt's own steps the moment its
-    // first draft frame shows up. Only an attempt genuinely higher than
-    // one already tracked by a draft clears the prior attempt's steps.
-    const attemptAdvanced =
-      current.draft !== null &&
-      typeof payload.attempt === "number" &&
-      payload.attempt > current.draft.attempt;
+    // `steps` is never reset on a new attempt (review ruling, fix round 1):
+    // `TurnStartedPayload` carries no `attempt` at all (`{state: "running"}`
+    // only — confirmed against the generated schema and the backend
+    // emitter, which writes `turn.started` once per claimed Turn, not per
+    // attempt), so there is no event that reliably marks "a newer attempt
+    // started" for `steps` to key off. `task.step`'s own `stepId`
+    // (`f"{turnId}:r{round}:c{index}"`) already upserts in place, so live
+    // and recovered (durable-replay) state agree without needing a reset
+    // here at all.
     next = {
       ...current,
       draft,
       status: "running",
       stage: isNewAttempt ? null : current.stage,
-      steps: attemptAdvanced ? [] : current.steps,
     };
   } else if (event.type === "task.step") {
     const stepId = payload.stepId;

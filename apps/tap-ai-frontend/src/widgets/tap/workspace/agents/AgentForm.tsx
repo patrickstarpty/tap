@@ -1,5 +1,5 @@
 import { Button, Input } from "antd";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQueries } from "@tanstack/react-query";
 
 import {
@@ -98,14 +98,20 @@ export function AgentForm({
   // fetched tool catalog's `defaultEnabled` flags to seed its initial
   // selection -- an edit/copy already has `toolIds` set from the base
   // Agent's `toolAllowlist` above and must not have it overwritten once
-  // the catalog loads.
-  if (toolIds === null && tools.data !== undefined) {
+  // the catalog loads. Runs as an effect, not during render (review fix
+  // round 1, folded minor): a render-phase `setState` call works here (the
+  // `toolIds === null` guard prevents an infinite loop) but is the wrong
+  // tool for "derive state once an async query resolves" — an effect
+  // keeps the render itself pure and matches how every other async-derived
+  // field in this form (e.g. Skill budgets below) is computed.
+  useEffect(() => {
+    if (toolIds !== null || tools.data === undefined) return;
     setToolIds(
       tools.data
         .filter((tool) => tool.required || tool.defaultEnabled)
         .map((tool) => tool.toolId),
     );
-  }
+  }, [toolIds, tools.data]);
 
   const toggleTool = (toolId: string) => {
     setToolIds((current) => {
@@ -441,6 +447,7 @@ export function AgentForm({
         </fieldset>
         <fieldset>
           <legend>{form.toolsLabel}</legend>
+          {tools.isError ? <p role="alert">{form.toolsLoadFailed}</p> : null}
           {(tools.data ?? []).map((tool) => {
             const checked =
               tool.required || (toolIds ?? []).includes(tool.toolId);

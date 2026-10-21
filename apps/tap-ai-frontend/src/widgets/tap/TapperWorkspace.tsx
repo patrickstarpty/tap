@@ -363,6 +363,60 @@ export function shouldShowAnswerFeedback(
   return turn.status === "completed" && conversationId !== undefined;
 }
 
+/**
+ * Formats one `task.step` row per the Task 10 contract, shared by
+ * `AnswerActivity` (folded into its collapsible activity panel) and
+ * `TaskStepList` (rendered directly, with no panel to expand, while a
+ * turn is still running or in the terminal-with-trace branch) so the two
+ * call sites never drift (review fix round 1, Important 1).
+ */
+function formatTaskStepRows(
+  steps: readonly TaskStepView[],
+  locale: "en" | "zh",
+): string[] {
+  const chatCopy = WORKSPACE_COPY[locale].chat;
+  return steps.map((step) =>
+    chatCopy.toolStepRow(
+      step.toolRound,
+      chatCopy.toolName(step.tool),
+      // Folded minor (review fix round 1): an empty summary (e.g. a
+      // `running` step that has no summary yet) must not leave a
+      // dangling " · " separator in the row.
+      step.summary.length === 0
+        ? chatCopy.stepStatus[step.status]
+        : `${chatCopy.stepStatus[step.status]} · ${step.summary}`,
+      step.durationMs,
+    ),
+  );
+}
+
+/**
+ * A turn's `task.step` rows, rendered directly (no collapsible panel to
+ * expand first) — used in the queued/running branch (no other activity
+ * summary exists yet to attach a toggle to) and in the terminal-with-trace
+ * branch (`DurableTracePanel` already covers the full event log; the step
+ * rows still need to surface here directly, review fix round 1, Important
+ * 1). `AnswerActivity` folds the same rows (via `formatTaskStepRows`) into
+ * its own collapsible panel instead, for the terminal-without-trace case.
+ */
+function TaskStepList({
+  steps,
+  locale,
+}: {
+  steps: readonly TaskStepView[];
+  locale: "en" | "zh";
+}) {
+  if (steps.length === 0) return null;
+  const rows = formatTaskStepRows(steps, locale);
+  return (
+    <ol className="tap-task-steps">
+      {rows.map((row, index) => (
+        <li key={`${index}-${row}`}>{row}</li>
+      ))}
+    </ol>
+  );
+}
+
 export function AnswerActivity({
   events,
   locale,
@@ -430,15 +484,7 @@ export function AnswerActivity({
     edgeCitationCount,
     graphContext,
   });
-  const chatCopy = WORKSPACE_COPY[locale].chat;
-  const stepRows = steps.map((step) =>
-    chatCopy.toolStepRow(
-      step.toolRound,
-      chatCopy.toolName(step.tool),
-      `${chatCopy.stepStatus[step.status]} · ${step.summary}`,
-      step.durationMs,
-    ),
-  );
+  const stepRows = formatTaskStepRows(steps, locale);
   const allRows = [...rows, ...stepRows, ...graphRows];
   if (allRows.length === 0) return null;
   return (
@@ -934,6 +980,7 @@ export function AssistantResponse({
                 edgeCitationCount={edgeCitationCount}
                 graphContext={graphContext}
               />
+              <TaskStepList steps={turn.steps ?? []} locale={turn.locale} />
               <DurableTracePanel
                 projectId={projectId}
                 conversationId={conversationId}
@@ -1029,6 +1076,7 @@ export function AssistantResponse({
             sourceCount={turn.sourceReferences.length}
             status={turn.status}
           />
+          <TaskStepList steps={turn.steps ?? []} locale={turn.locale} />
           {(draft !== null && draft.text.length > 0) || stage === "verify" ? (
             <DraftAnswer
               draft={draft}

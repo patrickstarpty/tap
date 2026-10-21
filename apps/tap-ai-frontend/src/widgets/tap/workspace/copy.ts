@@ -339,6 +339,7 @@ export interface WorkspaceCopy {
       boundSkillOutdated: string;
       removeSkill: string;
       toolsLabel: string;
+      toolsLoadFailed: string;
       save: string;
       cancel: string;
       nameInvalid: string;
@@ -835,6 +836,7 @@ export const WORKSPACE_COPY = {
           "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
         removeSkill: "Remove",
         toolsLabel: "Tools",
+        toolsLoadFailed: "Tools could not be loaded.",
         save: "Save",
         cancel: "Cancel",
         nameInvalid: "Enter a name up to 128 characters.",
@@ -1327,6 +1329,7 @@ export const WORKSPACE_COPY = {
           "此绑定的 Skill 有新修订，Agent 仍使用绑定时的修订。",
         removeSkill: "移除",
         toolsLabel: "工具",
+        toolsLoadFailed: "工具加载失败。",
         save: "保存",
         cancel: "取消",
         nameInvalid: "请输入不超过 128 个字符的名称。",
