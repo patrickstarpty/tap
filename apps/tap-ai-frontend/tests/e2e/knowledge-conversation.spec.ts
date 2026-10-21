@@ -906,19 +906,6 @@ test("multi-step tool calls show steps before the cited answer", async ({
 
   const prompt = `What does the identity policy require ${Date.now()} [e2e-tool:knowledge.search:verified identity evidence]`;
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
-  // The deterministic turn's tool round can complete within one Playwright
-  // polling interval (same reasoning as the durable-conversation test
-  // above): record every DOM commit instead of polling for the transient
-  // `.tap-task-steps` row.
-  await page.evaluate(() => {
-    const seen = { stepRow: false };
-    (
-      window as unknown as { tapperStepRowSeen: typeof seen }
-    ).tapperStepRowSeen = seen;
-    new MutationObserver(() => {
-      if (document.querySelector(".tap-task-steps")) seen.stepRow = true;
-    }).observe(document.body, { childList: true, subtree: true });
-  });
   const acceptedResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -947,12 +934,18 @@ test("multi-step tool calls show steps before the cited answer", async ({
     )
     .toBe("completed");
 
-  const stepRowSeen = await page.evaluate(
-    () =>
-      (window as unknown as { tapperStepRowSeen?: { stepRow: boolean } })
-        .tapperStepRowSeen?.stepRow ?? false,
-  );
-  expect(stepRowSeen).toBe(true);
+  // Task 10's fix keeps the `task.step` row rendered in `.tap-task-steps`
+  // after the turn completes (not just transiently while running), so this
+  // asserts the visible text directly instead of a MutationObserver: one
+  // round of the `knowledge.search` tool, showing its terminal "completed"
+  // status in the UI, per locale.
+  await expect(
+    page
+      .locator(".tap-task-steps")
+      .getByText(
+        /Round 1 · Knowledge search · Done|第 1 轮 · 知识检索 · 完成/u,
+      ),
+  ).toBeVisible({ timeout: 10_000 });
 
   const eventsResponse = await page.request.get(
     `${root}/conversations/${accepted.conversationId}/events`,
@@ -1010,13 +1003,68 @@ test("a clarification reply renders without citations", async ({ page }) => {
   // completes with `answerKind = "clarification"` and no claims/citations
   // (spec gap ruling), rendered through `ClarificationAnswer` instead of
   // `GroundedAnswer`.
+  //
+  // Fix round 1 (Important 1): with no source selected, `AnswerPlanner.plan`
+  // routes deterministically to `clarify` with `missing=("sources",)`
+  // *before any model call* (`plan_answer.py`), and `_stopped_answer`
+  // (`knowledge_service.py`) answers from the fixed "select an authorized
+  // project source" template -- the fake gateway's own `CLARIFY:` branch is
+  // never reached. A source must be selected, exactly like the multi-step
+  // case, so the Turn's route actually reaches the model and its
+  // `[e2e-clarify]`-driven reply.
   const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
   expect(runtimeResponse.status()).toBe(200);
   const runtime = (await runtimeResponse.json()) as { projectId: string };
   const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
 
+  const sourceFilename = `clarify-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `clarify-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Clarify evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as { source: { sourceId: string } };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
   await page.goto("/");
   await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(sourceFilename, "u") })
+    .check();
 
   const prompt = `Which product do you mean ${Date.now()} [e2e-clarify]`;
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
@@ -1078,4 +1126,15 @@ test("a clarification reply renders without citations", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: /Open source citation/u }),
   ).toHaveCount(0);
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `clarify-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
 });

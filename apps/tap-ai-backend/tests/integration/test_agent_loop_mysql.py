@@ -213,7 +213,6 @@ class _FixedRelationAnalysis:
 
     def __init__(self) -> None:
         self.calls = 0
-        self.called_from_tools_node = False
 
     async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
         self.calls += 1
@@ -534,18 +533,30 @@ async def test_multi_step_search_persists_steps_and_cites_tool_evidence(
         statuses = [event.payload["status"] for event in step_events]
         assert "running" in statuses
         assert "completed" in statuses
-        assert statuses.index("running") < statuses.index("completed")
-        assert any(
-            event.event_type == "retrieval.hits_ready" and event.payload.get("stepId") is not None
+        running_index = event_types.index("task.step")
+        completed_step = step_events[statuses.index("completed")]
+        completed_index = loaded.events.index(completed_step)
+        assert running_index < completed_index
+
+        tool_hits_ready = next(
+            event
             for event in loaded.events
-        ), "the tool call's retrieval.hits_ready must carry a stepId"
-        assert "turn.completed" in event_types
+            if event.event_type == "retrieval.hits_ready"
+            and event.payload.get("stepId") is not None
+        )
+        hits_ready_index = loaded.events.index(tool_hits_ready)
+        turn_completed_index = event_types.index("turn.completed")
+        # running -> completed -> hits_ready(stepId) -> turn.completed, in that order.
+        assert running_index < completed_index < hits_ready_index < turn_completed_index
+        assert tool_hits_ready.payload["stepId"] == completed_step.payload["stepId"]
 
         completed = next(event for event in loaded.events if event.event_type == "turn.completed")
         citations = completed.payload["answer"]["citations"]
-        assert any(citation["evidenceLabel"] not in {"S1"} for citation in citations), (
-            "the second search's new S label was never cited"
+        cited_s2 = next(
+            (citation for citation in citations if citation["evidenceLabel"] == "S2"), None
         )
+        assert cited_s2 is not None, "the second search's new S2 label was never cited"
+        assert cited_s2["chunkId"] == _SECOND_HIT.chunk_id
     finally:
         await engine.dispose()
 
@@ -569,6 +580,7 @@ async def test_relation_analysis_runs_only_as_a_tool(owned_project_mysql) -> Non
             if event.event_type == "task.step" and event.payload.get("tool") == "graph.relations"
         ]
         assert tool_steps, "graph.relations never ran as a tool call"
+        assert tool_steps[-1].payload["status"] == "completed"
 
         completed = next(event for event in loaded.events if event.event_type == "turn.completed")
         citations = completed.payload["answer"]["citations"]
@@ -656,6 +668,12 @@ async def test_worker_crash_after_tools_resumes_without_repeating_tool(
         setup.knowledge.generate_conversation_answer = _flaky_generate  # type: ignore[method-assign]
 
         assert await setup.worker.run_once(limit=1) == 1
+        # The injected failure must actually have fired -- otherwise this
+        # test would trivially "pass" by completing the turn in one
+        # uninterrupted run, never exercising the resume path at all.
+        assert calls_seen["n"] == 2
+        first_run_loaded = await setup.conversations.load("chat-crash")
+        assert first_run_loaded.turns[0].state != "completed"
 
         setup.knowledge.generate_conversation_answer = real_generate  # type: ignore[method-assign]
         await setup.clear_retry_backoff("turn-crash")

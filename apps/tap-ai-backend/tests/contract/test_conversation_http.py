@@ -635,6 +635,30 @@ def test_conversation_event_item_accepts_graph_context_ready() -> None:
     assert item.event_type == "graph.context_ready"
 
 
+def test_conversation_event_item_accepts_task_step() -> None:
+    """LangGraph PR 5 Task 9/12: the Conversation history route must not
+    reject a stored `task.step` event (one per native tool call) -- caught
+    missing from this closed set by Task 12's real MySQL integration test."""
+    item = ConversationEventItem.model_validate(
+        {
+            "eventId": "event-1",
+            "sequence": 1,
+            "turnId": "turn-1",
+            "eventType": "task.step",
+            "payload": {
+                "stepId": "turn-1:r1:c0",
+                "tool": "knowledge.search",
+                "status": "completed",
+                "summary": 'knowledge.search "x" → +1 条证据（S2）',
+                "durationMs": 42,
+                "toolRound": 1,
+            },
+            "occurredAt": "2026-10-09T00:00:00Z",
+        }
+    )
+    assert item.event_type == "task.step"
+
+
 def _asset_catalog_for_merge_tests():
     from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, ApprovedAssetCatalog
     from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision, text_digest

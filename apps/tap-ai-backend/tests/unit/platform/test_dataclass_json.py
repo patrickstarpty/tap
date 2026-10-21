@@ -107,6 +107,34 @@ class HoldsLiteral:
     status: Literal["published", "withdrawn"]
 
 
+@dataclass(frozen=True, slots=True)
+class HoldsNumericUnion:
+    """Mirrors `InsightsFact.value: float | int | None` (LangGraph PR 5 Task
+    8/12) -- two non-dataclass union members have no `__type__` tag to
+    disambiguate by, unlike a union of dataclasses."""
+
+    value: float | int | None
+
+
+def test_numeric_union_round_trips_int_float_and_none() -> None:
+    assert from_json(
+        HoldsNumericUnion, json.loads(json.dumps(to_json(HoldsNumericUnion(0.9))))
+    ) == (HoldsNumericUnion(0.9))
+    restored_int = from_json(
+        HoldsNumericUnion, json.loads(json.dumps(to_json(HoldsNumericUnion(5))))
+    )
+    assert restored_int == HoldsNumericUnion(5)
+    assert type(restored_int.value) is int
+    assert from_json(
+        HoldsNumericUnion, json.loads(json.dumps(to_json(HoldsNumericUnion(None))))
+    ) == (HoldsNumericUnion(None))
+
+
+def test_numeric_union_rejects_bool() -> None:
+    with pytest.raises(TypeError):
+        from_json(HoldsNumericUnion, {"value": True})
+
+
 def test_literal_round_trips_and_rejects_unknown_values() -> None:
     value = HoldsLiteral(status="withdrawn")
 
