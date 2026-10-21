@@ -55,6 +55,16 @@ _ABSTENTION_QUERY_SUFFIX = " [e2e-abstain]"
 # mistakes it for one.
 _SKILL_MARKER = re.compile(r"\[e2e-skill:[^\[\]]+\]")
 
+# Task 11/12: markers an isolated E2E journey (or the intent golden fake
+# gate) can put in the question text to force the fake `AnswerPlan` stub's
+# `agent_intent` observability classification (never the authoritative
+# `intent`/`route`, which stay driven by `is_relation_question`/
+# `is_comparison_question` as before) without needing a real model. Matched
+# against the raw question text, the same string the stub already decodes
+# out of `request.context`'s `question` key.
+_OUT_OF_SCOPE_MARKER = "[e2e-out-of-scope]"
+_TOOL_MARKER_PREFIX = "[e2e-tool:"
+
 
 def _skill_marker_in_prompt(prompt: str) -> str | None:
     match = _SKILL_MARKER.search(prompt)
@@ -364,7 +374,14 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 # `multi_step_qa` agent intent, would change which seam the
                 # turn exercises purely because the model got consulted --
                 # not because any answer actually changed.
-                if is_relation_question(question):
+                # Task 11: `[e2e-out-of-scope]` is authoritative, not just
+                # observability -- it also forces the legacy `intent`/`route`
+                # so `AnswerPlan.__post_init__`'s out-of-scope agreement
+                # invariant (`agent_intent == "out_of_scope"` iff
+                # `intent == "out_of_scope"`) holds.
+                if _OUT_OF_SCOPE_MARKER in question:
+                    intent, route = "out_of_scope", "direct"
+                elif is_relation_question(question):
                     intent, route = "relation", "graph"
                 elif is_comparison_question(question):
                     intent, route = "comparison", "retrieve"
@@ -380,9 +397,20 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                             "source_ids": source_ids,
                         }
                     ]
-                    if source_ids
+                    if source_ids and route in ("retrieve", "graph")
                     else []
                 )
+                # Task 11: `[e2e-tool:` only overrides the observability-only
+                # `agent_intent` (never limits which tools a turn may use,
+                # per the planner prompt) -- the out-of-scope marker above
+                # already took the authoritative branch, so it also wins
+                # here even if a question somehow carried both markers.
+                if intent == "out_of_scope":
+                    agent_intent = "out_of_scope"
+                elif _TOOL_MARKER_PREFIX in question:
+                    agent_intent = "multi_step_qa"
+                else:
+                    agent_intent = derive_agent_intent(intent, route, len(queries))
                 content = json.dumps(
                     {
                         "intent": intent,
@@ -391,8 +419,8 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                         "standalone_query": question,
                         "missing": [],
                         "queries": queries,
-                        "agent_intent": derive_agent_intent(intent, route, len(queries)),
-                        "intent_reason": "",
+                        "agent_intent": agent_intent,
+                        "intent_reason": "deterministic fake",
                     }
                 )
             elif request.operation is ModelOperation.STRUCTURED:

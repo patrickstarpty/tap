@@ -12,6 +12,7 @@
 .local/graph-relations/
 .local/graph-bench/
 .local/quality-answers/
+.local/quality-intents/
 .venv/
 .mypy_cache/
 node_modules/
