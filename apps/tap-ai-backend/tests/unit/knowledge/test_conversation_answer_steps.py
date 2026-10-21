@@ -1697,3 +1697,46 @@ async def test_tool_loop_runs_through_the_real_chain_and_informs_the_second_mode
         if event_type == "task.step"
     ]
     assert task_step_statuses == ["running", "completed"]
+
+
+# Final review M-2: an 18-character resident ID starting at offset 45 of the
+# query straddles the 60-character summary cut -- truncating first would leave
+# a 15-digit fragment the ID pattern no longer recognizes.
+_STRADDLING_ID = "11010119900307123X"
+_STRADDLING_QUERY = "a" * 44 + " " + _STRADDLING_ID + " tail"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_id", ["knowledge.search", "graph.relations"])
+async def test_run_conversation_tool_summary_redacts_before_truncating(tool_id) -> None:
+    from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+    from tap.modules.knowledge.application.retrieve import RelationAnalysisUnavailable
+
+    frozen, plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    step = {
+        "kind": "prepared",
+        "bundle": encode_bundle(bundle),
+        "retrieval_hits": {},
+        "transcript": [],
+    }
+    answers = ToolPhaseAnswers(
+        search_result=(bundle, ()),
+        relations_error=RelationAnalysisUnavailable("not configured"),
+    )
+    service = _service(
+        answers, redactor=PatternEgressRedactor(max_chars=262144, personal_data=True)
+    )
+    call = AdmittedToolCall(
+        call_id="call-1", tool_id=tool_id, arguments={"query": _STRADDLING_QUERY}
+    )
+
+    result = await service.run_conversation_tool(step, frozen, call, answer_plan=plan)
+
+    assert "[REDACTED_ID]" in result["summary"]
+    assert "1101011990" not in result["summary"]
+    # The tool itself still runs on the original query.
+    calls = answers.search_calls if tool_id == "knowledge.search" else answers.relations_calls
+    assert calls[0]["query"] == _STRADDLING_QUERY

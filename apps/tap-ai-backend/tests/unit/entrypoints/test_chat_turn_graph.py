@@ -1920,3 +1920,58 @@ async def test_insights_tool_failure_is_soft() -> None:
         if event_type == "task.step"
     ]
     assert full_task_steps[-1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_running_task_step_summary_redacts_before_truncating() -> None:
+    """Final review M-2: the `running` summary's query is cut to 60 chars
+    only after the v2 chat-egress redaction (the production
+    `_redact_chat_egress` rules) -- an ID straddling the cut must not leak a
+    digit fragment."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-redact", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    redactor = PatternEgressRedactor(max_chars=262144, personal_data=True)
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations,
+        steps=steps,
+        planner=None,
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=_require_authorized_noop,
+        redact=redactor.redact_text,
+    )
+    query = "a" * 44 + " 11010119900307123X tail"
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": "call-1",
+                    "name": "knowledge_search",
+                    "argumentsJson": json.dumps({"query": query}),
+                }
+            ],
+        },
+    }
+
+    await nodes.tools(state)
+
+    running = next(
+        payload
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step" and payload["status"] == "running"
+    )
+    assert "[REDACTED_ID]" in running["summary"]
+    assert "1101011990" not in running["summary"]

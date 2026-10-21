@@ -49,6 +49,7 @@ from tap.modules.knowledge.domain.models import (
     SearchResponse,
 )
 from tap.modules.knowledge.domain.sources import SourceCommand
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 
 
 class AnswerBudgetExhausted(TimeoutError):
@@ -105,11 +106,12 @@ def _retrieval_hits_payload(response: Any, relation: Any | None) -> dict[str, ob
 
 
 def _tool_call_summary(tool_id: str, query: str, labels: tuple[str, ...], *, unit: str) -> str:
-    """`run_conversation_tool`'s `summary` text: `tool_id “<query, first 60
-    chars>” → +N 条<unit>（<first label>–<last label>）`, or `→ 无新<unit>`
-    when nothing new was admitted into the pool (already full, or every
-    candidate deduped against an existing label)."""
-    prefix = f"{tool_id} “{query[:60]}”"
+    """`run_conversation_tool`'s `summary` text: `tool_id “<query>” → +N
+    条<unit>（<first label>–<last label>）`, or `→ 无新<unit>` when nothing new
+    was admitted into the pool (already full, or every candidate deduped
+    against an existing label). `query` is already redacted and bounded by
+    `KnowledgeHttpService._summary_query` (final review M-2)."""
+    prefix = f"{tool_id} “{query}”"
     if not labels:
         return f"{prefix} → 无新{unit}"
     label_range = labels[0] if labels[0] == labels[-1] else f"{labels[0]}–{labels[-1]}"
@@ -208,6 +210,22 @@ class KnowledgeHttpService:
         self._models = models
         self.answer_planner = answer_planner
         self._redactor = redactor
+
+    async def _summary_query(self, query: str) -> str:
+        """The tool query as shown in a `task.step` summary: redacted first,
+        then cut to 60 characters (final review M-2) -- cutting first could
+        split an ID/email into a fragment no redaction pattern matches. The
+        caller (`ChatTurnNodes.tools`) redacts the whole summary again with
+        the v2 chat egress rules; a redaction failure here degrades to a
+        content-free placeholder rather than failing the tool call."""
+        report = getattr(self._redactor, "redact_with_report", None)
+        if report is None:
+            return query[:60]
+        try:
+            redacted, _hits = await report(query)
+        except RedactionUnavailable:
+            return "内容已隐去"
+        return redacted[:60]
 
     async def redaction_report(self, text: str) -> Mapping[str, int]:
         """Egress-redaction hit counts for `text`, by pattern kind; empty
@@ -964,7 +982,7 @@ class KnowledgeHttpService:
             answer_execution = self._execution(answer_plan) if answer_plan is not None else None
             bundle = decode_bundle(step["bundle"])
             query = str(call.arguments.get("query", ""))
-            summary_query = query[:60]
+            summary_query = await self._summary_query(query)
             transcript = step.get("transcript", [])
 
             if call.tool_id == "knowledge.search":

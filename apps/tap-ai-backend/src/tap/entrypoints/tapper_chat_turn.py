@@ -831,7 +831,10 @@ class ChatTurnNodes:
 
             call = cast(AdmittedToolCall, outcome)
             started_at = time.monotonic()
-            running_query = str(call.arguments.get("query", ""))[:60]
+            # Final review M-2: redact the query before cutting it to 60
+            # characters, so an ID/email straddling the cut is never split
+            # into an unrecognizable fragment.
+            running_query = (await self._redact_summary(str(call.arguments.get("query", ""))))[:60]
             running_summary = await self._redact_summary(f'{call.tool_id} "{running_query}"')
             await emit(
                 "task.step",
