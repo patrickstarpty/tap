@@ -168,6 +168,7 @@ class TapperSettings:
     redis_stream_pool_size: int = 50
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
+    planner_timeout_seconds: float = 6.0
     graph_extraction_timeout_seconds: float = 240.0
     graph_extraction_max_tokens: int = 8192
     graph_worker_concurrency: int = 4
@@ -199,6 +200,12 @@ class TapperSettings:
     turn_budget: TurnBudget = field(default_factory=TurnBudget)
 
     def __post_init__(self) -> None:
+        # The gateway rejects a request whose timeout exceeds its own; the
+        # planner would report that as an invalid plan on every turn.
+        if self.planner_timeout_seconds > self.model_timeout_seconds:
+            raise ValueError(
+                "TAPPER_PLANNER_TIMEOUT_SECONDS must not exceed TAPPER_MODEL_TIMEOUT_SECONDS"
+            )
         # A deadline too short for the output budget turns a detectable truncation
         # into a timeout (then retried): require at least one second per
         # GRAPH_EXTRACTION_TOKENS_PER_SECOND output tokens.
@@ -602,6 +609,9 @@ class TapperSettings:
             vision_timeout_seconds=_duration(
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
             ),
+            planner_timeout_seconds=_duration(
+                values, "TAPPER_PLANNER_TIMEOUT_SECONDS", 6.0, maximum=60
+            ),
             graph_extraction_timeout_seconds=_duration(
                 values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 240.0, maximum=300
             ),
@@ -974,6 +984,7 @@ async def create_api_runtime(
             graph_retrieval_augment=settings.graph_retrieval_augment,
             graph_reasoning=settings.graph_reasoning,
             turn_max_attempts=settings.turn_max_attempts,
+            planner_timeout_seconds=settings.planner_timeout_seconds,
             event_wakeups=_create_event_wakeups(redis),
             draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
@@ -1621,12 +1632,13 @@ def _gated_ready_sources(list_sources, flowchart_gate, project_id: str):
     return gated
 
 
-def _answer_planner(models: KnowledgeModelGateway):
+def _answer_planner(models: KnowledgeModelGateway, *, timeout_seconds: float):
     from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
     from tap.modules.chat.application.plan_answer import AnswerPlanner
 
     return AnswerPlanner(
-        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_chat_egress)
+        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_chat_egress),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -2011,6 +2023,7 @@ def _assemble_http_services(
     graph_retrieval_augment: bool = True,
     graph_reasoning: bool = True,
     turn_max_attempts: int = 3,
+    planner_timeout_seconds: float = 6.0,
     event_wakeups: EventWakeups | None = None,
     draft_stream: DraftStream | None = None,
 ) -> HttpServices:
@@ -2225,7 +2238,7 @@ def _assemble_http_services(
         sources=SourceService(cast(SourceRepository, repository), documents),
         corpus_version=corpus_version,
         models=embeddings,
-        answer_planner=_answer_planner(embeddings),
+        answer_planner=_answer_planner(embeddings, timeout_seconds=planner_timeout_seconds),
         # Bounded like `_redact_chat_egress`, not the smaller query-only
         # `redactor` above: a saved answer (and its `redaction_report` use
         # for an incoming chat message) can be far longer than an 8,000-char
