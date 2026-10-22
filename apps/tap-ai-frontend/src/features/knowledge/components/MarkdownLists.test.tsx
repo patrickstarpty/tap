@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 
 import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,14 +13,16 @@ import { GroundedAnswer } from "./GroundedAnswer";
 
 // The app stylesheet sits on Tailwind's preflight, which resets every list to
 // `list-style: none` with no padding; load both, in app order, into jsdom.
+// Resolved through the package's own `exports` and this file's location, so the
+// test does not depend on the working directory or node_modules layout.
 const preflight = readFileSync(
-  resolve("node_modules/tailwindcss/preflight.css"),
+  createRequire(import.meta.url).resolve("tailwindcss/preflight.css"),
   "utf8",
 );
-const appStyles = readFileSync(resolve("src/app/styles.css"), "utf8").replace(
-  /^@import\s+"tailwindcss";/mu,
-  "",
-);
+const appStyles = readFileSync(
+  join(import.meta.dirname, "../../../app/styles.css"),
+  "utf8",
+).replace(/^@import\s+"tailwindcss";/mu, "");
 
 function mountStyles(): HTMLStyleElement {
   const style = document.createElement("style");

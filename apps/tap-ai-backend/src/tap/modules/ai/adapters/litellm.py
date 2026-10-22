@@ -929,7 +929,10 @@ class LiteLLMModelGateway:
         generator's own awaits (`_prepare`, each `anext` of the inner SSE stream)
         -- never across a `yield` -- so a timeout here can only mean the provider
         stalled, not that the consumer was slow between chunks. Until the first
-        token (content or tool-call delta) the request's own `timeout_seconds` is
+        token (content or tool-call delta; `reasoning_content` deltas are not
+        counted, so a future reasoning model that thinks longer than the
+        timeout before its first answer token would fail here) the request's
+        own `timeout_seconds` is
         one absolute instant from the call's start; after it, each chunk must
         arrive within `stream_idle_seconds`, and the whole stream ends by
         `stream_max_seconds`. Inside a Turn, the graph's wall-clock budget
@@ -975,6 +978,7 @@ class LiteLLMModelGateway:
                     stream_started = loop.time()
                     first_token_deadline = stream_started + request.timeout_seconds
                     overall_deadline = stream_started + self._config.stream_max_seconds
+                    # Content or tool-call deltas only; reasoning_content does not count.
                     token_seen = False
 
                     async with asyncio.timeout_at(first_token_deadline):
@@ -1098,7 +1102,9 @@ class LiteLLMModelGateway:
                         else full_text
                     )
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
-                    if cost_usd is None:
+                    # A streamed header is sent before generation; a zero there with
+                    # billed tokens is not the call's cost, so price the usage instead.
+                    if cost_usd is None or (cost_usd == 0 and (output_tokens or input_tokens)):
                         cost_usd = self._streamed_cost(
                             headers, input_tokens, output_tokens, cached_tokens
                         )

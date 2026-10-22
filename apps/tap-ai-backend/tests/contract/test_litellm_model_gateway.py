@@ -3135,6 +3135,22 @@ async def test_chat_stream_keeps_a_reported_cost_header_over_the_usage_price():
     assert events[-1].cost_usd == Decimal("0.0012000000")
 
 
+@pytest.mark.asyncio
+async def test_chat_stream_prices_usage_when_the_streamed_cost_header_reads_zero():
+    """A streamed response may carry a `0.0` cost header computed before any
+    token was generated; with non-zero usage that is not the call's cost."""
+    gateway = configured_gateway(
+        _streamed_cost_response(
+            cost_header="0.0", usage={"prompt_tokens": 15, "completion_tokens": 116}
+        ),
+        models=PRICED_MODELS,
+    )
+
+    events = [event async for event in gateway.chat_stream(request())]
+
+    assert events[-1].cost_usd == Decimal("0.0001452000")
+
+
 @pytest.mark.parametrize(
     ("models", "usage"),
     [
