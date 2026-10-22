@@ -40,7 +40,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -159,8 +159,47 @@ def reconcile_relation_claims(
                 retained.append(dataclasses.replace(claim, evidence_labels=tuple(kept_labels)))
         else:
             dropped += 1
-    text = "\n\n".join(claim.text for claim in retained)
+    dropped_texts = tuple(
+        claim.text
+        for claim in generation.claims
+        if claim.text not in {kept.text for kept in retained}
+    )
+    text = answer_without_claims(generation.text, dropped_texts, retained)
     return ReconciledClaims(claims=tuple(retained), text=text, stripped=stripped, dropped=dropped)
+
+
+_EMPTY_LIST_LINE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])?[ \t]*$")
+
+
+def answer_without_claims(
+    text: str, dropped_texts: tuple[str, ...], retained: Sequence[GeneratedClaim]
+) -> str:
+    """The answer with only the dropped claims' spans removed (span-level
+    citations: uncited text and list markup stay visible as unsupported text),
+    plus any line left holding nothing but a list marker. Falls back to the
+    retained claims' texts joined by blank lines -- the former behavior --
+    when a dropped claim cannot be located exactly once; with no claim
+    retained the answer is empty, as before."""
+
+    if not retained:
+        return ""
+    result = text
+    for dropped in dropped_texts:
+        if result.count(dropped) != 1:
+            return "\n\n".join(claim.text for claim in retained)
+        start = result.index(dropped)
+        line_start = result.rfind("\n", 0, start) + 1
+        line_end = result.find("\n", start + len(dropped))
+        line_end = len(result) if line_end == -1 else line_end
+        line = result[line_start:start] + result[start + len(dropped) : line_end]
+        if _EMPTY_LIST_LINE.match(line):
+            result = result[:line_start] + result[min(line_end + 1, len(result)) :]
+        else:
+            result = result[:start] + result[start + len(dropped) :]
+    if dropped_texts:
+        # A removed paragraph leaves its blank-line separators behind.
+        result = re.sub(r"\n{3,}", "\n\n", result).strip("\n")
+    return result
 
 
 # A single trailing full- or half-width parenthetical group, e.g. the

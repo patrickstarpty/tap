@@ -43,6 +43,7 @@ from tap.modules.knowledge.application.relation_analysis import (
 )
 from tap.modules.knowledge.application.relation_claims import (
     ClaimChunkSection,
+    answer_without_claims,
     normalized_heading_path,
     reconcile_relation_claims,
 )
@@ -1159,9 +1160,18 @@ class AuthorizedRetrieval:
                             if kept == claim.evidence_labels
                             else replace(claim, evidence_labels=kept)
                         )
+                    final_texts = {claim.text for claim in final_claims}
                     generation = replace(
                         generation,
-                        text="\n\n".join(claim.text for claim in final_claims),
+                        text=answer_without_claims(
+                            generation.text,
+                            tuple(
+                                claim.text
+                                for claim in generation.claims
+                                if claim.text not in final_texts
+                            ),
+                            final_claims,
+                        ),
                         claims=tuple(final_claims),
                     )
                     if not final_claims and reconciled.claims:

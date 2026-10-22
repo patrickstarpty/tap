@@ -769,3 +769,27 @@ def test_short_label_does_not_falsely_match_inside_the_other_endpoints_longer_te
     assert not claim_mentions_both_endpoints("乙方甲方代表已签署协议。", relation)
     # A genuine, standalone occurrence of the subject still matches.
     assert claim_mentions_both_endpoints("甲方已与乙方甲方代表签署协议。", relation)
+
+
+def test_reconciliation_keeps_uncited_text_and_list_markup() -> None:
+    """Span-level citations: uncited text is shown as unsupported, so relation
+    reconciliation must not rebuild the answer from its claims -- that dropped
+    every uncited sentence and every list marker on any answer with relation
+    context. Only a dropped claim's own span (and a list line it leaves empty)
+    is removed."""
+    text = "核保要求如下：\n\n1. 核保需要健康告知。\n2. 核保流程需要先完成体检。\n3. 准备身份证件\n"
+    generation = AnswerGeneration(
+        text=text,
+        claims=(
+            GeneratedClaim(text="核保需要健康告知。", evidence_labels=("R1",)),
+            GeneratedClaim(text="核保流程需要先完成体检。", evidence_labels=("R1",)),
+        ),
+        model_id="model-1",
+        profile_id="profile-1",
+        provider_request_id=None,
+    )
+
+    result = reconcile_relation_claims(generation, _CONTEXT, graph_version="7")
+
+    assert [claim.text for claim in result.claims] == ["核保需要健康告知。"]
+    assert result.text == "核保要求如下：\n\n1. 核保需要健康告知。\n3. 准备身份证件"
