@@ -926,22 +926,27 @@ def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> 
         )
         assert "cite the evidence facts you use, leave what you compose uncited" in contract
         assert "abstain only when no supplied evidence is relevant to the request" in contract
-        # The opening ends with the premise-correction rule; the composed rule
-        # sits in the rules right before the value-lookup abstention, whose
-        # "Otherwise" states the exemption once.
+        # Order (fix round 1, real ablation on the governed tool path): the
+        # premise-correction rule, then the composed rule, end the opening
+        # (Q3 8/10, c-001 10/10); with the composed rule just before the
+        # lookup rule instead, Q3 answered 6/20. The lookup rule's
+        # "Otherwise" refers back to it, so the exemption is stated once.
         opening = knowledge_litellm._ANSWER_PROMPT_OPENING
-        assert "compose" not in opening
-        assert opening.endswith(
+        premise = opening.index("If the query assumes")
+        correction = opening.index(
             "This correction is part of answering the query, never an ancillary fact, and comes "
             "first even when the rest of the query is answerable."
         )
-        composed = contract.index("A request to compose something")
-        lookup = contract.index(
+        composed = opening.index("A request to compose something")
+        assert premise < correction < composed
+        assert opening.endswith(
+            "abstain only when no supplied evidence is relevant to the request."
+        )
+        assert contract.index("A request to compose something") < contract.index(
             "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
             f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
-        assert contract.index("If the query assumes") < composed < lookup
-        assert contract[composed:lookup].count(".") == 1
+        assert contract.count("A request to compose something") == 1
         assert "this never applies to a request" not in contract
     # Sibling task prompts exempt composed requests from their own abstention.
     for sibling in (

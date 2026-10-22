@@ -1093,3 +1093,15 @@ async def test_a_constrained_question_gets_a_schema_with_empty_restatements(mess
         assert queries["items"]["properties"][field] == {"type": "string", "maxLength": 0}
     assert schema["required"] == PLANNER_SCHEMA["required"]
     assert PLANNER_SCHEMA["properties"]["standalone_query"] == {"type": "string"}
+
+
+def test_planner_prompt_keeps_requests_for_steps_or_test_checks_procedural():
+    """Once constrained plans were admitted, qwen-plus labelled the Q3 test
+    checks + Playwright request factual_lookup, whose answer template made
+    the governed answer abstain (8 of 10 real runs)."""
+    from tap.modules.chat.adapters.model_gateway_planner import PLANNER_PROMPT
+
+    assert (
+        "A question asking for steps, test checks, test cases or a script is procedural, never "
+        "factual_lookup." in PLANNER_PROMPT
+    )
