@@ -90,3 +90,27 @@ def test_graph_corpus_upload_sends_the_web_origin(
 
     assert script._upload_source("http://127.0.0.1:8000", "p", entry, target) == "src_1"
     assert seen[0].get_header("Origin") == "http://127.0.0.1:5173"
+
+
+def test_real_mode_reads_the_http_answer_dry_run_returns() -> None:
+    """`ConversationGroundingCheck.dry_run_answer` already returns the HTTP
+    `RetrievalAnswerResponse`; converting it again as a domain answer raised
+    `AttributeError: ... no attribute 'relation'` on the first real case."""
+    from types import SimpleNamespace
+
+    script = _load("run_answer_golden", "run-answer-golden.py")
+    citation = SimpleNamespace(source=SimpleNamespace(source_id="src_1"))
+    answer = SimpleNamespace(
+        citations=[citation], abstained=False, answer="Body [S1]", claims=[object()]
+    )
+
+    observation = script._real_observation("case-1", answer, {"src_1": "doc"})
+
+    assert observation == {
+        "id": "case-1",
+        "invalid": False,
+        "abstained": False,
+        "answer": "Body [S1]",
+        "citedSources": ["doc"],
+        "claimCount": 1,
+    }

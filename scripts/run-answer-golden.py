@@ -49,7 +49,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from tap.quality.web_origin import web_origin
 from tap.quality.answer_golden import (
@@ -434,6 +434,28 @@ def validate_corpus_file(
 # --- real mode ----------------------------------------------------------------
 
 
+def _real_observation(
+    case_id: str, answer: Any, stems_by_source_id: Mapping[str, str]
+) -> dict[str, Any]:
+    """One observation from the HTTP `RetrievalAnswerResponse` that
+    `ConversationGroundingCheck.dry_run_answer` returns (already HTTP-shaped)."""
+    cited_sources = sorted(
+        {
+            stems_by_source_id[citation.source.source_id]
+            for citation in answer.citations
+            if citation.source.source_id in stems_by_source_id
+        }
+    )
+    return {
+        "id": case_id,
+        "invalid": False,
+        "abstained": bool(answer.abstained),
+        "answer": answer.answer,
+        "citedSources": cited_sources,
+        "claimCount": len(answer.claims),
+    }
+
+
 async def run_real(
     *, golden: Path, corpus: Mapping[str, Any], actor_id: str, corpus_dir: Path
 ) -> dict[str, Any]:
@@ -441,8 +463,6 @@ async def run_real(
     from tap.entrypoints.tapper_runtime import TapperSettings, create_api_runtime
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
-    from tap.modules.knowledge.api import answer_response_to_http
-    from tap.modules.knowledge.domain.models import AnswerResponse
     from tap.platform.db.session import create_engine_and_session_factory
 
     from contextlib import AsyncExitStack
@@ -494,24 +514,7 @@ async def run_real(
                     }
                 )
                 continue
-            http_answer = answer_response_to_http(cast(AnswerResponse, answer))
-            cited_sources = sorted(
-                {
-                    stems_by_source_id[citation.source.source_id]
-                    for citation in http_answer.citations
-                    if citation.source.source_id in stems_by_source_id
-                }
-            )
-            observations.append(
-                {
-                    "id": case.id,
-                    "invalid": False,
-                    "abstained": bool(http_answer.abstained),
-                    "answer": http_answer.answer,
-                    "citedSources": cited_sources,
-                    "claimCount": len(http_answer.claims),
-                }
-            )
+            observations.append(_real_observation(case.id, answer, stems_by_source_id))
 
         return {
             "schemaVersion": OBSERVATIONS_SCHEMA_VERSION,
