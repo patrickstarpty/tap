@@ -50,7 +50,7 @@ flowchart LR
 3. **剧本运行**：剧本是标记为 `system` 的能力 4 Agent 定义，只能使用只读工具（授权检索、图谱查询、平台只读 API）和 `propose_*` 工具。每次运行最多 8 个工具步骤，有 token 上限，并生成能力 5 的 trace。
 4. **提议存储与执行**：提议持久化依据、路由和状态。采纳时由后端以采纳人身份调用写接口，Agent 不持有写权限。
 
-**跨边界规则**：TAP AI 不读平台数据库，只通过事件和平台只读 API 获取信息，采纳后的写操作调用平台 API。该契约在 V2.2 以 ADR 记录。
+**跨边界规则**：TAP AI 不读平台数据库，只通过事件和平台只读 API 获取信息，采纳后的写操作调用平台 API。该契约在 V2.3 以 ADR 记录。
 
 ## 信号与事件契约
 
@@ -160,8 +160,8 @@ stateDiagram-v2
 
 每期各自走 spec → plan → 实施。
 
-1. **V2.1 框架与 TAP AI 内部剧本**：`proactive` 模块、内部 Outbox 订阅、提议存储与路由、采纳执行（仅 TAP AI 内部写接口）、P1、P2（仅 Skill 影响）、P4、P5、P6，界面 1、2、4。
-2. **V2.2 平台事件接入**：ADR（TAP AI 与平台的事件及写接口契约）、接入接口、`apps/backend` 的 Outbox 与推送器、Test Insights 事件、P3（先只分析，采纳动作待平台 API 就绪），界面 3。
-3. **V2.3 Test Management 与 Low Code Automation**：随两个后端解冻接入，补全 P2 的用例部分、P3 的采纳动作和 `automation.run.failed`。
+1. **V2.2 框架与 TAP AI 内部剧本**：`proactive` 模块、内部 Outbox 订阅、提议存储与路由、采纳执行（仅 TAP AI 内部写接口）、P1、P2（仅 Skill 影响）、P4、P5、P6，界面 1、2、4。
+2. **V2.3 平台事件接入**：ADR（TAP AI 与平台的事件及写接口契约）、接入接口、`apps/backend` 的 Outbox 与推送器、Test Insights 事件、P3（先只分析，采纳动作待平台 API 就绪），界面 3。
+3. **V2.4 Test Management 与 Low Code Automation**：随两个后端解冻接入，补全 P2 的用例部分、P3 的采纳动作和 `automation.run.failed`。
 
-`docs/architecture.md` 在 V2.1 实施时补充主动 Agent 的数据流。
+`docs/architecture.md` 在 V2.2 实施时补充主动 Agent 的数据流。

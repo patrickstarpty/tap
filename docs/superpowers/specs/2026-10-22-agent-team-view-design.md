@@ -1,6 +1,6 @@
 # Agent 团队视图设计
 
-日期：2026-10-22。归属[产品路线图](../plans/2026-10-01-product-roadmap.md) V2.4。
+日期：2026-10-22。归属[产品路线图](../plans/2026-10-01-product-roadmap.md) V2.1。
 
 ## 背景
 
@@ -30,8 +30,8 @@
 ## 前置条件
 
 - V1 能力 4（Skills/Agents）与能力 5（可观测性、Langfuse 同步）已合入 `develop`。
-- 与 V2.1 主动框架无强依赖，可并行实施。V2.1 系统 Agent 上线后作为团队成员加入（见 1.1）。
-- 当前 Tapper Demo 为回环绑定、单一本地身份。V2.4 的数据模型和页面按多人设计，演示环境中只有一人。
+- V2 中最先实施；V2.2 主动框架在其之后。V2.2 系统 Agent 上线后作为团队成员加入（见 1.1）。
+- 当前 Tapper Demo 为回环绑定、单一本地身份。V2.1 的数据模型和页面按多人设计，演示环境中只有一人。
 
 ## 1. 概念
 
@@ -45,7 +45,7 @@
 | 自定义 Agent | 能力 4 创建或复制 | 有，默认创建人 |
 | 内置 Agent | 种子数据（Knowledge agent） | 显示"Tapper 内置" |
 | Tapper 默认 | 未选 Agent 的对话，`agent_key = tapper_default` | 显示"Tapper 内置" |
-| 系统 Agent | V2.1 主动剧本，V2.1 上线后出现 | 显示"Tapper 内置" |
+| 系统 Agent | V2.2 主动剧本，V2.2 上线后出现 | 显示"Tapper 内置" |
 
 - 停用的 Agent 保留在名单中，状态"已停用"，历史数据不变。
 
@@ -254,7 +254,7 @@ Vitest 覆盖四个标签、卡片与表格切换、排序筛选、组织架构�
 ### 7.5 文档与门禁
 
 - 新增 ADR：Langfuse 从可选组件改为默认组件，团队视图运行数据以 Langfuse 为唯一查询来源。
-- 更新 `docs/architecture.md`（`agent_team` 模块、同步标签、默认部署）与产品路线图 V2.4 行。
+- 更新 `docs/architecture.md`（`agent_team` 模块、同步标签、默认部署）与产品路线图 V2.1 行。
 - `make check`、`make test`、`make demo-e2e` 全部通过。
 
 ## 8. 风险

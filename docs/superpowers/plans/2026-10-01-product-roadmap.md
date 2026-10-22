@@ -57,16 +57,16 @@ flowchart LR
 
 ## V2：主动 Tapper（已设计）
 
-设计：[Tapper 主动 Agent 设计](../specs/2026-09-30-tapper-proactive-agent-design.md)。前置：V1 能力 4、能力 5 与 worker 可靠性修复完成。
+设计：[Agent 团队视图设计](../specs/2026-10-22-agent-team-view-design.md)（V2.1）、[Tapper 主动 Agent 设计](../specs/2026-09-30-tapper-proactive-agent-design.md)（V2.2–V2.4）。前置：V1 能力 4、能力 5 与 worker 可靠性修复完成。
 
 | 项 | 内容 | 状态 |
 | --- | --- | --- |
-| V2.1 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
-| V2.2 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
-| V2.3 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
-| V2.4 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 已设计（[spec](../specs/2026-10-22-agent-team-view-design.md)；可与 V2.1 并行） |
+| V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 已设计（[spec](../specs/2026-10-22-agent-team-view-design.md)；V2 第一个实施） |
+| V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
+| V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
+| V2.4 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
 
-退出标准：V2.1、V2.2 工程完成；在真实项目中度量提议采纳率。
+退出标准：V2.1、V2.2、V2.3 工程完成；在真实项目中度量提议采纳率。
 
 ## V3：测试闭环（未设计）
 
@@ -74,7 +74,7 @@ flowchart LR
 
 - 解冻 Test Management 后端，建设 Low Code Automation 后端。
 - 重新评估已暂缓的 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 与 [ADR-025](../../decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md)。
-- 完成 V2.3。
+- 完成 V2.4。
 
 ## V4：产品化（未设计）
 
