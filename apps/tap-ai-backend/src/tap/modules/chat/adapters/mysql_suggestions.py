@@ -37,6 +37,7 @@ from tap.modules.chat.domain.suggestions import (
     SuggestionSource,
     next_due_at,
 )
+from tap.platform.db.lock_contention import claim_or_nothing
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 
@@ -442,7 +443,17 @@ class MysqlSuggestionStore:
             raise ValueError("prompt suggestion claim limit must be positive")
         if not timedelta(0) < lease_duration <= timedelta(minutes=15):
             raise ValueError("prompt suggestion lease duration is invalid")
-        now = _naive(now)
+        return await claim_or_nothing(
+            lambda: self._claim_due_once(
+                worker_id=worker_id, now=_naive(now), limit=limit, lease_duration=lease_duration
+            ),
+            kind="prompt-suggestion",
+            nothing=(),
+        )
+
+    async def _claim_due_once(
+        self, *, worker_id: str, now: datetime, limit: int, lease_duration: timedelta
+    ) -> tuple[ClaimedRefresh, ...]:
         claims: list[ClaimedRefresh] = []
         async with self._sessions() as session, session.begin():
             rows = (

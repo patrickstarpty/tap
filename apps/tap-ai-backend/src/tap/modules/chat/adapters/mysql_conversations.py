@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from dataclasses import asdict, replace
+from collections.abc import Mapping, MutableSequence
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -59,6 +59,7 @@ from tap.modules.governance.domain.audit import (
     AuditResource,
     SafeAuditMetadata,
 )
+from tap.platform.db.lock_contention import claim_or_nothing
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -164,6 +165,32 @@ turn_artifact_link = _scoped(
 
 _LIKE_ESCAPE = "!"
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _UnclaimableTurn:
+    """A Turn a claim attempt settled as `turn.failed`, reported after commit."""
+
+    turn_id: str
+    reason: str
+    last_failure: str
+    attempts_exhausted: bool
+
+    def report(self) -> None:
+        _LOGGER.warning(
+            "conversation turn settled as unclaimable",
+            extra={
+                "turn_id": self.turn_id,
+                "reason": self.reason,
+                "last_failure": self.last_failure,
+            },
+        )
+        if self.attempts_exhausted:
+            with span(
+                "turn.attempts_exhausted",
+                {"tap.turn_id": self.turn_id, "tap.failure.last": self.last_failure},
+            ):
+                pass
 
 
 def _title_pattern(query: str) -> str:
@@ -1142,10 +1169,21 @@ class MysqlConversationRepository:
         """
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be positive")
+        # Per candidate the claim locks the conversation, Turn and graph-run
+        # rows while API writes (cancel, delete, new Turns) lock the same rows
+        # in their own order; a rolled-back claim leased and emitted nothing.
+        return await claim_or_nothing(
+            lambda: self._claim_queued_once(limit=limit),
+            kind="chat-turn",
+            nothing=ClaimBatch(),
+        )
+
+    async def _claim_queued_once(self, *, limit: int) -> ClaimBatch:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
         claimed: list[tuple[str, ConversationTurn]] = []
         wakeups: list[tuple[str, int]] = []
+        settled: list[_UnclaimableTurn] = []
         async with self.sessions() as session, session.begin():
             candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
@@ -1275,6 +1313,7 @@ class MysqlConversationRepository:
                         now,
                         problem_type="conversation-integrity",
                         reason="input-snapshot-missing",
+                        settled=settled,
                     )
                     wakeups.append((row["chat_id"], failed_sequence))
                     continue
@@ -1287,6 +1326,7 @@ class MysqlConversationRepository:
                         now,
                         problem_type="answer-unavailable",
                         reason="attempts-exhausted",
+                        settled=settled,
                     )
                     wakeups.append((row["chat_id"], failed_sequence))
                     continue
@@ -1356,6 +1396,10 @@ class MysqlConversationRepository:
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
                 wakeups.append((row["chat_id"], event.sequence))
+        # Only now has the settlement committed: a rolled-back attempt (lost
+        # to lock contention and retried) must not report it.
+        for turn in settled:
+            turn.report()
         return ClaimBatch(claimed, wakeups=wakeups)
 
     async def _has_input_snapshot(self, session, turn_id: str) -> bool:
@@ -1377,24 +1421,18 @@ class MysqlConversationRepository:
         *,
         problem_type: str,
         reason: str,
+        settled: MutableSequence[_UnclaimableTurn],
     ) -> int:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
-        last_failure = row["last_failure"] or "lease-expired"
-        _LOGGER.warning(
-            "conversation turn settled as unclaimable",
-            extra={
-                "turn_id": row["turn_id"],
-                "reason": reason,
-                "last_failure": last_failure,
-            },
+        settled.append(
+            _UnclaimableTurn(
+                turn_id=row["turn_id"],
+                reason=reason,
+                last_failure=row["last_failure"] or "lease-expired",
+                attempts_exhausted=problem_type == "answer-unavailable",
+            )
         )
-        if problem_type == "answer-unavailable":
-            with span(
-                "turn.attempts_exhausted",
-                {"tap.turn_id": row["turn_id"], "tap.failure.last": last_failure},
-            ):
-                pass
         event = await self._next_event(
             session,
             row["chat_id"],

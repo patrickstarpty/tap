@@ -11,7 +11,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 
+from sqlalchemy.exc import DBAPIError
+
 from tap.modules.knowledge.application.ingestion import IngestionWorker
+from tap.platform.db.lock_contention import transient_lock_error_code
 from tap.platform.messaging.redis_wakeup import WakeupConsumer
 
 if TYPE_CHECKING:
@@ -108,17 +111,29 @@ async def run_worker_loop(
             wakeup_failed = True
         if stop.is_set():
             break
-        if not await _run_until_stopped(
-            worker.run_once(limit=settings.job_batch_size), worker, stop, settings
-        ):
-            break
-        if pending_work is not None and not await _run_until_stopped(
-            pending_work(limit=settings.job_batch_size), worker, stop, settings
-        ):
-            break
+        contended = False
+        try:
+            if not await _run_until_stopped(
+                worker.run_once(limit=settings.job_batch_size), worker, stop, settings
+            ):
+                break
+            if pending_work is not None and not await _run_until_stopped(
+                pending_work(limit=settings.job_batch_size), worker, stop, settings
+            ):
+                break
+        except DBAPIError as error:
+            # A stage or settlement commit that lost to InnoDB lock contention
+            # rolled back alone; its job keeps a lease that expires and is
+            # reclaimed, so the pass ends here and the loop polls again. Every
+            # other error still ends the loop.
+            code = transient_lock_error_code(error)
+            if code is None:
+                raise
+            logger.warning("worker pass lost to MySQL lock contention (%s); polling again", code)
+            contended = True
         if wakeup is not None:
             await wakeups.ack(wakeup)
-        if wakeup_failed:
+        if wakeup_failed or contended:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
             except TimeoutError:
