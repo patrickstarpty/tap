@@ -25,6 +25,7 @@ CLAIM_ATTEMPTS = 3
 _BACKOFF_SECONDS = (0.05, 0.2)
 
 Sleep = Callable[[float], Awaitable[None]]
+_sleep: Sleep = asyncio.sleep
 
 
 def mysql_error_code(error: DBAPIError) -> int | None:
@@ -46,7 +47,7 @@ def transient_lock_error_code(error: BaseException) -> int | None:
 async def retry_lock_contention[T](
     attempt: Callable[[], Awaitable[T]],
     *,
-    sleep: Sleep = asyncio.sleep,
+    sleep: Sleep | None = None,
 ) -> T:
     """Run `attempt` (which must open its own transaction) up to `CLAIM_ATTEMPTS`
     times while it loses to lock contention; re-raise the last such error."""
@@ -57,7 +58,7 @@ async def retry_lock_contention[T](
         except DBAPIError as error:
             if transient_lock_error_code(error) is None or number == CLAIM_ATTEMPTS:
                 raise
-        await sleep(random.uniform(*_BACKOFF_SECONDS))
+        await (sleep or _sleep)(random.uniform(*_BACKOFF_SECONDS))
     raise AssertionError("unreachable")
 
 
@@ -66,7 +67,7 @@ async def claim_or_nothing[T](
     *,
     kind: str,
     nothing: T,
-    sleep: Sleep = asyncio.sleep,
+    sleep: Sleep | None = None,
 ) -> T:
     """`retry_lock_contention` for a polling claim: when every attempt loses,
     log one warning (claim kind and error code only) and return `nothing`."""

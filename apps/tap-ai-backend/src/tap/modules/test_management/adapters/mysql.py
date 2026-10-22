@@ -100,6 +100,7 @@ from tap.modules.test_management.ports.generation import (
     TestDesignContext,
     TestDesignGenerator,
 )
+from tap.platform.db.lock_contention import claim_or_nothing
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -2610,8 +2611,28 @@ class MysqlTestPlanRepository:
             raise ValueError("test design worker lease is invalid")
         if type(limit) is not int or not 1 <= limit <= 50:
             raise ValueError("test design claim limit must be between 1 and 50")
+        return await claim_or_nothing(
+            lambda: self._claim_generation_jobs_once(
+                scope,
+                worker_id=worker_id,
+                instant=_naive(now),
+                lease_duration=lease_duration,
+                limit=limit,
+            ),
+            kind="test-design",
+            nothing=(),
+        )
+
+    async def _claim_generation_jobs_once(
+        self,
+        scope: ProjectScopeContext,
+        *,
+        worker_id: str,
+        instant: datetime,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> tuple[ClaimedTestDesignJob, ...]:
         claims: list[ClaimedTestDesignJob] = []
-        instant = _naive(now)
         async with self._sessions() as session, session.begin():
             rows = (
                 (

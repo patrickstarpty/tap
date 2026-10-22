@@ -64,6 +64,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
     knowledge_document_revision,
 )
+from tap.platform.db.lock_contention import claim_or_nothing
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
 
@@ -277,6 +278,23 @@ class MysqlGraphJobStore:
             raise ValueError("graph worker lease is invalid")
         if type(limit) is not int or not 1 <= limit <= 50:
             raise ValueError("graph job claim limit must be between 1 and 50")
+        return await claim_or_nothing(
+            lambda: self._claim_once(
+                scope, worker_id=worker_id, now=now, lease_duration=lease_duration, limit=limit
+            ),
+            kind="graph-extraction",
+            nothing=(),
+        )
+
+    async def _claim_once(
+        self,
+        scope: ProjectScopeContext,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> tuple[ClaimedGraphJob, ...]:
         claims: list[ClaimedGraphJob] = []
         async with self._sessions() as session, session.begin():
             rows = (

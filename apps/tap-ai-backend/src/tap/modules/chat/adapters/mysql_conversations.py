@@ -59,6 +59,7 @@ from tap.modules.governance.domain.audit import (
     AuditResource,
     SafeAuditMetadata,
 )
+from tap.platform.db.lock_contention import claim_or_nothing
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -1142,6 +1143,16 @@ class MysqlConversationRepository:
         """
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be positive")
+        # Per candidate the claim locks the conversation, Turn and graph-run
+        # rows while API writes (cancel, delete, new Turns) lock the same rows
+        # in their own order; a rolled-back claim leased and emitted nothing.
+        return await claim_or_nothing(
+            lambda: self._claim_queued_once(limit=limit),
+            kind="chat-turn",
+            nothing=ClaimBatch(),
+        )
+
+    async def _claim_queued_once(self, *, limit: int) -> ClaimBatch:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
         claimed: list[tuple[str, ConversationTurn]] = []
