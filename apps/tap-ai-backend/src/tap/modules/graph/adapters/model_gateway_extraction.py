@@ -14,6 +14,7 @@ from tap.modules.ai.domain.models import (
     ModelOutputTruncated,
     ModelRequest,
     schema_digest,
+    structured_profile_digest,
     text_digest,
 )
 from tap.modules.ai.ports.gateway import ModelGateway
@@ -246,8 +247,10 @@ GRAPH_EXTRACTION_PROMPT = (
     "this contract, the company), never a clause, section or schedule number (第十九条, 附表1, "
     "Article 5), and never a number; an alias is a short name, not a sentence."
 )
-GRAPH_EXTRACTION_PROFILE_DIGEST = text_digest(
-    GRAPH_EXTRACTION_PROMPT + "\n" + schema_digest(GRAPH_EXTRACTION_SCHEMA)
+# Includes the gateway's schema instruction (what the model is shown), so a
+# gateway wording change also makes existing fragments stale for backfill.
+GRAPH_EXTRACTION_PROFILE_DIGEST = structured_profile_digest(
+    GRAPH_EXTRACTION_PROMPT, GRAPH_EXTRACTION_SCHEMA
 )
 
 

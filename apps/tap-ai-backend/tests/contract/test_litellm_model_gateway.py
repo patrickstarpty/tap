@@ -3924,17 +3924,28 @@ async def test_json_schema_request_shows_the_schema_in_the_trusted_instructions(
 
 @pytest.mark.asyncio
 async def test_schema_instructions_count_toward_the_request_byte_bound():
-    sent_nothing = []
+    """For text requests the 256 KiB transport payload bound is always the
+    tighter one (the payload carries prompt, context and the schema twice),
+    but a vision request's transport bound is 6 MiB, so only `_validate`'s
+    instruction-counted 256 KiB total stops prompt + context + schema
+    instruction from exceeding the instruction bound."""
+    sent = []
 
     def respond(incoming):
-        sent_nothing.append(incoming)
+        sent.append(incoming)
         raise AssertionError("an oversized request must not reach the provider")
 
-    structured = request(ModelOperation.STRUCTURED)
-    compact = json.dumps(structured.schema, sort_keys=True, separators=(",", ":"))
-    # Prompt + context fit the 256 KiB instruction bound on their own; the
-    # schema now sent as instruction text pushes the total over it.
-    prompt = "a" * (262144 - len(structured.context.encode()) - len(compact) // 2)
+    from tap.modules.ai.domain.models import structured_schema_instruction
+
+    structured = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="qwen3-vl-plus",
+        image_bytes=b"\x89PNG\r\n\x1a\nexample",
+        image_media_type="image/png",
+    )
+    instruction = structured_schema_instruction(structured.schema)
+    # Prompt + context alone fit the bound; the schema instruction does not.
+    prompt = "a" * (262144 - len(structured.context.encode()) - len(instruction) // 2)
     oversized = replace(structured, prompt=prompt, prompt_digest=digest(prompt))
     gateway = configured_gateway(respond)
 
@@ -3944,7 +3955,12 @@ async def test_schema_instructions_count_toward_the_request_byte_bound():
 
     gateway._redact = accept
     with pytest.raises(ModelGatewayRejected):
+        await gateway._validate(oversized, ModelOperation.STRUCTURED)
+    with pytest.raises(ModelGatewayRejected):
         await gateway.generate_structured(oversized)
-    # The encoded payload (which now carries the schema twice) stays bounded
-    # by the same 256 KiB transport limit.
-    assert sent_nothing == []
+    assert sent == []
+    # The same request minus the schema-instruction overflow is admitted.
+    fits = replace(oversized, prompt=prompt[: -len(instruction)])
+    await gateway._validate(
+        replace(fits, prompt_digest=digest(fits.prompt)), ModelOperation.STRUCTURED
+    )

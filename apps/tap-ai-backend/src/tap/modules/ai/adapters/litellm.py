@@ -48,6 +48,7 @@ from tap.modules.ai.domain.models import (
     ModelToolCall,
     ModelUsage,
     schema_digest,
+    structured_schema_instruction,
     text_digest,
 )
 from tap.modules.ai.domain.tools import TOOL_REGISTRY, known_tool_ids
@@ -256,16 +257,6 @@ def _translate_model_errors(error_holder: _ErrorCode):
     ):
         error_holder.value = "model-unavailable"
         raise ModelGatewayUnavailable() from None
-
-
-def _schema_instruction(schema: dict[str, Any] | None) -> str:
-    """The trusted instruction suffix carrying a structured request's schema,
-    serialized exactly as `_validate` redaction-checks it."""
-    return (
-        "\nReturn one JSON object conforming exactly to this JSON schema; "
-        "include all required fields and no additional fields:\n"
-        + json.dumps(schema, sort_keys=True, separators=(",", ":"))
-    )
 
 
 def _request_json_for_record(
@@ -504,7 +495,7 @@ class LiteLLMModelGateway:
                 await self._check_redacted(call.arguments_json)
         if operation is ModelOperation.STRUCTURED and request.schema:
             # `_prepare` sends the schema as trusted instruction text too.
-            total_request_bytes += len(_schema_instruction(request.schema).encode())
+            total_request_bytes += len(structured_schema_instruction(request.schema).encode())
         if total_request_bytes > 262144:
             raise ModelGatewayRejected()
         governed = bool(request.governance_digests or request.tool_allowlist)
@@ -658,7 +649,9 @@ class LiteLLMModelGateway:
                 # mode constrains decoding without showing the schema to the
                 # model (prompt tokens do not grow with it), so enum choices
                 # and field meanings were otherwise invisible.
-                system_prompt += _schema_instruction(request.schema)
+                # Invariant: only platform-owned schemas may reach STRUCTURED,
+                # because the schema becomes trusted instruction text.
+                system_prompt += structured_schema_instruction(request.schema)
             payload.update(
                 messages=[
                     {"role": "system", "content": system_prompt},
