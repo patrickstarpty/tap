@@ -117,15 +117,15 @@ _CLARIFY_PREFIX = "CLARIFY:"
 _CLARIFY_MAX_CHARS = 300
 _ANSWER_PROMPT_OPENING = (
     "Answer the query directly and minimally; state facts only from supplied evidence and "
-    "omit ancillary facts. If evidence conflicts or cannot answer the query, output exactly "
+    "omit ancillary facts. If the evidence conflicts, output exactly "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL} and nothing else. Otherwise write the answer as "
-    "Markdown. A request to compose something from the evidence, such as test checks, steps, a "
-    "script, a plan, a summary or a comparison, is answerable whenever supplied evidence is "
-    "relevant to it: cite the evidence facts you use and leave what you compose uncited; "
-    "abstain only when no supplied evidence is relevant to the request. If the query assumes a "
-    "fact or value that the evidence contradicts, state the evidence's own value in a cited "
-    "sentence that corrects it, e.g. 'X is A, not B': lead with the evidence's value and never "
-    "restate the query's assumed value as true."
+    "Markdown. If the query assumes a fact or value that the evidence contradicts, state the "
+    "evidence's own value in a cited sentence that corrects it, e.g. 'X is A, not B': lead with "
+    "the evidence's value and never restate the query's assumed value as true. A request to "
+    "compose something from the evidence, such as test checks, steps, a script, a plan, a "
+    "summary or a comparison, is answerable whenever supplied evidence is relevant to it, even "
+    "though no evidence states what you compose: cite the evidence facts you use and leave what "
+    "you compose uncited; abstain only when no supplied evidence is relevant to the request."
 )
 _ANSWER_PROMPT_RULES = (
     "Never cite a label that was not supplied. Evidence labels appear only as bracketed "
@@ -144,7 +144,8 @@ _ANSWER_PROMPT_RULES = (
     "share one value and only one differs -- never write a single generalized sentence for a "
     "value that is not identical across every document it is about. If the query looks up a "
     "fact or value that no supplied evidence states, output exactly "
-    f"{_INSUFFICIENT_EVIDENCE_SENTINEL}. When some selected documents state that value and "
+    f"{_INSUFFICIENT_EVIDENCE_SENTINEL}; this never applies to a request to compose something. "
+    "When some selected documents state that value and "
     "another selected document does not, say in that document's own sentence that it does not "
     "state the value; never infer that value or borrow another document's value for it."
 )

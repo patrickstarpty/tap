@@ -892,7 +892,7 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
         # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
         abstain = (
             "If the query looks up a fact or value that no supplied evidence states, output "
-            f"exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
+            f"exactly {INSUFFICIENT_EVIDENCE_SENTINEL};"
         )
         scoped = "When some selected documents state that value and another selected document"
         assert abstain in contract and scoped in contract
@@ -907,16 +907,34 @@ def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> 
     state). Abstention is scoped to lookups; a composed request is answered
     with cited facts and uncited composed content."""
     from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+    from tap.modules.knowledge.domain.abstention import INSUFFICIENT_EVIDENCE_SENTINEL
 
     for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
         assert "If no supplied evidence states the value the query asks about" not in contract
+        # "cannot answer the query" made a tool-offering governed Turn abstain
+        # on Q3 (real qwen-plus ablation); abstention is now only for
+        # conflicts, irrelevant evidence and unstated looked-up values.
+        assert "cannot answer the query" not in contract
+        assert (
+            f"If the evidence conflicts, output exactly {INSUFFICIENT_EVIDENCE_SENTINEL} and "
+            "nothing else." in contract
+        )
         assert (
             "A request to compose something from the evidence, such as test checks, steps, a "
             "script, a plan, a summary or a comparison, is answerable whenever supplied evidence "
-            "is relevant to it" in contract
+            "is relevant to it, even though no evidence states what you compose" in contract
         )
         assert "cite the evidence facts you use and leave what you compose uncited" in contract
         assert "abstain only when no supplied evidence is relevant to the request" in contract
+        # The premise-correction rule stays right after the Markdown sentence;
+        # placing the composed rule between them lowered c-001's correction rate.
+        assert contract.index("Otherwise write the answer as Markdown. If the query assumes") < (
+            contract.index("A request to compose something")
+        )
+        assert (
+            f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}; this never applies to a request "
+            "to compose something." in contract
+        )
 
 
 def test_evidence_labels_appear_only_as_markers() -> None:
