@@ -616,13 +616,20 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     intent, route = "comparison", "retrieve"
                 else:
                     intent, route = "factual_lookup", "retrieve"
+                # A constrained question's schema fixes its restatements to
+                # "" (the planner fills in the original question).
+                restated = (
+                    ""
+                    if request.schema["properties"]["standalone_query"].get("maxLength") == 0
+                    else question
+                )
                 queries = (
                     [
                         {
                             "id": "q1",
-                            "text": question,
+                            "text": restated,
                             "depends_on": [],
-                            "evidence_goal": question,
+                            "evidence_goal": restated,
                             "source_ids": source_ids,
                         }
                     ]
@@ -645,7 +652,7 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                         "intent": intent,
                         "route": route,
                         "confidence": 0.9,
-                        "standalone_query": question,
+                        "standalone_query": restated,
                         "missing": [],
                         "queries": queries,
                         "agent_intent": agent_intent,
