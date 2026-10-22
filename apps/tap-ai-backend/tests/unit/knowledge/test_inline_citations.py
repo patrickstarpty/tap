@@ -891,10 +891,239 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
         # the value (stated after it, b-001 kept writing a cited
         # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
         abstain = (
-            "If no supplied evidence states the value the query asks about, output exactly "
-            f"{INSUFFICIENT_EVIDENCE_SENTINEL}."
+            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         scoped = "When some selected documents state that value and another selected document"
         assert abstain in contract and scoped in contract
         assert contract.index(abstain) < contract.index(scoped)
     assert knowledge_litellm._INSUFFICIENT_EVIDENCE_SENTINEL is INSUFFICIENT_EVIDENCE_SENTINEL
+
+
+def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> None:
+    """D1-R: the unstated-value abstention made real qwen-plus abstain on a
+    request to compose test checks and Playwright steps from sufficient
+    evidence (it read the requested checks as values the evidence must
+    state). Abstention is scoped to lookups; a composed request is answered
+    with cited facts and uncited composed content."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+    from tap.modules.knowledge.domain.abstention import INSUFFICIENT_EVIDENCE_SENTINEL
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert "If no supplied evidence states the value the query asks about" not in contract
+        # "cannot answer the query" made a tool-offering governed Turn abstain
+        # on Q3 (real qwen-plus ablation); abstention is now only for
+        # conflicts, irrelevant evidence and unstated looked-up values.
+        assert "cannot answer the query" not in contract
+        assert (
+            f"If the evidence conflicts, output exactly {INSUFFICIENT_EVIDENCE_SENTINEL} and "
+            "nothing else." in contract
+        )
+        assert (
+            "A request to compose something from the evidence, such as test checks, steps, a "
+            "script, a plan, a summary or a comparison, is answerable whenever supplied evidence "
+            "is relevant to it, even though no evidence states what you compose" in contract
+        )
+        assert "cite the evidence facts you use, leave what you compose uncited" in contract
+        assert "abstain only when no supplied evidence is relevant to the request" in contract
+        # Order (fix round 1, real ablation on the governed tool path): the
+        # premise-correction rule, then the composed rule, end the opening
+        # (Q3 16/20 over two batches, c-001 10/10); with the composed rule
+        # just before the lookup rule instead, Q3 answered 8/30. The
+        # exemption is stated once, in the composed rule ("abstain only
+        # when no supplied evidence is relevant"); the lookup rule's
+        # "Otherwise" only continues the per-document value rules before it.
+        opening = knowledge_litellm._ANSWER_PROMPT_OPENING
+        premise = opening.index("If the query assumes")
+        correction = opening.index(
+            "This correction is part of answering the query, never an ancillary fact, and comes "
+            "first even when the rest of the query is answerable."
+        )
+        composed = opening.index("A request to compose something")
+        assert premise < correction < composed
+        assert opening.endswith(
+            "abstain only when no supplied evidence is relevant to the request."
+        )
+        assert contract.index("A request to compose something") < contract.index(
+            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
+        )
+        assert contract.count("A request to compose something") == 1
+        assert "this never applies to a request" not in contract
+    # Sibling task prompts exempt composed requests from their own abstention.
+    for sibling in (
+        knowledge_litellm._RELATION_ANSWER_PROMPT,
+        knowledge_litellm._FLOWCHART_ANSWER_PROMPT,
+    ):
+        assert (
+            "unless the query asks you to compose something from the evidence, output "
+            f"{INSUFFICIENT_EVIDENCE_SENTINEL}" in sibling
+        )
+
+
+def test_evidence_labels_appear_only_as_markers() -> None:
+    """N1: real answers mentioned labels in code comments ("依据 S9/S1/S8") and
+    closing remarks ("（S1–S10）"), and wrote a fake "[webapp-testing skill]"."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert (
+            "Evidence labels appear only as bracketed markers right after the text they "
+            "support; never mention a label anywhere else, including inside code, comments or "
+            "source lists, and never write a bracketed source, document or Skill name as a "
+            "citation." in contract
+        )
+
+
+def _three_label_pool():
+    return (
+        *_steps_pool(),
+        evidence(label="S3", content="严重缺陷需在24小时内修复。"),
+    )
+
+
+async def _final_answer(reply: str, pool, question: str = "问题") -> str:
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    generation = await _answer_gateway(Gateway()).answer(question, pool, "quick-hybrid-v1")
+    assert generation.claims
+    return generation.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "answer"),
+    [
+        # (a) a bracketed or parenthesized list, with or without a cue inside
+        (
+            "- 验证码固定为123456[S1]。\n\n以上检查点均有资料支撑（S1–S2）。",
+            "- 验证码固定为123456。\n\n以上检查点均有资料支撑。",
+        ),
+        ("期限最长6个月[S2]。(S1, S2)", "期限最长6个月。"),
+        ("期限最长6个月[S2]（来源：S1/S2）。", "期限最长6个月。"),
+        # (b) a list right after a citation cue word goes with its cue
+        ("期限最长6个月[S2]。以上步骤依据 S2/S1 整理。", "期限最长6个月。以上步骤整理。"),
+        ("期限最长6个月[S2]。参见 S1、S2。", "期限最长6个月。"),
+        ("The term is 6 months[S2]. See S1, S2.", "The term is 6 months."),
+        # (c) a list standing alone on its own line
+        ("期限最长6个月[S2]。\n\nS1/S2\n\n验证码固定为123456[S1]。", None),
+    ],
+)
+async def test_a_bare_label_list_used_as_a_citation_is_removed(reply, answer) -> None:
+    text = await _final_answer(reply, _steps_pool())
+
+    if answer is None:
+        assert "S1/S2" not in text and "期限最长6个月。" in text and "123456。" in text
+    else:
+        assert text == answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "\n\n```python\n# 依据 S1/S2\npage.fill('#otp', '123456')\n```",
+        "\n\n~~~\n# 依据 S1/S2\n~~~",
+        "\n\n```python\n# 依据 S1/S2 (unclosed fence)",
+        "\n\n    # 依据 S1/S2\n    page.fill('#otp', '123456')",
+        "运行 `check(S1/S2)` 即可。",
+        "型号 S1000/S2000 与 PS1/S2 不同。",
+        "S1 档位单独适用。",
+        "参见 S1/S9 不是本次标签。",
+        "Sales/Service 流程。",
+        # Domain text that merely contains a label-like list stays.
+        "S1/S2 级缺陷需在24小时内修复。",
+        "缺陷分 S1-S4 四级。",
+        "比较 S1/S2 版本差异。",
+    ],
+)
+async def test_label_like_domain_text_is_kept(tail) -> None:
+    pool = (*_three_label_pool(), evidence(label="S4", content="缺陷分级。"))
+
+    assert await _final_answer("期限最长6个月[S2]。" + tail, pool) == "期限最长6个月。" + tail
+
+
+@pytest.mark.asyncio
+async def test_a_cited_claim_with_a_label_like_list_keeps_it() -> None:
+    text = await _final_answer("S1/S2 级缺陷需在24小时内修复[S3]。", _three_label_pool())
+
+    assert text == "S1/S2 级缺陷需在24小时内修复。"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["question", "evidence"])
+async def test_a_list_that_appears_in_the_question_or_evidence_is_kept(where) -> None:
+    question = "依据 S1/S2 标准如何处理？" if where == "question" else "问题"
+    pool = _steps_pool()
+    if where == "evidence":
+        pool = (*pool, evidence(label="S3", content="缺陷依据 S1/S2 标准分级。"))
+    reply = "期限最长6个月[S2]。依据 S1/S2 标准处理。"
+
+    assert await _final_answer(reply, pool, question) == "期限最长6个月。依据 S1/S2 标准处理。"
+
+
+def test_relation_labels_in_domain_text_are_kept() -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    text = "比较 R1/R2 版本差异[R3]。"
+
+    assert _without_bare_label_lists(text, frozenset({"R1", "R2", "R3"}), ()) == text
+    assert _without_bare_label_lists("关系，见 R1/R2。", frozenset({"R1", "R2"}), ()) == "关系。"
+
+
+_FOUR = frozenset({"S1", "S2", "S3", "S4"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "常见 S1/S2 缺陷需要优先修复。",
+        "详见 S1/S2 级缺陷的处理规定。",
+        "意见 S1、S2 已合并。",
+        "根据 S1-S4 四级标准评估。",
+        "Per S1/S2 severity rules, fix them first.",
+        "可见 S1/S2 两级。",
+        "关系见 S1/S2 两条。",
+    ],
+)
+def test_a_cue_inside_a_word_or_an_unclosed_cued_list_is_kept(text) -> None:
+    """Fix round 2: 见 matched inside 常见/详见/意见/可见, and a cued run was
+    removed even when the clause went on ("根据 S1-S4 四级标准")."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(text, _FOUR, ()) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("如下所示，参见 S1/S2。", "如下所示。"),
+        ("期限最长6个月。详见 S1/S2。", "期限最长6个月。"),
+        ("期限最长6个月。依据 S1/S2，可得结论。", "期限最长6个月。可得结论。"),
+        ("以上步骤依据 S2/S1 整理。", "以上步骤整理。"),
+        ("Fix them first, see S1/S2.", "Fix them first."),
+        ("期限最长6个月；见 S1、S2", "期限最长6个月"),
+    ],
+)
+def test_a_closed_cued_list_is_removed_with_its_dangling_separator(text, expected) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(text, _FOUR, ()) == expected
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["~~~\n验证码固定为123456[S1]\n~~~\n\n", "```python\n# 验证码固定为123456[S1]\n"],
+)
+def test_markers_in_tilde_or_unclosed_fences_are_not_claims(code) -> None:
+    """The label-list filter and the marker parser share one code grammar:
+    ~~~ fences and a fence left open to the end are code too."""
+    text = "期限最长6个月[S2]。\n\n" + code
+    answer, claims = _parse(text, _steps_pool())
+
+    assert [claim.evidence_labels for claim in claims] == [("S2",)]
+    # The code is kept verbatim, not treated as a rejected cited span.
+    assert answer == "期限最长6个月。\n\n" + code

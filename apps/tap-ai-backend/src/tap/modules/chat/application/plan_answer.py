@@ -351,6 +351,26 @@ class AnswerPlanner:
                     or not isinstance(raw["standalone_query"], str)
                 ):
                     raise ValueError("invalid planning field types")
+                if protected_constraints(original) and raw["route"] in {"retrieve", "graph"}:
+                    # N3: copying a long constrained question verbatim into
+                    # every restatement took the planner past its budget, so
+                    # the model leaves them empty and the original question
+                    # fills them here. A non-empty value must still be
+                    # verbatim (checked below).
+                    raw = {
+                        **raw,
+                        "standalone_query": raw["standalone_query"] or original,
+                        "queries": [
+                            {
+                                **query,
+                                "text": query.get("text") or original,
+                                "evidence_goal": query.get("evidence_goal") or original,
+                            }
+                            if isinstance(query, dict)
+                            else query
+                            for query in raw["queries"]
+                        ],
+                    }
                 if not raw["standalone_query"].strip() and raw["route"] not in {
                     "retrieve",
                     "graph",

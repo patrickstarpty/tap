@@ -69,7 +69,9 @@ def parse_grounded_answer_payload(
     return canonical_answer, tuple(claims)
 
 
-_CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
+# Fenced (``` or ~~~, closed or left open to the end) and inline code.
+CODE_SPAN = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)|`[^`\n]*`", re.DOTALL)
+_CODE_SPAN = CODE_SPAN
 # Label grammar only (`S1`..`S999`, `R1`..`R999`, `I1`..`I999` -- PR 5 Task 8
 # adds Insights metric labels; the real allow-list below bounds this further
 # to the evidence/relation/insights labels actually in play) so a Markdown

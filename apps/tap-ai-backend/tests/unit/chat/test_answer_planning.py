@@ -946,3 +946,185 @@ def test_planner_prompt_carries_route_semantics_and_leaves_the_schema_to_the_gat
     assert "empty source_ids" in PLANNER_PROMPT
     assert "compact single-line JSON" in PLANNER_PROMPT
     assert "insurance" not in PLANNER_PROMPT
+
+
+_CONSTRAINED = "列出不超过5条的保单贷款测试检查点"
+
+
+def _blank_constrained(**changes):
+    return suggestion(
+        intent="procedural",
+        standalone_query="",
+        queries=[
+            {
+                "id": "q1",
+                "text": "",
+                "depends_on": [],
+                "evidence_goal": "",
+                "source_ids": [],
+            }
+        ],
+        **changes,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_constrained_question_left_blank_is_filled_with_the_original_question():
+    """N3: copying a long constrained question verbatim into standalone_query
+    and every query text and evidence_goal took the planner past its 6 s
+    budget; the model now leaves them empty and the code fills in the
+    original question, so the plan is admitted without a semantic rewrite."""
+
+    async def model(_input, _timeout):
+        return _blank_constrained()
+
+    plan = await planning().AnswerPlanner(model).plan(context(_CONSTRAINED))
+    assert plan.degradation_reason is None
+    assert plan.intent == "procedural"
+    assert plan.standalone_query == _CONSTRAINED
+    assert [(query.text, query.evidence_goal) for query in plan.queries] == [
+        (_CONSTRAINED, _CONSTRAINED)
+    ]
+    assert plan.queries[0].source_ids == ("source-a",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["standalone", "text", "evidence_goal"])
+async def test_a_non_verbatim_value_for_a_constrained_question_is_still_rejected(field):
+    raw = _blank_constrained()
+    if field == "standalone":
+        raw["standalone_query"] = "保单贷款测试检查点"
+    else:
+        raw["queries"][0][field] = "保单贷款测试检查点"
+
+    async def model(_input, _timeout):
+        return raw
+
+    plan = await planning().AnswerPlanner(model).plan(context(_CONSTRAINED))
+    assert plan.degradation_reason == "invalid-plan"
+    assert plan.standalone_query == _CONSTRAINED
+
+
+@pytest.mark.asyncio
+async def test_blank_fields_for_an_unconstrained_question_are_still_rejected():
+    async def model(_input, _timeout):
+        return _blank_constrained()
+
+    plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    assert plan.degradation_reason == "invalid-plan"
+
+
+def test_planner_prompt_asks_constrained_questions_to_leave_restatements_empty():
+    from tap.modules.chat.adapters.model_gateway_planner import PLANNER_PROMPT
+
+    assert "copy the question verbatim" not in PLANNER_PROMPT
+    assert (
+        "When constrainedQuestion is true (the question contains a negation, number, date or "
+        "version), return one query and leave standalone_query, its text and its evidence_goal "
+        "empty" in PLANNER_PROMPT
+    )
+    assert "Otherwise standalone_query restates the question and is never empty" in PLANNER_PROMPT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message,flag", [(_CONSTRAINED, True), ("比较章节 A 和 B", False)])
+async def test_planner_context_marks_a_constrained_question(message, flag):
+    """qwen-plus kept paraphrasing constrained questions when told only "a
+    question with a negation or number"; the code-computed flag is followed."""
+    import json
+    from types import SimpleNamespace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+
+    requests = []
+
+    class Gateway:
+        async def generate_structured(self, request):
+            requests.append(request)
+            return SimpleNamespace(output=suggestion())
+
+    async def redact(text):
+        return text
+
+    await ModelGatewayPlanner(Gateway(), scope=VALIDATION_SCOPE, redact=redact)(
+        context(message), 0.5
+    )
+    assert json.loads(requests[0].context)["constrainedQuestion"] is flag
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message,constrained", [(_CONSTRAINED, True), ("比较章节 A 和 B", False)])
+async def test_a_constrained_question_gets_a_schema_with_empty_restatements(message, constrained):
+    """Even told to leave them empty, qwen-plus paraphrased the restatements
+    of 5 of 9 constrained questions (all rejected as invalid plans); the
+    schema it sees and decodes against fixes them to empty strings."""
+    from types import SimpleNamespace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.domain.models import schema_digest
+    from tap.modules.chat.adapters.model_gateway_planner import (
+        PLANNER_SCHEMA,
+        ModelGatewayPlanner,
+    )
+
+    requests = []
+
+    class Gateway:
+        async def generate_structured(self, request):
+            requests.append(request)
+            return SimpleNamespace(output=suggestion())
+
+    async def redact(text):
+        return text
+
+    await ModelGatewayPlanner(Gateway(), scope=VALIDATION_SCOPE, redact=redact)(
+        context(message), 0.5
+    )
+    schema = requests[0].schema
+    assert requests[0].schema_digest == schema_digest(schema)
+    if not constrained:
+        assert schema == PLANNER_SCHEMA
+        return
+    queries = schema["properties"]["queries"]
+    assert schema["properties"]["standalone_query"] == {"type": "string", "maxLength": 0}
+    assert queries["maxItems"] == 1
+    for field in ("text", "evidence_goal"):
+        assert queries["items"]["properties"][field] == {"type": "string", "maxLength": 0}
+    assert schema["required"] == PLANNER_SCHEMA["required"]
+    assert PLANNER_SCHEMA["properties"]["standalone_query"] == {"type": "string"}
+
+
+def test_planner_prompt_keeps_requests_for_steps_or_test_checks_procedural():
+    """Once constrained plans were admitted, qwen-plus labelled the Q3 test
+    checks + Playwright request factual_lookup, whose answer template made
+    the governed answer abstain (8 of 10 real runs)."""
+    from tap.modules.chat.adapters.model_gateway_planner import PLANNER_PROMPT
+
+    assert (
+        "A question asking for steps, test checks, test cases or a script is procedural, never "
+        "factual_lookup." in PLANNER_PROMPT
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_constrained_plan_with_too_many_queries_is_an_invalid_plan():
+    """Fix round 2: the constrained schema allows one query; a second one
+    overflows `maxItems` (the gateway raises `ModelOutputTruncated`), which is
+    an invalid suggestion, not a planner outage."""
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+
+    class Gateway:
+        async def generate_structured(self, request):
+            raise ModelOutputTruncated()
+
+    async def redact(text):
+        return text
+
+    adapter = ModelGatewayPlanner(Gateway(), scope=VALIDATION_SCOPE, redact=redact)
+    plan = await planning().AnswerPlanner(adapter).plan(context(_CONSTRAINED))
+    assert plan.degradation_reason == "invalid-plan"
+    unconstrained = await planning().AnswerPlanner(adapter).plan(context("比较章节 A 和 B"))
+    assert unconstrained.degradation_reason == "planner-unavailable"
