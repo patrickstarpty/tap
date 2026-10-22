@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from tap.quality.web_origin import web_origin
 from tap.quality.graph_corpus import (
     CorpusEntry,
     download_target,
@@ -145,7 +146,11 @@ def _upload_source(api: str, project_id: str, entry: CorpusEntry, target: Path) 
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": content_type, "Idempotency-Key": idempotency_key},
+        headers={
+            "Content-Type": content_type,
+            "Idempotency-Key": idempotency_key,
+            "Origin": web_origin(),
+        },
     )
     with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
         accepted = json.loads(response.read().decode("utf-8"))

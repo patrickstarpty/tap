@@ -51,6 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from tap.quality.web_origin import web_origin
 from tap.quality.answer_golden import (
     OBSERVATIONS_SCHEMA_VERSION,
     GoldenCase,
@@ -316,7 +317,11 @@ def _upload_source(api: str, project_id: str, stem: str, content: bytes) -> str:
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": content_type, "Idempotency-Key": idempotency_key},
+        headers={
+            "Content-Type": content_type,
+            "Idempotency-Key": idempotency_key,
+            "Origin": web_origin(),
+        },
     )
     with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
         accepted = json.loads(response.read().decode("utf-8"))
