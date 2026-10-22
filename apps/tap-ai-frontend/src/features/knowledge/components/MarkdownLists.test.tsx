@@ -72,3 +72,55 @@ describe("GroundedAnswer Markdown lists", () => {
     expect(getComputedStyle(ordered!).paddingLeft).not.toMatch(/^0(px)?$/u);
   });
 });
+
+describe("span-level citations in lists", () => {
+  it("puts each cited step's badge inside its own list item and leaves generated steps unbadged", () => {
+    const markdown =
+      "验证步骤：\n\n1. 登录测试环境，输入验证码123456\n2. 打开保单贷款页面\n3. 申请金额不超过现金价值的80%";
+    const span = (text: string) => {
+      const start = Array.from(
+        markdown.slice(0, markdown.indexOf(text)),
+      ).length;
+      return { answerStart: start, answerEnd: start + Array.from(text).length };
+    };
+    const { container } = render(
+      <GroundedAnswer
+        response={answerResponse({
+          answer: markdown,
+          claims: [
+            {
+              claimId: "claim-login",
+              text: "登录测试环境，输入验证码123456",
+              ...span("登录测试环境，输入验证码123456"),
+              citationIds: ["citation-a"],
+            },
+            {
+              claimId: "claim-limit",
+              text: "申请金额不超过现金价值的80%",
+              ...span("申请金额不超过现金价值的80%"),
+              citationIds: ["citation-b"],
+            },
+          ],
+          citations: [
+            retrievalCitation("citation-a"),
+            retrievalCitation("citation-b"),
+          ],
+        })}
+        onOpenCitation={() => undefined}
+      />,
+    );
+
+    const items = Array.from(
+      container.querySelectorAll(".tapper-markdown ol > li"),
+    );
+    expect(items).toHaveLength(3);
+    expect(
+      items[0]!.querySelector("[data-claim-id='claim-login'] button"),
+    ).not.toBeNull();
+    expect(items[1]!.querySelector("button")).toBeNull();
+    expect(items[1]!.textContent).toBe("打开保单贷款页面");
+    expect(
+      items[2]!.querySelector("[data-claim-id='claim-limit'] button"),
+    ).not.toBeNull();
+  });
+});
