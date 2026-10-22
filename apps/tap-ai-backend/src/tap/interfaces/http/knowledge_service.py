@@ -693,13 +693,30 @@ class KnowledgeHttpService:
         redacted answer prefix when that prefix is literally the start of the
         redacted answer (redaction did not cross the claim boundary); claim
         and prefix hit counts are not recorded -- both are slices of the
-        answer whose hits are counted once by the caller."""
+        answer whose hits are counted once by the caller.
+
+        The prefix is only an anchoring aid: a prefix can end right after a
+        credential key (`password=`), inside an open quoted secret or inside a
+        PEM block, so the redactor rejects it (`RedactionUnavailable`) even
+        though the whole answer redacted cleanly. Such a claim has no anchor
+        and is located by the uniqueness and ordering checks alone; a claim
+        text that cannot be redacted still fails closed.
+
+        Every claim that is not kept is counted on the current span as
+        `tap.guard.redaction.dropped_claims` (only when nonzero, like the
+        output hits), so a drop is observable."""
         located_claims = []
         search_from = 0
         for claim in claims:
             redacted_text, _claim_hits = await report(claim.text)
-            redacted_prefix, _prefix_hits = await report(answer[: claim.answer_start])
-            anchor = len(redacted_prefix) if redacted_answer.startswith(redacted_prefix) else None
+            try:
+                redacted_prefix, _prefix_hits = await report(answer[: claim.answer_start])
+            except RedactionUnavailable:
+                anchor = None
+            else:
+                anchor = (
+                    len(redacted_prefix) if redacted_answer.startswith(redacted_prefix) else None
+                )
             located = self._locate_redacted_claim(
                 redacted_answer, redacted_text, search_from, anchor
             )
@@ -707,6 +724,9 @@ class KnowledgeHttpService:
                 continue
             search_from = located[1]
             located_claims.append((claim, redacted_text, *located))
+        dropped = len(claims) - len(located_claims)
+        if dropped:
+            get_current_span().set_attribute("tap.guard.redaction.dropped_claims", dropped)
         return located_claims
 
     async def _redact_answer_response(self, response: AnswerResponse) -> AnswerResponse:

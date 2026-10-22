@@ -22,7 +22,9 @@ short claim-scoped value (default 5 s) for its own transaction only:
 * The connection is therefore back at its previous value before SQLAlchemy can
   return it to the pool, so non-claim work never inherits the bound. If the
   restore itself fails (for example a lost connection), the connection is
-  invalidated so the pool discards it instead of reusing it.
+  invalidated so the pool discards it instead of reusing it. A restore failure
+  is re-raised in place of any original lock error, which stays chained as its
+  `__context__`.
 """
 
 from __future__ import annotations

@@ -939,6 +939,187 @@ async def test_redaction_never_moves_a_claim_onto_another_sentence() -> None:
     assert result.claims == []
 
 
+class _RecordingSpan:
+    def __init__(self) -> None:
+        self.attributes: dict[str, object] = {}
+
+    def set_attribute(self, key: str, value: object) -> None:
+        self.attributes[key] = value
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_records_claims_it_drops_on_the_span(monkeypatch) -> None:
+    """A claim dropped because redaction left it without one unique span is
+    counted on the redaction span next to the output hits, so the drop is
+    observable rather than silent."""
+    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    span = _RecordingSpan()
+    monkeypatch.setattr(knowledge_service_module, "get_current_span", lambda: span)
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    first = "The waiting period is 30 days."
+    second = "Call 13900001111 today."
+    answer_text = f"Call 13812345678 today. {first} {second}"
+    response = replace(
+        base,
+        answer=answer_text,
+        claims=_sentence_claims(answer_text, (first, second), citation_id),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+    service = _service(PhaseAnswers(), redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert [c.text for c in result.claims] == [first]
+    assert span.attributes["tap.guard.redaction.dropped_claims"] == 1
+    assert span.attributes["tap.guard.redaction.output_hits"] == json.dumps({"phone": 2})
+
+
+@pytest.mark.asyncio
+async def test_final_route_records_claims_it_drops_on_the_span(monkeypatch) -> None:
+    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    from tap.contracts.http import RetrievalClaim
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.api import answer_response_to_http
+
+    span = _RecordingSpan()
+    monkeypatch.setattr(knowledge_service_module, "get_current_span", lambda: span)
+    base = answer_response_to_http(answer_response())
+    citation_id = base.citations[0].citation_id
+    cited = "Call 13900001111 today."
+    answer_text = f"Call 13812345678 today. {cited}"
+    response = base.model_copy(
+        update={
+            "answer": answer_text,
+            "claims": [
+                RetrievalClaim(
+                    claim_id="claim-a",
+                    text=cited,
+                    answer_start=answer_text.index(cited),
+                    answer_end=len(answer_text),
+                    citation_ids=[citation_id],
+                )
+            ],
+        }
+    )
+    service = _service(redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service._redact_final_response(response)
+
+    assert result.claims == []
+    assert span.attributes["tap.guard.redaction.dropped_claims"] == 1
+
+
+@pytest.mark.asyncio
+async def test_output_redaction_without_drops_records_no_dropped_claims(monkeypatch) -> None:
+    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.platform.serialization.dataclass_json import to_json
+
+    span = _RecordingSpan()
+    monkeypatch.setattr(knowledge_service_module, "get_current_span", lambda: span)
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    cited = "The waiting period is 30 days."
+    answer_text = f"Email claims@example.com for help. {cited}"
+    response = replace(
+        base, answer=answer_text, claims=_sentence_claims(answer_text, (cited,), citation_id)
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+    service = _service(PhaseAnswers(), redactor=PatternEgressRedactor(personal_data=True))
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert [c.text for c in result.claims] == [cited]
+    assert "tap.guard.redaction.dropped_claims" not in span.attributes
+
+
+@pytest.mark.asyncio
+async def test_unredactable_claim_prefix_falls_back_to_the_unique_span_checks() -> None:
+    """Redacting a claim's answer prefix is only an anchoring aid. A prefix can
+    end right after `password=` and so be rejected by the pattern redactor
+    even though the whole answer redacts cleanly; that must not fail the
+    answer -- the claim is located by the uniqueness and ordering checks alone
+    (here the first claim, whose secret value was redacted away, is dropped
+    and the second claim keeps its exact span)."""
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.ports.answers import AnswerSnapshot
+    from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+    from tap.platform.serialization.dataclass_json import to_json
+
+    redactor = PatternEgressRedactor(personal_data=True)
+    frozen, plan = await _retrieve_route()
+    base = answer_response()
+    citation_id = base.citations[0].citation_id
+    first = "Hunter2 is rotated monthly."
+    second = "The waiting period is 30 days."
+    answer_text = f"Set password={first} {second}"
+    with pytest.raises(RedactionUnavailable):
+        await redactor.redact_with_report(answer_text[: answer_text.index(first)])
+    response = replace(
+        base,
+        answer=answer_text,
+        claims=_sentence_claims(answer_text, (first, second), citation_id),
+    )
+    step = {"kind": "verified", "response": to_json(response)}
+    answers = PhaseAnswers()
+    service = _service(answers, redactor=redactor)
+
+    result = await service.finalize_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert "Hunter2" not in result.answer
+    assert [c.text for c in result.claims] == [second]
+    claim = result.claims[0]
+    assert result.answer[claim.answer_start : claim.answer_end] == second
+    (saved,) = answers.save_calls
+    AnswerSnapshot.from_response(
+        response=saved, query=frozen.message, selected_revisions=(ready(),)
+    )
+
+
+@pytest.mark.asyncio
+async def test_unredactable_claim_prefix_still_rejects_a_misplaced_claim() -> None:
+    """Without an anchor the fallback still requires one unique span after the
+    previous claim; an unredactable prefix never relaxes that."""
+    from tap.contracts.http import RetrievalClaim
+    from tap.modules.knowledge.api import answer_response_to_http
+    from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+
+    class PrefixRejectingRedactor:
+        async def redact_with_report(self, text):
+            if text == "Note B. ":
+                raise RedactionUnavailable("prefix ends inside a credential")
+            return {"Note B. Note A.": "Note A. Note A."}.get(text, text), {}
+
+    base = answer_response_to_http(answer_response())
+    citation_id = base.citations[0].citation_id
+    response = base.model_copy(
+        update={
+            "answer": "Note B. Note A.",
+            "claims": [
+                RetrievalClaim(
+                    claim_id="claim-a",
+                    text="Note A.",
+                    answer_start=8,
+                    answer_end=15,
+                    citation_ids=[citation_id],
+                )
+            ],
+        }
+    )
+    service = _service(redactor=PrefixRejectingRedactor())
+
+    result = await service._redact_final_response(response)
+
+    assert result.answer == "Note A. Note A."
+    assert result.claims == []
+
+
 @pytest.mark.asyncio
 async def test_output_redaction_hits_land_on_current_span(monkeypatch) -> None:
     """Only the answer-body hit counts land on `tap.guard.redaction.output_hits`
@@ -948,13 +1129,6 @@ async def test_output_redaction_hits_land_on_current_span(monkeypatch) -> None:
     import tap.interfaces.http.knowledge_service as knowledge_service_module
     from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
     from tap.platform.serialization.dataclass_json import to_json
-
-    class _RecordingSpan:
-        def __init__(self) -> None:
-            self.attributes: dict[str, object] = {}
-
-        def set_attribute(self, key: str, value: object) -> None:
-            self.attributes[key] = value
 
     span = _RecordingSpan()
     monkeypatch.setattr(knowledge_service_module, "get_current_span", lambda: span)
