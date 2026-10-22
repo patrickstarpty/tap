@@ -734,3 +734,26 @@ def test_answer_contract_cites_spans_and_leaves_composed_text_uncited() -> None:
     ):
         assert "complete sentence" not in sibling
         assert "sentence or list item" in sibling
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "期限最长6个月[S2]。\n\nINSUFFICIENT_EVIDENCE",
+        "期限最长6个月[S2]。申请流程未说明[INSUFFICIENT_EVIDENCE]。",
+    ],
+)
+async def test_a_stray_abstention_sentinel_never_reaches_a_grounded_answer(reply) -> None:
+    """Real qwen-plus sometimes appends the abstention sentinel to a partly
+    grounded answer; with uncited text now shown, it must not leak."""
+
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    generation = await _answer_gateway(Gateway()).answer("问题", _steps_pool(), "quick-hybrid-v1")
+
+    assert "INSUFFICIENT_EVIDENCE" not in generation.text
+    assert [claim.text for claim in generation.claims] == ["期限最长6个月。"]

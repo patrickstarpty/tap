@@ -169,6 +169,20 @@ _INSIGHTS_ANSWER_PROMPT = (
     "immediately after it, e.g. [I1]. Never state a metric value that no supplied I record "
     "states, and never apply an I label to a sentence about knowledge evidence or vice versa."
 )
+# The sentinel alone is an abstention; inside an otherwise grounded answer
+# (a trailing line, or bracketed like a marker) it is model noise that must
+# never be shown now that uncited text stays visible.
+_STRAY_SENTINEL = re.compile(
+    rf"\[[ \t]*{_INSUFFICIENT_EVIDENCE_SENTINEL}[ \t]*\]"
+    rf"|^[ \t]*{_INSUFFICIENT_EVIDENCE_SENTINEL}[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def _without_stray_sentinel(text: str) -> str:
+    return _STRAY_SENTINEL.sub("", text).rstrip()
+
+
 _CLARIFY_PROMPT = (
     "If the question is ambiguous or lacks information you need and the evidence cannot resolve "
     "it, do not answer; instead reply with one line that starts with CLARIFY: followed by a "
@@ -655,7 +669,7 @@ class KnowledgeModelGateway:
                 )
             try:
                 answer, claims = parse_inline_answer(
-                    raw_text,
+                    _without_stray_sentinel(raw_text),
                     evidence,
                     extra_labels=extra_labels,
                     max_answer_chars=16000,
