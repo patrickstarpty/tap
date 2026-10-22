@@ -64,7 +64,7 @@ flowchart LR
 | V2.1 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.2 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.3 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
-| V2.4 | Agent 团队视图：Agents 页花名册、使用与成本统计、维护记录、导出 | 已设计（[spec](../specs/2026-10-22-agent-team-view-design.md)；可与 V2.1 并行） |
+| V2.4 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 已设计（[spec](../specs/2026-10-22-agent-team-view-design.md)；可与 V2.1 并行） |
 
 退出标准：V2.1、V2.2 工程完成；在真实项目中度量提议采纳率。
 

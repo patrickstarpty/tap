@@ -5,224 +5,261 @@
 ## 背景
 
 - AI 提效后团队规模已经收缩，管理层仍主要按人数看成本，会继续追问"还能不能再减人"。
-- 实际的工作单元是"员工 + 其维护的一组 Agent"。效率提升来自 Agent，而 Agent 需要人持续维护：改提示词、升级 Skill、处理差评、停用失效的 Agent。只看人数，看不到这部分工作量和产出。
-- 现有数据已经足够支撑第一版统计，只是没有汇总和展示：
-  - `chat_turn` 与 Turn 冻结输入记录每轮使用的 `agent_revision_id`（为空表示 Tapper 默认）。
-  - `model_call` 记录每次模型调用的 token、`cost_usd`、状态与 `turn_id`/`job_id`。
-  - `answer_feedback` 记录每轮的赞/踩与评论。
-  - `ai_agent`、`ai_agent_revision` 记录创建人（`actor_id`）、每次修订、停用与启用。
-- Agents 页（能力 4）只展示配置，没有使用情况和维护情况。
+- 实际的工作单元是"员工 + 其负责和使用的一组 Agent"。产出靠 Agent，Agent 靠人维护：改提示词、升级 Skill、处理差评、停用失效的 Agent。只看人数，这部分产出和投入都不可见。
+- 现有数据：
+  - Langfuse（3.225.11，ClickHouse）已有每个 Turn 的 trace：`userId`（即 `actor_id`）、延迟、成本、`ERROR` 级别，以及 `project:` 标签；但没有 Agent 标识。
+  - MySQL `answer_feedback` 记录每轮的赞/踩；Turn 冻结输入记录 `agent_revision_id`（为空表示 Tapper 默认）。
+  - `ai_agent`、`ai_agent_revision` 记录创建人、修订、停用与启用。
+- Agents 页（能力 4）只展示配置。
 
 ## 目标
 
-- Agents 页像花名册一样展示 Agent 团队：数量、每个 Agent 的负责人、使用记录、产出、成本与维护记录。
-- 让"人维护 Agent"的投入可见：每位维护人负责几个 Agent，每个 Agent 被修订、处理反馈的次数。
-- 管理层可以按周期查看团队汇总并导出，用于成本与人力讨论。
-- 所有数字都能追溯到明细，估算值标明公式，不做无法验证的口径。
+- 像展示员工一样展示 Agent 团队：每个 Agent 有岗位、入职日期、直属负责人、服务对象、工作量与履历；有"人 → Agent"的组织架构图。
+- 产出与投入并列：产出是 Agent 的真实运行数据，投入是人对 Agent 的维护动作。
+- 三种视角：员工（我的 Agent）、团队负责人（团队）、管理层（汇报）。
+- 汇报形式：页面、可打印的报告页（浏览器导出 PDF）、CSV。
 
 ## 非目标
 
-- 按个人考核员工或做排名。视图按 Agent 和维护人展示投入，不提供"员工效率排行"。
-- 精确计算"等效人力"。V2.4 只提供由项目配置的人工基准时长推出的"估算节省工时"，并在界面上写明公式。
-- 跨项目、跨企业汇总。依赖 V4 的身份与多项目。
-- 采集员工在系统外的维护时间（如线下调试、会议）。
-- Langfuse 看板改造。Langfuse 仍是工程运营视图，本视图面向业务与管理层。
+- 把运行数据换算成节省工时或等效人数。只展示真实运行数据。
+- 统计 Tapper 之外的 Agent（IDE 助手、其他平台）。
+- 跨项目汇总与按角色限制可见范围，随 V4 身份与多项目交付。
+- 记录人的维护时长。投入侧只记录维护动作。
+- 后端生成 PDF。
 
 ## 前置条件
 
-- V1 能力 4（Skills/Agents）与能力 5（可观测性）已合入 `develop`。
-- 与 V2.1 主动框架无强依赖，可以并行实施。V2.1 的系统 Agent 上线后，其运行自动计入本视图（见 2.3）。
-- 当前 Tapper Demo 为回环绑定、单一本地身份，"维护人"在演示环境中只有一人。多人真实数据要等 V4 身份接入；V2.4 的数据模型按多人设计。
+- V1 能力 4（Skills/Agents）与能力 5（可观测性、Langfuse 同步）已合入 `develop`。
+- 与 V2.1 主动框架无强依赖，可并行实施。V2.1 系统 Agent 上线后作为团队成员加入（见 1.1）。
+- 当前 Tapper Demo 为回环绑定、单一本地身份。V2.4 的数据模型和页面按多人设计，演示环境中只有一人。
 
-## 1. 概念与指标口径
+## 1. 概念
 
-### 1.1 Agent 团队成员
+### 1.1 团队与成员
 
-| 成员类型 | 来源 | 说明 |
+- 一个 Tapper 项目即一个团队。
+- 成员类型：
+
+| 类型 | 来源 | 负责人 |
 | --- | --- | --- |
-| 自定义 Agent | 能力 4 创建或复制 | 有负责人，可维护 |
-| 内置 Agent | 种子数据（Knowledge agent） | 负责人显示"Tapper 内置"，不计维护投入 |
-| Tapper 默认 | `agent_revision_id` 为空的对话 | 作为一行虚拟成员，只统计使用，不可维护 |
-| 系统 Agent | V2.1 主动剧本 | V2.1 上线后出现，统计运行次数与提议采纳率 |
+| 自定义 Agent | 能力 4 创建或复制 | 有，默认创建人 |
+| 内置 Agent | 种子数据（Knowledge agent） | 显示"Tapper 内置" |
+| Tapper 默认 | 未选 Agent 的对话，`agent_key = tapper_default` | 显示"Tapper 内置" |
+| 系统 Agent | V2.1 主动剧本，V2.1 上线后出现 | 显示"Tapper 内置" |
 
-停用的 Agent 保留在列表中，状态为"已停用"，历史统计不变。
+- 停用的 Agent 保留在名单中，状态"已停用"，历史数据不变。
 
-### 1.2 负责人与维护人
+### 1.2 人事档案
 
-- 负责人：每个自定义 Agent 有且只有一个负责人，默认为创建人，可转交给项目内其他成员。
-- 维护人：周期内对该 Agent 有过维护动作（见 1.4）的成员，可以有多人。
-- 维护人视图按人汇总"负责几个 Agent、周期内维护动作次数"，不汇总个人的使用量。
-
-### 1.3 使用与产出指标
-
-按 Agent、按自然日统计，周期可选近 7 天、近 30 天、本月、上月、自定义。
-
-| 指标 | 口径 |
+| 字段 | 来源 |
 | --- | --- |
-| 对话轮次 | 周期内使用该 Agent 修订、状态为完成的 Turn 数 |
-| 失败轮次 | 状态为失败或取消的 Turn 数 |
-| 使用人数 | 周期内使用过该 Agent 的不同 `actor_id` 数 |
-| 最近使用 | 最后一个完成 Turn 的时间 |
-| 满意度 | 赞数 ÷（赞数 + 踩数）；有反馈的轮次少于 10 时显示"样本不足" |
-| 模型成本 | 关联 Turn 的 `model_call.cost_usd` 合计；有成本缺失的调用时标注"部分调用无成本数据" |
-| 估算节省工时 | 完成轮次 × 项目为该 Agent 配置的"单次人工基准时长"；未配置时不显示 |
-| 系统 Agent 运行（V2.1 后） | 剧本运行次数、产生提议数、采纳数 |
+| 岗位 | Agent 上新增的短字段（≤ 64 字符），如"回归测试分析员"；可在档案中编辑 |
+| 入职日期 | Agent 创建时间 |
+| 直属负责人 | 1 人，负责质量与维护；默认创建人，可转交 |
+| 服务对象 | 周期内调用过该 Agent 的人，按调用次数排序；查询时计算，不存表 |
+| 工作量 | 第 2 节的运行指标 |
+| 履历 | 维护动作时间线 |
 
-### 1.4 维护投入指标
+组织架构图以人为节点：实线连接其负责的 Agent，虚线连接为其服务的 Agent。
 
-维护动作由系统自动记录，不需要人工填写：
+### 1.3 维护动作
 
-| 动作 | 来源 |
+| `kind` | 触发 |
 | --- | --- |
-| 修改配置 | 生成新的 Agent 修订（提示词、Skills、默认模型变更） |
-| 升级 Skill | 因绑定的 Skill 出新版本而生成 Agent 修订 |
-| 停用、启用 | 状态变更 |
-| 处理反馈 | 维护人把一条踩或评论标记为"已处理"，可附一句说明 |
-| 转交负责人 | 负责人变更 |
+| `revised` | 生成新的 Agent 修订（提示词、Skills、默认模型变更） |
+| `skill_upgraded` | 因绑定的 Skill 出新版本而生成 Agent 修订 |
+| `disabled`、`enabled` | 状态变更 |
+| `feedback_resolved` | 把一条踩或评论标记为已处理 |
+| `owner_transferred` | 转交负责人 |
 
-可选人工补充：保存 Agent 修订时可填"本次维护用时（分钟）"，默认留空。界面上维护用时只显示已填写部分的合计，并标明"仅含自填记录"。
+动作由系统在对应写操作中自动记录，不需要人工填写。
 
-### 1.5 团队汇总
+## 2. 指标口径
 
-| 指标 | 口径 |
+### 2.1 周期与粒度
+
+- 周期：近 7 天、近 30 天、本月、上月、自定义；不限跨度。
+- 按项目时区切分自然日，未配置时用 UTC，界面显示所用时区。
+- 趋势粒度随跨度自动调整：≤ 92 天按天，≤ 2 年按周，更长按月。汇总数字始终是整个周期的准确合计。
+
+### 2.2 产出侧（取自 Langfuse）
+
+| 指标 | 口径 | 层级 |
+| --- | --- | --- |
+| 运行次数 | 带 `agent:` 标签的 Turn trace 数；一次提问即一次运行 | 主指标 |
+| 失败次数 | 其中根 observation 为 `ERROR` 的数量 | 主指标 |
+| 运行时长 | trace 延迟合计与 p50 | 主指标 |
+| 模型成本 | `totalCost` 合计（USD） | 主指标 |
+| 服务人数、服务对象 | 不同 `userId` 数与按次数排序的名单 | 主指标 |
+| 最近运行 | 周期内最后一个 trace 的时间 | 主指标 |
+| 模型调用次数 | 类型为 generation 的 observation 数 | 次要，档案与 CSV |
+| 工具调用次数 | 工具 span 数；LangGraph PR 5（工具循环）合入前恒为 0 | 次要，档案与 CSV |
+| 平均每次运行调用数 | （模型调用 + 工具调用）÷ 运行次数 | 次要，档案与 CSV |
+
+汇总、排序与报告只用主指标。调用次数随 ReAct 步数、重试与实现变化，不同 Agent 之间不可比，只用于观察复杂度与成本来源。
+
+### 2.3 满意度（取自 MySQL）
+
+赞数 ÷（赞数 + 踩数），按 Turn 冻结的 Agent 归属。有反馈的轮次少于 10 时显示"样本不足"。
+
+### 2.4 投入侧（取自 MySQL）
+
+- 周期内维护动作次数，按 `kind` 分列。
+- 待处理差评数。
+
+### 2.5 按人
+
+| 指标 | 说明 |
 | --- | --- |
-| Agent 总数 | 启用中的自定义与内置 Agent 数（不含 Tapper 默认） |
-| 活跃 Agent 数 | 周期内至少有 1 个完成轮次的 Agent 数 |
-| 闲置 Agent 数 | 启用中但近 30 天无使用的 Agent 数 |
-| 人均负责 Agent 数 | 自定义 Agent 数 ÷ 有负责 Agent 的成员数 |
-| 总对话轮次、总成本、估算节省工时 | 各 Agent 指标合计 |
-| 维护动作数 | 周期内维护动作合计 |
+| 负责 Agent 数 | 当前为直属负责人的 Agent 数 |
+| 负责 Agent 运行量 | 这些 Agent 周期内运行次数合计 |
+| 被服务 Agent 数 | 周期内调用过的不同 Agent 数 |
+| 调用次数 | 本人周期内运行次数 |
+| 维护动作数 | 本人周期内维护动作合计 |
 
-## 2. 数据模型与统计
+每列均可排序，个人数据对团队视图可见。
 
-### 2.1 新表（新迁移，编号接续实施时最新迁移）
+### 2.6 团队汇总
 
-`agent_usage_daily`：按天的统计快照。
+- Agent 总数（启用中的自定义与内置 Agent，不含 Tapper 默认）、活跃数（周期内至少运行 1 次）、闲置数（启用中但近 30 天无运行）。
+- 人均负责 Agent 数、人均被服务 Agent 数。
+- 总运行次数、总运行时长、总成本、维护动作合计。
 
-| 列 | 说明 |
-| --- | --- |
-| `project_id`、`agent_key`、`usage_date` | 主键。`agent_key` 为 `agent_id`，Tapper 默认为保留值 `tapper_default` |
-| `completed_turns`、`failed_turns` | 轮次 |
-| `distinct_actors` | 当日使用人数 |
-| `thumbs_up`、`thumbs_down` | 反馈 |
-| `cost_usd`、`calls_missing_cost` | 成本与缺失成本的调用数 |
-| `last_used_at` | 当日最后使用时间 |
-| `computed_at` | 统计时间 |
+## 3. 架构与数据流
 
-使用人数跨天不能相加，周期内的使用人数由 `agent_usage_actor_daily`（`project_id`、`agent_key`、`usage_date`、`actor_id`）去重计算。
+```mermaid
+flowchart LR
+  T[Turn 链路<br/>MySQL trace_span / model_call] -->|同步 worker<br/>新增 agent: 标签| LF[(Langfuse<br/>ClickHouse)]
+  FB[answer_feedback] --> AT
+  ME[agent_maintenance_event] --> AT
+  AG[ai_agent 人事字段] --> AT
+  LF -->|Metrics API v1| AT[agent_team 模块]
+  AT --> UI[Agents 页<br/>我的 Agent / 团队 / 汇报]
+  AT --> EX[报告页 / CSV]
+```
 
-`agent_maintenance_event`：维护动作流水，只追加。
+- 运行数据只从 Langfuse Metrics API v1 查询（自托管 3.x 只提供 v1）。已在本地 3.225.11 实测：按 `tags`、`userId`、`name` 分组，`timeDimension` 按天，`count`、`sum_totalCost`、`p50_latency`，observations 视图按 `level` 计 `ERROR`，metadata 与 tags 过滤均可用。metadata 只能过滤不能分组，因此 Agent 标识写入标签。
+- 满意度、维护动作与人事字段来自 MySQL，由 `agent_team` 模块合并。
+- 新增后端模块 `agent_team`，通过端口 `AgentRuntimeMetrics` 访问 Langfuse；生产适配器调用 Metrics API，测试适配器返回 mock 数据。
+- 查询结果按（项目、周期、查询类型）缓存 5 分钟；界面显示"数据更新于"，并说明运行数据比对话最多晚一个同步周期。
+- 单次查询超过 1 000 行时按日期分段查询后合并。
+- `make demo-up` 默认启动 Langfuse 与 ClickHouse（原为可选的 `make langfuse-up`）；`make demo-check` 增加 Langfuse 检查。
+
+## 4. 数据模型（新迁移，编号接续 0035）
+
+- `ai_agent` 增加 `job_title`（可空，≤ 64）、`owner_actor_id`（回填为 `actor_id`）、`owner_assigned_at`。三者不进入修订摘要，因为它们不影响回答。
+- 新表 `agent_maintenance_event`，只追加：
 
 | 列 | 说明 |
 | --- | --- |
 | `event_id` | 主键 |
-| `project_id`、`agent_id`、`actor_id` | 归属 |
-| `kind` | `revised`、`skill_upgraded`、`disabled`、`enabled`、`feedback_resolved`、`owner_transferred` |
+| `project_id`、`agent_id`、`actor_id` | 归属与操作人 |
+| `kind` | 见 1.3 |
 | `revision_id`、`feedback_id` | 可空，关联对象 |
 | `note` | 可空，≤ 500 字符 |
-| `effort_minutes` | 可空，自填维护用时 |
 | `occurred_at` | 发生时间 |
 
-`ai_agent` 增加两列：`owner_actor_id`（迁移时回填为 `actor_id`）与 `baseline_minutes_per_turn`（可空整数，单次人工基准时长）。两者放在 Agent 而不是 Agent 修订上，不进入修订摘要，因为它们是管理口径，不影响回答。
+- `answer_feedback` 增加 `resolved_at`、`resolved_by`、`resolution_note`。
+- 维护事件与对应写操作（修订、停用、启用、转交、处理反馈）在同一事务内写入。
+- Langfuse 同步：Turn 的 trace 增加标签 `agent:<agent_id>`，未选 Agent 时为 `agent:tapper_default`。上线时重置同步游标重推历史，使旧 trace 补上标签。
 
-### 2.2 统计任务
+## 5. API 与契约
 
-- 新增 `agent_usage_rollup` 作业，由现有 worker 进程按 10 分钟周期调度，不新增进程。
-- 每次重算"今天"与"昨天"两天（覆盖跨午夜与迟到的反馈），按 `project_id + agent_key + usage_date` 覆盖写入，可重复执行。
-- 首次上线时回填全部历史，之后不再扫描更早日期。
-- 选择快照表而不是查询时实时聚合的原因：对话被删除或按保留策略清理后，历史统计不能跟着变少；周期查询不扫描 `model_call` 全表。
-- 已删除对话的明细不可再打开，但其统计保留。
-- 时区：按项目配置的时区切分自然日；未配置时用 UTC，界面显示所用时区。
-
-### 2.3 维护动作的写入
-
-- Agent 修订、停用、启用、负责人转交在现有写接口的同一事务内追加 `agent_maintenance_event`。
-- "处理反馈"是新接口（见 3.1），写入事件并在 `answer_feedback` 上标记处理状态（新增 `resolved_at`、`resolved_by` 两列）。
-- V2.1 系统 Agent 的运行与提议采纳由 V2.1 的提议存储提供，本视图只读取；V2.1 未上线时该部分不显示。
-
-## 3. API 与契约
-
-前缀 `/api/v1/projects/{project_id}/ai/`，契约由 `make contracts` 生成。
-
-### 3.1 接口
+前缀 `/api/v1/projects/{project_id}/ai/`，契约由 `make contracts` 生成。查询参数 `from`、`to` 为日期。
 
 | 方法与路径 | 作用 |
 | --- | --- |
-| `GET /ai/agent-team/summary?from=&to=` | 团队汇总（1.5） |
-| `GET /ai/agent-team/members?from=&to=&status=&owner=` | 花名册：每个成员的类型、负责人、状态、1.3 指标 |
-| `GET /ai/agent-team/members/{agentKey}/usage?from=&to=` | 单个 Agent 按天的趋势 |
-| `GET /ai/agent-team/members/{agentKey}/maintenance?cursor=` | 维护记录，分页 |
-| `GET /ai/agent-team/maintainers?from=&to=` | 维护人视图：负责 Agent 数、维护动作数、自填用时合计 |
-| `GET /ai/agent-team/export?from=&to=` | 花名册与汇总 CSV，UTF-8 BOM，便于 Excel 打开 |
-| `POST /ai/agents/{agentId}/owner` | 转交负责人 |
-| `PUT /ai/agents/{agentId}/baseline` | 设置单次人工基准时长 |
-| `POST /ai/feedback/{feedbackId}/resolve` | 标记反馈已处理，可带说明 |
+| `GET agent-team/summary` | 团队汇总 |
+| `GET agent-team/members` | 花名册，支持按负责人、状态、类型筛选与按列排序 |
+| `GET agent-team/members/{agentKey}` | Agent 档案：人事字段、工作量、服务对象、趋势 |
+| `GET agent-team/members/{agentKey}/history` | 履历，游标分页 |
+| `GET agent-team/people` | 人员表 |
+| `GET agent-team/people/{actorId}` | 个人视图，"我的 Agent"传本人 |
+| `GET agent-team/org-chart` | 组织架构图节点与边（`owns`、`serves`） |
+| `GET agent-team/report` | 报告页数据，附上一周期对比 |
+| `GET agent-team/export` | CSV zip：花名册、人员、趋势明细三个文件，UTF-8 BOM；跨度超过一年时明细按月并在文件中注明 |
+| `PUT agents/{agentId}/profile` | 修改岗位 |
+| `POST agents/{agentId}/owner` | 转交负责人 |
+| `POST feedback/{feedbackId}/resolve` | 标记反馈已处理，可带说明；重复提交返回原结果 |
 
-- 能力 4 的 `POST /ai/agents/{agentId}/revisions` 增加可选字段 `effortMinutes`（0–1 440）。
-- `from`、`to` 为日期，跨度上限 366 天；超出返回 400 `period_too_long`。
-- 统计数据带 `computedAt`，界面显示"数据更新于"。
+- 查询接口返回 `runtimeStatus`（`ok`、`unavailable`）与 `computedAt`。
+- 权限：新增 `ai.agent_team.read`；三个写接口沿用 `ai.agents.write`。演示身份拥有全部权限，按角色限制随 V4。
 
-### 3.2 权限
+### 5.1 错误与降级
 
-- 新增 `ai.agent_team.read`：查看团队视图与导出；`ai.agents.write` 的持有者可转交负责人、设置基准时长、处理自己负责 Agent 的反馈。
-- 本地演示身份默认拥有全部权限。
+| 情况 | 处理 |
+| --- | --- |
+| Langfuse 不可达或 10 秒超时 | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；花名册、负责人、履历、满意度照常显示；不返回 500 |
+| 同步积压 | 显示"数据更新于"并提示可能滞后 |
+| `from` 晚于 `to` | 400 `period_invalid` |
+| 转交给不存在的成员 | 400 `actor_not_found` |
+| 修改内置 Agent 的人事字段 | 403 `agent_read_only` |
 
-## 4. 前端
+## 6. 前端
 
-### 4.1 Agents 页结构
+Agents 页顶部四个标签：**我的 Agent**、**团队**（默认）、**汇报**、**配置**。"配置"为能力 4 现有列表与表单，不改动。
 
-Agents 页顶部增加两个标签："团队"（默认）与"配置"。"配置"即能力 4 的现有列表与表单，不改动。
+### 6.1 团队
 
-### 4.2 团队标签
+- 汇总栏：2.6 指标、周期选择器、"数据更新于"。
+- 花名册：卡片视图（默认）与表格视图。卡片像员工名片：头像（名称首字）、名称、岗位、直属负责人、状态（活跃、闲置、已停用）、近 30 天运行趋势、满意度、主要服务对象（前 3 位）、最近运行、最近维护。按负责人、状态、类型筛选；表格各列可排序。
+- 组织架构图：人节点实线连负责的 Agent，虚线连服务的 Agent；点击一个人高亮其关系。
+- 人员表：2.5 各列，可排序。
 
-- 汇总栏：Agent 总数、活跃数、闲置数、人均负责 Agent 数、对话轮次、模型成本、估算节省工时（未配置基准时长时显示"未配置"并链接到设置），周期选择器在右上角，旁边"导出"。
-- 花名册：卡片或表格两种视图，默认卡片。每张卡片像员工名片：Agent 名称与头像（取名称首字或能力 4 的图标）、负责人、状态标签（活跃、闲置、已停用）、近 30 天轮次迷你趋势、满意度、最近使用、最近维护。筛选：负责人、状态、类型。
-- Agent 档案（点击卡片打开抽屉）：
-  - 概览：周期指标与按天趋势图。
-  - 维护记录：时间线，展示修订、升级 Skill、停用启用、处理反馈、转交，含自填用时与说明；可打开对应修订。
-  - 待处理反馈：未处理的踩与评论，可"标记已处理"。
-  - 设置：负责人转交、单次人工基准时长。
-  - "查看配置"跳到"配置"标签中的该 Agent。
-- 维护人视图：表格列出成员、负责 Agent 数、周期维护动作数、自填用时合计；点击展开其负责的 Agent。不提供排序为"效率"的列。
+### 6.2 Agent 档案（抽屉）
 
-### 4.3 通用要求
+- 基本信息：岗位、入职日期、直属负责人、服务对象名单、当前修订。
+- 工作量：按周期粒度的趋势，2.2 主指标与次要指标。
+- 履历：维护时间线，可打开对应修订。
+- 待处理反馈：可"标记已处理"并写说明。
+- 设置：编辑岗位、转交负责人；"查看配置"跳到配置标签中的该 Agent。
 
-- 估算值旁显示信息图标，悬停展示公式；成本缺失、样本不足等情况直接在数字旁标注。
-- 图表遵循仓库现有图表组件与配色。
-- 中英文案齐全；空状态引导"新建 Agent"；产品界面不放演示开关或实现说明。
+### 6.3 我的 Agent
 
-## 5. 测试与验收
+两块：我负责的 Agent、为我服务的 Agent。指标同团队页，"待我处理的差评"置顶。
 
-### 5.1 后端
+### 6.4 汇报
 
-- 单元：各指标口径（完成与失败、满意度样本阈值、成本缺失标注、估算工时未配置不出现、跨天使用人数去重）；统计作业重复执行结果不变；跨午夜与迟到反馈的重算；时区切分；维护事件与修订在同一事务。
-- 契约：新接口、`effortMinutes`、`period_too_long`；能力 4 现有契约测试不改即通过。
-- 集成（隔离 MySQL 夹具，一次一个文件）：对话 → 统计作业 → 汇总与花名册数字一致；删除对话后统计不变；回填历史；CSV 导出内容与编码。
+- 可打印的报告页：选择周期（默认上月），固定版式展示汇总、趋势、花名册、人员表与上一周期对比。
+- 导出 PDF 使用浏览器打印，提供打印样式；导出 CSV 调用 `agent-team/export`。
 
-### 5.2 前端
+### 6.5 通用
 
-Vitest 覆盖标签切换、周期选择、卡片与表格视图、档案抽屉各页、标记反馈已处理、负责人转交、基准时长未配置的状态、导出按钮、中英切换。
+- 中英文案齐全；空状态引导"新建 Agent"。
+- "样本不足""运行数据同步中""运行数据暂不可用"在数字旁直接标注。
+- 图表遵循仓库现有图表组件与配色；产品界面不放演示开关或实现说明。
 
-### 5.3 E2E 与截图
+## 7. 测试与验收
 
-- `make demo-e2e` 新增 journey：新建 Agent → 用它对话两轮并点一个踩 → 触发统计作业 → 团队标签显示 2 轮与样本不足 → 档案中处理该反馈 → 维护记录出现"处理反馈"与"修改配置"。
-- `ui:capture` 新增团队汇总、花名册、Agent 档案、维护人视图截图。
+### 7.1 后端
 
-### 5.4 业务验证
+- 单元：各指标口径（运行与调用分开计数、失败判定、满意度样本阈值、闲置判定、粒度切换边界 92 天与 2 年）；服务对象排序；维护事件与写操作同一事务；Langfuse 不可达降级；超 1 000 行分段合并；缓存命中与过期；同步写入 `agent:` 标签（含 `tapper_default`）。
+- 契约：新接口与错误码；能力 4 现有契约测试不改即通过。
+- 集成（隔离 MySQL 夹具，一次一个文件）：转交、处理反馈、修订进入履历；CSV zip 内容与编码。
+- Langfuse 适配器：mock 数据测试查询拼装与结果解析；opt-in smoke（`TAP_RUN_LANGFUSE_SMOKE=1`）对本地真实 Langfuse 3.225.11 验证标签分组与 `ERROR` 计数，未设置时跳过。
 
-在演示环境用真实模型积累至少一周的使用数据，导出月度 CSV，由用户确认数字与口径可以直接用于管理层汇报。
+### 7.2 前端
 
-### 5.5 文档与门禁
+Vitest 覆盖四个标签、卡片与表格切换、排序筛选、组织架构图高亮、档案各分页、处理反馈、转交、报告页、导出、降级提示、中英切换。
 
-- 更新 `docs/architecture.md`（统计作业与新表）、产品路线图 V2.4 行。
+### 7.3 E2E 与截图
+
+- `make demo-e2e`（Metrics 用 mock）：新建 Agent 并填岗位 → 用它对话两轮并点一个踩 → 团队页出现该 Agent 卡片与服务对象 → 档案中处理该反馈，履历出现"处理差评" → 打开汇报页并导出 CSV。
+- `ui:capture` 新增团队、组织架构图、Agent 档案、我的 Agent、汇报页截图。
+
+### 7.4 业务验证
+
+在演示环境用真实模型积累至少一周数据，生成上一周期报告，由用户确认数字与口径可直接用于管理层汇报。
+
+### 7.5 文档与门禁
+
+- 新增 ADR：Langfuse 从可选组件改为默认组件，团队视图运行数据以 Langfuse 为唯一查询来源。
+- 更新 `docs/architecture.md`（`agent_team` 模块、同步标签、默认部署）与产品路线图 V2.4 行。
 - `make check`、`make test`、`make demo-e2e` 全部通过。
 
-## 6. 待确认问题
+## 8. 风险
 
-| 问题 | 当前假设 |
-| --- | --- |
-| 估算节省工时的口径是否可以对管理层展示 | 按 Agent 配置单次人工基准时长，公式公开；不换算成"等效人数" |
-| 是否需要"等效人数"（如节省工时 ÷ 月标准工时） | 不做，避免被直接用作减员依据；如需要，作为导出 CSV 中的一列由用户自行计算 |
-| 维护用时是否只靠自填 | 是，默认留空；自动记录的是维护动作次数 |
-| 维护人视图是否对所有成员可见 | 只对持有 `ai.agent_team.read` 的成员可见 |
-| 是否需要专门的管理层看板页 | 不做，团队标签加导出即可；V4 多项目后再评估跨项目看板 |
+- Langfuse 升级到 v4 后 v1 Metrics API 不可用，需改用 v2 并重新验证；固定 3.x 版本，升级前在本地重跑 smoke。
+- Langfuse 与 ClickHouse 默认启动后本地资源占用上升：ClickHouse 2 GB 内存由 insights 与 Langfuse 共用，Docker 磁盘余量需在 `make demo-check` 中提示。
+- 运行数据依赖同步 worker：同步失败或积压时数字滞后，以"数据更新于"提示，失败项沿用现有失败表补推。
+- 个人数据对团队视图可见：V4 接入真实身份前需确认可见范围与员工告知要求。
