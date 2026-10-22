@@ -11,6 +11,7 @@ the job exactly once. Requires `TAP_RUN_MYSQL_INTEGRATION=1`.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -487,5 +488,57 @@ def test_ingestion_stage_commit_contention_does_not_end_the_loop(owned_project_m
         # later polls neither crash nor claim the leased job a second time.
         assert row["status"] == "processing" and row["stage"] == "stored"
         assert row["lease_owner"] == "contended-worker"
+
+    _scenario(owned_project_mysql, body)
+
+
+def test_exhausted_turn_settlement_is_reported_once_across_lost_attempts(
+    owned_project_mysql, span_recorder, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    """A claim attempt that settles an exhausted Turn and then loses to lock
+    contention rolled the settlement back: its warning and span must only be
+    emitted for the attempt that committed."""
+
+    def settles_turn(statement: str) -> bool:
+        # The settlement UPDATE; the claim's own UPDATE also sets the attempt.
+        set_clause = statement.split(" WHERE ", 1)[0]
+        return (
+            set_clause.startswith("UPDATE chat_turn SET state=%s")
+            and "last_sequence" in set_clause
+            and "processing_attempt" not in set_clause
+        )
+
+    async def body(database_url: str, engine: AsyncEngine, sessions) -> None:  # type: ignore[no-untyped-def]
+        del database_url
+        repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+        conversations = ConversationService(repository, scope=VALIDATION_SCOPE)
+        await conversations.create("chat-exhausted", "turn-exhausted", "request-x", _turn_input())
+        async with sessions() as session, session.begin():
+            await session.execute(
+                chat_turn.update()
+                .where(chat_turn.c.turn_id == "turn-exhausted")
+                .values(processing_attempt=3)
+            )
+        remaining = [2]  # the first two attempts lose after settling
+        inject_lock_errors(engine, matches=settles_turn, remaining=remaining)
+        caplog.set_level(logging.WARNING)
+        span_recorder.clear()
+
+        batch = await repository.claim_queued(limit=5)
+
+        assert remaining[0] == 0
+        assert tuple(batch) == () and len(batch.wakeups) == 1
+        row = await _row(sessions, chat_turn, chat_turn.c.turn_id == "turn-exhausted")
+        assert row["state"] == "failed"
+        settled = [
+            r
+            for r in caplog.records
+            if r.getMessage() == "conversation turn settled as unclaimable"
+        ]
+        assert len(settled) == 1
+        spans = [
+            s for s in span_recorder.get_finished_spans() if s.name == "turn.attempts_exhausted"
+        ]
+        assert len(spans) == 1
 
     _scenario(owned_project_mysql, body)
