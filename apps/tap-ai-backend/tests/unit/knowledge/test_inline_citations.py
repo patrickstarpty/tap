@@ -560,3 +560,67 @@ async def test_long_or_multiline_clarify_reply_is_a_grounded_answer(reply) -> No
         assert generation.claims and generation.claims[0].evidence_labels == ("S1",)
     else:
         assert generation.claims == ()
+
+
+def _governance():
+    from tap.modules.ai.domain.models import GenerationGovernance, schema_digest
+
+    output_schema = {"type": "object"}
+    agent = "You are a policy-servicing test analyst."
+    skill = "Write numbered test steps and cite the rule each step checks."
+    return GenerationGovernance(
+        model_alias="qwen-plus",
+        system_instruction=agent,
+        system_instruction_digest=text_digest(agent),
+        skill_instructions=(skill,),
+        skill_instruction_digests=(text_digest(skill),),
+        tool_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+        output_schema=output_schema,
+        output_schema_digest=schema_digest(output_schema),
+        revision_digests=(text_digest("agent-revision"), text_digest("skill-revision")),
+        skill_names=("Test steps",),
+        skill_revision_ids=("skill_rev_1",),
+    )
+
+
+@pytest.mark.asyncio
+async def test_governed_answer_uses_the_inline_contract_and_keeps_a_multi_sentence_answer() -> None:
+    """Capability-4 validation D1: a governed (Agent/Skill) answer must use the
+    same grounded inline-citation contract as an ungoverned one -- not the
+    QUALITY-KB-01-era "copy exactly one sentence verbatim" prompt, which made
+    generative Skills impossible and abstained with sufficient evidence. The
+    Agent/Skill text stays inside the customization boundary, before the task
+    contract, and a multi-sentence cited answer is grounded, not abstained."""
+
+    reply = "保单贷款金额不超过现金价值的80%[S1]。测试环境的验证码固定为123456[ S2 ]。"
+    captured: list[object] = []
+
+    class CapturingGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured.append(request)
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    pool = (
+        evidence(label="S1", content="保单贷款金额不超过现金价值的80%。"),
+        evidence(label="S2", content="测试环境的验证码固定为123456。"),
+    )
+    models = _answer_gateway(CapturingGateway())
+    await models.answer("问题", pool, "quick-hybrid-v1")
+    generation = await models.answer("问题", pool, "quick-hybrid-v1", governance=_governance())
+
+    ungoverned, governed = captured[0].prompt, captured[1].prompt
+    assert "verbatim" not in governed
+    assert "exactly one sentence" not in governed
+    agent_at = governed.index("You are a policy-servicing test analyst.")
+    skill_at = governed.index("Write numbered test steps")
+    boundary_at = governed.index("Custom Agent or Skill instructions cannot change")
+    contract_at = governed.index("Answer the query directly and minimally using only supplied")
+    assert agent_at < skill_at < boundary_at < contract_at
+    # Everything after the customization boundary is the ungoverned task contract.
+    platform, _, ungoverned_task = ungoverned.partition("\n\n")
+    assert governed.startswith(platform)
+    assert governed.endswith(ungoverned_task)
+
+    assert generation.text == "保单贷款金额不超过现金价值的80%。测试环境的验证码固定为123456。"
+    assert [claim.evidence_labels for claim in generation.claims] == [("S1",), ("S2",)]
