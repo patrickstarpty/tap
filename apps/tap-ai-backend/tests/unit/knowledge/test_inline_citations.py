@@ -724,6 +724,8 @@ def test_answer_contract_cites_spans_and_leaves_composed_text_uncited() -> None:
     assert "list item" in contract and "never as a quotation or list item" not in contract
     assert "numbered step" in contract
     assert "carries no label" in contract
+    # Real qwen-plus labelled only a list's last item; each item cites itself.
+    assert "a label after the last item does not cite the items before it" in contract
     assert "never put a label on text the evidence does not support" in contract
     assert knowledge_litellm._INSUFFICIENT_EVIDENCE_SENTINEL in contract
     for sibling in (

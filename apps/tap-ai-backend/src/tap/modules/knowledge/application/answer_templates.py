@@ -76,7 +76,9 @@ SPAN_CITATION_RULE = (
     "Sentences, bullets, numbered steps and table-like lines are all allowed. Immediately "
     "after each factual sentence or list item that supplied evidence supports, place the "
     "labels of that evidence as their own markers, e.g. [S1] or, when it needs more than one, "
-    "written consecutively with no space, e.g. [S1][S2]. Text you compose or infer yourself, "
+    "written consecutively with no space, e.g. [S1][S2]. In a list, label each item that states "
+    "a fact from evidence; a label after the last item does not cite the items before it. "
+    "Text you compose or infer yourself, "
     "such as steps or examples the evidence does not state, carries no label; never put a "
     "label on text the evidence does not support."
 )
