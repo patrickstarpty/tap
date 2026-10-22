@@ -209,18 +209,19 @@ quality-graph-relations-real: ## evaluate the human-labeled relation golden set 
 TAP_GRAPH_REAL_CORPUS ?= .local/graph-real/corpus.json
 TAP_CHAT_RELATIONS_API ?= http://127.0.0.1:8000
 TAP_CHAT_RELATIONS_QUESTIONS ?=
+TAP_CHAT_RELATIONS_AGENT ?=
 TAP_CHAT_RELATIONS_BASELINE ?=
 TAP_CHAT_RELATIONS_OBSERVATIONS ?= .local/chat-relations/observations.json
 TAP_CHAT_RELATIONS_REPORT ?= .local/chat-relations/report.json
 
-quality-chat-relations-real: ## ask the relation golden set through the real Tapper chat agent loop (opt-in; requires a running `make demo-dev` stack, corpus.json from `load-graph-real-corpus.py upload`, published sources; gates against TAP_CHAT_RELATIONS_BASELINE when set, otherwise report-only)
+quality-chat-relations-real: ## ask the relation golden set through the real Tapper chat agent loop (opt-in; requires a running `make demo-dev` stack with TAPPER_GRAPH_REASONING=1, corpus.json from `load-graph-real-corpus.py upload`, published sources; no Agent unless TAP_CHAT_RELATIONS_AGENT is set; golden questions only, no regression groups; gates against TAP_CHAT_RELATIONS_BASELINE when set, otherwise report-only)
 	@if [ "$${TAP_RUN_QUALITY_CHAT_RELATIONS:-}" != "1" ]; then echo "quality-chat-relations-real requires TAP_RUN_QUALITY_CHAT_RELATIONS=1" >&2; exit 2; fi
 	@case "$${TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-chat-relations-real requires explicit dataset authorization" >&2; exit 2;; esac
 	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-chat-relations-real requires explicit model execution authorization" >&2; exit 2;; esac
 	@[ -f "$(TAP_GRAPH_REAL_CORPUS)" ] || { echo "quality-chat-relations-real requires $(TAP_GRAPH_REAL_CORPUS) (scripts/load-graph-real-corpus.py upload)" >&2; exit 2; }
 	@if [ -n "$(TAP_CHAT_RELATIONS_BASELINE)" ] && [ ! -f "$(TAP_CHAT_RELATIONS_BASELINE)" ]; then echo "quality-chat-relations-real: baseline $(TAP_CHAT_RELATIONS_BASELINE) does not exist" >&2; exit 2; fi
 	uv run --project apps/tap-ai-backend python scripts/load-graph-real-corpus.py validate --manifest "$(TAP_GRAPH_REAL_MANIFEST)"
-	uv run --project apps/tap-ai-backend python scripts/run-chat-relations-check.py --api "$(TAP_CHAT_RELATIONS_API)" --golden "$(TAP_GRAPH_RELATIONS_GOLDEN)" --corpus "$(TAP_GRAPH_REAL_CORPUS)" --questions "$(TAP_CHAT_RELATIONS_QUESTIONS)" --observations "$(TAP_CHAT_RELATIONS_OBSERVATIONS)" --report "$(TAP_CHAT_RELATIONS_REPORT)" $(if $(TAP_CHAT_RELATIONS_BASELINE),--baseline-observations "$(TAP_CHAT_RELATIONS_BASELINE)")
+	uv run --project apps/tap-ai-backend python scripts/run-chat-relations-check.py --api "$(TAP_CHAT_RELATIONS_API)" --golden "$(TAP_GRAPH_RELATIONS_GOLDEN)" --corpus "$(TAP_GRAPH_REAL_CORPUS)" --questions "$(TAP_CHAT_RELATIONS_QUESTIONS)" --agent-revision-id "$(TAP_CHAT_RELATIONS_AGENT)" --observations "$(TAP_CHAT_RELATIONS_OBSERVATIONS)" --report "$(TAP_CHAT_RELATIONS_REPORT)" $(if $(TAP_CHAT_RELATIONS_BASELINE),--baseline-observations "$(TAP_CHAT_RELATIONS_BASELINE)")
 
 TAP_ANSWERS_GOLDEN ?= apps/tap-ai-backend/tests/fixtures/quality/answers/golden-v1.json
 TAP_ANSWERS_CORPUS_DIR ?= apps/tap-ai-backend/tests/fixtures/quality/answers

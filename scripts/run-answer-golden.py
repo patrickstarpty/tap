@@ -51,6 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from tap.quality.web_origin import web_origin
 from tap.quality.answer_golden import (
     OBSERVATIONS_SCHEMA_VERSION,
     GoldenCase,
@@ -307,13 +308,6 @@ def _runtime_project_id(api: str) -> str:
     return str(body["projectId"])
 
 
-def _web_origin() -> str:
-    """The web app's exact loopback Origin; the API rejects mutations without it."""
-    host = os.environ.get("TAPPER_WEB_HOST", "127.0.0.1")
-    port = os.environ.get("TAPPER_WEB_PORT", "5173")
-    return f"http://{host}:{port}"
-
-
 def _upload_source(api: str, project_id: str, stem: str, content: bytes) -> str:
     filename = f"{stem}.md"
     body, content_type = _multipart_body("upload", filename, content)
@@ -326,7 +320,7 @@ def _upload_source(api: str, project_id: str, stem: str, content: bytes) -> str:
         headers={
             "Content-Type": content_type,
             "Idempotency-Key": idempotency_key,
-            "Origin": _web_origin(),
+            "Origin": web_origin(),
         },
     )
     with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310

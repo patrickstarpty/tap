@@ -7,12 +7,21 @@ gate (`make quality-graph-relations-real`, `run-graph-relations-candidate.py --m
 real`) never enters that loop, so this script asks each relation question in the
 Graph golden set through the real HTTP API exactly as the web app does -- a new
 durable Conversation/Turn per question (`POST /conversations`, the exact web
-`Origin`, frozen published source revisions, the built-in Agent revision) -- then
-follows the conversation SSE stream to the Turn's terminal event and records:
+`Origin`, frozen published source revisions, no Agent unless `--agent-revision-id`
+is given -- the web default) -- then follows the conversation SSE stream to the
+Turn's terminal event and records:
 
-- whether a `task.step` for `graph.relations` reached `completed`,
-- the answer's R-labelled edge citations, answer kind and abstention,
+- whether a `task.step` for `graph.relations` reached `completed`, and whether the
+  tool was offered at all (the trace's `tap.agent.tools` attribute, when present);
+- the answer's R-labelled edge citations, answer kind and abstention;
+- the models that answered (the trace's successful non-embedding model calls);
 - end-to-end latency (POST accepted -> terminal event).
+
+A question whose request is rejected or whose Turn times out is recorded with
+outcome `error`/`timeout` (scored as not passed) and the run continues;
+observations are rewritten after every question. The API must run with
+`TAPPER_GRAPH_REASONING=1`, otherwise `graph.relations` is never offered.
+Regression groups are out of scope: only golden relation questions are asked.
 
 Answers are written as `graph-relation-observations-v1` (plus chat-only fields)
 and scored with `scripts/evaluate-graph-relations.py`'s own `evaluate()`, so the
@@ -24,13 +33,15 @@ Gate rule (exit code):
 - without `--baseline-observations`: report-only, exit 0 once the report is written;
 - with a single-shot real baseline (the `TAPPER_GRAPH_REASONING=1`
   `run-graph-relations-candidate.py --mode real` observations), the baseline must be
-  comparable (same goldenDigest, corpusDigest, graphVersion, real execution,
-  graphReasoning True, and the same actual model) or the run exits 2; then, scored
+  comparable -- same goldenDigest, corpusDigest, graphVersion, real execution,
+  graphReasoning True, and every answer's model call uses the baseline's alias and
+  (normalized) provider model id, see `model_check` -- or the report is written with
+  gate mode `incomparable` and the run exits 2; then, scored
   over the same selected questions, the gate passes (exit 0) only when
   1. `relationPassRateNotBelowBaseline`: chat pass rate >= single-shot pass rate,
   2. `wrongEdgeQuestionsNotAboveBaseline`: chat `wrong` questions <= single-shot's,
-  3. `graphRelationsToolCallRate`: the model called `graph.relations` on >= 80% of
-     the questions (the same required percent the relation summary uses);
+  3. `graphRelationsToolCallRate`: the model called `graph.relations` on >=
+     `REQUIRED_PERCENT` (80%) of the questions, the relation summary's own threshold;
   otherwise exit 1.
 """
 
@@ -39,7 +50,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import os
 import socket
 import statistics
 import sys
@@ -49,7 +59,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
@@ -58,20 +68,26 @@ from typing import Any
 from tap.modules.knowledge.ports.answers import RELATION_CITATION_LABEL_PATTERN
 from tap.quality.evidence import canonical_digest
 from tap.quality.graph_relations import (
+    REQUIRED_PERCENT,
     GoldenQuestion,
     grounded_rate,
     validate_golden,
 )
+from tap.quality.web_origin import web_origin
 
 OBSERVATIONS_SCHEMA_VERSION = "graph-relation-observations-v1"
 REPORT_SCHEMA_VERSION = "chat-relation-report-v1"
 ANSWER_PATH = "chat-agent-loop"
 GRAPH_RELATIONS_TOOL = "graph.relations"
-DEFAULT_AGENT_REVISION_ID = "validation-knowledge-agent-v3"
-TOOL_CALL_REQUIRED_PERCENT = 80
-_TURN_TERMINAL_EVENTS = frozenset(
-    {"turn.completed", "turn.abstained", "turn.failed", "turn.canceled"}
-)
+TOOL_CALL_REQUIRED_PERCENT = REQUIRED_PERCENT
+_NON_ANSWER_OPERATIONS = ("embed", "rerank")
+_AGENT_TOOLS_ATTRIBUTE = "tap.agent.tools"
+_TURN_TERMINAL_EVENTS = {
+    "turn.completed": "completed",
+    "turn.abstained": "abstained",
+    "turn.failed": "failed",
+    "turn.canceled": "canceled",
+}
 _CONVERSATION_TERMINAL_EVENT = "conversation.turn.completed"
 _STEP_STATUSES = frozenset({"running", "completed", "rejected", "failed"})
 
@@ -152,17 +168,30 @@ def parse_sse(text: str) -> tuple[list[dict[str, Any]], str]:
 @dataclass(frozen=True)
 class TurnOutcome:
     terminal: str | None
+    """Terminal event type seen (`turn.*` wins over `conversation.turn.completed`)."""
+    state: str | None
+    """completed / abstained / failed / canceled, or timeout / error for a failed ask."""
+    final: bool
+    """A `turn.*` terminal event was seen (the authoritative answer, if any, is in)."""
     answer: Mapping[str, Any] | None
     steps: tuple[Mapping[str, Any], ...]
     last_sequence: int
     problem: str | None
 
 
+EMPTY_OUTCOME = TurnOutcome(None, None, False, None, (), 0, None)
+
+
 def reduce_turn(envelopes: Iterable[Mapping[str, Any]], turn_id: str) -> TurnOutcome:
     """Reduce one Turn's stream envelopes, mirroring the web stream reducer:
     `task.step` upserts by `stepId`; `answer.draft` frames are ignored and never
-    advance the sequence; the first terminal event wins."""
+    advance the sequence. The first `turn.*` terminal event is authoritative; a
+    `conversation.turn.completed` only sets the state (from `payload.outcome`)
+    until one arrives. A legacy `turn.completed` without an answer is
+    `completed` with no answer."""
     terminal: str | None = None
+    state: str | None = None
+    final = False
     answer: Mapping[str, Any] | None = None
     problem: str | None = None
     steps: dict[str, Mapping[str, Any]] = {}
@@ -178,7 +207,7 @@ def reduce_turn(envelopes: Iterable[Mapping[str, Any]], turn_id: str) -> TurnOut
         sequence = envelope.get("sequence")
         if isinstance(sequence, int):
             last_sequence = max(last_sequence, sequence)
-        if envelope.get("turnId") != turn_id or terminal is not None:
+        if envelope.get("turnId") != turn_id or final:
             continue
         if event_type == "task.step":
             step_id = payload.get("stepId")
@@ -188,8 +217,10 @@ def reduce_turn(envelopes: Iterable[Mapping[str, Any]], turn_id: str) -> TurnOut
                 and payload.get("status") in _STEP_STATUSES
             ):
                 steps[step_id] = dict(payload)
-        elif event_type in _TURN_TERMINAL_EVENTS:
-            terminal = str(event_type)
+        elif isinstance(event_type, str) and event_type in _TURN_TERMINAL_EVENTS:
+            terminal = event_type
+            state = _TURN_TERMINAL_EVENTS[event_type]
+            final = True
             raw_answer = payload.get("answer")
             if isinstance(raw_answer, Mapping):
                 answer = raw_answer
@@ -198,15 +229,61 @@ def reduce_turn(envelopes: Iterable[Mapping[str, Any]], turn_id: str) -> TurnOut
                 raw_problem.get("title"), str
             ):
                 problem = raw_problem["title"]
-        elif event_type == _CONVERSATION_TERMINAL_EVENT:
+        elif event_type == _CONVERSATION_TERMINAL_EVENT and terminal is None:
             terminal = _CONVERSATION_TERMINAL_EVENT
+            outcome = payload.get("outcome")
+            state = outcome if isinstance(outcome, str) else None
     return TurnOutcome(
         terminal=terminal,
+        state=state,
+        final=final,
         answer=answer,
         steps=tuple(steps.values()),
         last_sequence=last_sequence,
         problem=problem,
     )
+
+
+# --- Trace facts ------------------------------------------------------------------
+
+
+def answer_models(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Distinct (alias, upstream model, provider) of the Turn's successful answer
+    model calls -- every `modelCalls` entry with status `ok` whose operation is not
+    an embedding or rerank call (seed retrieval runs before the model node, so the
+    first call is usually an embedding). Streamed calls may carry no
+    `upstreamModel` (it is resolved from cached LiteLLM routes only)."""
+    models: list[dict[str, Any]] = []
+    for call in trace.get("modelCalls", ()) or ():
+        if not isinstance(call, Mapping) or call.get("status") != "ok":
+            continue
+        operation = str(call.get("operation", "")).lower()
+        if any(marker in operation for marker in _NON_ANSWER_OPERATIONS):
+            continue
+        identity = {
+            "alias": call.get("modelName"),
+            "upstreamModel": call.get("upstreamModel"),
+            "provider": call.get("provider"),
+        }
+        if identity not in models:
+            models.append(identity)
+    return models
+
+
+def offered_tools(trace: Mapping[str, Any]) -> list[str] | None:
+    """The Turn's visible tool list (`tap.agent.tools` span attribute), or `None`
+    when the trace does not record it."""
+    found: list[str] | None = None
+    for span in trace.get("spans", ()) or ():
+        attributes = span.get("attributes") if isinstance(span, Mapping) else None
+        if not isinstance(attributes, Mapping):
+            continue
+        value = attributes.get(_AGENT_TOOLS_ATTRIBUTE)
+        if isinstance(value, str):
+            tools = [item for item in value.split(",") if item]
+            if found is None or len(tools) > len(found):
+                found = tools
+    return found
 
 
 # --- Observation building ---------------------------------------------------------
@@ -289,7 +366,8 @@ def answer_entry(
         "questionId": question_id,
         "group": "golden",
         "locale": locale,
-        "outcome": outcome.terminal,
+        "outcome": outcome.state,
+        "terminalEvent": outcome.terminal,
         "error": outcome.problem,
         "abstained": answer is None or answer.get("abstained") is True,
         "abstentionReason": answer.get("abstentionReason") if answer else None,
@@ -326,7 +404,8 @@ def assemble_observations(
     actual_model: str | None,
     agent_revision_id: str | None,
     started_at: str,
-    finished_at: str,
+    finished_at: str | None,
+    complete: bool = True,
 ) -> dict[str, Any]:
     return {
         "schemaVersion": OBSERVATIONS_SCHEMA_VERSION,
@@ -339,6 +418,7 @@ def assemble_observations(
         "graphVersion": graph_version,
         "startedAt": started_at,
         "finishedAt": finished_at,
+        "complete": complete,
         "answers": answers,
     }
 
@@ -379,37 +459,109 @@ def _wrong_count(report: Mapping[str, Any]) -> int:
     return sum(1 for row in report["questions"] if row["status"] == "wrong")
 
 
-def _require_comparable(
-    observations: Mapping[str, Any], baseline: Mapping[str, Any]
+def _require_current(
+    golden_json: Mapping[str, Any], observations: Mapping[str, Any]
 ) -> None:
-    def require(condition: bool, message: str) -> None:
-        if not condition:
-            raise ValueError(f"baseline is not comparable: {message}")
-
-    require(baseline.get("executionMode") == "real", "baseline executionMode 'real'")
-    require(
-        baseline.get("graphReasoning") is True,
-        "baseline graphReasoning must be True (the single-shot relation run, not "
-        "the TAPPER_GRAPH_REASONING=0 regression baseline)",
-    )
-    for field in ("goldenDigest", "corpusDigest", "graphVersion"):
-        require(
-            baseline.get(field) is not None
-            and baseline.get(field) == observations.get(field),
-            f"{field} differs from the chat observations",
+    """Observations (including `--score-only` input) must belong to this golden set."""
+    if observations.get("goldenDigest") != canonical_digest(dict(golden_json)):
+        raise ValueError(
+            "observations goldenDigest does not match the current golden set"
         )
+    corpus = golden_json.get("corpus")
+    digest = corpus.get("digest") if isinstance(corpus, Mapping) else None
+    if observations.get("corpusDigest") != digest:
+        raise ValueError(
+            "observations corpusDigest does not match the golden corpus.digest"
+        )
+
+
+def _normalized_model(value: object) -> str:
+    return str(value).strip().lower() if value is not None else ""
+
+
+def _same_model(left: str, right: str) -> bool:
+    return bool(left) and (
+        left == right or left.endswith("/" + right) or right.endswith("/" + left)
+    )
+
+
+_UNASKED_OUTCOMES = frozenset({"timeout", "error"})
+
+
+def model_check(
+    answers: Sequence[Mapping[str, Any]], baseline: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Every answered question's model calls must use the baseline's alias and,
+    where the call recorded one, its (normalized) provider model id
+    (`answer_provenance.provider_model_id` in the single-shot run). Calls without an
+    upstream model are listed under `unresolved` rather than hidden. A question
+    that was never answered (`timeout`/`error`) has no model to compare."""
     baseline_model = baseline.get("model")
-    chat_model = observations.get("model")
-    baseline_actual = (
+    alias = baseline_model.get("alias") if isinstance(baseline_model, Mapping) else None
+    actual = _normalized_model(
         baseline_model.get("actual") if isinstance(baseline_model, Mapping) else None
     )
-    chat_actual = chat_model.get("actual") if isinstance(chat_model, Mapping) else None
-    require(
-        isinstance(baseline_actual, str)
-        and bool(baseline_actual)
-        and baseline_actual == chat_actual,
-        f"model.actual {baseline_actual!r} differs from chat {chat_actual!r}",
-    )
+    mismatches: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    if not actual:
+        mismatches.append(
+            {"questionId": None, "reason": "baseline model.actual is blank"}
+        )
+    for answer in answers:
+        question_id = answer.get("questionId")
+        if answer.get("outcome") in _UNASKED_OUTCOMES:
+            continue
+        models = answer.get("answerModels") or []
+        if not models:
+            mismatches.append(
+                {"questionId": question_id, "reason": "no answer model call recorded"}
+            )
+            continue
+        for model in models:
+            if model.get("alias") != alias:
+                mismatches.append(
+                    {
+                        "questionId": question_id,
+                        "reason": f"alias {model.get('alias')!r} != baseline {alias!r}",
+                    }
+                )
+            upstream = _normalized_model(model.get("upstreamModel"))
+            if not upstream:
+                if question_id not in unresolved:
+                    unresolved.append(str(question_id))
+            elif actual and not _same_model(upstream, actual):
+                mismatches.append(
+                    {
+                        "questionId": question_id,
+                        "reason": f"upstream model {upstream!r} != baseline {actual!r}",
+                    }
+                )
+    return {
+        "baselineAlias": alias,
+        "baselineActual": actual or None,
+        "mismatches": mismatches,
+        "unresolved": unresolved,
+        "passed": not mismatches,
+    }
+
+
+def _comparability_reasons(
+    observations: Mapping[str, Any], baseline: Mapping[str, Any]
+) -> list[str]:
+    reasons: list[str] = []
+    if baseline.get("executionMode") != "real":
+        reasons.append("baseline executionMode must be 'real'")
+    if baseline.get("graphReasoning") is not True:
+        reasons.append(
+            "baseline graphReasoning must be True (the single-shot relation run, not "
+            "the TAPPER_GRAPH_REASONING=0 regression baseline)"
+        )
+    for field in ("goldenDigest", "corpusDigest", "graphVersion"):
+        if baseline.get(field) is None or baseline.get(field) != observations.get(
+            field
+        ):
+            reasons.append(f"baseline {field} differs from the chat observations")
+    return reasons
 
 
 def _ratio(count: int, total: int, required_percent: int) -> dict[str, object]:
@@ -431,6 +583,7 @@ def build_report(
 ) -> dict[str, Any]:
     """Score chat observations (and optionally a single-shot baseline) with the
     shared evaluator over the selected golden questions; apply the gate rule."""
+    _require_current(golden_json, observations)
     golden_subset = _selected_golden(golden_json, question_ids)
     selected_ids = {str(item.get("id")) for item in golden_subset.get("questions", ())}
     chat_report = _EVALUATOR.evaluate(golden_subset, observations)
@@ -444,6 +597,7 @@ def build_report(
             {
                 **row,
                 "graphRelationsCalled": answer.get("graphRelationsCalled") is True,
+                "graphRelationsOffered": answer.get("graphRelationsOffered"),
                 "relationCitationLabels": answer.get("relationCitationLabels", []),
                 "answerKind": answer.get("answerKind"),
                 "abstained": answer.get("abstained", True),
@@ -464,51 +618,66 @@ def build_report(
     wrong = _wrong_count(chat_report)
 
     baseline_section: dict[str, Any] | None = None
+    models: dict[str, Any] | None = None
     if baseline is None:
         gate: dict[str, Any] = {"mode": "report-only", "checks": [], "passed": True}
     else:
-        _require_comparable(observations, baseline)
+        models = model_check(answers, baseline)
+        reasons = _comparability_reasons(observations, baseline) + [
+            f"model mismatch for {item['questionId']}: {item['reason']}"
+            for item in models["mismatches"]
+        ]
         baseline_report = _EVALUATOR.evaluate(golden_subset, baseline)
         baseline_summary = baseline_report["summary"]
         baseline_wrong = _wrong_count(baseline_report)
-        checks = [
-            {
-                "id": "relationPassRateNotBelowBaseline",
-                "actual": summary["actual"],
-                "baseline": baseline_summary["actual"],
-                "passed": int(summary["passedCount"]) * int(baseline_summary["total"])
-                >= int(baseline_summary["passedCount"]) * int(summary["total"]),
-            },
-            {
-                "id": "wrongEdgeQuestionsNotAboveBaseline",
-                "actual": wrong,
-                "baseline": baseline_wrong,
-                "passed": wrong <= baseline_wrong,
-            },
-            {
-                "id": "graphRelationsToolCallRate",
-                "actual": tool_rate["actual"],
-                "required": tool_rate["required"],
-                "passed": tool_rate["passed"],
-            },
-        ]
-        gate = {
-            "mode": "baseline",
-            "checks": checks,
-            "passed": all(check["passed"] for check in checks),
-        }
         baseline_section = {
             "observationsDigest": canonical_digest(dict(baseline)),
             "summary": baseline_summary,
             "wrongCount": baseline_wrong,
             "questions": baseline_report["questions"],
         }
+        if reasons:
+            gate = {
+                "mode": "incomparable",
+                "reasons": reasons,
+                "checks": [],
+                "passed": False,
+            }
+        else:
+            checks = [
+                {
+                    "id": "relationPassRateNotBelowBaseline",
+                    "actual": summary["actual"],
+                    "baseline": baseline_summary["actual"],
+                    "passed": int(summary["passedCount"])
+                    * int(baseline_summary["total"])
+                    >= int(baseline_summary["passedCount"]) * int(summary["total"]),
+                },
+                {
+                    "id": "wrongEdgeQuestionsNotAboveBaseline",
+                    "actual": wrong,
+                    "baseline": baseline_wrong,
+                    "passed": wrong <= baseline_wrong,
+                },
+                {
+                    "id": "graphRelationsToolCallRate",
+                    "actual": tool_rate["actual"],
+                    "required": tool_rate["required"],
+                    "passed": tool_rate["passed"],
+                },
+            ]
+            gate = {
+                "mode": "baseline",
+                "checks": checks,
+                "passed": all(check["passed"] for check in checks),
+            }
 
     return {
         "schemaVersion": REPORT_SCHEMA_VERSION,
         "answerPath": ANSWER_PATH,
         "goldenDigest": canonical_digest(dict(golden_json)),
         "observationsDigest": canonical_digest(dict(observations)),
+        "observationsComplete": observations.get("complete", True),
         "graphVersion": observations.get("graphVersion"),
         "model": observations.get("model"),
         "agentRevisionId": observations.get("agentRevisionId"),
@@ -518,24 +687,28 @@ def build_report(
         "wrongCount": wrong,
         "graphRelationsToolCallRate": tool_rate,
         "groundedRate": {"grounded": grounded, "total": grounded_total},
+        "unansweredCount": sum(
+            1 for answer in answers if answer.get("outcome") in _UNASKED_OUTCOMES
+        ),
         "latencyMs": {
             "p50": int(statistics.median(latencies)) if latencies else None,
             "max": max(latencies) if latencies else None,
         },
+        "modelCheck": models,
         "baseline": baseline_section,
         "gate": gate,
         "passed": bool(gate["passed"]),
     }
 
 
+def exit_code(report: Mapping[str, Any]) -> int:
+    gate = report.get("gate")
+    if isinstance(gate, Mapping) and gate.get("mode") == "incomparable":
+        return 2
+    return 0 if report.get("passed") else 1
+
+
 # --- HTTP layer -------------------------------------------------------------------
-
-
-def _web_origin() -> str:
-    """The web app's exact loopback Origin; the API rejects mutations without it."""
-    host = os.environ.get("TAPPER_WEB_HOST", "127.0.0.1")
-    port = os.environ.get("TAPPER_WEB_PORT", "5173")
-    return f"http://{host}:{port}"
 
 
 def runtime_project_id(api: str) -> str:
@@ -569,13 +742,13 @@ class TapperApi:
         version = body.get("graphVersion")
         return str(version) if version is not None else None
 
-    def turn_upstream_models(self, conversation_id: str, turn_id: str) -> list[str]:
-        trace = self._get(
-            f"/conversations/{urllib.parse.quote(conversation_id)}"
-            f"/turns/{urllib.parse.quote(turn_id)}/trace"
+    def turn_trace(self, conversation_id: str, turn_id: str) -> dict[str, Any]:
+        return dict(
+            self._get(
+                f"/conversations/{urllib.parse.quote(conversation_id)}"
+                f"/turns/{urllib.parse.quote(turn_id)}/trace"
+            )
         )
-        models = trace.get("summary", {}).get("upstreamModels", [])
-        return [str(model) for model in models]
 
     def create_conversation(
         self,
@@ -600,7 +773,7 @@ class TapperApi:
             headers={
                 "Content-Type": "application/json",
                 "Idempotency-Key": str(uuid.uuid4()),
-                "Origin": _web_origin(),
+                "Origin": web_origin(),
             },
         )
         with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
@@ -631,6 +804,14 @@ class TapperApi:
 StreamOpener = Callable[[str, int], Iterable[bytes]]
 
 
+class TurnTimeout(TimeoutError):
+    """The Turn did not reach a terminal event before the deadline."""
+
+    def __init__(self, turn_id: str, outcome: TurnOutcome) -> None:
+        super().__init__(f"turn {turn_id} did not finish before the deadline")
+        self.outcome = outcome
+
+
 def follow_turn(
     open_stream: StreamOpener,
     conversation_id: str,
@@ -640,10 +821,15 @@ def follow_turn(
     reconnect_delay_seconds: float = 1.0,
 ) -> TurnOutcome:
     """Follow the conversation SSE stream until `turn_id` is terminal, resuming
-    from the last authoritative sequence (`Last-Event-ID`) when the stream drops."""
+    from the last authoritative sequence (`Last-Event-ID`) when the stream drops.
+
+    A 4xx when opening the stream is raised at once (retrying cannot fix it); 5xx,
+    connection errors and read timeouts reconnect until the deadline, which raises
+    `TurnTimeout` carrying the partial outcome. A `conversation.turn.completed`
+    without its `turn.*` event is accepted once the stream closes."""
     deadline = time.monotonic() + deadline_seconds
     envelopes: list[dict[str, Any]] = []
-    outcome = reduce_turn(envelopes, turn_id)
+    outcome = EMPTY_OUTCOME
     while True:
         before = outcome.last_sequence
         pending = ""
@@ -653,22 +839,111 @@ def follow_turn(
                 envelopes.extend(parsed)
                 if parsed:
                     outcome = reduce_turn(envelopes, turn_id)
-                    if outcome.terminal is not None:
+                    if outcome.final:
                         return outcome
                 if time.monotonic() > deadline:
                     break
+        except urllib.error.HTTPError as error:
+            if 400 <= error.code < 500:
+                raise
         except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError):
             pass
         outcome = reduce_turn(envelopes, turn_id)
         if outcome.terminal is not None:
             return outcome
         if time.monotonic() > deadline:
-            raise TimeoutError(f"turn {turn_id} did not finish before the deadline")
+            raise TurnTimeout(turn_id, outcome)
         if outcome.last_sequence == before:
             time.sleep(reconnect_delay_seconds)
 
 
 # --- Real run ---------------------------------------------------------------------
+
+
+def _describe_error(error: BaseException) -> str:
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code} {error.reason}"
+    return f"{type(error).__name__}: {error}"
+
+
+def ask_questions(
+    api: Any,
+    questions: Sequence[GoldenQuestion],
+    revisions: Mapping[str, Sequence[str]],
+    *,
+    model_alias: str,
+    agent_revision_id: str | None,
+    turn_timeout_seconds: float,
+    on_answer: Callable[[dict[str, Any]], None],
+) -> list[dict[str, Any]]:
+    """Ask each question as a new Conversation; a rejected request or a timed-out
+    Turn is recorded (outcome `error`/`timeout`, scored as not passed) and the run
+    moves on. `on_answer` sees every entry as soon as it exists."""
+    answers: list[dict[str, Any]] = []
+    for question in questions:
+        started = time.monotonic()
+        conversation_id: str | None = None
+        turn_id: str | None = None
+        try:
+            accepted = api.create_conversation(
+                message=question.question,
+                model_alias=model_alias,
+                source_revision_ids=revisions[question.id],
+                agent_revision_id=agent_revision_id,
+            )
+            conversation_id = str(accepted["conversationId"])
+            turn_id = str(accepted["turnId"])
+            outcome = follow_turn(
+                api.open_stream,
+                conversation_id,
+                turn_id,
+                deadline_seconds=turn_timeout_seconds,
+            )
+        except TurnTimeout as error:
+            outcome = replace(error.outcome, state="timeout", problem=str(error))
+        except (urllib.error.URLError, OSError, KeyError, ValueError) as error:
+            outcome = replace(
+                EMPTY_OUTCOME, state="error", problem=_describe_error(error)
+            )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        entry = answer_entry(
+            question_id=question.id,
+            locale=question.locale,
+            outcome=outcome,
+            latency_ms=latency_ms,
+        )
+        entry["conversationId"] = conversation_id
+        entry["turnId"] = turn_id
+        entry["answerModels"] = []
+        entry["offeredTools"] = None
+        if conversation_id is not None and turn_id is not None:
+            try:
+                trace = api.turn_trace(conversation_id, turn_id)
+                entry["answerModels"] = answer_models(trace)
+                entry["offeredTools"] = offered_tools(trace)
+            except (urllib.error.URLError, OSError, KeyError, ValueError):
+                pass
+        tools = entry["offeredTools"]
+        entry["graphRelationsOffered"] = (
+            GRAPH_RELATIONS_TOOL in tools if tools is not None else None
+        )
+        answers.append(entry)
+        on_answer(entry)
+        print(
+            f"{question.id}: {entry['outcome']} graphRelationsCalled="
+            f"{entry['graphRelationsCalled']} R={entry['relationCitationLabels']} "
+            f"{latency_ms}ms",
+            file=sys.stderr,
+        )
+    return answers
+
+
+def _first_upstream(answers: Sequence[Mapping[str, Any]]) -> str | None:
+    for answer in answers:
+        for model in answer.get("answerModels") or ():
+            if model.get("upstreamModel"):
+                return str(model["upstreamModel"])
+    return None
 
 
 def run_check(
@@ -681,6 +956,7 @@ def run_check(
     model_alias: str | None,
     agent_revision_id: str | None,
     turn_timeout_seconds: float,
+    write_observations: Callable[[dict[str, Any]], None],
 ) -> dict[str, Any]:
     started_at = _now_iso()
     golden_set = validate_golden(golden_json, require_human=True)
@@ -708,58 +984,38 @@ def run_check(
     }
     graph_version = api.graph_version()
 
-    answers: list[dict[str, Any]] = []
-    actual_model: str | None = None
-    for question in selected:
-        started = time.monotonic()
-        accepted = api.create_conversation(
-            message=question.question,
+    def observations(answers: list[dict[str, Any]], complete: bool) -> dict[str, Any]:
+        return assemble_observations(
+            golden_json=golden_json,
+            corpus_value=corpus_value,
+            answers=answers,
+            graph_version=graph_version,
             model_alias=alias,
-            source_revision_ids=revisions[question.id],
+            actual_model=_first_upstream(answers),
             agent_revision_id=agent_revision_id,
-        )
-        conversation_id = str(accepted["conversationId"])
-        turn_id = str(accepted["turnId"])
-        outcome = follow_turn(
-            api.open_stream,
-            conversation_id,
-            turn_id,
-            deadline_seconds=turn_timeout_seconds,
-        )
-        latency_ms = int((time.monotonic() - started) * 1000)
-        entry = answer_entry(
-            question_id=question.id,
-            locale=question.locale,
-            outcome=outcome,
-            latency_ms=latency_ms,
-        )
-        entry["conversationId"] = conversation_id
-        entry["turnId"] = turn_id
-        try:
-            entry["upstreamModels"] = api.turn_upstream_models(conversation_id, turn_id)
-        except (urllib.error.URLError, ValueError, KeyError):
-            entry["upstreamModels"] = []
-        if actual_model is None and entry["upstreamModels"]:
-            actual_model = entry["upstreamModels"][0]
-        answers.append(entry)
-        print(
-            f"{question.id}: {entry['outcome']} graphRelationsCalled="
-            f"{entry['graphRelationsCalled']} R={entry['relationCitationLabels']} "
-            f"{latency_ms}ms",
-            file=sys.stderr,
+            started_at=started_at,
+            finished_at=_now_iso() if complete else None,
+            complete=complete,
         )
 
-    return assemble_observations(
-        golden_json=golden_json,
-        corpus_value=corpus_value,
-        answers=answers,
-        graph_version=graph_version,
+    progress: list[dict[str, Any]] = []
+
+    def on_answer(entry: dict[str, Any]) -> None:
+        progress.append(entry)
+        write_observations(observations(list(progress), False))
+
+    answers = ask_questions(
+        api,
+        selected,
+        revisions,
         model_alias=alias,
-        actual_model=actual_model,
         agent_revision_id=agent_revision_id,
-        started_at=started_at,
-        finished_at=_now_iso(),
+        turn_timeout_seconds=turn_timeout_seconds,
+        on_answer=on_answer,
     )
+    final = observations(answers, True)
+    write_observations(final)
+    return final
 
 
 def _load_json(path: Path) -> Any:
@@ -788,8 +1044,9 @@ def main() -> int:
     parser.add_argument("--model-alias", default=None)
     parser.add_argument(
         "--agent-revision-id",
-        default=DEFAULT_AGENT_REVISION_ID,
-        help="Agent revision to run the Turn with; pass '' for the default chat path",
+        default="",
+        help="opt-in Agent revision (e.g. validation-knowledge-agent-v3); the default "
+        "sends no Agent, like the web app before a user picks one",
     )
     parser.add_argument(
         "--questions",
@@ -821,8 +1078,10 @@ def main() -> int:
                 model_alias=arguments.model_alias,
                 agent_revision_id=arguments.agent_revision_id or None,
                 turn_timeout_seconds=arguments.turn_timeout_seconds,
+                write_observations=lambda value: _write_json(
+                    arguments.observations, value
+                ),
             )
-            _write_json(arguments.observations, observations)
         baseline = (
             _load_json(arguments.baseline_observations)
             if arguments.baseline_observations is not None
@@ -840,7 +1099,13 @@ def main() -> int:
 
     _write_json(arguments.report, report)
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
-    return 0 if report["passed"] else 1
+    if report["gate"]["mode"] == "incomparable":
+        print(
+            "error: baseline is not comparable: "
+            + "; ".join(report["gate"]["reasons"]),
+            file=sys.stderr,
+        )
+    return exit_code(report)
 
 
 if __name__ == "__main__":

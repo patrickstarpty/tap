@@ -11,7 +11,9 @@ import importlib.util
 import io
 import json
 import sys
+import urllib.error
 import urllib.request
+from email.message import Message
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -197,7 +199,7 @@ def test_reduce_turn_records_a_failure_problem_title() -> None:
     assert outcome.answer is None
 
 
-def test_conversation_turn_completed_alone_is_terminal() -> None:
+def test_conversation_turn_completed_alone_takes_its_payload_outcome() -> None:
     events = (
         _envelope(
             1,
@@ -206,7 +208,30 @@ def test_conversation_turn_completed_alone_is_terminal() -> None:
             turn=TURN,
         ),
     )
-    assert script.reduce_turn(events, TURN).terminal == "conversation.turn.completed"
+    outcome = script.reduce_turn(events, TURN)
+    assert outcome.terminal == "conversation.turn.completed"
+    assert outcome.state == "canceled"
+    assert outcome.final is False
+
+
+def test_a_later_turn_event_supplies_the_answer_after_conversation_completion() -> None:
+    events = (
+        _envelope(1, "conversation.turn.completed", {"turnId": TURN, "outcome": "completed"}),
+        _envelope(2, "turn.completed", {"answer": _answer([])}),
+    )
+    outcome = script.reduce_turn(events, TURN)
+    assert outcome.terminal == "turn.completed"
+    assert outcome.state == "completed"
+    assert outcome.final is True
+    assert outcome.answer is not None
+
+
+def test_legacy_turn_completed_without_an_answer_is_completed_but_abstained() -> None:
+    outcome = script.reduce_turn((_envelope(1, "turn.completed", {"state": "completed"}),), TURN)
+    assert outcome.state == "completed"
+    entry = script.answer_entry(question_id="q-01", locale="en", outcome=outcome, latency_ms=1)
+    assert entry["outcome"] == "completed"
+    assert entry["abstained"] is True
 
 
 # --- observation building --------------------------------------------------------------
@@ -260,7 +285,8 @@ def test_a_turn_without_an_answer_is_recorded_as_abstained() -> None:
     )
     assert entry["abstained"] is True
     assert entry["citations"] == []
-    assert entry["outcome"] == "turn.failed"
+    assert entry["outcome"] == "failed"
+    assert entry["terminalEvent"] == "turn.failed"
     assert entry["error"] == "boom"
 
 
@@ -302,12 +328,16 @@ def _observations(golden: dict[str, Any], answers: list[dict[str, Any]], **overr
 def _entry(question_id: str, *, called: bool, citations: list[dict[str, Any]]):
     events: list[dict[str, Any]] = [_step(1, "completed")] if called else []
     events.append(_envelope(2, "turn.completed", {"answer": _answer(citations)}))
-    return script.answer_entry(
+    entry = script.answer_entry(
         question_id=question_id,
         locale="en",
         outcome=script.reduce_turn(events, TURN),
         latency_ms=100,
     )
+    entry["answerModels"] = [
+        {"alias": "chat-default", "upstreamModel": "openai/gpt-x", "provider": "openai"}
+    ]
+    return entry
 
 
 GOOD = [_edge("R1", "Claim", "REQUIRES", "Claim form")]
@@ -363,7 +393,7 @@ def _baseline(golden: dict[str, Any], answers: list[dict[str, Any]], **overrides
         "schemaVersion": "graph-relation-observations-v1",
         "executionMode": "real",
         "extractionMode": "model",
-        "model": {"alias": "chat-default", "actual": "provider/model-x"},
+        "model": {"alias": "chat-default", "actual": "openai/gpt-x"},
         "goldenDigest": canonical_digest(golden),
         "corpusDigest": DIGEST,
         "graphVersion": GRAPH_VERSION,
@@ -434,15 +464,134 @@ def test_gate_fails_on_more_wrong_edge_questions_than_the_baseline() -> None:
         ({"graphVersion": "8"}, "graphVersion"),
         ({"graphReasoning": False}, "graphReasoning"),
         ({"executionMode": "fake"}, "executionMode"),
-        ({"model": {"alias": "chat-default", "actual": "other/model"}}, "model.actual"),
+        ({"model": {"alias": "chat-default", "actual": "openai/gpt-y"}}, "q-01"),
+        ({"model": {"alias": "other-alias", "actual": "openai/gpt-x"}}, "alias"),
     ],
 )
-def test_an_incomparable_baseline_is_refused(override: dict[str, Any], message: str) -> None:
+def test_an_incomparable_baseline_is_reported_and_not_gated(
+    override: dict[str, Any], message: str
+) -> None:
     golden = _golden("q-01")
-    chat = _observations(golden, [_entry("q-01", called=True, citations=GOOD)])
-    baseline = _baseline(golden, [_single_shot("q-01", GOOD)], **override)
-    with pytest.raises(ValueError, match=message):
-        script.build_report(golden, chat, baseline=baseline)
+    entry = _entry("q-01", called=True, citations=GOOD)
+    entry["answerModels"] = [
+        {"alias": "chat-default", "upstreamModel": "openai/gpt-x", "provider": "openai"}
+    ]
+    chat = _observations(golden, [entry])
+    baseline = _baseline(golden, [_single_shot("q-01", GOOD)])
+    baseline["model"] = {"alias": "chat-default", "actual": "openai/gpt-x"}
+    baseline.update(override)
+    report = script.build_report(golden, chat, baseline=baseline)
+    assert report["gate"]["mode"] == "incomparable"
+    assert report["passed"] is False
+    assert any(message in reason for reason in report["gate"]["reasons"])
+    assert script.exit_code(report) == 2
+
+
+# --- answer model identity -------------------------------------------------------------
+
+
+REALISTIC_TRACE = {
+    "traceId": "t",
+    "summary": {"upstreamModels": ["openai/text-embedding-3-small", "openai/gpt-x"]},
+    "spans": [
+        {"spanId": "s1", "name": "tapper.chat.turn", "attributes": {"tap.agent.tools": ""}},
+        {
+            "spanId": "s2",
+            "name": "tapper.chat.ingress",
+            "attributes": {"tap.agent.tools": "knowledge.search,graph.relations"},
+        },
+    ],
+    "modelCalls": [
+        {
+            "callId": "m1",
+            "operation": "embed",
+            "modelName": "embedding-default",
+            "upstreamModel": "openai/text-embedding-3-small",
+            "provider": "openai",
+            "status": "ok",
+        },
+        {
+            "callId": "m2",
+            "operation": "chat",
+            "modelName": "chat-default",
+            "upstreamModel": None,
+            "provider": "unknown",
+            "status": "ok",
+        },
+        {
+            "callId": "m3",
+            "operation": "chat",
+            "modelName": "chat-default",
+            "upstreamModel": "openai/gpt-z",
+            "provider": "openai",
+            "status": "error",
+        },
+        {
+            "callId": "m4",
+            "operation": "structured",
+            "modelName": "chat-default",
+            "upstreamModel": "openai/gpt-x",
+            "provider": "openai",
+            "status": "ok",
+        },
+    ],
+}
+
+
+def test_answer_models_skip_embedding_and_failed_calls() -> None:
+    assert script.answer_models(REALISTIC_TRACE) == [
+        {"alias": "chat-default", "upstreamModel": None, "provider": "unknown"},
+        {"alias": "chat-default", "upstreamModel": "openai/gpt-x", "provider": "openai"},
+    ]
+
+
+def test_offered_tools_come_from_the_agent_tools_span_attribute() -> None:
+    assert script.offered_tools(REALISTIC_TRACE) == ["knowledge.search", "graph.relations"]
+    assert script.offered_tools({"spans": []}) is None
+
+
+def _chat_with_models(golden: dict[str, Any], models: list[dict[str, Any]]):
+    entry = _entry("q-01", called=True, citations=GOOD)
+    entry["answerModels"] = models
+    return _observations(golden, [entry])
+
+
+def test_model_check_compares_alias_and_normalized_provider_model_id() -> None:
+    golden = _golden("q-01")
+    chat = _chat_with_models(golden, script.answer_models(REALISTIC_TRACE))
+    baseline = _baseline(golden, [_single_shot("q-01", GOOD)])
+    baseline["model"] = {"alias": "chat-default", "actual": "OpenAI/GPT-X "}
+    report = script.build_report(golden, chat, baseline=baseline)
+    assert report["gate"]["mode"] == "baseline"
+    check = report["modelCheck"]
+    assert check["mismatches"] == []
+    # The streamed chat call had no resolved upstream model: listed, not hidden.
+    assert check["unresolved"] == ["q-01"]
+
+
+def test_model_check_rejects_an_answer_without_a_recorded_model() -> None:
+    golden = _golden("q-01")
+    chat = _chat_with_models(golden, [])
+    baseline = _baseline(golden, [_single_shot("q-01", GOOD)])
+    report = script.build_report(golden, chat, baseline=baseline)
+    assert report["gate"]["mode"] == "incomparable"
+    assert report["modelCheck"]["mismatches"][0]["questionId"] == "q-01"
+
+
+def test_score_only_refuses_observations_from_another_golden_set() -> None:
+    golden = _golden("q-01")
+    chat = _observations(golden, [], goldenDigest="sha256:" + "c" * 64)
+    with pytest.raises(ValueError, match="goldenDigest"):
+        script.build_report(golden, chat)
+    chat = _observations(golden, [], corpusDigest="sha256:" + "c" * 64)
+    with pytest.raises(ValueError, match="corpusDigest"):
+        script.build_report(golden, chat)
+
+
+def test_tool_call_threshold_is_the_shared_relation_required_percent() -> None:
+    from tap.quality.graph_relations import REQUIRED_PERCENT
+
+    assert script.TOOL_CALL_REQUIRED_PERCENT == REQUIRED_PERCENT == 80
 
 
 # --- HTTP layer ------------------------------------------------------------------------
@@ -506,3 +655,94 @@ def test_follow_turn_resumes_from_the_last_sequence_after_a_dropped_stream() -> 
     outcome = script.follow_turn(open_stream, "c1", TURN, deadline_seconds=30)
     assert calls == [0, 2]
     assert outcome.terminal == "turn.completed"
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError("http://x", code, "error", Message(), None)
+
+
+def test_follow_turn_fails_fast_on_a_client_error() -> None:
+    calls: list[int] = []
+
+    def open_stream(conversation_id: str, last_sequence: int):
+        calls.append(last_sequence)
+        raise _http_error(404)
+
+    with pytest.raises(urllib.error.HTTPError):
+        script.follow_turn(open_stream, "c1", TURN, deadline_seconds=30)
+    assert calls == [0]
+
+
+def test_follow_turn_retries_a_server_error() -> None:
+    calls: list[int] = []
+
+    def open_stream(conversation_id: str, last_sequence: int):
+        calls.append(last_sequence)
+        if len(calls) == 1:
+            raise _http_error(503)
+        return iter([_sse(*RELATION_TURN).encode()])
+
+    outcome = script.follow_turn(
+        open_stream, "c1", TURN, deadline_seconds=30, reconnect_delay_seconds=0
+    )
+    assert calls == [0, 0]
+    assert outcome.state == "completed"
+
+
+def test_follow_turn_timeout_keeps_the_partial_outcome() -> None:
+    def open_stream(conversation_id: str, last_sequence: int):
+        return iter([_sse(*RELATION_TURN[:3]).encode()])
+
+    with pytest.raises(script.TurnTimeout) as raised:
+        script.follow_turn(open_stream, "c1", TURN, deadline_seconds=0)
+    assert raised.value.outcome.steps[0]["status"] == "completed"
+
+
+class _FakeApi:
+    def __init__(self) -> None:
+        self.created: list[str] = []
+
+    def create_conversation(self, *, message: str, **_: Any) -> dict[str, Any]:
+        self.created.append(message)
+        if "q-01" in message:
+            raise _http_error(422)
+        return {"conversationId": f"c{len(self.created)}", "turnId": TURN, "state": "queued"}
+
+    def open_stream(self, conversation_id: str, last_sequence: int):
+        if conversation_id == "c2":
+            return iter([_sse(RELATION_TURN[0]).encode()])
+        return iter([_sse(*RELATION_TURN).encode()])
+
+    def turn_trace(self, conversation_id: str, turn_id: str) -> dict[str, Any]:
+        return REALISTIC_TRACE
+
+
+def test_ask_questions_records_failures_and_continues() -> None:
+    questions = script.golden_questions(_golden("q-01", "q-02", "q-03"))
+    revisions = {question.id: ("rev-1",) for question in questions}
+    seen: list[str] = []
+    answers = script.ask_questions(
+        _FakeApi(),
+        questions,
+        revisions,
+        model_alias="chat-default",
+        agent_revision_id=None,
+        turn_timeout_seconds=0,
+        on_answer=lambda entry: seen.append(entry["questionId"]),
+    )
+    assert seen == ["q-01", "q-02", "q-03"]
+    assert [entry["outcome"] for entry in answers] == ["error", "timeout", "completed"]
+    assert answers[0]["abstained"] is True and "422" in answers[0]["error"]
+    assert answers[2]["graphRelationsOffered"] is True
+    assert answers[2]["answerModels"][1]["upstreamModel"] == "openai/gpt-x"
+
+    golden = _golden("q-01", "q-02", "q-03")
+    report = script.build_report(golden, _observations(golden, answers))
+    statuses = [row["status"] for row in report["questions"]]
+    assert statuses == ["miss", "miss", "pass"]
+
+
+def test_web_origin_helper_is_shared() -> None:
+    from tap.quality.web_origin import web_origin
+
+    assert script.web_origin is web_origin

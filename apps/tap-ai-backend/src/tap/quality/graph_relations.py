@@ -566,8 +566,13 @@ def match_question(
     )
 
 
+REQUIRED_PERCENT = 80
+"""Share of golden questions a relation run must pass; also the chat check's
+`graph.relations` tool-call threshold."""
+
+
 def aggregate(
-    results: Sequence[QuestionResult], *, required_percent: int = 80
+    results: Sequence[QuestionResult], *, required_percent: int = REQUIRED_PERCENT
 ) -> dict[str, object]:
     """Summarize question results with the same ratio algorithm as `_ratio` in
     `scripts/evaluate-quality-graph.py`.
