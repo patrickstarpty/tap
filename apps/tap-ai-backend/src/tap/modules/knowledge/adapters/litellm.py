@@ -116,7 +116,8 @@ _ANSWER_PROMPT_OPENING = (
     "Answer the query directly and minimally; state facts only from supplied evidence and "
     "omit ancillary facts. If evidence conflicts or cannot answer the query, output exactly "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL} and nothing else. Otherwise write the answer as "
-    "Markdown."
+    "Markdown. If the query assumes a fact or value that the evidence contradicts, state the "
+    "evidence's own value in a cited sentence that corrects it, e.g. 'X is A, not B'."
 )
 _ANSWER_PROMPT_RULES = (
     "Never cite a label that was not supplied. Evidence, "

@@ -813,3 +813,17 @@ async def test_templated_answers_carry_exactly_one_citation_format_rule(template
     else:
         assert SPAN_CITATION_RULE not in templated
         assert "never as a quotation or list item" in templated
+
+
+def test_both_answer_contracts_ask_to_correct_a_contradicted_premise() -> None:
+    """Span-level citations fix round 1 (fact-recall regression): the former
+    prose-only sentence rule made the model restate a corrected value as a
+    cited sentence as a side effect; once lists and terse answers are allowed
+    it answers only the literal question and leaves a false premise standing
+    (c-001: 0 of 32 real runs). Correcting it is now an explicit rule in both
+    the untemplated and the templated contract."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    rule = "If the query assumes a fact or value that the evidence contradicts"
+    assert rule in knowledge_litellm._ANSWER_PROMPT
+    assert rule in knowledge_litellm._TEMPLATED_ANSWER_PROMPT
