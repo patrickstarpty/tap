@@ -25,7 +25,7 @@
 | `governance` | 审计 |
 | `test_management` | 测试方案生成、校验与发布（V1 冻结） |
 
-HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform/{db,messaging,storage}`。进程入口位于 `entrypoints/`：`tapper_api`（API）、`relay_reconciler`（Outbox → Redis Stream 中继），以及 ingestion、parser、graph、generation、test design、prompt suggestion、Langfuse 同步（`tapper_langfuse_sync_worker`，未配置 `LANGFUSE_HOST` 时空转）八个 worker。`legacy_litellm.py` 与 `legacy_loopback_answer_runtime.py` 为遗留路径。轮询式 MySQL 作业领取（ingestion、Turn 生成、prompt suggestion、测试设计、graph 抽取与 relay Outbox）统一经 `platform/db/lock_contention.py`：领取事务遇 InnoDB 锁冲突（1213 死锁、1205 锁等待超时）时在新事务中最多重试 3 次（50–200 ms 抖动退避），仍失败则本轮不领取、只记一条带错误码与领取类别的 warning；其他数据库错误照常抛出。共享 worker 循环在领取之外的阶段/结算提交遇到同样两类错误时结束本轮并继续轮询（租约到期后由后续领取接手），不再退出进程。
+HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform/{db,messaging,storage}`。进程入口位于 `entrypoints/`：`tapper_api`（API）、`relay_reconciler`（Outbox → Redis Stream 中继），以及 ingestion、parser、graph、generation、test design、prompt suggestion、Langfuse 同步（`tapper_langfuse_sync_worker`，未配置 `LANGFUSE_HOST` 时空转）八个 worker。`legacy_litellm.py` 与 `legacy_loopback_answer_runtime.py` 为遗留路径。轮询式 MySQL 作业领取（ingestion、Turn 生成、prompt suggestion、测试设计、graph 抽取与 relay Outbox）统一经 `platform/db/lock_contention.py`：领取事务遇 InnoDB 锁冲突（1213 死锁、1205 锁等待超时）时在新事务中最多重试 3 次（50–200 ms 抖动退避），仍失败则本轮不领取、只记一条带错误码与领取类别的 warning；其他数据库错误照常抛出。共享 worker 循环与 relay 循环在领取之外的阶段/结算提交遇到同样两类错误时结束本轮并继续轮询，不再退出进程：本轮中已领取但未处理的作业（如 ingestion 批次的其余作业）保留租约，到期后由后续领取接手；本轮的唤醒信号照常 ack，MySQL 仍是权威状态，Redis 只是提示。1205 的最坏情况约为每个落空轮次 150 秒（3 次 × `innodb_lock_wait_timeout` 默认 50 秒）；目前没有按领取事务设置的锁等待超时，作为后续事项。
 
 ## 3. 基础设施
 
