@@ -135,12 +135,11 @@ _ANSWER_PROMPT_RULES = (
     "separately before answering; when documents disagree on that value, state each "
     "document's own value in its own sentence naming that product, even if most documents "
     "share one value and only one differs -- never write a single generalized sentence for a "
-    "value that is not identical across every document it is about. When a selected document's "
-    "own evidence does not state the value the query asks about, say in your sentence that this "
-    "document does not state it -- only when another selected document does state it; if no "
-    "supplied evidence states the queried value, output exactly "
-    f"{_INSUFFICIENT_EVIDENCE_SENTINEL} -- and never infer that value or borrow another "
-    "document's value for it."
+    "value that is not identical across every document it is about. If no supplied evidence "
+    "states the value the query asks about, output exactly "
+    f"{_INSUFFICIENT_EVIDENCE_SENTINEL}. When some selected documents state that value and "
+    "another selected document does not, say in that document's own sentence that it does not "
+    "state the value; never infer that value or borrow another document's value for it."
 )
 # Untemplated answers carry the span citation rule here. A plan-bound answer
 # whose pinned template already states an inline citation format (V3's

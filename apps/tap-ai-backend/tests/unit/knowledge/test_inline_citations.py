@@ -886,9 +886,15 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
             "lead with the evidence's value and never restate the query's assumed value as true"
             in contract
         )
-        assert "only when another selected document does state it" in contract
-        assert (
-            "if no supplied evidence states the queried value, output exactly "
-            f"{INSUFFICIENT_EVIDENCE_SENTINEL}" in contract
+        # The abstention condition comes first; the "does not state it"
+        # sentence applies only when another selected document does state
+        # the value (stated after it, b-001 kept writing a cited
+        # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
+        abstain = (
+            "If no supplied evidence states the value the query asks about, output exactly "
+            f"{INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
+        scoped = "When some selected documents state that value and another selected document"
+        assert abstain in contract and scoped in contract
+        assert contract.index(abstain) < contract.index(scoped)
     assert knowledge_litellm._INSUFFICIENT_EVIDENCE_SENTINEL is INSUFFICIENT_EVIDENCE_SENTINEL

@@ -1553,7 +1553,7 @@ async def test_answer_prompt_requires_per_document_values_when_documents_disagre
     assert "when documents disagree on that value" in _ANSWER_PROMPT
     assert "state each document's own value in its own sentence" in _ANSWER_PROMPT
     assert "even if most documents share one value and only one differs" in _ANSWER_PROMPT
-    assert "does not state the value the query asks about" in _ANSWER_PROMPT
+    assert "say in that document's own sentence that it does not state the value" in _ANSWER_PROMPT
     assert "never infer that value or borrow another document's value" in _ANSWER_PROMPT
 
     base = _claim_resolution_evidence()
@@ -1564,7 +1564,7 @@ async def test_answer_prompt_requires_per_document_values_when_documents_disagre
 
     assert _ANSWER_PROMPT in captured[0].prompt
     assert "when documents disagree on that value" in captured[0].prompt
-    assert "does not state the value the query asks about" in captured[0].prompt
+    assert "it does not state the value" in captured[0].prompt
 
 
 @pytest.mark.asyncio
