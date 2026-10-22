@@ -891,8 +891,8 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
         # the value (stated after it, b-001 kept writing a cited
         # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
         abstain = (
-            "If the query looks up a fact or value that no supplied evidence states, output "
-            f"exactly {INSUFFICIENT_EVIDENCE_SENTINEL};"
+            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         scoped = "When some selected documents state that value and another selected document"
         assert abstain in contract and scoped in contract
@@ -924,16 +924,33 @@ def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> 
             "script, a plan, a summary or a comparison, is answerable whenever supplied evidence "
             "is relevant to it, even though no evidence states what you compose" in contract
         )
-        assert "cite the evidence facts you use and leave what you compose uncited" in contract
+        assert "cite the evidence facts you use, leave what you compose uncited" in contract
         assert "abstain only when no supplied evidence is relevant to the request" in contract
-        # The premise-correction rule stays right after the Markdown sentence;
-        # placing the composed rule between them lowered c-001's correction rate.
-        assert contract.index("Otherwise write the answer as Markdown. If the query assumes") < (
-            contract.index("A request to compose something")
+        # The opening ends with the premise-correction rule; the composed rule
+        # sits in the rules right before the value-lookup abstention, whose
+        # "Otherwise" states the exemption once.
+        opening = knowledge_litellm._ANSWER_PROMPT_OPENING
+        assert "compose" not in opening
+        assert opening.endswith(
+            "This correction is part of answering the query, never an ancillary fact, and comes "
+            "first even when the rest of the query is answerable."
         )
+        composed = contract.index("A request to compose something")
+        lookup = contract.index(
+            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
+        )
+        assert contract.index("If the query assumes") < composed < lookup
+        assert contract[composed:lookup].count(".") == 1
+        assert "this never applies to a request" not in contract
+    # Sibling task prompts exempt composed requests from their own abstention.
+    for sibling in (
+        knowledge_litellm._RELATION_ANSWER_PROMPT,
+        knowledge_litellm._FLOWCHART_ANSWER_PROMPT,
+    ):
         assert (
-            f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}; this never applies to a request "
-            "to compose something." in contract
+            "unless the query asks you to compose something from the evidence, output "
+            f"{INSUFFICIENT_EVIDENCE_SENTINEL}" in sibling
         )
 
 
@@ -951,32 +968,50 @@ def test_evidence_labels_appear_only_as_markers() -> None:
         )
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("reply", "answer"),
-    [
-        (
-            "- 验证码固定为123456[S1]。\n\n以上检查点均有资料支撑（S1–S2）。",
-            "- 验证码固定为123456。\n\n以上检查点均有资料支撑。",
-        ),
-        (
-            "期限最长6个月[S2]。以上步骤依据 S2/S1 整理。",
-            "期限最长6个月。以上步骤依据整理。",
-        ),
-        ("期限最长6个月[S2]。参见 S1、S2。", "期限最长6个月。参见。"),
-        ("期限最长6个月[S2]。(S1, S2)", "期限最长6个月。"),
-    ],
-)
-async def test_a_bare_label_list_outside_code_is_removed(reply, answer) -> None:
+def _three_label_pool():
+    return (
+        *_steps_pool(),
+        evidence(label="S3", content="严重缺陷需在24小时内修复。"),
+    )
+
+
+async def _final_answer(reply: str, pool, question: str = "问题") -> str:
     class Gateway:
         async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
             yield ModelTextDelta(reply)
             yield _result(reply)
 
-    generation = await _answer_gateway(Gateway()).answer("问题", _steps_pool(), "quick-hybrid-v1")
-
-    assert generation.text == answer
+    generation = await _answer_gateway(Gateway()).answer(question, pool, "quick-hybrid-v1")
     assert generation.claims
+    return generation.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "answer"),
+    [
+        # (a) a bracketed or parenthesized list, with or without a cue inside
+        (
+            "- 验证码固定为123456[S1]。\n\n以上检查点均有资料支撑（S1–S2）。",
+            "- 验证码固定为123456。\n\n以上检查点均有资料支撑。",
+        ),
+        ("期限最长6个月[S2]。(S1, S2)", "期限最长6个月。"),
+        ("期限最长6个月[S2]（来源：S1/S2）。", "期限最长6个月。"),
+        # (b) a list right after a citation cue word goes with its cue
+        ("期限最长6个月[S2]。以上步骤依据 S2/S1 整理。", "期限最长6个月。以上步骤整理。"),
+        ("期限最长6个月[S2]。参见 S1、S2。", "期限最长6个月。"),
+        ("The term is 6 months[S2]. See S1, S2.", "The term is 6 months."),
+        # (c) a list standing alone on its own line
+        ("期限最长6个月[S2]。\n\nS1/S2\n\n验证码固定为123456[S1]。", None),
+    ],
+)
+async def test_a_bare_label_list_used_as_a_citation_is_removed(reply, answer) -> None:
+    text = await _final_answer(reply, _steps_pool())
+
+    if answer is None:
+        assert "S1/S2" not in text and "期限最长6个月。" in text and "123456。" in text
+    else:
+        assert text == answer
 
 
 @pytest.mark.asyncio
@@ -984,21 +1019,64 @@ async def test_a_bare_label_list_outside_code_is_removed(reply, answer) -> None:
     "tail",
     [
         "\n\n```python\n# 依据 S1/S2\npage.fill('#otp', '123456')\n```",
+        "\n\n~~~\n# 依据 S1/S2\n~~~",
+        "\n\n```python\n# 依据 S1/S2 (unclosed fence)",
+        "\n\n    # 依据 S1/S2\n    page.fill('#otp', '123456')",
         "运行 `check(S1/S2)` 即可。",
         "型号 S1000/S2000 与 PS1/S2 不同。",
         "S1 档位单独适用。",
-        "S1/S9 不是本次标签。",
+        "参见 S1/S9 不是本次标签。",
         "Sales/Service 流程。",
+        # Domain text that merely contains a label-like list stays.
+        "S1/S2 级缺陷需在24小时内修复。",
+        "缺陷分 S1-S4 四级。",
+        "比较 S1/S2 版本差异。",
     ],
 )
-async def test_label_like_text_that_is_not_a_bare_label_list_is_kept(tail) -> None:
-    reply = "期限最长6个月[S2]。" + tail
+async def test_label_like_domain_text_is_kept(tail) -> None:
+    pool = (*_three_label_pool(), evidence(label="S4", content="缺陷分级。"))
 
-    class Gateway:
-        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
-            yield ModelTextDelta(reply)
-            yield _result(reply)
+    assert await _final_answer("期限最长6个月[S2]。" + tail, pool) == "期限最长6个月。" + tail
 
-    generation = await _answer_gateway(Gateway()).answer("问题", _steps_pool(), "quick-hybrid-v1")
 
-    assert generation.text == "期限最长6个月。" + tail
+@pytest.mark.asyncio
+async def test_a_cited_claim_with_a_label_like_list_keeps_it() -> None:
+    text = await _final_answer("S1/S2 级缺陷需在24小时内修复[S3]。", _three_label_pool())
+
+    assert text == "S1/S2 级缺陷需在24小时内修复。"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["question", "evidence"])
+async def test_a_list_that_appears_in_the_question_or_evidence_is_kept(where) -> None:
+    question = "依据 S1/S2 标准如何处理？" if where == "question" else "问题"
+    pool = _steps_pool()
+    if where == "evidence":
+        pool = (*pool, evidence(label="S3", content="缺陷依据 S1/S2 标准分级。"))
+    reply = "期限最长6个月[S2]。依据 S1/S2 标准处理。"
+
+    assert await _final_answer(reply, pool, question) == "期限最长6个月。依据 S1/S2 标准处理。"
+
+
+def test_relation_labels_in_domain_text_are_kept() -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    text = "比较 R1/R2 版本差异[R3]。"
+
+    assert _without_bare_label_lists(text, frozenset({"R1", "R2", "R3"}), ()) == text
+    assert _without_bare_label_lists("关系见 R1/R2。", frozenset({"R1", "R2"}), ()) == "关系。"
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["~~~\n验证码固定为123456[S1]\n~~~\n\n", "```python\n# 验证码固定为123456[S1]\n"],
+)
+def test_markers_in_tilde_or_unclosed_fences_are_not_claims(code) -> None:
+    """The label-list filter and the marker parser share one code grammar:
+    ~~~ fences and a fence left open to the end are code too."""
+    text = "期限最长6个月[S2]。\n\n" + code
+    answer, claims = _parse(text, _steps_pool())
+
+    assert [claim.evidence_labels for claim in claims] == [("S2",)]
+    # The code is kept verbatim, not treated as a rejected cited span.
+    assert answer == "期限最长6个月。\n\n" + code

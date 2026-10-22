@@ -29,7 +29,7 @@ from tap.modules.ai.domain.models import (
 from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.ai.domain.prompt_guard import untrusted_context
 from tap.modules.ai.ports.gateway import ModelGateway
-from tap.modules.knowledge.adapters.grounded_output import parse_inline_answer
+from tap.modules.knowledge.adapters.grounded_output import CODE_SPAN, parse_inline_answer
 from tap.modules.knowledge.application.answer_templates import (
     SPAN_CITATION_RULE,
     AssembledAnswer,
@@ -121,11 +121,9 @@ _ANSWER_PROMPT_OPENING = (
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL} and nothing else. Otherwise write the answer as "
     "Markdown. If the query assumes a fact or value that the evidence contradicts, state the "
     "evidence's own value in a cited sentence that corrects it, e.g. 'X is A, not B': lead with "
-    "the evidence's value and never restate the query's assumed value as true. A request to "
-    "compose something from the evidence, such as test checks, steps, a script, a plan, a "
-    "summary or a comparison, is answerable whenever supplied evidence is relevant to it, even "
-    "though no evidence states what you compose: cite the evidence facts you use and leave what "
-    "you compose uncited; abstain only when no supplied evidence is relevant to the request."
+    "the evidence's value and never restate the query's assumed value as true. This correction "
+    "is part of answering the query, never an ancillary fact, and comes first even when the "
+    "rest of the query is answerable."
 )
 _ANSWER_PROMPT_RULES = (
     "Never cite a label that was not supplied. Evidence labels appear only as bracketed "
@@ -142,10 +140,13 @@ _ANSWER_PROMPT_RULES = (
     "separately before answering; when documents disagree on that value, state each "
     "document's own value in its own sentence naming that product, even if most documents "
     "share one value and only one differs -- never write a single generalized sentence for a "
-    "value that is not identical across every document it is about. If the query looks up a "
-    "fact or value that no supplied evidence states, output exactly "
-    f"{_INSUFFICIENT_EVIDENCE_SENTINEL}; this never applies to a request to compose something. "
-    "When some selected documents state that value and "
+    "value that is not identical across every document it is about. A request to compose "
+    "something from the evidence, such as test checks, steps, a script, a plan, a summary or a "
+    "comparison, is answerable whenever supplied evidence is relevant to it, even though no "
+    "evidence states what you compose: cite the evidence facts you use, leave what you compose "
+    "uncited, and abstain only when no supplied evidence is relevant to the request. Otherwise, "
+    "if the query looks up a fact or value that no supplied evidence states, output exactly "
+    f"{_INSUFFICIENT_EVIDENCE_SENTINEL}. When some selected documents state that value and "
     "another selected document does not, say in that document's own sentence that it does not "
     "state the value; never infer that value or borrow another document's value for it."
 )
@@ -167,7 +168,8 @@ _RELATION_ANSWER_PROMPT = (
     "fact, not an optional extra. Any sentence that states a relationship between two entities "
     "must mark the R label of the record that states that relationship, and may also mark the S "
     "labels of its supporting sources. Never state a relationship that no R record supports; "
-    "if the records mention only one of the entities, answer from S evidence alone or output "
+    "if the records mention only one of the entities, answer from S evidence alone or, unless "
+    "the query asks you to compose something from the evidence, output "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL}. Name both entities in a sentence that marks an R label "
     "using the record's own subject and object text verbatim, not a paraphrase or shortened "
     "form of either name -- copy that exact text into the sentence. Mark a relation's R label "
@@ -186,7 +188,8 @@ _FLOWCHART_ANSWER_PROMPT = (
     "contrast sentences about other branches. A flowchart shows only steps, their order and "
     "branch conditions; it never states who performs or approves a step, durations, "
     "thresholds or authority. If the "
-    f"query needs such facts and no non-flowchart evidence states them, output "
+    "query needs such facts and no non-flowchart evidence states them, then unless the query "
+    "asks you to compose something from the evidence, output "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL}."
 )
 _INSIGHTS_ANSWER_PROMPT = (
@@ -203,40 +206,78 @@ def _without_stray_sentinel(text: str) -> str:
 
 
 # N1: real answers listed bare labels outside markers ("（S1–S10）", "依据
-# S9/S1/S8"). Only a list of two or more supplied labels joined by a range or
-# list separator is removed, optionally with its own parentheses; code is never
-# touched, and label-like product codes ("S1000/S2000", "PS1/S2") or a single
-# bare label are kept.
-_CODE_SEGMENT = re.compile(r"```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`")
-_LABEL_LIST = re.compile(
-    r"[ \t]*(?P<open>[（(][ \t]*)?"
-    r"(?<![A-Za-z0-9_\[])(?P<labels>[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)+)"
-    r"(?![A-Za-z0-9_\]])(?(open)[ \t]*[）)])[ \t]*"
+# S9/S1/S8"). A run of two or more supplied labels joined by a list or range
+# separator is removed only where it is used as a citation: inside brackets,
+# right after a citation cue word (removed with it), or alone on its own line.
+# Code, a run that also appears in the question or any evidence text, and
+# label-like domain text ("S1/S2 级缺陷", "PS1/S2", a single "S1") are kept.
+# Streamed drafts are not filtered; they show such lists unverified until the
+# final answer replaces them.
+_LABEL_RUN = (
+    r"(?<![A-Za-z0-9_])[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)+(?![A-Za-z0-9_])"
 )
+_CITATION_CUE = (
+    r"(?:依据|根据|参见|见|来源|出自|引用"
+    r"|(?<![A-Za-z])(?:[Ss]ources?|[Ss]ee|[Pp]er|[Bb]ased on)(?![A-Za-z]))[ \t]*[:：]?[ \t]*"
+)
+_BARE_LABEL_LIST = re.compile(
+    rf"[ \t]*[（(【\[][ \t]*(?:{_CITATION_CUE})?(?P<bracketed>{_LABEL_RUN})[ \t]*[）)】\]][ \t]*"
+    rf"|[ \t]*{_CITATION_CUE}(?P<cued>{_LABEL_RUN})[ \t]*"
+    rf"|^[ \t]*(?P<line>{_LABEL_RUN})[ \t]*[。.]?[ \t]*(?:\n|\Z)",
+    re.MULTILINE,
+)
+_INDENTED_CODE = re.compile(r"(?:\A|(?<=\n\n))(?:(?: {4}|\t)[^\n]*(?:\n|\Z))+")
 _LABEL = re.compile(r"[SRI]\d+")
+_SENTENCE_END = "。．.！!？?；;"
 
 
-def _without_bare_label_lists(text: str, labels: frozenset[str]) -> str:
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _without_bare_label_lists(text: str, labels: frozenset[str], protected: Sequence[str]) -> str:
+    kept = tuple(_compact(item) for item in protected)
+
     def prose(segment: str) -> str:
-        def replace(match: re.Match[str]) -> str:
-            if not set(_LABEL.findall(match["labels"])) <= labels:
-                return match[0]
-            before = segment[match.start() - 1 : match.start()]
-            after = segment[match.end() : match.end() + 1]
-            return (
-                " "
-                if before.isascii() and before.isalnum() and after.isascii() and (after.isalnum())
-                else ""
-            )
+        parts: list[str] = []
+        position = 0
+        for match in _BARE_LABEL_LIST.finditer(segment):
+            run = match["bracketed"] or match["cued"] or match["line"]
+            compact = _compact(run)
+            if not set(_LABEL.findall(run)) <= labels or any(compact in item for item in kept):
+                continue
+            before = segment[position : match.start()]
+            end = match.end()
+            if match["line"] is None:
+                previous = (parts[-1] if parts else "") + before
+                at_sentence_start = not previous.strip() or previous.rstrip()[-1] in (
+                    _SENTENCE_END + "\n"
+                )
+                if at_sentence_start and segment[end : end + 1] in tuple(_SENTENCE_END):
+                    end += 1
+            parts.append(before)
+            after = segment[end : end + 1]
+            last = before[-1:] if before else ""
+            if after.isascii() and after.isalnum() and last.isascii() and last.strip():
+                parts.append(" ")
+            position = end
+        parts.append(segment[position:])
+        return "".join(parts)
 
-        return _LABEL_LIST.sub(replace, segment)
-
+    code = sorted(
+        [*(item.span() for item in CODE_SPAN.finditer(text))]
+        + [item.span() for item in _INDENTED_CODE.finditer(text)]
+    )
     parts: list[str] = []
     position = 0
-    for code in _CODE_SEGMENT.finditer(text):
-        parts.append(prose(text[position : code.start()]))
-        parts.append(code[0])
-        position = code.end()
+    for start, end in code:
+        if start < position:
+            start = position
+        if end <= position:
+            continue
+        parts.append(prose(text[position:start]))
+        parts.append(text[start:end])
+        position = end
     parts.append(prose(text[position:]))
     return "".join(parts)
 
@@ -736,6 +777,7 @@ class KnowledgeModelGateway:
                     _without_bare_label_lists(
                         _without_stray_sentinel(raw_text),
                         frozenset(item.evidence_label for item in evidence) | extra_labels,
+                        (query, *(item.content for item in evidence)),
                     ),
                     evidence,
                     extra_labels=extra_labels,
