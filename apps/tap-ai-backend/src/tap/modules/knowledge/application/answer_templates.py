@@ -73,7 +73,7 @@ _RULES_V3 = _RULES_PREFIX_INLINE + _INLINE_CLAIM_RULE + _RULES_SUFFIX
 # as unsupported). Additive again so pinned V3 plans replay byte-for-byte;
 # also the citation rule of `KnowledgeModelGateway`'s `_ANSWER_PROMPT`.
 SPAN_CITATION_RULE = (
-    "Sentences, bullets, numbered steps and table-like lines are all allowed. Immediately "
+    "Sentences, bullets and numbered steps are all allowed. Immediately "
     "after each factual sentence or list item that supplied evidence supports, place the "
     "labels of that evidence as their own markers, e.g. [S1] or, when it needs more than one, "
     "written consecutively with no space, e.g. [S1][S2]. In a list, label each item that states "

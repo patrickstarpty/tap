@@ -742,6 +742,7 @@ def test_answer_contract_cites_spans_and_leaves_composed_text_uncited() -> None:
     [
         "期限最长6个月[S2]。\n\nINSUFFICIENT_EVIDENCE",
         "期限最长6个月[S2]。申请流程未说明[INSUFFICIENT_EVIDENCE]。",
+        "期限最长6个月[S2]。申请流程未说明INSUFFICIENT_EVIDENCE。",
     ],
 )
 async def test_a_stray_abstention_sentinel_never_reaches_a_grounded_answer(reply) -> None:
@@ -757,3 +758,58 @@ async def test_a_stray_abstention_sentinel_never_reaches_a_grounded_answer(reply
 
     assert "INSUFFICIENT_EVIDENCE" not in generation.text
     assert [claim.text for claim in generation.claims] == ["期限最长6个月。"]
+
+
+def test_a_list_item_claim_ends_at_its_last_marker() -> None:
+    """Text after the last marker of a list item is uncited, not part of the claim."""
+    answer, claims = _parse(
+        "- 期限最长6个月[S2]，到期后可再联系客服\n- 验证码固定为123456[S1]。", _steps_pool()
+    )
+
+    assert [(claim.text, claim.evidence_labels) for claim in claims] == [
+        ("期限最长6个月", ("S2",)),
+        ("验证码固定为123456。", ("S1",)),
+    ]
+    assert answer == "- 期限最长6个月，到期后可再联系客服\n- 验证码固定为123456。"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("template_version", ["3", "4"])
+async def test_templated_answers_carry_exactly_one_citation_format_rule(template_version) -> None:
+    """Span-level citations fix round 1: a plan-bound answer gets its citation
+    format from the pinned template only -- once for a new (V4) plan, and a
+    replayed V3 plan is not contradicted by the span rule."""
+    from tap.modules.knowledge.application.answer_templates import (
+        SPAN_CITATION_RULE,
+        assemble_answer,
+        get_template,
+    )
+
+    template = get_template("general", template_version)
+    answer_input = assemble_answer(
+        template_id="general",
+        template_version=template_version,
+        template_digest=template.digest,
+        original_question="问题",
+        standalone_question="问题",
+        evidence_map={"q1": ("S1",)},
+    )
+    captured: list[object] = []
+
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured.append(request)
+            yield ModelTextDelta("验证码固定为123456[S1]。")
+            yield _result("验证码固定为123456[S1]。")
+
+    models = _answer_gateway(Gateway())
+    await models.answer("问题", _steps_pool(), "quick-hybrid-v1", answer_input=answer_input)
+    await models.answer("问题", _steps_pool(), "quick-hybrid-v1")
+
+    templated, plain = captured[0].prompt, captured[1].prompt
+    assert plain.count(SPAN_CITATION_RULE) == 1
+    if template_version == "4":
+        assert templated.count(SPAN_CITATION_RULE) == 1
+    else:
+        assert SPAN_CITATION_RULE not in templated
+        assert "never as a quotation or list item" in templated

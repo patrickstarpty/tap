@@ -793,3 +793,14 @@ def test_reconciliation_keeps_uncited_text_and_list_markup() -> None:
 
     assert [claim.text for claim in result.claims] == ["核保需要健康告知。"]
     assert result.text == "核保要求如下：\n\n1. 核保需要健康告知。\n3. 准备身份证件"
+
+
+def test_dropping_a_claim_removes_a_heading_line_it_leaves_empty() -> None:
+    from tap.modules.knowledge.application.relation_claims import answer_without_claims
+
+    kept = GeneratedClaim(text="核保需要健康告知。", evidence_labels=("R1",))
+    text = "### 核保流程需要先完成体检。\n\n核保需要健康告知。"
+
+    assert (
+        answer_without_claims(text, ("核保流程需要先完成体检。",), (kept,)) == "核保需要健康告知。"
+    )

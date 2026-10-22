@@ -421,3 +421,43 @@ def test_grounded_output_abstains_when_every_claim_borrows_another_documents_val
     assert _attributed(
         [{"text": "盛世终身寿险的被保险人为团体成员。", "evidenceLabels": ["S1"]}]
     ) == ("", ())
+
+
+def _inline(text: str):
+    from tap.modules.knowledge.adapters.grounded_output import parse_inline_answer
+
+    return parse_inline_answer(
+        text,
+        (GROUP, LIFE),
+        max_answer_chars=16_000,
+        max_claims=64,
+        max_claim_chars=4_000,
+        max_labels_per_claim=16,
+    )
+
+
+def test_inline_answer_hides_a_labelled_sentence_that_borrows_another_documents_value() -> None:
+    """Span-level citations fix round 1: uncited composed text stays visible,
+    but text the model *did* label and the parser rejected (here: it names one
+    product while citing only the other's evidence) must not be shown as if
+    it were merely unsupported."""
+    answer, claims = _inline(
+        "概览如下：\n\n"
+        "- 尊享智选康惠团体医疗保险的被保险人为团体成员[S1]。\n"
+        "- 尊享智选康惠团体医疗保险的投保年龄为0周岁至70周岁[S2]。\n"
+        "- 具体以保单为准。"
+    )
+
+    assert [claim.text for claim in claims] == ["尊享智选康惠团体医疗保险的被保险人为团体成员。"]
+    assert answer == (
+        "概览如下：\n\n- 尊享智选康惠团体医疗保险的被保险人为团体成员。\n- 具体以保单为准。"
+    )
+
+
+def test_inline_answer_hides_a_labelled_duplicate_sentence() -> None:
+    answer, claims = _inline(
+        "本合同的投保年龄为0周岁至70周岁[S2]。另请注意。本合同的投保年龄为0周岁至70周岁[S2]。"
+    )
+
+    assert [claim.text for claim in claims] == ["本合同的投保年龄为0周岁至70周岁。"]
+    assert answer == "本合同的投保年龄为0周岁至70周岁。另请注意。"

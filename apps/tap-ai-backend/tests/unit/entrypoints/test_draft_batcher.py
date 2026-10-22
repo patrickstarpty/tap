@@ -549,3 +549,34 @@ async def test_discard_resets_sent_text():
     assert len(drafts.calls) > sent_before_discard
     new_calls = drafts.calls[sent_before_discard:]
     assert "preamble" not in "".join(_texts(new_calls))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pieces", "expected"),
+    [
+        (("期限最长6个月。", "流程未说明[INSUFFICIENT_EVIDENCE]。"), "期限最长6个月。流程未说明。"),
+        (("期限最长6个月。", "流程未说明INSUFFICIENT_EVIDENCE。"), "期限最长6个月。流程未说明。"),
+    ],
+)
+async def test_a_stray_sentinel_inside_a_draft_leaves_no_brackets(pieces, expected):
+    """Span-level citations fix round 1: the draft strips the abstention
+    sentinel exactly like the final answer -- bracketed or before the end of
+    a sentence -- and never leaves an empty `[]` behind."""
+    drafts = _FakeDrafts()
+    batcher = DraftBatcher(
+        turn_id="turn-1",
+        attempt=1,
+        drafts=drafts,
+        redact=_identity_redact,
+        max_delay_s=1000,
+        max_chars=1,
+        holdback_chars=0,
+    )
+
+    for piece in pieces:
+        await batcher.push(piece)
+    final_text = await batcher.close()
+
+    assert final_text == expected
+    assert all("[]" not in text and "INSUFFICIENT" not in text for text in _texts(drafts.calls))

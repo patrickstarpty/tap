@@ -317,5 +317,7 @@ def test_span_citation_rule_is_the_latest_additive_template_version(template):
     assert "never as a quotation or list item" in inline.instruction
     assert "never as a quotation or list item" not in latest.instruction
     assert "numbered step" in latest.instruction
+    # A cited table row cannot become a claim, so the rule never invites one.
+    assert "table" not in latest.instruction
     assert "carries no label" in latest.instruction
     assert "Write the answer as Markdown prose, not JSON" in latest.instruction

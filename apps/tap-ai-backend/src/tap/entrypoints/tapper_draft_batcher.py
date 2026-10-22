@@ -44,10 +44,10 @@ from collections.abc import Awaitable, Callable
 from opentelemetry.trace import get_current_span
 
 from tap.modules.chat.application.ports import DraftStream, DraftStreamUnavailable
+from tap.modules.knowledge.domain.abstention import without_abstention_sentinel
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.redaction_patterns import email_local_trailing_run_start
 
-_INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
 _CLARIFY_PREFIX = "CLARIFY:"
 
 # Mirrors `PatternEgressRedactor`'s placeholder markers -> the hit-count key
@@ -166,12 +166,11 @@ class DraftBatcher:
             self._last_flush_at = time.monotonic()
             self._unflushed_chars = 0
             return
-        # The sentinel is only ever the model's *entire* output (never mixed
-        # into a real answer), so stripping it out of the full raw text before
-        # redaction keeps it from ever reaching Redis or the caller, at any
-        # flush -- including a final one where the whole answer is nothing
-        # but the sentinel.
-        visible_raw = self._raw.replace(_INSUFFICIENT_EVIDENCE_SENTINEL, "")
+        # Stripping the sentinel out of the full raw text before redaction
+        # keeps it from ever reaching Redis or the caller, at any flush --
+        # whether it is the whole answer or stray noise inside one -- the same
+        # way the final answer drops it (bracketed form included, so no `[]`).
+        visible_raw = without_abstention_sentinel(self._raw)
         lstripped = visible_raw.lstrip()
         if lstripped.startswith(_CLARIFY_PREFIX):
             visible_raw = lstripped[len(_CLARIFY_PREFIX) :].lstrip()

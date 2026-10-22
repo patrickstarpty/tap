@@ -168,7 +168,7 @@ def reconcile_relation_claims(
     return ReconciledClaims(claims=tuple(retained), text=text, stripped=stripped, dropped=dropped)
 
 
-_EMPTY_LIST_LINE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])?[ \t]*$")
+_EMPTY_LIST_LINE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|#{1,6})?[ \t]*$")
 
 
 def answer_without_claims(
