@@ -195,11 +195,18 @@ async def test_model_out_of_scope_intent_requires_direct_route_without_queries()
             ]
         },
         {"acl_digest": "model-controlled"},
+        # A blank restatement is only admitted where nothing is searched
+        # (direct/clarify); retrieval plans keep requiring one, and queries.
+        {"standalone_query": ""},
+        {"standalone_query": "  "},
+        {"queries": []},
+        {"intent": "relation", "route": "graph", "standalone_query": ""},
+        {"intent": "relation", "route": "graph", "queries": []},
     ],
 )
 async def test_invalid_model_suggestions_fall_back_to_one_original_query(bad):
     async def model(_input, timeout):
-        assert 0 < timeout <= 3
+        assert 0 < timeout <= planning().DEFAULT_PLANNER_TIMEOUT_SECONDS
         return suggestion(**bad)
 
     plan = await planning().AnswerPlanner(model).plan(context("比较章节 A 和 B"))
@@ -837,3 +844,105 @@ async def test_production_planner_gateway_failure_keeps_relation_graph_route():
     assert plan.degradation_reason == "planner-unavailable"
     assert (plan.route, plan.intent) == ("graph", "relation")
     assert plan.agent_intent != "multi_step_qa"
+
+
+@pytest.mark.asyncio
+async def test_model_query_without_source_ids_searches_every_authorized_source():
+    """Real-model probe: echoing every authorized source id into every query
+    made the planner's output (and latency) grow with the number of attached
+    documents (6 sources: 7.5-14 s). An empty `source_ids` list means "every
+    authorized source"; only a nonempty list narrows the query."""
+    queries = [{**query, "source_ids": []} for query in suggestion()["queries"]]
+
+    async def model(_input, _timeout):
+        return suggestion(queries=queries)
+
+    value = replace(context("比较章节 A 和 B"), source_ids=("source-a", "source-b"))
+    plan = await planning().AnswerPlanner(model).plan(value)
+    assert plan.degradation_reason is None
+    assert [query.source_ids for query in plan.queries] == [("source-a", "source-b")] * 2
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_plan_with_blank_standalone_query_is_admitted():
+    """Real-model probe: qwen-plus returns `standalone_query: ""` for an
+    out-of-scope request (there is nothing to search); that is a valid plan,
+    not an invalid one, so the original question stands in for it."""
+
+    async def model(_input, _timeout):
+        return suggestion(intent="out_of_scope", route="direct", queries=[], standalone_query="")
+
+    plan = await planning().AnswerPlanner(model).plan(context("帮我写一首关于春天的诗。"))
+    assert plan.degradation_reason is None
+    assert plan.agent_intent == "out_of_scope"
+    assert plan.standalone_query == "帮我写一首关于春天的诗。"
+
+
+@pytest.mark.asyncio
+async def test_planner_budget_defaults_to_the_measured_real_model_budget():
+    module = planning()
+    timeouts = []
+
+    async def model(_input, timeout):
+        timeouts.append(timeout)
+        return suggestion()
+
+    await module.AnswerPlanner(model).plan(context("比较章节 A 和 B"))
+    await module.AnswerPlanner(model, timeout_seconds=4.5).plan(context("比较章节 A 和 B"))
+    await module.AnswerPlanner(model, timeout_seconds=4.5).plan(
+        context("比较章节 A 和 B", remaining_seconds=2.0)
+    )
+    assert timeouts == [module.DEFAULT_PLANNER_TIMEOUT_SECONDS, 4.5, 2.0]
+    assert module.DEFAULT_PLANNER_TIMEOUT_SECONDS == 6.0
+
+
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf")])
+def test_planner_budget_must_be_a_positive_finite_duration(value):
+    with pytest.raises(ValueError):
+        planning().AnswerPlanner(None, timeout_seconds=value)
+
+
+@pytest.mark.asyncio
+async def test_structured_adapter_passes_the_planner_budget_through():
+    from types import SimpleNamespace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+
+    requests = []
+
+    class Gateway:
+        async def generate_structured(self, request):
+            requests.append(request)
+            return SimpleNamespace(output=suggestion())
+
+    async def redact(text):
+        return text
+
+    await ModelGatewayPlanner(Gateway(), scope=VALIDATION_SCOPE, redact=redact)(
+        context("比较章节 A 和 B"), 6.0
+    )
+    assert requests[0].timeout_seconds == 6.0
+
+
+def test_planner_prompt_carries_route_semantics_and_leaves_the_schema_to_the_gateway():
+    """The provider's `json_schema` response format constrains decoding but
+    is not shown to the model, so without route/intent meanings and the
+    enums qwen-plus picked `intent` blind (`clarification`/`out_of_scope` on
+    a `direct` route for most answerable questions). The gateway now appends
+    the exact schema to every structured request's trusted instructions, so
+    the planner prompt carries only the route semantics -- no second copy."""
+    import json
+
+    from tap.modules.chat.adapters.model_gateway_planner import PLANNER_PROMPT, PLANNER_SCHEMA
+    from tap.modules.chat.domain.answer_plan import AGENT_INTENTS
+
+    assert json.dumps(PLANNER_SCHEMA["properties"]["intent"]) not in PLANNER_PROMPT
+    assert '"additionalProperties"' not in PLANNER_PROMPT
+    for route in ("retrieve", "graph", "clarify", "direct"):
+        assert f"- {route}" in PLANNER_PROMPT
+    for agent_intent in AGENT_INTENTS:
+        assert f"{agent_intent} (" in PLANNER_PROMPT or agent_intent in ("clarify", "out_of_scope")
+    assert "empty source_ids" in PLANNER_PROMPT
+    assert "compact single-line JSON" in PLANNER_PROMPT
+    assert "insurance" not in PLANNER_PROMPT

@@ -1,6 +1,7 @@
 """One graph-local planning call followed by deterministic authority admission."""
 
 import asyncio
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -22,6 +23,13 @@ from tap.modules.knowledge.api import latest_template_version as _latest_templat
 from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
+# Measured against qwen-plus through LiteLLM (2026-10-22): decoding runs at
+# roughly 38 output tokens per second with negligible time to first token, and
+# even a minimal one-query plan is ~100-130 tokens (~2.6-3.3 s); a
+# three-query comparison plan peaked at ~4.6 s. 6 s covers that with margin
+# while bounding how long a slow planner can delay the answer's first token
+# (on timeout the turn still proceeds on the heuristic plan).
+DEFAULT_PLANNER_TIMEOUT_SECONDS = 6.0
 # Relation-question cues, kept as a small set of independently-reasoned
 # checks -- a literal phrase, a keyword paired with a question-form signal,
 # or a lookaround exclusion for a specific kind-of-relationship compound --
@@ -187,8 +195,20 @@ def planning_input(
 
 
 class AnswerPlanner:
-    def __init__(self, model: PlannerCall | None = None):
+    def __init__(
+        self,
+        model: PlannerCall | None = None,
+        *,
+        timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
+    ):
+        if (
+            type(timeout_seconds) not in {int, float}
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("planner budget must be a positive finite duration")
         self._model = model
+        self._timeout_seconds = float(timeout_seconds)
 
     async def plan(
         self, value: PlanningInput, *, previous_plan_id: str | None = None
@@ -292,7 +312,7 @@ class AnswerPlanner:
 
             if route not in {"retrieve", "graph"} or self._model is None or ambiguous:
                 return build()
-            timeout = min(3.0, value.remaining_seconds)
+            timeout = min(self._timeout_seconds, value.remaining_seconds)
             if timeout <= 0:
                 raise TimeoutError("answer budget exhausted")
             # Final review I-1: a planner-model failure degrades to the plan the
@@ -331,6 +351,13 @@ class AnswerPlanner:
                     or not isinstance(raw["standalone_query"], str)
                 ):
                     raise ValueError("invalid planning field types")
+                if not raw["standalone_query"].strip() and raw["route"] not in {
+                    "retrieve",
+                    "graph",
+                }:
+                    # Nothing is searched on a direct/clarify plan; a model that
+                    # leaves the restatement blank still produced a valid plan.
+                    raw = {**raw, "standalone_query": original}
                 for query in raw["queries"]:
                     for field in ("depends_on", "source_ids"):
                         if not isinstance(query[field], list) or not all(
@@ -361,7 +388,10 @@ class AnswerPlanner:
                         **{
                             **query,
                             "depends_on": tuple(query["depends_on"]),
-                            "source_ids": tuple(query["source_ids"]),
+                            # Empty means every authorized source (the planner
+                            # prompt asks for it so output size does not grow
+                            # with the number of attached documents).
+                            "source_ids": tuple(query["source_ids"]) or value.source_ids,
                         }
                     )
                     for query in raw["queries"]

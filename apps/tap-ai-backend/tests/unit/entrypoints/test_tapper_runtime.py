@@ -3096,3 +3096,28 @@ def test_vision_timeout_override_keeps_text_requests_and_unconfigured_gateway_bo
     assert settings.vision_timeout_seconds == 45
     assert models.gateway._config.timeout_seconds == 45
     assert models.timeout_seconds == 15
+
+
+def test_planner_timeout_defaults_to_the_measured_budget_and_wires_into_the_planner():
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    assert settings.planner_timeout_seconds == 6.0
+    models = module._create_embeddings(settings)
+    planner = module._answer_planner(models, timeout_seconds=settings.planner_timeout_seconds)
+    assert planner._timeout_seconds == 6.0
+
+    custom = module.TapperSettings.from_mapping(
+        valid_settings() | {"TAPPER_PLANNER_TIMEOUT_SECONDS": "4.5"}
+    )
+    assert custom.planner_timeout_seconds == 4.5
+
+
+@pytest.mark.parametrize("value", ["0", "nan", "16"])
+def test_planner_timeout_must_fit_inside_the_model_gateway_timeout(value):
+    """The gateway rejects a request whose timeout exceeds its own, which the
+    planner would silently report as an invalid plan on every turn."""
+    module = _runtime()
+    with pytest.raises(ValueError, match="TAPPER_PLANNER_TIMEOUT_SECONDS"):
+        module.TapperSettings.from_mapping(
+            valid_settings() | {"TAPPER_PLANNER_TIMEOUT_SECONDS": value}
+        )

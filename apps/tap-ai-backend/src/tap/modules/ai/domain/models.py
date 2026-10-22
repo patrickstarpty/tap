@@ -234,3 +234,28 @@ def text_digest(value: str) -> str:
 
 def schema_digest(value: dict[str, object]) -> str:
     return text_digest(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False))
+
+
+def structured_schema_instruction(schema: dict[str, object] | None) -> str:
+    """The trusted system-instruction suffix the model gateway sends with every
+    STRUCTURED request (DashScope's `json_schema` mode constrains decoding but
+    does not show the schema to the model). Serialized exactly as the gateway
+    redaction-checks the schema."""
+    return (
+        "\nReturn one JSON object conforming exactly to this JSON schema; "
+        "include all required fields and no additional fields:\n"
+        + json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    )
+
+
+def structured_profile_digest(prompt: str, schema: dict[str, object]) -> str:
+    """A structured workload's profile: its prompt, schema and the gateway's
+    schema instruction -- what the model is actually shown -- so a change to
+    any of them makes outputs produced under the old profile stale."""
+    return text_digest(
+        prompt
+        + "\n"
+        + schema_digest(schema)
+        + "\n"
+        + text_digest(structured_schema_instruction(schema))
+    )

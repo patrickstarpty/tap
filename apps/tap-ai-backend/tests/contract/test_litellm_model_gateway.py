@@ -3883,3 +3883,84 @@ async def test_knowledge_tool_round_redacts_assistant_arguments_json():
     assistant = next(item for item in sent[0]["messages"] if item["role"] == "assistant")
     arguments = assistant["tool_calls"][0]["function"]["arguments"]
     assert "user@example.com" not in arguments
+
+
+@pytest.mark.asyncio
+async def test_json_schema_request_shows_the_schema_in_the_trusted_instructions():
+    """DashScope constrains decoding to a `json_schema` response format but
+    never shows the schema to the model (measured: prompt tokens do not grow
+    with it), so field meanings and enum choices were invisible. The gateway
+    appends the exact redaction-checked schema to the trusted system
+    instructions -- never to the untrusted user context -- and keeps the
+    caller's prompt digest."""
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "dashscope/qwen-plus",
+                "choices": [{"message": {"content": '{"answer":"A"}'}}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+            },
+        )
+
+    structured = request(ModelOperation.STRUCTURED)
+    result = await configured_gateway(respond).generate_structured(structured)
+
+    assert result.output == {"answer": "A"}
+    compact = json.dumps(structured.schema, sort_keys=True, separators=(",", ":"))
+    system, user = sent[0]["messages"]
+    assert system["role"] == "system"
+    assert system["content"].startswith(structured.prompt + "\n")
+    assert system["content"].endswith("\n" + compact)
+    assert system["content"].count(compact) == 1
+    assert user == {"role": "user", "content": structured.context}
+    assert sent[0]["response_format"]["type"] == "json_schema"
+    assert sent[0]["response_format"]["json_schema"]["schema"] == structured.schema
+    assert sent[0]["metadata"]["prompt_digest"] == structured.prompt_digest
+
+
+@pytest.mark.asyncio
+async def test_schema_instructions_count_toward_the_request_byte_bound():
+    """For text requests the 256 KiB transport payload bound is always the
+    tighter one (the payload carries prompt, context and the schema twice),
+    but a vision request's transport bound is 6 MiB, so only `_validate`'s
+    instruction-counted 256 KiB total stops prompt + context + schema
+    instruction from exceeding the instruction bound."""
+    sent = []
+
+    def respond(incoming):
+        sent.append(incoming)
+        raise AssertionError("an oversized request must not reach the provider")
+
+    from tap.modules.ai.domain.models import structured_schema_instruction
+
+    structured = replace(
+        request(ModelOperation.STRUCTURED),
+        alias="qwen3-vl-plus",
+        image_bytes=b"\x89PNG\r\n\x1a\nexample",
+        image_media_type="image/png",
+    )
+    instruction = structured_schema_instruction(structured.schema)
+    # Prompt + context alone fit the bound; the schema instruction does not.
+    prompt = "a" * (262144 - len(structured.context.encode()) - len(instruction) // 2)
+    oversized = replace(structured, prompt=prompt, prompt_digest=digest(prompt))
+    gateway = configured_gateway(respond)
+
+    async def accept(text):
+        # The pattern redactor bounds its own input far below 256 KiB.
+        return text
+
+    gateway._redact = accept
+    with pytest.raises(ModelGatewayRejected):
+        await gateway._validate(oversized, ModelOperation.STRUCTURED)
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.generate_structured(oversized)
+    assert sent == []
+    # The same request minus the schema-instruction overflow is admitted.
+    fits = replace(oversized, prompt=prompt[: -len(instruction)])
+    await gateway._validate(
+        replace(fits, prompt_digest=digest(fits.prompt)), ModelOperation.STRUCTURED
+    )

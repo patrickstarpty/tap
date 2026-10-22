@@ -83,6 +83,7 @@ from typing import Any
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.application.plan_answer import (
+    DEFAULT_PLANNER_TIMEOUT_SECONDS,
     AnswerPlan,
     AnswerPlanner,
     PlanningInput,
@@ -205,20 +206,24 @@ async def _plan_case(
     model: PlannerCall,
     *,
     source_ids: tuple[str, ...] = _SOURCE_IDS,
+    timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
 ) -> tuple[AnswerPlan, bool]:
     """Drive one golden case through the production `AnswerPlanner(ModelGatewayPlanner(
     ...))` assembly's `.plan()` entry point, returning the final validated
     `AnswerPlan` and whether the model was actually called (observed via
     `_CallTracker`, not assumed from the case's category)."""
     tracker = _CallTracker(model)
-    plan = await AnswerPlanner(tracker).plan(
+    plan = await AnswerPlanner(tracker, timeout_seconds=timeout_seconds).plan(
         _planning_input(case, source_ids=source_ids)
     )
     return plan, tracker.called
 
 
 async def _classify_cases(
-    golden: IntentGoldenSet, model: PlannerCall
+    golden: IntentGoldenSet,
+    model: PlannerCall,
+    *,
+    timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
     """Score every golden case through the real planning path and record the
     final `AnswerPlan.agent_intent`, the observed `plannerSource`, and
@@ -229,7 +234,9 @@ async def _classify_cases(
     observations: list[dict[str, Any]] = []
     for case in golden.cases:
         model_eligible = await _model_eligible(case)
-        plan, model_called = await _plan_case(case, model)
+        plan, model_called = await _plan_case(
+            case, model, timeout_seconds=timeout_seconds
+        )
         observations.append(
             {
                 "id": case.id,
@@ -310,7 +317,11 @@ async def run_real(golden: IntentGoldenSet) -> dict[str, Any]:
     )
     try:
         planner = ModelGatewayPlanner(gateway, scope=VALIDATION_SCOPE, redact=_redact)
-        observations = await _classify_cases(golden, planner)
+        # The production planner budget (`TAPPER_PLANNER_TIMEOUT_SECONDS`), as
+        # `tapper_runtime._answer_planner` receives it.
+        observations = await _classify_cases(
+            golden, planner, timeout_seconds=settings.planner_timeout_seconds
+        )
     finally:
         await gateway.aclose()
 

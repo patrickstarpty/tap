@@ -48,6 +48,7 @@ from tap.modules.ai.domain.models import (
     ModelToolCall,
     ModelUsage,
     schema_digest,
+    structured_schema_instruction,
     text_digest,
 )
 from tap.modules.ai.domain.tools import TOOL_REGISTRY, known_tool_ids
@@ -492,6 +493,9 @@ class LiteLLMModelGateway:
             for call in message.tool_calls:
                 total_request_bytes += len(call.arguments_json.encode())
                 await self._check_redacted(call.arguments_json)
+        if operation is ModelOperation.STRUCTURED and request.schema:
+            # `_prepare` sends the schema as trusted instruction text too.
+            total_request_bytes += len(structured_schema_instruction(request.schema).encode())
         if total_request_bytes > 262144:
             raise ModelGatewayRejected()
         governed = bool(request.governance_digests or request.tool_allowlist)
@@ -638,14 +642,16 @@ class LiteLLMModelGateway:
                     },
                 ]
             system_prompt = request.prompt
-            if request.image_bytes is not None:
-                # JSON-object mode guarantees JSON, not the caller's schema.
-                # Send the validated snapshot explicitly for vision providers.
-                system_prompt += (
-                    "\nReturn one JSON object conforming exactly to this JSON schema; "
-                    "include all required fields and no additional fields:\n"
-                    + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
-                )
+            if operation is ModelOperation.STRUCTURED:
+                # Send the validated, redaction-checked schema snapshot in the
+                # trusted instructions: JSON-object mode (vision) guarantees
+                # JSON, not the caller's schema, and DashScope's `json_schema`
+                # mode constrains decoding without showing the schema to the
+                # model (prompt tokens do not grow with it), so enum choices
+                # and field meanings were otherwise invisible.
+                # Invariant: only platform-owned schemas may reach STRUCTURED,
+                # because the schema becomes trusted instruction text.
+                system_prompt += structured_schema_instruction(request.schema)
             payload.update(
                 messages=[
                     {"role": "system", "content": system_prompt},
