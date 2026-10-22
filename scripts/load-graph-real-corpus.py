@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import mimetypes
 import time
 import urllib.error
@@ -134,6 +135,13 @@ def _runtime_project_id(api: str) -> str:
     return str(body["projectId"])
 
 
+def _web_origin() -> str:
+    """The web app's exact loopback Origin; the API rejects mutations without it."""
+    host = os.environ.get("TAPPER_WEB_HOST", "127.0.0.1")
+    port = os.environ.get("TAPPER_WEB_PORT", "5173")
+    return f"http://{host}:{port}"
+
+
 def _upload_source(api: str, project_id: str, entry: CorpusEntry, target: Path) -> str:
     filename = f"{entry.id}.pdf" if entry.kind == "policy" else target.name
     body, content_type = _multipart_body("upload", filename, target.read_bytes())
@@ -145,7 +153,11 @@ def _upload_source(api: str, project_id: str, entry: CorpusEntry, target: Path) 
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": content_type, "Idempotency-Key": idempotency_key},
+        headers={
+            "Content-Type": content_type,
+            "Idempotency-Key": idempotency_key,
+            "Origin": _web_origin(),
+        },
     )
     with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
         accepted = json.loads(response.read().decode("utf-8"))
