@@ -925,21 +925,24 @@ async def test_structured_adapter_passes_the_planner_budget_through():
     assert requests[0].timeout_seconds == 6.0
 
 
-def test_planner_prompt_carries_the_closed_schema_and_route_semantics():
+def test_planner_prompt_carries_route_semantics_and_leaves_the_schema_to_the_gateway():
     """The provider's `json_schema` response format constrains decoding but
-    is not shown to the model (prompt tokens do not grow with the schema),
-    so without the enums in the prompt qwen-plus picked `intent` blind:
-    `clarification`/`out_of_scope` on a `direct` route for most answerable
-    questions. The prompt must carry the exact schema and route semantics."""
+    is not shown to the model, so without route/intent meanings and the
+    enums qwen-plus picked `intent` blind (`clarification`/`out_of_scope` on
+    a `direct` route for most answerable questions). The gateway now appends
+    the exact schema to every structured request's trusted instructions, so
+    the planner prompt carries only the route semantics -- no second copy."""
     import json
 
     from tap.modules.chat.adapters.model_gateway_planner import PLANNER_PROMPT, PLANNER_SCHEMA
     from tap.modules.chat.domain.answer_plan import AGENT_INTENTS
 
-    assert json.dumps(PLANNER_SCHEMA, ensure_ascii=False, separators=(",", ":")) in PLANNER_PROMPT
+    assert json.dumps(PLANNER_SCHEMA["properties"]["intent"]) not in PLANNER_PROMPT
+    assert '"additionalProperties"' not in PLANNER_PROMPT
     for route in ("retrieve", "graph", "clarify", "direct"):
         assert f"- {route}" in PLANNER_PROMPT
     for agent_intent in AGENT_INTENTS:
         assert f"{agent_intent} (" in PLANNER_PROMPT or agent_intent in ("clarify", "out_of_scope")
     assert "empty source_ids" in PLANNER_PROMPT
     assert "compact single-line JSON" in PLANNER_PROMPT
+    assert "insurance" not in PLANNER_PROMPT
