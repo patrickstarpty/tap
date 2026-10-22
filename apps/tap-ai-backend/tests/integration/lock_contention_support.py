@@ -49,8 +49,9 @@ def inject_lock_errors(
             )
 
 
-def locking_read_of(table: str) -> Callable[[str], bool]:
-    """Match the claim's locking read (`SELECT ... FROM <table> ... FOR UPDATE`)."""
+def locking_read_of(table: str, *, skip_locked: bool | None = None) -> Callable[[str], bool]:
+    """Match a locking read (`SELECT ... FROM <table> ... FOR UPDATE`), optionally
+    only the claim's `SKIP LOCKED` scan (True) or only blocking reads (False)."""
 
     source = re.compile(rf"\nFROM {re.escape(table)}\b")
 
@@ -59,6 +60,7 @@ def locking_read_of(table: str) -> Callable[[str], bool]:
             statement.startswith("SELECT")
             and source.search(statement) is not None
             and "FOR UPDATE" in statement
+            and (skip_locked is None or ("SKIP LOCKED" in statement) is skip_locked)
         )
 
     return matches
