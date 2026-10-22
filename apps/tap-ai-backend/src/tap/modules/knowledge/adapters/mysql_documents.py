@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -130,6 +129,8 @@ from tap.modules.knowledge.ports.documents import (
     initial_stage_results,
     serialize_stage_results,
 )
+from tap.platform.db.lock_contention import claim_or_nothing, retry_lock_contention
+from tap.platform.db.lock_contention import mysql_error_code as _mysql_error_code
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import augment_project_table, metadata, outbox
 from tap.platform.messaging.mysql_outbox import (
@@ -137,8 +138,6 @@ from tap.platform.messaging.mysql_outbox import (
     scoped_outbox_id,
     write_project_event,
 )
-
-_logger = logging.getLogger(__name__)
 
 CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
 ANSWER_SNAPSHOT_RETENTION = 1_000
@@ -2998,16 +2997,14 @@ class MysqlDocumentRepository:
     async def claim_upload_recoveries(
         self, *, worker_id: str, lease_duration: timedelta, limit: int
     ) -> tuple[UploadRecovery, ...]:
-        for attempt in range(3):
-            try:
-                return await self._claim_upload_recoveries_once(
-                    worker_id=worker_id, lease_duration=lease_duration, limit=limit
-                )
-            except DBAPIError as error:
-                if _mysql_error_code(error) not in {1213, 1205} or attempt == 2:
-                    raise
-                await asyncio.sleep(0)
-        raise AssertionError("unreachable")
+        # Only the one-shot operator recovers uploads, and it records the
+        # recovered count in its idempotent receipt: exhausted contention must
+        # fail the operation (retryable with the same key), never report zero.
+        return await retry_lock_contention(
+            lambda: self._claim_upload_recoveries_once(
+                worker_id=worker_id, lease_duration=lease_duration, limit=limit
+            )
+        )
 
     async def _claim_upload_recoveries_once(
         self,
@@ -3877,27 +3874,14 @@ class MysqlDocumentRepository:
         # shared lock on each claimed job's knowledge_document row, while
         # `request_delete` holds that document row and inserts its deletion
         # job into the claim's locked gap. InnoDB resolves the cycle by
-        # rolling one transaction back. A rolled-back claim leased nothing, so
-        # retry it a bounded number of times and otherwise claim nothing this
-        # poll -- the worker's next poll scans again.
-        for attempt in range(_CLAIM_CONTENTION_ATTEMPTS):
-            try:
-                return await self._claim_jobs_once(
-                    worker_id=worker_id, lease_duration=lease_duration, limit=limit
-                )
-            except DBAPIError as error:
-                code = _mysql_error_code(error)
-                if code not in _TRANSIENT_LOCK_ERRORS:
-                    raise
-                if attempt + 1 == _CLAIM_CONTENTION_ATTEMPTS:
-                    _logger.warning(
-                        "ingestion claim lost to MySQL lock contention (%s); "
-                        "claiming nothing this poll",
-                        code,
-                    )
-                    return ()
-                await asyncio.sleep(0)
-        raise AssertionError("unreachable")
+        # rolling one transaction back; a rolled-back claim leased nothing.
+        return await claim_or_nothing(
+            lambda: self._claim_jobs_once(
+                worker_id=worker_id, lease_duration=lease_duration, limit=limit
+            ),
+            kind="ingestion",
+            nothing=(),
+        )
 
     async def _claim_jobs_once(
         self,
@@ -5117,17 +5101,6 @@ def _manifest_from_rows(rows: list[RowMapping]) -> tuple[ManifestChunk, ...]:
         )
         for row in rows
     )
-
-
-# InnoDB deadlock victim (1213) and lock-wait timeout (1205): the statement's
-# transaction was rolled back and may simply be retried.
-_TRANSIENT_LOCK_ERRORS = frozenset({1213, 1205})
-_CLAIM_CONTENTION_ATTEMPTS = 3
-
-
-def _mysql_error_code(error: DBAPIError) -> int | None:
-    args = getattr(error.orig, "args", ())
-    return args[0] if args and isinstance(args[0], int) else None
 
 
 def _validate_job_lease(worker_id: str, lease_duration: timedelta) -> None:
