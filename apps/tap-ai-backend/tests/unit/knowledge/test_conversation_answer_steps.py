@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from test_answer_service import MemoryAnswerRepository, answer_response, ready
 
@@ -2095,3 +2096,221 @@ async def test_run_conversation_tool_summary_redacts_before_truncating(tool_id) 
     # The tool itself still runs on the original query.
     calls = answers.search_calls if tool_id == "knowledge.search" else answers.relations_calls
     assert calls[0]["query"] == _STRADDLING_QUERY
+
+
+class _PacedSSE(httpx.AsyncByteStream):
+    """httpx byte stream for a LiteLLM SSE response: each chunk arrives
+    `delay` seconds after the previous one; `stall_after` chunks then hang."""
+
+    def __init__(self, texts: tuple[str, ...], *, delay: float, stall_after: int | None = None):
+        self._texts = texts
+        self._delay = delay
+        self._stall_after = stall_after
+
+    async def __aiter__(self):
+        import asyncio
+
+        for index, text in enumerate(self._texts):
+            if self._stall_after is not None and index == self._stall_after:
+                await asyncio.Event().wait()
+            await asyncio.sleep(self._delay)
+            last = index == len(self._texts) - 1
+            chunk = {
+                "model": "dashscope/qwen-plus",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": text},
+                        "finish_reason": "stop" if last else None,
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _streaming_answer_models(stream: _PacedSSE, *, idle_seconds: float):
+    """The real `KnowledgeModelGateway` over the real `LiteLLMModelGateway`,
+    with only LiteLLM's HTTP responses faked."""
+    from tap.modules.ai.adapters.litellm import LiteLLMModelGateway, LiteLLMModelGatewayConfig
+    from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
+    from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+
+    models = [
+        {
+            "model_name": name,
+            "litellm_params": {"model": f"dashscope/{name}"},
+            "model_info": {"id": f"deployment-{name}", "mode": mode, **extra},
+        }
+        for name, mode, extra in (
+            ("qwen-plus", "chat", {"supports_response_schema": True}),
+            ("text-embedding-v4", "embedding", {}),
+        )
+    ]
+
+    def catalog_response(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": models})
+
+    def chat_response(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+
+    async def redact(text: str) -> str:
+        return (await PatternEgressRedactor().redact(text)).sanitized_text
+
+    async def passthrough(text: str) -> str:
+        return text
+
+    gateway = LiteLLMModelGateway(
+        LiteLLMModelGatewayConfig(
+            base_url="https://litellm.example",
+            api_key="private-provider-key",
+            roles=ModelRoles("qwen-plus", "text-embedding-v4", None),
+            embedding_dimension=2,
+            stream_idle_seconds=idle_seconds,
+        ),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        catalog=LiteLLMCatalog(
+            base_url="https://litellm.example",
+            api_key="private-provider-key",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(catalog_response)),
+        ),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(chat_response)),
+    )
+    return KnowledgeModelGateway(
+        gateway,
+        scope=VALIDATION_SCOPE,
+        redact=passthrough,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+
+async def _planned_turn_nodes(stream: _PacedSSE, *, idle_seconds: float, plan_window: float):
+    """Real `ChatTurnNodes` -> `KnowledgeHttpService` -> `AnswerService` ->
+    `KnowledgeAPI` -> `KnowledgeModelGateway` -> `LiteLLMModelGateway` with an
+    attached planner and an admitted plan whose own window is `plan_window`
+    seconds -- shorter than the streamed answer -- inside a 30 s Turn budget."""
+    frozen, plan = await _retrieve_route()
+    revision = ready()
+    knowledge_api = KnowledgeAPI(
+        search=_RealChainSearch((_real_chain_search_hit(revision),)),
+        embeddings=_RealChainEmbeddings(),
+        answers=_streaming_answer_models(stream, idle_seconds=idle_seconds),
+        policy_verifier=_CurrentPolicyVerifier(),
+        redactor=_PassthroughRedactor(),
+        id_factory=lambda: str(uuid4()),
+    )
+    repository = MemoryAnswerRepository((revision,))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    service = _service(AnswerService(repository=repository, knowledge=knowledge_api))
+
+    async def require_authorized() -> None:
+        return None
+
+    turn = SimpleNamespace(
+        turn_id="turn-a",
+        lease_token="lease-a",
+        attempt=1,
+        input_snapshot=TurnInputSnapshot(
+            "snapshot-a",
+            VALIDATION_SCOPE.project_id,
+            "turn-a",
+            frozen,
+            content_digest(
+                frozen.material(project_id=VALIDATION_SCOPE.project_id, turn_id="turn-a")
+            ),
+            datetime.now(UTC),
+        ),
+    )
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-a",
+        turn=turn,
+        conversations=_EmittingConversations(),
+        steps=service,
+        planner=object(),
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+        attempt_started_at=time.time(),
+    )
+    state: dict[str, object] = {
+        "answer_plan": replace(plan, deadline_at=time.time() + plan_window).to_dict(),
+        "plan_attempt": 1,
+        "tools": [],
+        "budget": {
+            "maxToolRounds": 6,
+            "maxSeconds": 30.0,
+            "maxModelCalls": 10,
+            "maxCostMicros": 0,
+            "startedAtMs": int(time.time() * 1000),
+        },
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+    }
+    state.update(await nodes.seed_search(state))
+    assert state["step"]["kind"] == "prepared"
+    return nodes, state
+
+
+@pytest.mark.asyncio
+async def test_planned_turn_streams_an_answer_longer_than_the_plan_window() -> None:
+    """Capability-4 fix round 1 (D3 end to end): with a planner attached, the
+    admitted plan's own window (30 s in production, 0.3 s here) must not cut
+    a slow-but-steady streamed answer that is still inside the Turn's
+    wall-clock budget; generation and verification complete."""
+    pieces = ("错误码 E104 ", "代表", "核保", "材料", "缺失", "[S1]。")
+    nodes, state = await _planned_turn_nodes(
+        _PacedSSE(pieces, delay=0.12), idle_seconds=0.5, plan_window=0.3
+    )
+    started = time.monotonic()
+
+    state.update(await nodes.model(state))
+    state.update(await nodes.verify(state))
+
+    assert time.monotonic() - started > 0.6
+    assert state["step"]["kind"] == "verified"
+    assert len(state["step"]["response"]["claims"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_planned_turn_still_fails_a_stalled_stream_on_the_idle_timeout() -> None:
+    from tap.modules.knowledge.ports.errors import AnswerUnavailable
+
+    pieces = ("错误码 E104 ", "代表", "核保材料缺失[S1]。")
+    nodes, state = await _planned_turn_nodes(
+        _PacedSSE(pieces, delay=0.01, stall_after=1), idle_seconds=0.2, plan_window=10
+    )
+    started = time.monotonic()
+
+    with pytest.raises(AnswerUnavailable):
+        await nodes.model(state)
+
+    assert time.monotonic() - started < 2
+
+
+@pytest.mark.asyncio
+async def test_plan_window_expiring_mid_phase_is_a_deterministic_budget_exhaustion() -> None:
+    """Capability-4 fix round 1: the plan window now equals the Turn's
+    wall-clock end, so it may expire in the same instant as the Turn budget.
+    Expiring mid-phase must surface as `AnswerBudgetExhausted` (classified
+    deterministic, `budget-exhausted`), never as a bare `TimeoutError` the
+    worker would retry as transient."""
+    import asyncio
+
+    from tap.entrypoints.tapper_turn_failures import classify_turn_failure
+    from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
+
+    _frozen, plan = await _retrieve_route()
+    short = replace(plan, deadline_at=time.time() + 0.05)
+
+    with pytest.raises(AnswerBudgetExhausted) as raised:
+        async with KnowledgeHttpService._plan_deadline(short):
+            await asyncio.sleep(1)
+
+    assert classify_turn_failure(raised.value) == "deterministic"

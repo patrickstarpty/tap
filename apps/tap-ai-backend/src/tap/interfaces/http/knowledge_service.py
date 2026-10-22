@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import time
@@ -346,7 +347,8 @@ class KnowledgeHttpService:
             )
 
     @staticmethod
-    def _plan_deadline(answer_plan):
+    @contextlib.asynccontextmanager
+    async def _plan_deadline(answer_plan):
         """One shared deadline guard used by `answer_conversation` and every
         resumable phase below: raises `AnswerBudgetExhausted` (a `TimeoutError`
         subclass) immediately if the plan's persisted deadline has already
@@ -356,11 +358,23 @@ class KnowledgeHttpService:
         absolute timestamp, so recomputing it fresh at the start of every
         phase -- rather than passing a single captured budget along -- keeps
         nested uses of this guard safe: each nested call only ever tightens
-        the remaining time, never resets it."""
+        the remaining time, never resets it.
+
+        Expiring mid-phase also raises `AnswerBudgetExhausted` (capability-4
+        fix round 1): inside a Turn the plan window ends with the Turn's
+        wall-clock budget, so a bare `TimeoutError` here would be retried as
+        transient instead of failing as `budget-exhausted`."""
         remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
         if remaining is not None and remaining <= 0:
             raise AnswerBudgetExhausted("persisted answer budget exhausted")
-        return asyncio.timeout(remaining)
+        timeout_cm = asyncio.timeout(remaining)
+        try:
+            async with timeout_cm:
+                yield
+        except TimeoutError:
+            if timeout_cm.expired():
+                raise AnswerBudgetExhausted("persisted answer budget exhausted") from None
+            raise
 
     async def authorize_planning(self, snapshot) -> None:
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision

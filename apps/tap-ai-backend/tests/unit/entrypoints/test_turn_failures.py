@@ -196,9 +196,13 @@ class _FakePlan:
     deadline_at: float
 
 
-def test_expired_plan_deadline_raises_answer_budget_exhausted() -> None:
+@pytest.mark.asyncio
+async def test_expired_plan_deadline_raises_answer_budget_exhausted() -> None:
     plan = _FakePlan(deadline_at=time.time() + 60)
     expired_plan = replace(plan, deadline_at=time.time() - 1)
+    entered = False
     with pytest.raises(AnswerBudgetExhausted) as excinfo:
-        KnowledgeHttpService._plan_deadline(expired_plan)
+        async with KnowledgeHttpService._plan_deadline(expired_plan):
+            entered = True
+    assert not entered
     assert isinstance(excinfo.value, TimeoutError)

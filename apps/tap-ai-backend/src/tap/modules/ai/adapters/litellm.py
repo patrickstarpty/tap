@@ -306,7 +306,8 @@ class LiteLLMModelGatewayConfig:
     # bounds connect and the first token; after that each chunk may take up to
     # `stream_idle_seconds`, and the whole stream at most `stream_max_seconds`.
     # Inside a Turn the graph's wall-clock budget additionally cancels the call
-    # at the Turn's remaining time (`ChatGraph._run_budgeted`).
+    # at the Turn's remaining time (`ChatGraph._run_budgeted`); the answer plan
+    # window is bound to that same Turn end (`ChatTurnNodes._active_plan`).
     stream_idle_seconds: float = 15.0
     stream_max_seconds: float = 180.0
 
