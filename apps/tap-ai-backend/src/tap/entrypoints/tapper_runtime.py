@@ -170,6 +170,8 @@ class TapperSettings:
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
     planner_timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS
+    model_stream_idle_seconds: float = 15.0
+    model_stream_max_seconds: float = 180.0
     graph_extraction_timeout_seconds: float = 240.0
     graph_extraction_max_tokens: int = 8192
     graph_worker_concurrency: int = 4
@@ -623,6 +625,12 @@ class TapperSettings:
                 "TAPPER_PLANNER_TIMEOUT_SECONDS",
                 DEFAULT_PLANNER_TIMEOUT_SECONDS,
                 maximum=60,
+            ),
+            model_stream_idle_seconds=_duration(
+                values, "TAPPER_MODEL_STREAM_IDLE_SECONDS", 15.0, maximum=60
+            ),
+            model_stream_max_seconds=_duration(
+                values, "TAPPER_MODEL_STREAM_MAX_SECONDS", 180.0, maximum=300
             ),
             graph_extraction_timeout_seconds=_duration(
                 values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 240.0, maximum=300
@@ -1691,6 +1699,8 @@ def _create_embeddings(
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=ceiling,
         max_retries=max_retries,
+        stream_idle_seconds=settings.model_stream_idle_seconds,
+        stream_max_seconds=settings.model_stream_max_seconds,
         # Never below the default 4 slots; a wider graph worker needs one slot per
         # concurrent extraction or its calls would queue against their deadlines.
         max_concurrency=max(4, max_concurrency or 4),

@@ -152,6 +152,12 @@ def _chunk_finish_reason(chunk: dict[str, Any]) -> str | None:
     return reason if isinstance(reason, str) else None
 
 
+def _cached_prompt_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("prompt_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    return cached if type(cached) is int and 0 <= cached <= 1000000 else 0
+
+
 def _validate_usage_tokens(usage: dict[str, Any]) -> tuple[int | None, int | None]:
     """Shared by `_normalize` and `chat_stream`: usage token fields must be bounded ints
     or absent; any other type or out-of-range value makes the whole call unavailable."""
@@ -296,6 +302,14 @@ class LiteLLMModelGatewayConfig:
     # In-flight calls (and pooled connections) per gateway instance; a call queued
     # behind full slots still spends its own deadline waiting.
     max_concurrency: int = 4
+    # Streamed chat (capability-4 validation D3): a call's own `timeout_seconds`
+    # bounds connect and the first token; after that each chunk may take up to
+    # `stream_idle_seconds`, and the whole stream at most `stream_max_seconds`.
+    # Inside a Turn the graph's wall-clock budget additionally cancels the call
+    # at the Turn's remaining time (`ChatGraph._run_budgeted`); the answer plan
+    # window is bound to that same Turn end (`ChatTurnNodes._active_plan`).
+    stream_idle_seconds: float = 15.0
+    stream_max_seconds: float = 180.0
 
     def __post_init__(self) -> None:
         validate_litellm_base_url(self.base_url)
@@ -315,6 +329,14 @@ class LiteLLMModelGatewayConfig:
             or not 0 < self.timeout_seconds <= MAX_GATEWAY_TIMEOUT_SECONDS
         ):
             raise ValueError("model gateway timeout is invalid")
+        for value in (self.stream_idle_seconds, self.stream_max_seconds):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or not 0 < value <= MAX_GATEWAY_TIMEOUT_SECONDS
+            ):
+                raise ValueError("model gateway stream timeout is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -903,10 +925,18 @@ class LiteLLMModelGateway:
         without retrying, and the `finally` below still records exactly one
         `ModelCallRecord`.
 
-        The deadline is one absolute instant (`asyncio.timeout_at`), applied only
-        around this generator's own awaits (`_prepare`, each `anext` of the inner
-        SSE stream) -- never across a `yield` -- so a timeout here can only mean
-        the provider stalled, not that the consumer was slow between chunks. The
+        Deadlines (capability-4 validation D3) apply only around this
+        generator's own awaits (`_prepare`, each `anext` of the inner SSE stream)
+        -- never across a `yield` -- so a timeout here can only mean the provider
+        stalled, not that the consumer was slow between chunks. Until the first
+        token (content or tool-call delta; `reasoning_content` deltas are not
+        counted, so a future reasoning model that thinks longer than the
+        timeout before its first answer token would fail here) the request's
+        own `timeout_seconds` is
+        one absolute instant from the call's start; after it, each chunk must
+        arrive within `stream_idle_seconds`, and the whole stream ends by
+        `stream_max_seconds`. Inside a Turn, the graph's wall-clock budget
+        cancels the call at the Turn's remaining time. The
         inner stream is driven through `contextlib.aclosing` so that an early
         consumer exit (`aclose()`/`break`) or the consumer's task being cancelled
         still closes the HTTP response and releases the concurrency slot
@@ -944,9 +974,14 @@ class LiteLLMModelGateway:
             try:
                 with _translate_model_errors(error_holder):
                     self._check_timeout_seconds(request)
-                    deadline = asyncio.get_running_loop().time() + request.timeout_seconds
+                    loop = asyncio.get_running_loop()
+                    stream_started = loop.time()
+                    first_token_deadline = stream_started + request.timeout_seconds
+                    overall_deadline = stream_started + self._config.stream_max_seconds
+                    # Content or tool-call deltas only; reasoning_content does not count.
+                    token_seen = False
 
-                    async with asyncio.timeout_at(deadline):
+                    async with asyncio.timeout_at(first_token_deadline):
                         request, payload = await self._prepare(request, operation)
                     payload["stream"] = True
                     payload["stream_options"] = {"include_usage": True}
@@ -957,12 +992,20 @@ class LiteLLMModelGateway:
                     rejected_delta = False
                     tool_call_fragments: dict[int, dict[str, str | None]] = {}
                     headers = httpx.Headers()
+                    cached_tokens = 0
 
                     post_stream = self._post_stream(request, payload, attempts)
                     async with contextlib.aclosing(post_stream):
                         while True:
+                            wait_until = (
+                                min(
+                                    loop.time() + self._config.stream_idle_seconds, overall_deadline
+                                )
+                                if token_seen
+                                else min(first_token_deadline, overall_deadline)
+                            )
                             try:
-                                async with asyncio.timeout_at(deadline):
+                                async with asyncio.timeout_at(wait_until):
                                     chunk, chunk_headers = await anext(post_stream)
                             except StopAsyncIteration:
                                 break
@@ -974,12 +1017,14 @@ class LiteLLMModelGateway:
                             if delta is not None:
                                 content = delta.get("content")
                                 if isinstance(content, str) and content:
+                                    token_seen = True
                                     chunks.append(content)
                                     yield ModelTextDelta(content)
                                 if delta.get("refusal"):
                                     rejected_delta = True
                                 raw_tool_calls = delta.get("tool_calls")
                                 if raw_tool_calls:
+                                    token_seen = True
                                     if not request.tools or not isinstance(raw_tool_calls, list):
                                         rejected_delta = True
                                     else:
@@ -1013,6 +1058,7 @@ class LiteLLMModelGateway:
                             usage_field = chunk.get("usage")
                             if isinstance(usage_field, dict):
                                 input_tokens, output_tokens = _validate_usage_tokens(usage_field)
+                                cached_tokens = _cached_prompt_tokens(usage_field)
 
                     full_text = "".join(chunks)
                     tool_calls: tuple[ModelToolCall, ...] = ()
@@ -1056,6 +1102,12 @@ class LiteLLMModelGateway:
                         else full_text
                     )
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
+                    # A streamed header is sent before generation; a zero there with
+                    # billed tokens is not the call's cost, so price the usage instead.
+                    if cost_usd is None or (cost_usd == 0 and (output_tokens or input_tokens)):
+                        cost_usd = self._streamed_cost(
+                            headers, input_tokens, output_tokens, cached_tokens
+                        )
                     upstream_model = self._upstream_model(headers)
                     actual, provider = _resolve_actual_model(returned_model, upstream_model)
                     normalized_usage = ModelUsage(input_tokens, output_tokens)
@@ -1151,7 +1203,12 @@ class LiteLLMModelGateway:
                             "idempotency-key": request.idempotency_key,
                         },
                         content=encoded,
-                        timeout=request.timeout_seconds,
+                        # Transport reads wait as long as the stream idle bound; the
+                        # first-token and idle deadlines are enforced by `chat_stream`.
+                        timeout=httpx.Timeout(
+                            request.timeout_seconds,
+                            read=max(request.timeout_seconds, self._config.stream_idle_seconds),
+                        ),
                     ) as response,
                 ):
                     if response.status_code in {408, 429} or response.status_code >= 500:
@@ -1236,6 +1293,30 @@ class LiteLLMModelGateway:
                 if attempt == max_retries:
                     raise ModelGatewayUnavailable() from None
         raise ModelGatewayUnavailable()
+
+    def _streamed_cost(
+        self,
+        headers: httpx.Headers,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_tokens: int,
+    ) -> Decimal | None:
+        """Cost of a streamed call (capability-4 validation D4).
+
+        LiteLLM sends a streamed response's headers before generation, so no
+        `x-litellm-response-cost` arrives; price the final `include_usage` chunk
+        with the served deployment's published rates instead -- the same
+        `model_info` rates LiteLLM computes its non-streamed header from. Unknown
+        deployment, rates or usage leave the cost unknown, never zero."""
+
+        deployment_id = headers.get("x-litellm-model-id")
+        routes = self._catalog.cached_routes()
+        if not deployment_id or routes is None or input_tokens is None or output_tokens is None:
+            return None
+        rates = routes.deployment_rates(deployment_id)
+        if rates is None:
+            return None
+        return _parse_cost_header(str(rates.cost(input_tokens, output_tokens, cached_tokens)))
 
     def _upstream_model(self, headers: httpx.Headers) -> str | None:
         """Map LiteLLM's served deployment id to its upstream model from cached routes only."""

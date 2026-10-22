@@ -9,7 +9,8 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from decimal import Decimal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -34,18 +35,44 @@ class LiteLLMModel:
 
 
 @dataclass(frozen=True, slots=True)
+class DeploymentRates:
+    """USD per token LiteLLM publishes for one deployment (`model_info.*_cost_per_token`),
+    the same rates its own response-cost header is computed from."""
+
+    input_per_token: Decimal
+    output_per_token: Decimal
+    cache_read_per_token: Decimal | None = None
+
+    def cost(self, input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> Decimal:
+        cached = min(max(cached_tokens, 0), input_tokens)
+        cache_rate = (
+            self.input_per_token if self.cache_read_per_token is None else self.cache_read_per_token
+        )
+        return (
+            (input_tokens - cached) * self.input_per_token
+            + cached * cache_rate
+            + output_tokens * self.output_per_token
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class LiteLLMRoutes:
     models: Mapping[str, LiteLLMModel]
     # LiteLLM deployment id (`model_info.id`, echoed as `x-litellm-model-id`) → upstream model.
     deployments: Mapping[str, str] = field(default_factory=dict)
     # LiteLLM entries left out of the public catalog: model name → operator-safe reason.
     skipped: Mapping[str, str] = field(default_factory=dict)
+    # Deployment id → published token rates; absent when LiteLLM publishes none.
+    rates: Mapping[str, DeploymentRates] = field(default_factory=dict)
 
     def get(self, name: str) -> LiteLLMModel | None:
         return self.models.get(name)
 
     def upstream_model(self, deployment_id: str) -> str | None:
         return self.deployments.get(deployment_id)
+
+    def deployment_rates(self, deployment_id: str) -> DeploymentRates | None:
+        return self.rates.get(deployment_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +181,25 @@ def _merge(entries: list[dict[str, Any]]) -> LiteLLMModel | None:
     )
 
 
+def _rate(model_info: dict[str, Any], key: str) -> Decimal | None:
+    value = model_info.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not math.isfinite(value) or not 0 <= value < 1:
+        return None
+    return Decimal(str(value))
+
+
+def _deployment_rates(model_info: dict[str, Any]) -> DeploymentRates | None:
+    input_rate = _rate(model_info, "input_cost_per_token")
+    output_rate = _rate(model_info, "output_cost_per_token")
+    if input_rate is None or output_rate is None:
+        return None
+    return DeploymentRates(
+        input_rate, output_rate, _rate(model_info, "cache_read_input_token_cost")
+    )
+
+
 def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
     rows = body.get("data")
     if not isinstance(rows, list):
@@ -180,6 +226,7 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
             continue
         models[name] = merged
     deployments: dict[str, str] = {}
+    rates: dict[str, DeploymentRates] = {}
     for row in rows:
         model_info = row.get("model_info")
         params = row.get("litellm_params")
@@ -193,7 +240,10 @@ def _parse_routes(body: dict[str, Any]) -> LiteLLMRoutes:
             and len(upstream) <= 256
         ):
             deployments[deployment_id] = upstream
-    return LiteLLMRoutes(models, deployments, skipped)
+            deployment_rates = _deployment_rates(cast(dict[str, Any], model_info))
+            if deployment_rates is not None:
+                rates[deployment_id] = deployment_rates
+    return LiteLLMRoutes(models, deployments, skipped, rates)
 
 
 def _contract_violation(model: LiteLLMModel) -> str | None:

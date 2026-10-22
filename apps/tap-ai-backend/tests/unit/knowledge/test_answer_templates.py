@@ -280,7 +280,7 @@ def test_inline_marker_rule_is_the_latest_additive_template_version(template):
     assert latest.digest != sentence.digest
     assert "Return exactly answer and claims" not in latest.instruction
     assert "Write the answer as Markdown prose, not JSON" in latest.instruction
-    assert "immediately after it place the evidence labels" in latest.instruction
+    assert "[S1]" in latest.instruction
     if template == "clarification":
         assert "time-range" in latest.instruction
     assembled = module.assemble_answer(
@@ -300,3 +300,24 @@ def test_legacy_template_digests_are_unchanged():
         module.get_template("clarification", "1").digest
         == "sha256:f8531d6e58b9bf5c119c68181f4db310bf1682b0b2c81f71273483a59924e2a4"
     )
+
+
+@pytest.mark.parametrize(
+    "template", ["general", "factual", "explanation", "comparison", "procedural", "clarification"]
+)
+def test_span_citation_rule_is_the_latest_additive_template_version(template):
+    """Span-level citations: the latest template version cites sentences and
+    list items alike, adds no list-item ban, and leaves the pinned inline
+    version (general "3", clarification "4") byte-for-byte unchanged."""
+    module = templates()
+    inline_version = "4" if template == "clarification" else "3"
+    inline = module.get_template(template, inline_version)
+    latest = module.get_template(template, module.latest_template_version(template))
+    assert latest.version != inline.version
+    assert "never as a quotation or list item" in inline.instruction
+    assert "never as a quotation or list item" not in latest.instruction
+    assert "numbered step" in latest.instruction
+    # A cited table row cannot become a claim, so the rule never invites one.
+    assert "table" not in latest.instruction
+    assert "carries no label" in latest.instruction
+    assert "Write the answer as Markdown prose, not JSON" in latest.instruction

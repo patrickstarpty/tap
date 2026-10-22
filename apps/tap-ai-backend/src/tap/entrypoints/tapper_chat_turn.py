@@ -476,16 +476,21 @@ class ChatTurnNodes:
         if raw is None:
             return None
         plan = AnswerPlan.from_dict(raw)
+        budget = state.get("budget")
+        if budget and float(budget.get("maxSeconds", 0.0)) > 0:
+            # Capability-4 fix round 1 (D3 end to end): inside a budgeted
+            # Turn the plan window *is* the Turn's wall-clock window (spec
+            # 4.3: one 3-minute Turn budget). The plan's own pre-graph
+            # `remaining_seconds` (30 s) is shared by retrieval, tool rounds
+            # and the whole streamed generation, so keeping it would cut a
+            # long, steadily streaming answer long before the Turn budget,
+            # the gateway's idle timeout or its overall stream cap. Never
+            # past the Turn's end either (I2), so a fresh attempt cannot get
+            # a new window once the Turn budget is nearly spent.
+            turn_end = budget.get("startedAtMs", 0) / 1000 + float(budget["maxSeconds"])
+            return dataclasses.replace(plan, deadline_at=turn_end)
         if state.get("plan_attempt") != self._turn.attempt and self._attempt_started_at is not None:
             deadline_at = max(plan.deadline_at, self._attempt_started_at + plan.remaining_seconds)
-            # Never rebase past the turn's own wall-clock end: otherwise a
-            # turn whose budget is nearly exhausted would still hand a fresh
-            # attempt a full new plan window, making the turn budget's
-            # wall-clock exhaustion effectively unreachable (I2).
-            budget = state.get("budget")
-            if budget:
-                turn_end = budget.get("startedAtMs", 0) / 1000 + budget.get("maxSeconds", 0.0)
-                deadline_at = min(deadline_at, turn_end)
             return dataclasses.replace(plan, deadline_at=deadline_at)
         return plan
 
