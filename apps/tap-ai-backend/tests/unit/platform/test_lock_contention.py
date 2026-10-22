@@ -11,10 +11,14 @@ from sqlalchemy.exc import OperationalError
 
 from tap.platform.db.lock_contention import (
     CLAIM_ATTEMPTS,
+    DEFAULT_CLAIM_LOCK_WAIT_SECONDS,
+    claim_lock_wait_seconds,
     claim_or_nothing,
+    claim_transaction,
     retry_lock_contention,
     transient_lock_error_code,
 )
+from tap.platform.db.session import create_engine_and_session_factory
 
 
 def _mysql_error(code: int) -> OperationalError:
@@ -131,3 +135,147 @@ def test_transient_lock_error_code_reads_only_the_driver_code() -> None:
     assert transient_lock_error_code(_mysql_error(1062)) is None
     assert transient_lock_error_code(RuntimeError("1213")) is None
     assert transient_lock_error_code(OperationalError("x", {}, Exception("1213 text"))) is None
+
+
+_BOUND = (
+    "SET @tap_claim_prior_lock_wait = @@SESSION.innodb_lock_wait_timeout, "
+    "SESSION innodb_lock_wait_timeout = {seconds}"
+)
+_RESTORE = "SET SESSION innodb_lock_wait_timeout = @tap_claim_prior_lock_wait"
+
+
+class _Connection:
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    async def invalidate(self) -> None:
+        self._log.append("invalidate")
+
+
+class _RecordingSession:
+    def __init__(self, log: list[str], fail_restore: bool) -> None:
+        self._log = log
+        self._fail_restore = fail_restore
+
+    async def __aenter__(self) -> _RecordingSession:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    def begin(self) -> _RecordingTransaction:
+        return _RecordingTransaction(self._log)
+
+    async def execute(self, statement: object) -> None:
+        self._log.append(str(statement))
+        if self._fail_restore and str(statement) == _RESTORE:
+            raise _mysql_error(2013)
+
+    async def connection(self) -> _Connection:
+        return _Connection(self._log)
+
+
+class _RecordingTransaction:
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+
+    async def __aenter__(self) -> None:
+        self._log.append("begin")
+
+    async def __aexit__(self, kind, error, traceback) -> bool:  # type: ignore[no-untyped-def]
+        self._log.append("rollback" if error is not None else "commit")
+        return False
+
+
+class _RecordingSessions:
+    def __init__(self, log: list[str], *, bind: object = None, fail_restore: bool = False) -> None:
+        self.kw: dict[str, object] = {"bind": bind}
+        self._log = log
+        self._fail_restore = fail_restore
+
+    def __call__(self) -> _RecordingSession:
+        return _RecordingSession(self._log, self._fail_restore)
+
+
+def test_claim_transaction_bounds_lock_waits_and_restores_before_commit() -> None:
+    log: list[str] = []
+
+    async def claim() -> None:
+        async with claim_transaction(_RecordingSessions(log)) as session:
+            await session.execute("SELECT claim FOR UPDATE")
+
+    asyncio.run(claim())
+
+    assert DEFAULT_CLAIM_LOCK_WAIT_SECONDS == 5
+    assert log == [
+        "begin",
+        _BOUND.format(seconds=5),
+        "SELECT claim FOR UPDATE",
+        _RESTORE,
+        "commit",
+    ]
+
+
+def test_claim_transaction_restores_the_lock_wait_when_the_claim_fails() -> None:
+    log: list[str] = []
+
+    async def claim() -> None:
+        async with claim_transaction(_RecordingSessions(log)):
+            raise _mysql_error(1205)
+
+    with pytest.raises(OperationalError):
+        asyncio.run(claim())
+    assert log == ["begin", _BOUND.format(seconds=5), _RESTORE, "rollback"]
+
+
+def test_a_connection_whose_lock_wait_cannot_be_restored_is_never_pooled_again() -> None:
+    log: list[str] = []
+
+    async def claim() -> None:
+        async with claim_transaction(_RecordingSessions(log, fail_restore=True)):
+            pass
+
+    with pytest.raises(OperationalError):
+        asyncio.run(claim())
+    assert log == ["begin", _BOUND.format(seconds=5), _RESTORE, "invalidate", "rollback"]
+
+
+def test_the_engine_carries_the_configured_claim_lock_wait() -> None:
+    url = "mysql+asyncmy://tap:tap@127.0.0.1:1/tap?charset=utf8mb4"
+
+    async def configured() -> tuple[int, int]:
+        default_engine, default_sessions = create_engine_and_session_factory(url)
+        engine, sessions = create_engine_and_session_factory(url, claim_lock_wait_seconds=2)
+        try:
+            return claim_lock_wait_seconds(default_sessions), claim_lock_wait_seconds(sessions)
+        finally:
+            await default_engine.dispose()
+            await engine.dispose()
+
+    assert asyncio.run(configured()) == (5, 2)
+    assert claim_lock_wait_seconds(_RecordingSessions([])) == 5
+
+    log: list[str] = []
+
+    async def claim_with(sessions: object) -> None:
+        async with claim_transaction(_RecordingSessions(log, bind=sessions)):
+            pass
+
+    async def bound_by_engine() -> None:
+        engine, _ = create_engine_and_session_factory(url, claim_lock_wait_seconds=2)
+        try:
+            await claim_with(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(bound_by_engine())
+    assert log[1] == _BOUND.format(seconds=2)
+
+
+@pytest.mark.parametrize("seconds", [0, 51, True])
+def test_the_claim_lock_wait_is_bounded(seconds: object) -> None:
+    with pytest.raises(ValueError):
+        create_engine_and_session_factory(
+            "mysql+asyncmy://tap:tap@127.0.0.1:1/tap?charset=utf8mb4",
+            claim_lock_wait_seconds=seconds,  # type: ignore[arg-type]
+        )

@@ -653,30 +653,81 @@ class KnowledgeHttpService:
 
     @staticmethod
     def _locate_redacted_claim(
-        redacted_answer: str, redacted_claim_text: str, search_from: int
+        redacted_answer: str,
+        redacted_claim_text: str,
+        search_from: int,
+        anchor: int | None,
     ) -> tuple[int, int] | None:
-        """Find `redacted_claim_text` in `redacted_answer[search_from:]`.
+        """The span of `redacted_claim_text` in `redacted_answer`, or None.
 
-        PR 3 claims are cited sentences inside paragraphs, not whole
-        paragraphs, so a paragraph-boundary split (the old
-        `_paragraph_offsets` approach) cannot relocate them once redaction
-        changes the answer's length -- a stale offset then fails
-        `_validate_gateway_response` downstream. Search forward from the
-        previous claim's end (claims are already ordered and non-
-        overlapping, enforced by that same validator) and require the match
-        to be unique in the remaining answer; a missing or ambiguous match
-        means the offset cannot be trusted, so the caller must drop the
-        claim rather than keep a stale one."""
+        PR 3 claims are cited sentences inside paragraphs, so redaction that
+        changes the answer's length leaves every original offset stale. The
+        claim is kept only when its redacted text has exactly one span in the
+        *whole* redacted answer -- the same rule `_validate_gateway_response`
+        and the HTTP contract apply. Uniqueness only after the previous claim
+        is not enough: an uncited sentence earlier in the answer that redacts
+        to the same text would make those whole-answer validators reject the
+        entire answer. That span must also start at or after the previous
+        claim's end and, when `anchor` (the claim's own position in the
+        redacted answer) is known, start exactly there, so a claim is never
+        re-pointed at a different sentence that merely redacts alike. A
+        missing, ambiguous or misplaced match drops only this claim."""
         if not redacted_claim_text:
             return None
-        remainder = redacted_answer[search_from:]
-        first = remainder.find(redacted_claim_text)
-        if first == -1:
+        spans: list[tuple[int, int]] = []
+        found = redacted_answer.find(redacted_claim_text)
+        while found != -1 and len(spans) < 2:
+            spans.append((found, found + len(redacted_claim_text)))
+            found = redacted_answer.find(redacted_claim_text, found + len(redacted_claim_text))
+        if len(spans) != 1:
             return None
-        if remainder.find(redacted_claim_text, first + 1) != -1:
+        start, end = spans[0]
+        if start < search_from or (anchor is not None and start != anchor):
             return None
-        start = search_from + first
-        return start, start + len(redacted_claim_text)
+        return start, end
+
+    async def _redacted_claim_spans(self, report, answer: str, redacted_answer: str, claims):
+        """Each claim that stays locatable after redaction, as `(claim,
+        redacted_text, start, end)` in answer order (see
+        `_locate_redacted_claim`). The claim's anchor is the length of its
+        redacted answer prefix when that prefix is literally the start of the
+        redacted answer (redaction did not cross the claim boundary); claim
+        and prefix hit counts are not recorded -- both are slices of the
+        answer whose hits are counted once by the caller.
+
+        The prefix is only an anchoring aid: a prefix can end right after a
+        credential key (`password=`), inside an open quoted secret or inside a
+        PEM block, so the redactor rejects it (`RedactionUnavailable`) even
+        though the whole answer redacted cleanly. Such a claim has no anchor
+        and is located by the uniqueness and ordering checks alone; a claim
+        text that cannot be redacted still fails closed.
+
+        Every claim that is not kept is counted on the current span as
+        `tap.guard.redaction.dropped_claims` (only when nonzero, like the
+        output hits), so a drop is observable."""
+        located_claims = []
+        search_from = 0
+        for claim in claims:
+            redacted_text, _claim_hits = await report(claim.text)
+            try:
+                redacted_prefix, _prefix_hits = await report(answer[: claim.answer_start])
+            except RedactionUnavailable:
+                anchor = None
+            else:
+                anchor = (
+                    len(redacted_prefix) if redacted_answer.startswith(redacted_prefix) else None
+                )
+            located = self._locate_redacted_claim(
+                redacted_answer, redacted_text, search_from, anchor
+            )
+            if located is None:
+                continue
+            search_from = located[1]
+            located_claims.append((claim, redacted_text, *located))
+        dropped = len(claims) - len(located_claims)
+        if dropped:
+            get_current_span().set_attribute("tap.guard.redaction.dropped_claims", dropped)
+        return located_claims
 
     async def _redact_answer_response(self, response: AnswerResponse) -> AnswerResponse:
         """Redact `response.answer` and every claim's text with the same
@@ -692,20 +743,14 @@ class KnowledgeHttpService:
             return response
         redacted_answer, hits = await report(response.answer)
 
-        new_claims = []
-        search_from = 0
-        for claim in response.claims:
-            redacted_text, _claim_hits = await report(claim.text)
-            located = self._locate_redacted_claim(redacted_answer, redacted_text, search_from)
-            if located is None:
-                continue
-            claim_start, claim_end = located
-            search_from = claim_end
-            new_claims.append(
-                dataclasses.replace(
-                    claim, text=redacted_text, answer_start=claim_start, answer_end=claim_end
-                )
+        new_claims = [
+            dataclasses.replace(
+                claim, text=redacted_text, answer_start=claim_start, answer_end=claim_end
             )
+            for claim, redacted_text, claim_start, claim_end in await self._redacted_claim_spans(
+                report, response.answer, redacted_answer, response.claims
+            )
+        ]
 
         if hits:
             get_current_span().set_attribute("tap.guard.redaction.output_hits", json.dumps(hits))
@@ -723,24 +768,14 @@ class KnowledgeHttpService:
             return response
         redacted_answer, hits = await report(response.answer)
 
-        new_claims = []
-        search_from = 0
-        for claim in response.claims:
-            redacted_text, _claim_hits = await report(claim.text)
-            located = self._locate_redacted_claim(redacted_answer, redacted_text, search_from)
-            if located is None:
-                continue
-            claim_start, claim_end = located
-            search_from = claim_end
-            new_claims.append(
-                claim.model_copy(
-                    update={
-                        "text": redacted_text,
-                        "answer_start": claim_start,
-                        "answer_end": claim_end,
-                    }
-                )
+        new_claims = [
+            claim.model_copy(
+                update={"text": redacted_text, "answer_start": claim_start, "answer_end": claim_end}
             )
+            for claim, redacted_text, claim_start, claim_end in await self._redacted_claim_spans(
+                report, response.answer, redacted_answer, response.claims
+            )
+        ]
 
         if hits:
             get_current_span().set_attribute("tap.guard.redaction.output_hits", json.dumps(hits))

@@ -197,6 +197,7 @@ class TapperSettings:
     trace_redaction_rules: Path | None = None
     turn_max_attempts: int = 3
     turn_budget: TurnBudget = field(default_factory=TurnBudget)
+    claim_lock_wait_seconds: int = 5
 
     def __post_init__(self) -> None:
         # A deadline too short for the output budget turns a detectable truncation
@@ -439,6 +440,13 @@ class TapperSettings:
             minimum=10,
             maximum=86400,
         )
+        claim_lock_wait_seconds = _integer(
+            values,
+            "TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS",
+            5,
+            minimum=1,
+            maximum=50,
+        )
         turn_max_attempts = _integer(
             values,
             "TAPPER_TURN_MAX_ATTEMPTS",
@@ -656,6 +664,7 @@ class TapperSettings:
             trace_redaction_rules=trace_redaction_rules,
             turn_max_attempts=turn_max_attempts,
             turn_budget=turn_budget,
+            claim_lock_wait_seconds=claim_lock_wait_seconds,
         )
 
 
@@ -1164,7 +1173,9 @@ def _open_database(
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
     from tap.platform.db.session import create_engine_and_session_factory
 
-    return create_engine_and_session_factory(settings.database_url)
+    return create_engine_and_session_factory(
+        settings.database_url, claim_lock_wait_seconds=settings.claim_lock_wait_seconds
+    )
 
 
 def _build_document_repository(

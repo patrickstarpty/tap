@@ -328,6 +328,36 @@ def test_worker_shutdown_grace_is_bounded_and_reaches_the_loop_settings() -> Non
     assert worker_settings_from_tapper(settings).shutdown_grace_seconds == 30.0
 
 
+def test_claim_lock_wait_is_bounded_and_reaches_every_claiming_engine() -> None:
+    import asyncio
+
+    from tap.entrypoints import relay_reconciler
+    from tap.platform.db.lock_contention import claim_lock_wait_seconds
+
+    module = _runtime()
+    assert module.TapperSettings.from_mapping(S3_SETTINGS).claim_lock_wait_seconds == 5
+    for value in ("0", "51", "2.5", "five"):
+        with pytest.raises(ValueError):
+            module.TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS": value}
+            )
+    environment = S3_SETTINGS | {"TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS": "3"}
+    settings = module.TapperSettings.from_mapping(environment)
+    relay = relay_reconciler.load_settings(environment)
+    assert settings.claim_lock_wait_seconds == relay.claim_lock_wait_seconds == 3
+
+    async def configured() -> tuple[int, int]:
+        engine, sessions = module._open_database(settings)
+        relay_engine, relay_sessions = relay_reconciler._open_database(relay)
+        try:
+            return claim_lock_wait_seconds(sessions), claim_lock_wait_seconds(relay_sessions)
+        finally:
+            await engine.dispose()
+            await relay_engine.dispose()
+
+    assert asyncio.run(configured()) == (3, 3)
+
+
 def test_graph_worker_gateway_and_lease_cover_the_extraction_deadline() -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(

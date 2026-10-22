@@ -48,6 +48,7 @@ class RelaySettings:
     poll_seconds: float
     stream_name: str
     worker_id: str
+    claim_lock_wait_seconds: int = 5
 
 
 def load_settings(environment: Mapping[str, str] | None = None) -> RelaySettings:
@@ -66,6 +67,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> RelaySettings
         poll_seconds=poll_seconds,
         stream_name=tapper.redis_stream,
         worker_id=tapper.worker_id,
+        claim_lock_wait_seconds=tapper.claim_lock_wait_seconds,
     )
 
 
@@ -87,7 +89,9 @@ def create_redis_client(redis_url: str) -> Redis:
 def _open_database(
     settings: RelaySettings,
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
-    return create_engine_and_session_factory(settings.database_url)
+    return create_engine_and_session_factory(
+        settings.database_url, claim_lock_wait_seconds=settings.claim_lock_wait_seconds
+    )
 
 
 def _build_relay(

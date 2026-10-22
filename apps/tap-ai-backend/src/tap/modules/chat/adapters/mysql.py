@@ -39,7 +39,7 @@ from tap.modules.chat.application.ports import (
     TurnNotFound,
 )
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId, TurnState
-from tap.platform.db.lock_contention import claim_or_nothing
+from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import augment_project_table, metadata, outbox
 from tap.platform.messaging.mysql_outbox import (
@@ -354,7 +354,7 @@ class OutboxStore:
         )
 
     async def _reconcile_expired_once(self, now: datetime, limit: int) -> int:
-        async with self._sessions() as session, session.begin():
+        async with claim_transaction(self._sessions) as session:
             expired_ids = list(
                 (
                     await session.execute(
@@ -414,7 +414,7 @@ class OutboxStore:
         lease_duration: timedelta,
         limit: int,
     ) -> list[ClaimedOutbox]:
-        async with self._sessions() as session, session.begin():
+        async with claim_transaction(self._sessions) as session:
             pending_ids = list(
                 (
                     await session.execute(

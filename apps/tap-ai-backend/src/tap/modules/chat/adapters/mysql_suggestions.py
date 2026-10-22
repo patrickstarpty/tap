@@ -37,7 +37,7 @@ from tap.modules.chat.domain.suggestions import (
     SuggestionSource,
     next_due_at,
 )
-from tap.platform.db.lock_contention import claim_or_nothing
+from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 
@@ -455,7 +455,7 @@ class MysqlSuggestionStore:
         self, *, worker_id: str, now: datetime, limit: int, lease_duration: timedelta
     ) -> tuple[ClaimedRefresh, ...]:
         claims: list[ClaimedRefresh] = []
-        async with self._sessions() as session, session.begin():
+        async with claim_transaction(self._sessions) as session:
             rows = (
                 (
                     await session.execute(
