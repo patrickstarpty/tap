@@ -618,9 +618,13 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     intent, route = "factual_lookup", "retrieve"
                 # A constrained question's schema fixes its restatements to
                 # "" (the planner fills in the original question).
+                properties = request.schema.get("properties")
+                standalone = (
+                    properties.get("standalone_query") if isinstance(properties, dict) else None
+                )
                 restated = (
                     ""
-                    if request.schema["properties"]["standalone_query"].get("maxLength") == 0
+                    if isinstance(standalone, dict) and standalone.get("maxLength") == 0
                     else question
                 )
                 queries = (
