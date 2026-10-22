@@ -87,7 +87,11 @@ _MARKER = re.compile(r"\[[ \t]*([SRI][1-9][0-9]{0,2})[ \t]*\]")
 # 2026-10-16 round 2).
 _CJK_TERMINATORS = "。！？"
 _ASCII_TERMINATORS = ".!?"
-_LIST_OR_HEADING_PREFIX = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+|#{1,6}[ \t]+)")
+_LIST_OR_HEADING_PREFIX = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+|#{1,6}[ \t]+)")
+# A Markdown list item line: bullet (`-`/`*`/`+`) or ordered (`1.`/`1)`) marker,
+# optionally indented (nested lists).
+_LIST_ITEM_LINE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
+_ORDERED_LIST_NUMBER = re.compile(r"[ \t]*\d+\.[ \t]")
 
 
 def _sentence_delimiter_at(masked: str, index: int) -> bool:
@@ -95,6 +99,11 @@ def _sentence_delimiter_at(masked: str, index: int) -> bool:
     if character == "\n" or character in _CJK_TERMINATORS:
         return True
     if character not in _ASCII_TERMINATORS:
+        return False
+    # The `.` of an ordered list marker (`1. `) numbers the item; it never ends
+    # a sentence (span-level citations: each list item is its own span).
+    line_start = masked.rfind("\n", 0, index) + 1
+    if character == "." and _ORDERED_LIST_NUMBER.fullmatch(masked, line_start, index + 2):
         return False
     next_index = index + 1
     if next_index >= len(masked):
@@ -221,13 +230,13 @@ def parse_inline_answer(
     masked = _masked_for_markers(text)
     spans = _sentence_spans(text, masked)
 
-    candidates: list[tuple[str, list[str]]] = []
+    candidates: list[tuple[str, list[str], bool]] = []
     for start, end in spans:
         claim_text, labels = _claim_text_and_labels(
             text[start:end], masked[start:end], allowed_labels
         )
         if claim_text and labels:
-            candidates.append((claim_text, labels))
+            candidates.append((claim_text, labels, _ends_list_item(text, masked, start, end)))
 
     if not candidates:
         return "", ()
@@ -241,7 +250,7 @@ def parse_inline_answer(
 
     claims: list[GeneratedClaim] = []
     seen_claims: set[str] = set()
-    for claim_text, labels in candidates:
+    for claim_text, labels, list_item in candidates:
         claim = _grounded_claim(
             {"text": claim_text, "evidenceLabels": labels},
             answer,
@@ -250,6 +259,7 @@ def parse_inline_answer(
             seen_claims,
             max_claim_chars=max_claim_chars,
             max_labels_per_claim=max_labels_per_claim,
+            list_item=list_item,
         )
         if claim is None or _borrows_another_document(claim, label_documents, document_names):
             continue
@@ -258,6 +268,20 @@ def parse_inline_answer(
     if not claims:
         return "", ()
     return answer, tuple(claims)
+
+
+def _ends_list_item(text: str, masked: str, start: int, end: int) -> bool:
+    """Whether the sentence span `[start, end)` is the last span of a Markdown
+    list item line: the line it starts on is a list item and the span runs to
+    that line's end. Such a span is complete as written even without terminal
+    punctuation (steps and bullets rarely carry it)."""
+
+    line_start = masked.rfind("\n", 0, start) + 1
+    line_end = masked.find("\n", start)
+    line_end = len(text) if line_end == -1 else line_end
+    if _LIST_ITEM_LINE.match(masked, line_start) is None:
+        return False
+    return not text[end:line_end].strip()
 
 
 def _grounded_claim(
@@ -269,6 +293,7 @@ def _grounded_claim(
     *,
     max_claim_chars: int,
     max_labels_per_claim: int,
+    list_item: bool = False,
 ) -> GeneratedClaim | None:
     if not isinstance(raw, dict) or set(raw) != {"text", "evidenceLabels"}:
         return None
@@ -282,7 +307,12 @@ def _grounded_claim(
     is_complete = text[-1] in ".!?。！？"
     is_unique_statement = is_complete and answer.count(text) == 1
     is_complete_sentence = is_complete and "\n" not in text
-    if not (is_unique_paragraph or is_unique_statement or is_complete_sentence):
+    # A cited list item (bullet or numbered step) is its own span; it only has
+    # to be locatable at exactly one offset in the answer.
+    is_unique_list_item = list_item and "\n" not in text and answer.count(text) == 1
+    if not (
+        is_unique_paragraph or is_unique_statement or is_complete_sentence or is_unique_list_item
+    ):
         return None
     if text in seen_claims:
         return None

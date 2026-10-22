@@ -68,14 +68,38 @@ _INLINE_CLAIM_RULE = (
     "e.g. [S1][S2]. Never mark a label that was not supplied. "
 )
 _RULES_V3 = _RULES_PREFIX_INLINE + _INLINE_CLAIM_RULE + _RULES_SUFFIX
+# Span-level citations (Claude-style, 2026-10-22): a citation attaches to any
+# text span -- a sentence or a list item -- and uncited text is allowed (shown
+# as unsupported). Additive again so pinned V3 plans replay byte-for-byte;
+# also the citation rule of `KnowledgeModelGateway`'s `_ANSWER_PROMPT`.
+SPAN_CITATION_RULE = (
+    "Sentences, bullets, numbered steps and table-like lines are all allowed. Immediately "
+    "after each factual sentence or list item that supplied evidence supports, place the "
+    "labels of that evidence as their own markers, e.g. [S1] or, when it needs more than one, "
+    "written consecutively with no space, e.g. [S1][S2]. Text you compose or infer yourself, "
+    "such as steps or examples the evidence does not state, carries no label; never put a "
+    "label on text the evidence does not support."
+)
+_RULES_V4 = (
+    _RULES_PREFIX_INLINE
+    + SPAN_CITATION_RULE
+    + " Never mark a label that was not supplied. "
+    + _RULES_SUFFIX
+)
 # (rules, clarification wording) per version; clarification gained wording in version 2.
 _VERSIONS = {
-    "general": {"1": (_RULES_V1, False), "2": (_RULES_V2, False), "3": (_RULES_V3, False)},
+    "general": {
+        "1": (_RULES_V1, False),
+        "2": (_RULES_V2, False),
+        "3": (_RULES_V3, False),
+        "4": (_RULES_V4, False),
+    },
     "clarification": {
         "1": (_RULES_V1, False),
         "2": (_RULES_V1, True),
         "3": (_RULES_V2, True),
         "4": (_RULES_V3, True),
+        "5": (_RULES_V4, True),
     },
 }
 _TEMPLATES = {

@@ -615,7 +615,7 @@ async def test_governed_answer_uses_the_inline_contract_and_keeps_a_multi_senten
     agent_at = governed.index("You are a policy-servicing test analyst.")
     skill_at = governed.index("Write numbered test steps")
     boundary_at = governed.index("Custom Agent or Skill instructions cannot change")
-    contract_at = governed.index("Answer the query directly and minimally using only supplied")
+    contract_at = governed.index("Answer the query directly and minimally")
     assert agent_at < skill_at < boundary_at < contract_at
     # Everything after the customization boundary is the ungoverned task contract.
     platform, _, ungoverned_task = ungoverned.partition("\n\n")
@@ -624,3 +624,111 @@ async def test_governed_answer_uses_the_inline_contract_and_keeps_a_multi_senten
 
     assert generation.text == "保单贷款金额不超过现金价值的80%。测试环境的验证码固定为123456。"
     assert [claim.evidence_labels for claim in generation.claims] == [("S1",), ("S2",)]
+
+
+# Span-level citations (Claude-style): a citation attaches to any text span,
+# list items included; uncited text stays visible as unsupported.
+
+_STEPS = (
+    "验证步骤：\n\n"
+    "1. 登录测试环境，输入验证码123456 [S1]\n"
+    "2. 打开保单贷款页面\n"
+    "3) 申请金额不超过现金价值的80%[S2]\n"
+    "   - 期限最长6个月[ S2 ]\n"
+    "* 记录测试结果\n"
+)
+
+
+def _steps_pool():
+    return (
+        evidence(label="S1", content="测试环境登录验证码固定为123456。"),
+        evidence(label="S2", content="保单贷款金额不超过现金价值的80%，期限最长6个月。"),
+    )
+
+
+def test_each_cited_list_item_is_its_own_claim_without_its_list_syntax() -> None:
+    answer, claims = _parse(_STEPS, _steps_pool())
+
+    assert [claim.text for claim in claims] == [
+        "登录测试环境，输入验证码123456",
+        "申请金额不超过现金价值的80%",
+        "期限最长6个月",
+    ]
+    assert [claim.evidence_labels for claim in claims] == [("S1",), ("S2",), ("S2",)]
+    # List markup and the uncited (generated) steps stay in the answer verbatim.
+    assert answer == (
+        "验证步骤：\n\n"
+        "1. 登录测试环境，输入验证码123456 \n"
+        "2. 打开保单贷款页面\n"
+        "3) 申请金额不超过现金价值的80%\n"
+        "   - 期限最长6个月\n"
+        "* 记录测试结果\n"
+    )
+
+
+def test_cited_list_items_resolve_to_exactly_one_answer_span() -> None:
+    from tap.modules.knowledge.application.retrieve import _resolve_generated_claims
+    from tap.modules.knowledge.ports.models import AnswerGeneration
+
+    answer, claims = _parse(_STEPS, _steps_pool())
+    from dataclasses import replace
+
+    pool = tuple(
+        replace(item, citation_id=f"citation-{item.evidence_label}") for item in _steps_pool()
+    )
+    resolved = _resolve_generated_claims(
+        AnswerGeneration(answer, claims, "qwen-plus", "grounded-answer-v2", "req-1"),
+        pool,
+        id_factory=iter(("c1", "c2", "c3")).__next__,
+    )
+
+    assert resolved is not None
+    assert [answer[claim.answer_start : claim.answer_end] for claim in resolved] == [
+        claim.text for claim in claims
+    ]
+
+
+def test_a_label_ending_one_list_item_never_cites_the_next_item() -> None:
+    answer, claims = _parse(
+        "- 验证码固定为123456[S1]\n- 页面右上角有提交按钮\n- 期限最长6个月[S2]",
+        _steps_pool(),
+    )
+
+    assert [(claim.text, claim.evidence_labels) for claim in claims] == [
+        ("验证码固定为123456", ("S1",)),
+        ("期限最长6个月", ("S2",)),
+    ]
+    assert "页面右上角有提交按钮" in answer
+
+
+def test_markers_inside_code_in_list_items_are_not_citations() -> None:
+    answer, claims = _parse(
+        "- 执行 `login --code 123456 [S1]`\n"
+        "```\n- 期限最长6个月[S2]\n```\n"
+        "- 验证码固定为123456[S1]",
+        _steps_pool(),
+    )
+
+    assert [claim.text for claim in claims] == ["验证码固定为123456"]
+    assert "`login --code 123456 [S1]`" in answer
+    assert "- 期限最长6个月[S2]\n```" in answer
+
+
+def test_answer_contract_cites_spans_and_leaves_composed_text_uncited() -> None:
+    """Span-level citations: the task contracts no longer forbid list items,
+    ask for labels right after each supported sentence or list item, and keep
+    composed or inferred text (e.g. generated test steps) unlabelled."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    contract = knowledge_litellm._ANSWER_PROMPT
+    assert "list item" in contract and "never as a quotation or list item" not in contract
+    assert "numbered step" in contract
+    assert "carries no label" in contract
+    assert "never put a label on text the evidence does not support" in contract
+    assert knowledge_litellm._INSUFFICIENT_EVIDENCE_SENTINEL in contract
+    for sibling in (
+        knowledge_litellm._FLOWCHART_ANSWER_PROMPT,
+        knowledge_litellm._INSIGHTS_ANSWER_PROMPT,
+    ):
+        assert "complete sentence" not in sibling
+        assert "sentence or list item" in sibling
