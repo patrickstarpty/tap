@@ -891,10 +891,96 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
         # the value (stated after it, b-001 kept writing a cited
         # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
         abstain = (
-            "If no supplied evidence states the value the query asks about, output exactly "
-            f"{INSUFFICIENT_EVIDENCE_SENTINEL}."
+            "If the query looks up a fact or value that no supplied evidence states, output "
+            f"exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         scoped = "When some selected documents state that value and another selected document"
         assert abstain in contract and scoped in contract
         assert contract.index(abstain) < contract.index(scoped)
     assert knowledge_litellm._INSUFFICIENT_EVIDENCE_SENTINEL is INSUFFICIENT_EVIDENCE_SENTINEL
+
+
+def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> None:
+    """D1-R: the unstated-value abstention made real qwen-plus abstain on a
+    request to compose test checks and Playwright steps from sufficient
+    evidence (it read the requested checks as values the evidence must
+    state). Abstention is scoped to lookups; a composed request is answered
+    with cited facts and uncited composed content."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert "If no supplied evidence states the value the query asks about" not in contract
+        assert (
+            "A request to compose something from the evidence, such as test checks, steps, a "
+            "script, a plan, a summary or a comparison, is answerable whenever supplied evidence "
+            "is relevant to it" in contract
+        )
+        assert "cite the evidence facts you use and leave what you compose uncited" in contract
+        assert "abstain only when no supplied evidence is relevant to the request" in contract
+
+
+def test_evidence_labels_appear_only_as_markers() -> None:
+    """N1: real answers mentioned labels in code comments ("依据 S9/S1/S8") and
+    closing remarks ("（S1–S10）"), and wrote a fake "[webapp-testing skill]"."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert (
+            "Evidence labels appear only as bracketed markers right after the text they "
+            "support; never mention a label anywhere else, including inside code, comments or "
+            "source lists, and never write a bracketed source, document or Skill name as a "
+            "citation." in contract
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "answer"),
+    [
+        (
+            "- 验证码固定为123456[S1]。\n\n以上检查点均有资料支撑（S1–S2）。",
+            "- 验证码固定为123456。\n\n以上检查点均有资料支撑。",
+        ),
+        (
+            "期限最长6个月[S2]。以上步骤依据 S2/S1 整理。",
+            "期限最长6个月。以上步骤依据整理。",
+        ),
+        ("期限最长6个月[S2]。参见 S1、S2。", "期限最长6个月。参见。"),
+        ("期限最长6个月[S2]。(S1, S2)", "期限最长6个月。"),
+    ],
+)
+async def test_a_bare_label_list_outside_code_is_removed(reply, answer) -> None:
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    generation = await _answer_gateway(Gateway()).answer("问题", _steps_pool(), "quick-hybrid-v1")
+
+    assert generation.text == answer
+    assert generation.claims
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "\n\n```python\n# 依据 S1/S2\npage.fill('#otp', '123456')\n```",
+        "运行 `check(S1/S2)` 即可。",
+        "型号 S1000/S2000 与 PS1/S2 不同。",
+        "S1 档位单独适用。",
+        "S1/S9 不是本次标签。",
+        "Sales/Service 流程。",
+    ],
+)
+async def test_label_like_text_that_is_not_a_bare_label_list_is_kept(tail) -> None:
+    reply = "期限最长6个月[S2]。" + tail
+
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    generation = await _answer_gateway(Gateway()).answer("问题", _steps_pool(), "quick-hybrid-v1")
+
+    assert generation.text == "期限最长6个月。" + tail
