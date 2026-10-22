@@ -928,9 +928,11 @@ def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> 
         assert "abstain only when no supplied evidence is relevant to the request" in contract
         # Order (fix round 1, real ablation on the governed tool path): the
         # premise-correction rule, then the composed rule, end the opening
-        # (Q3 8/10, c-001 10/10); with the composed rule just before the
-        # lookup rule instead, Q3 answered 6/20. The lookup rule's
-        # "Otherwise" refers back to it, so the exemption is stated once.
+        # (Q3 16/20 over two batches, c-001 10/10); with the composed rule
+        # just before the lookup rule instead, Q3 answered 8/30. The
+        # exemption is stated once, in the composed rule ("abstain only
+        # when no supplied evidence is relevant"); the lookup rule's
+        # "Otherwise" only continues the per-document value rules before it.
         opening = knowledge_litellm._ANSWER_PROMPT_OPENING
         premise = opening.index("If the query assumes")
         correction = opening.index(
@@ -1069,7 +1071,47 @@ def test_relation_labels_in_domain_text_are_kept() -> None:
     text = "比较 R1/R2 版本差异[R3]。"
 
     assert _without_bare_label_lists(text, frozenset({"R1", "R2", "R3"}), ()) == text
-    assert _without_bare_label_lists("关系见 R1/R2。", frozenset({"R1", "R2"}), ()) == "关系。"
+    assert _without_bare_label_lists("关系，见 R1/R2。", frozenset({"R1", "R2"}), ()) == "关系。"
+
+
+_FOUR = frozenset({"S1", "S2", "S3", "S4"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "常见 S1/S2 缺陷需要优先修复。",
+        "详见 S1/S2 级缺陷的处理规定。",
+        "意见 S1、S2 已合并。",
+        "根据 S1-S4 四级标准评估。",
+        "Per S1/S2 severity rules, fix them first.",
+        "可见 S1/S2 两级。",
+        "关系见 S1/S2 两条。",
+    ],
+)
+def test_a_cue_inside_a_word_or_an_unclosed_cued_list_is_kept(text) -> None:
+    """Fix round 2: 见 matched inside 常见/详见/意见/可见, and a cued run was
+    removed even when the clause went on ("根据 S1-S4 四级标准")."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(text, _FOUR, ()) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("如下所示，参见 S1/S2。", "如下所示。"),
+        ("期限最长6个月。详见 S1/S2。", "期限最长6个月。"),
+        ("期限最长6个月。依据 S1/S2，可得结论。", "期限最长6个月。可得结论。"),
+        ("以上步骤依据 S2/S1 整理。", "以上步骤整理。"),
+        ("Fix them first, see S1/S2.", "Fix them first."),
+        ("期限最长6个月；见 S1、S2", "期限最长6个月"),
+    ],
+)
+def test_a_closed_cued_list_is_removed_with_its_dangling_separator(text, expected) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(text, _FOUR, ()) == expected
 
 
 @pytest.mark.parametrize(

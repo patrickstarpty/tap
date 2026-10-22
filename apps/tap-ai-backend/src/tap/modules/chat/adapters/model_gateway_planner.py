@@ -6,7 +6,13 @@ from typing import Any
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
+from tap.modules.ai.domain.models import (
+    ModelOperation,
+    ModelOutputTruncated,
+    ModelRequest,
+    schema_digest,
+    text_digest,
+)
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.chat.domain.answer_plan import (
     AGENT_INTENTS,
@@ -145,37 +151,42 @@ class ModelGatewayPlanner:
         self._redact = redact
 
     async def __call__(self, value: PlanningInput, timeout: float) -> dict[str, Any]:
+        constrained = bool(protected_constraints(value.original_question))
         context = await self._redact(
             json.dumps(
                 {
                     "question": value.original_question,
                     "sourceIds": value.source_ids,
                     "authorizedReferents": value.authorized_referents,
-                    "constrainedQuestion": bool(protected_constraints(value.original_question)),
+                    "constrainedQuestion": constrained,
                 },
                 ensure_ascii=False,
             )
         )
-        schema = (
-            CONSTRAINED_PLANNER_SCHEMA
-            if protected_constraints(value.original_question)
-            else PLANNER_SCHEMA
+        schema = CONSTRAINED_PLANNER_SCHEMA if constrained else PLANNER_SCHEMA
+        request = ModelRequest(
+            scope=self._scope,
+            alias=value.model_alias,
+            operation=ModelOperation.STRUCTURED,
+            prompt=PLANNER_PROMPT,
+            prompt_digest=text_digest(PLANNER_PROMPT),
+            context=context,
+            timeout_seconds=timeout,
+            idempotency_key=uuid4().hex,
+            schema=schema,
+            schema_digest=schema_digest(schema),
+            allow_retries=False,
         )
-        result = await self._gateway.generate_structured(
-            ModelRequest(
-                scope=self._scope,
-                alias=value.model_alias,
-                operation=ModelOperation.STRUCTURED,
-                prompt=PLANNER_PROMPT,
-                prompt_digest=text_digest(PLANNER_PROMPT),
-                context=context,
-                timeout_seconds=timeout,
-                idempotency_key=uuid4().hex,
-                schema=schema,
-                schema_digest=schema_digest(schema),
-                allow_retries=False,
-            )
-        )
+        try:
+            result = await self._gateway.generate_structured(request)
+        except ModelOutputTruncated:
+            if not constrained:
+                raise
+            # The gateway reports a top-level array over `maxItems` as
+            # truncation; on the constrained schema that is a second query --
+            # an invalid suggestion, not an outage. Its output is a few dozen
+            # tokens, so a real truncation is not expected here.
+            raise ValueError("constrained plan returned more than one query") from None
         if not isinstance(result.output, dict):
             raise ValueError("planner output must match the closed schema")
         return result.output

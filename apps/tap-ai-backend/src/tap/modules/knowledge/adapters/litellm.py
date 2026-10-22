@@ -216,19 +216,26 @@ def _without_stray_sentinel(text: str) -> str:
 _LABEL_RUN = (
     r"(?<![A-Za-z0-9_])[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)+(?![A-Za-z0-9_])"
 )
+# Longest cue first; the single-character 见 must start a word (not 常见,
+# 意见, 可见 ...), and English cues are whole words.
 _CITATION_CUE = (
-    r"(?:依据|根据|参见|见|来源|出自|引用"
+    r"(?:依据|根据|详见|参见|来源|出自|引用"
+    r"|(?<![^\s，,。．.；;：:、（(【\[])见"
     r"|(?<![A-Za-z])(?:[Ss]ources?|[Ss]ee|[Pp]er|[Bb]ased on)(?![A-Za-z]))[ \t]*[:：]?[ \t]*"
 )
+_CLAUSE_SEPARATORS = "，,、；;：:"
+_SENTENCE_END = "。．.！!？?；;"
+# A cued run is a citation only when its clause ends right after it ("参见
+# S1/S2。"), not when the sentence goes on about it ("根据 S1-S4 四级标准").
+_CUED_RUN_CLOSER = r"(?=[。．.！!？?；;，,、）)】\]]|\n|\Z|整理|编写|汇总|归纳|总结|得出)"
 _BARE_LABEL_LIST = re.compile(
     rf"[ \t]*[（(【\[][ \t]*(?:{_CITATION_CUE})?(?P<bracketed>{_LABEL_RUN})[ \t]*[）)】\]][ \t]*"
-    rf"|[ \t]*{_CITATION_CUE}(?P<cued>{_LABEL_RUN})[ \t]*"
+    rf"|[ \t]*{_CITATION_CUE}(?P<cued>{_LABEL_RUN})[ \t]*{_CUED_RUN_CLOSER}"
     rf"|^[ \t]*(?P<line>{_LABEL_RUN})[ \t]*[。.]?[ \t]*(?:\n|\Z)",
     re.MULTILINE,
 )
 _INDENTED_CODE = re.compile(r"(?:\A|(?<=\n\n))(?:(?: {4}|\t)[^\n]*(?:\n|\Z))+")
 _LABEL = re.compile(r"[SRI]\d+")
-_SENTENCE_END = "。．.！!？?；;"
 
 
 def _compact(text: str) -> str:
@@ -253,8 +260,18 @@ def _without_bare_label_lists(text: str, labels: frozenset[str], protected: Sequ
                 at_sentence_start = not previous.strip() or previous.rstrip()[-1] in (
                     _SENTENCE_END + "\n"
                 )
-                if at_sentence_start and segment[end : end + 1] in tuple(_SENTENCE_END):
+                following = segment[end : end + 1]
+                closes = following in ("", "\n") or following in _SENTENCE_END
+                if before.rstrip(" \t")[-1:] in tuple(_CLAUSE_SEPARATORS) and closes:
+                    # "如下所示，参见 S1/S2。" -> "如下所示。"
+                    before = before.rstrip(" \t")[:-1]
+                elif at_sentence_start and following and following in _SENTENCE_END:
                     end += 1
+                elif at_sentence_start and following and following in _CLAUSE_SEPARATORS:
+                    # "依据 S1/S2，可得结论。" -> "可得结论。"
+                    end += 1
+                    while segment[end : end + 1] in (" ", "\t"):
+                        end += 1
             parts.append(before)
             after = segment[end : end + 1]
             last = before[-1:] if before else ""

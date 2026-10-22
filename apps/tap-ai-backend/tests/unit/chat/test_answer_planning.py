@@ -1105,3 +1105,26 @@ def test_planner_prompt_keeps_requests_for_steps_or_test_checks_procedural():
         "A question asking for steps, test checks, test cases or a script is procedural, never "
         "factual_lookup." in PLANNER_PROMPT
     )
+
+
+@pytest.mark.asyncio
+async def test_a_constrained_plan_with_too_many_queries_is_an_invalid_plan():
+    """Fix round 2: the constrained schema allows one query; a second one
+    overflows `maxItems` (the gateway raises `ModelOutputTruncated`), which is
+    an invalid suggestion, not a planner outage."""
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.domain.models import ModelOutputTruncated
+    from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
+
+    class Gateway:
+        async def generate_structured(self, request):
+            raise ModelOutputTruncated()
+
+    async def redact(text):
+        return text
+
+    adapter = ModelGatewayPlanner(Gateway(), scope=VALIDATION_SCOPE, redact=redact)
+    plan = await planning().AnswerPlanner(adapter).plan(context(_CONSTRAINED))
+    assert plan.degradation_reason == "invalid-plan"
+    unconstrained = await planning().AnswerPlanner(adapter).plan(context("比较章节 A 和 B"))
+    assert unconstrained.degradation_reason == "planner-unavailable"
