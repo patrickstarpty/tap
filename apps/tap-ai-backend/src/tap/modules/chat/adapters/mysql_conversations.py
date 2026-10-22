@@ -59,7 +59,7 @@ from tap.modules.governance.domain.audit import (
     AuditResource,
     SafeAuditMetadata,
 )
-from tap.platform.db.lock_contention import claim_or_nothing
+from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -1184,7 +1184,7 @@ class MysqlConversationRepository:
         claimed: list[tuple[str, ConversationTurn]] = []
         wakeups: list[tuple[str, int]] = []
         settled: list[_UnclaimableTurn] = []
-        async with self.sessions() as session, session.begin():
+        async with claim_transaction(self.sessions) as session:
             candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
                 (

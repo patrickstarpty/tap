@@ -64,7 +64,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
     knowledge_document,
     knowledge_document_revision,
 )
-from tap.platform.db.lock_contention import claim_or_nothing
+from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
 
@@ -296,7 +296,7 @@ class MysqlGraphJobStore:
         limit: int,
     ) -> tuple[ClaimedGraphJob, ...]:
         claims: list[ClaimedGraphJob] = []
-        async with self._sessions() as session, session.begin():
+        async with claim_transaction(self._sessions) as session:
             rows = (
                 (
                     await session.execute(

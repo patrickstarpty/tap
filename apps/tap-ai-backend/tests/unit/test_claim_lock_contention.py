@@ -28,6 +28,11 @@ from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
 from tap.platform.db import lock_contention
 
 NOW = datetime(2026, 10, 22, 9, 0, 0)
+_BOUND_LOCK_WAIT = (
+    "SET @tap_claim_prior_lock_wait = @@SESSION.innodb_lock_wait_timeout, "
+    "SESSION innodb_lock_wait_timeout = 5"
+)
+_RESTORE_LOCK_WAIT = "SET SESSION innodb_lock_wait_timeout = @tap_claim_prior_lock_wait"
 LEASE = timedelta(seconds=60)
 
 
@@ -63,7 +68,14 @@ class _LosingSession:
     async def _fail(self, *args: object, **kwargs: object) -> Any:
         raise OperationalError("SELECT 1", {}, DriverOperationalError(self._code, "server"))
 
-    execute = _fail
+    async def execute(self, statement: object, *args: object, **kwargs: object) -> Any:
+        # The claim-scoped lock-wait bound is session state, not a locking
+        # read: record it and let it succeed, as MySQL does under contention.
+        if "innodb_lock_wait_timeout" in str(statement):
+            self._log.append(str(statement))
+            return None
+        return await self._fail()
+
     scalar = _fail
     scalars = _fail
 
@@ -140,7 +152,18 @@ def test_exhausted_lock_contention_claims_nothing(path: str, code: int) -> None:
     result = asyncio.run(claim(build(_sessions(log, code))))
 
     assert not result  # (), [], an empty ClaimBatch, or 0 reconciled rows
-    assert log == ["begin", "rollback"] * lock_contention.CLAIM_ATTEMPTS
+    # Every attempt bounds its own lock waits and restores the connection's
+    # previous value before its transaction ends.
+    assert (
+        log
+        == [
+            "begin",
+            _BOUND_LOCK_WAIT,
+            _RESTORE_LOCK_WAIT,
+            "rollback",
+        ]
+        * lock_contention.CLAIM_ATTEMPTS
+    )
 
 
 @pytest.mark.parametrize("path", sorted(_CLAIMS))
@@ -150,4 +173,4 @@ def test_other_database_errors_still_raise_without_retry(path: str) -> None:
 
     with pytest.raises(OperationalError):
         asyncio.run(claim(build(_sessions(log, 2013))))
-    assert log == ["begin", "rollback"]
+    assert log == ["begin", _BOUND_LOCK_WAIT, _RESTORE_LOCK_WAIT, "rollback"]

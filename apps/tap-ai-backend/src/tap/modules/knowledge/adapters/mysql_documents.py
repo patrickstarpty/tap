@@ -129,7 +129,11 @@ from tap.modules.knowledge.ports.documents import (
     initial_stage_results,
     serialize_stage_results,
 )
-from tap.platform.db.lock_contention import claim_or_nothing, retry_lock_contention
+from tap.platform.db.lock_contention import (
+    claim_or_nothing,
+    claim_transaction,
+    retry_lock_contention,
+)
 from tap.platform.db.lock_contention import mysql_error_code as _mysql_error_code
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import augment_project_table, metadata, outbox
@@ -3017,7 +3021,7 @@ class MysqlDocumentRepository:
             raise ValueError("upload recovery requires a worker and bounded positive lease")
         if limit <= 0:
             return ()
-        async with self._sessions() as session, session.begin():
+        async with claim_transaction(self._sessions) as session:
             selection_now = await _database_now(session)
             rows = list(
                 (
@@ -3890,7 +3894,7 @@ class MysqlDocumentRepository:
         lease_duration: timedelta,
         limit: int,
     ) -> tuple[ClaimedIngestionJob, ...]:
-        async with self._sessions() as session, session.begin():
+        async with claim_transaction(self._sessions) as session:
             selection_now = await _database_now(session)
             cancelled_ingestion = knowledge_ingestion_job.alias("cancelled_ingestion")
             active_cancelled_owner = exists(
