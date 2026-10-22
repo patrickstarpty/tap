@@ -122,6 +122,19 @@ def test_markers_after_terminal_punctuation_also_attach_to_the_sentence() -> Non
     assert "[" not in answer
 
 
+def test_markers_padded_with_spaces_inside_the_brackets_still_ground_claims() -> None:
+    """Real qwen-plus output intermittently pads markers as `[ S1 ]`; such a
+    marker must still ground its sentence (and be stripped from the answer)
+    instead of leaving the turn with no claim and abstaining."""
+    answer, claims = _parse(
+        "小额理赔的金额标准是低于5000元[ S1 ]。线上快速通道的审核时限是3个工作日[ S1 ][S2]。",
+        (evidence(label="S1"), evidence(label="S2")),
+    )
+
+    assert answer == "小额理赔的金额标准是低于5000元。线上快速通道的审核时限是3个工作日。"
+    assert [claim.evidence_labels for claim in claims] == [("S1",), ("S1", "S2")]
+
+
 def test_plain_text_without_any_marker_abstains() -> None:
     assert _parse("INSUFFICIENT_EVIDENCE", (evidence(label="S1"),)) == ("", ())
 

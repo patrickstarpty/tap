@@ -74,8 +74,11 @@ _CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
 # adds Insights metric labels; the real allow-list below bounds this further
 # to the evidence/relation/insights labels actually in play) so a Markdown
 # link (`[docs](url)`), a literal `[x]`, or an unrelated `a[0]` index is never
-# mistaken for a citation marker.
-_MARKER = re.compile(r"\[([SRI][1-9][0-9]{0,2})\]")
+# mistaken for a citation marker. Spaces/tabs just inside the brackets are
+# tolerated: real qwen-plus output intermittently pads markers as `[ S1 ]`,
+# and an unmatched padded marker left the sentence without a claim, so the
+# whole turn abstained despite a grounded answer.
+_MARKER = re.compile(r"\[[ \t]*([SRI][1-9][0-9]{0,2})[ \t]*\]")
 # CJK terminators always end a sentence; a newline always does (so a Markdown
 # list item/heading line is its own sentence). An ASCII `.!?` only ends a
 # sentence when whitespace, end of text, or a citation marker follows --
