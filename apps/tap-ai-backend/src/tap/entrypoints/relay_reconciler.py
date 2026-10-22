@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 import signal
@@ -13,12 +14,14 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 from redis.asyncio import Redis
+from sqlalchemy.exc import DBAPIError
 
 from tap.entrypoints.tapper_runtime import OwnedResources, TapperSettings
 from tap.modules.access.adapters.validation import ValidationScopeProvider
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.adapters.mysql import OutboxStore
+from tap.platform.db.lock_contention import transient_lock_error_code
 from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.messaging.redis_dispatch import (
     MAX_RELAY_BATCH_SIZE,
@@ -31,6 +34,8 @@ from tap.platform.messaging.redis_dispatch import (
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+logger = logging.getLogger(__name__)
 
 SignalInstaller = Callable[[asyncio.Event], Callable[[], None] | None]
 
@@ -163,7 +168,18 @@ async def run(
         remove_handlers = signal_installer(stop)
         iterations = 0
         while not stop.is_set():
-            published = await relay.publish_pending(settings.batch_size)
+            try:
+                published = await relay.publish_pending(settings.batch_size)
+            except DBAPIError as error:
+                # A claim or settlement write that lost to InnoDB lock
+                # contention rolled back alone: rows it held keep a lease that
+                # `reconcile_expired` hands back, and the Redis dedup marker
+                # keeps redelivery idempotent. Every other error still ends.
+                code = transient_lock_error_code(error)
+                if code is None:
+                    raise
+                logger.warning("relay pass lost to MySQL lock contention (%s); polling again", code)
+                published = 0
             iterations += 1
             if max_iterations is not None and iterations >= max_iterations:
                 break

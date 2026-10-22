@@ -320,62 +320,111 @@ def test_chat_turn_claim_contention_polls_again_without_backoff(owned_project_my
     _scenario(owned_project_mysql, body)
 
 
+class _UnavailableRedis:
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        async def unavailable(*args: object, **kwargs: object) -> object:
+            raise ConnectionError(f"redis unavailable ({name})")
+
+        return unavailable
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def _seed_outbox(sessions) -> None:  # type: ignore[no-untyped-def]
+    conversations = ConversationService(
+        MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE), scope=VALIDATION_SCOPE
+    )
+    await conversations.create("chat-relay", "turn-relay", "request-relay", _turn_input())
+    async with sessions() as session:
+        pending = await session.scalar(select(func.count()).where(outbox.c.status == "pending"))
+    assert pending and pending >= 1
+
+
+async def _run_contended_relay(  # type: ignore[no-untyped-def]
+    monkeypatch, database_url: str, *, matches, remaining: list[int], iterations: int
+) -> None:
+    """`relay_reconciler.run` opens its own engine; inject into that one."""
+
+    def contended_database(settings):  # type: ignore[no-untyped-def]
+        relay_engine, relay_sessions = create_engine_and_session_factory(settings.database_url)
+        inject_lock_errors(relay_engine, matches=matches, remaining=remaining)
+        return relay_engine, relay_sessions
+
+    monkeypatch.setattr(relay_reconciler, "_open_database", contended_database)
+    monkeypatch.setattr(relay_reconciler, "create_redis_client", lambda url: _UnavailableRedis())
+    await relay_reconciler.run(
+        settings=relay_reconciler.RelaySettings(
+            database_url=database_url,
+            redis_url="redis://127.0.0.1:1/0",
+            batch_size=10,
+            poll_seconds=0.01,
+            stream_name="tap-lock-contention:commands",
+            worker_id="contended-relay",
+        ),
+        signal_installer=lambda stop: None,
+        max_iterations=iterations,
+    )
+
+
+async def _outbox_states(sessions):  # type: ignore[no-untyped-def]
+    async with sessions() as session:
+        return (await session.execute(select(outbox.c.status, outbox.c.attempt_count))).all()
+
+
 def test_relay_claim_contention_skips_one_poll(owned_project_mysql, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    class UnavailableRedis:
-        def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
-            async def unavailable(*args: object, **kwargs: object) -> object:
-                raise ConnectionError(f"redis unavailable ({name})")
-
-            return unavailable
-
-        async def aclose(self) -> None:
-            return None
-
     async def body(database_url: str, engine: AsyncEngine, sessions) -> None:  # type: ignore[no-untyped-def]
-        conversations = ConversationService(
-            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE), scope=VALIDATION_SCOPE
-        )
-        await conversations.create("chat-relay", "turn-relay", "request-relay", _turn_input())
-        async with sessions() as session:
-            pending = await session.scalar(select(func.count()).where(outbox.c.status == "pending"))
-        assert pending and pending >= 1
-
-        # The relay opens its own engine; its first iteration's reconcile and
-        # claim both lose every attempt, the second iteration claims.
+        del engine
+        await _seed_outbox(sessions)
+        # The first iteration's reconcile and claim both lose every attempt;
+        # the second iteration claims.
         remaining = [6]
-
-        def contended_database(settings):  # type: ignore[no-untyped-def]
-            relay_engine, relay_sessions = create_engine_and_session_factory(settings.database_url)
-            inject_lock_errors(
-                relay_engine,
-                matches=locking_read_of("outbox", skip_locked=True),
-                remaining=remaining,
-            )
-            return relay_engine, relay_sessions
-
-        monkeypatch.setattr(relay_reconciler, "_open_database", contended_database)
-        monkeypatch.setattr(relay_reconciler, "create_redis_client", lambda url: UnavailableRedis())
-        await relay_reconciler.run(
-            settings=relay_reconciler.RelaySettings(
-                database_url=database_url,
-                redis_url="redis://127.0.0.1:1/0",
-                batch_size=10,
-                poll_seconds=0.01,
-                stream_name="tap-lock-contention:commands",
-                worker_id="contended-relay",
-            ),
-            signal_installer=lambda stop: None,
-            max_iterations=2,
+        await _run_contended_relay(
+            monkeypatch,
+            database_url,
+            matches=locking_read_of("outbox", skip_locked=True),
+            remaining=remaining,
+            iterations=2,
         )
 
         assert remaining[0] == 0
-        async with sessions() as session:
-            attempts = (
-                await session.execute(select(outbox.c.status, outbox.c.attempt_count))
-            ).all()
+        attempts = await _outbox_states(sessions)
         # Claimed once on the second iteration; the unavailable Redis sends
         # each row back to pending for a later retry.
         assert attempts and all(row == ("pending", 1) for row in attempts)
+
+    _scenario(owned_project_mysql, body)
+
+
+def test_relay_settlement_contention_does_not_end_the_relay(
+    owned_project_mysql, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    def settles_failure(statement: str) -> bool:
+        # `mark_failed` is the only outbox UPDATE setting both columns.
+        return (
+            statement.startswith("UPDATE outbox SET")
+            and "next_attempt_at" in statement
+            and "last_error" in statement
+        )
+
+    async def body(database_url: str, engine: AsyncEngine, sessions) -> None:  # type: ignore[no-untyped-def]
+        del engine
+        await _seed_outbox(sessions)
+        remaining = [1]
+        await _run_contended_relay(
+            monkeypatch,
+            database_url,
+            matches=settles_failure,
+            remaining=remaining,
+            iterations=3,
+        )
+
+        assert remaining[0] == 0
+        # The lost settlement left its row leased ("publishing"); the later
+        # iterations neither crashed nor claimed it again within the lease.
+        states = await _outbox_states(sessions)
+        assert ("publishing", 1) in states
+        assert all(attempt == 1 for _, attempt in states)
 
     _scenario(owned_project_mysql, body)
 
