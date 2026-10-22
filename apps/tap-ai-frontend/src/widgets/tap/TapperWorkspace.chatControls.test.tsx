@@ -889,3 +889,102 @@ it("stops the turn that is generating, not the previous completed turn", async (
 
   await waitFor(() => expect(canceled).toEqual(["turn-3"]));
 });
+
+it("shows a running tool step live, through the real SSE client and reducer (review fix round 1, Important 1)", async () => {
+  // Before this fix, the queued/running branch of `AssistantResponse`
+  // rendered only `AnswerProgress` + `DraftAnswer` -- a `task.step` event
+  // arriving while a turn was still generating had nowhere to render, so
+  // the step list was invisible for the entire time a turn is actually
+  // running (its most useful moment). This streams a real SSE body
+  // through `useConversationStream`/`reduceStreamEvent`, mocking only the
+  // fetch/network boundary -- not stubbing `AssistantTurn.steps` directly.
+  const frame = (sequence: number, type: string, payload: unknown) =>
+    `data: ${JSON.stringify({
+      eventId: `event-${sequence}`,
+      sequence,
+      chatId: "conversation-a",
+      turnId: "turn-1",
+      occurredAt: "2026-09-29T08:00:02Z",
+      schemaVersion: 1,
+      event: { type, payload },
+    })}\n\n`;
+  let streamCalls = 0;
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/conversations") && request.method === "GET")
+      return json({
+        items: [
+          {
+            conversationId: "conversation-a",
+            title: "What is the rule?",
+            createdAt: "2026-09-29T08:00:00Z",
+            updatedAt: "2026-09-29T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    if (
+      path.endsWith("/conversations/conversation-a") &&
+      request.method === "GET"
+    )
+      return json({
+        conversationId: "conversation-a",
+        title: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        updatedAt: "2026-09-29T08:00:00Z",
+        turns: [
+          {
+            turnId: "turn-1",
+            state: "running",
+            attempt: 1,
+            traceId: null,
+            inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+            answerEvidenceSnapshotDigest: null,
+            input: {
+              message: "What is the rule?",
+              modelAlias: "qwen-plus",
+              sourceRevisionIds: [],
+              documentRevisionIds: [],
+              resolvedResources: [],
+              agentRevisionId: null,
+              agentLabel: null,
+              skillRevisionIds: [],
+              skillLabels: [],
+              insightsQueryId: null,
+            },
+          },
+        ],
+      });
+    if (path.endsWith("/conversations/conversation-a/events"))
+      return json({ items: [], nextCursor: null });
+    if (path.endsWith("/conversations/conversation-a/stream")) {
+      streamCalls += 1;
+      if (streamCalls === 1) {
+        return new Response(
+          frame(1, "turn.started", { state: "running" }) +
+            frame(2, "task.step", {
+              stepId: "turn-1:r1:c0",
+              tool: "knowledge.search",
+              status: "running",
+              summary: "",
+              durationMs: 0,
+              toolRound: 1,
+            }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      // Reconnects keep the turn running with no further events.
+      return new Response(new ReadableStream({ start() {} }), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+  });
+
+  renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+  await screen.findByText("Generating answer…");
+  expect(
+    await screen.findByText("Round 1 · Knowledge search · Running · 0 ms"),
+  ).toBeVisible();
+});

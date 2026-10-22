@@ -4,17 +4,22 @@ phase on its own, checkpointing `ConversationAnswerStep` between them."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
-from test_answer_service import answer_response, ready
+from test_answer_service import MemoryAnswerRepository, answer_response, ready
 
 from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
+from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.domain.persona import TAPPER_PERSONA_V1, UnknownPersonaVersion
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput, planning_input
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
@@ -23,22 +28,36 @@ from tap.modules.chat.domain.conversations import (
     TurnInputSnapshot,
     content_digest,
 )
+from tap.modules.knowledge.api import KnowledgeAPI
+from tap.modules.knowledge.application.answers import AnswerService
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     AnswerRequest,
     Claim,
+    ContentRole,
     ContextLayer,
     ContextLayerKind,
     ContextSnapshot,
+    DocumentAnchor,
+    IndexRevision,
     ModelCallProvenance,
     QueryPlan,
     RetrievalProfileId,
+    RevisionKind,
     SearchResponse,
     SourceFamily,
+    SourceRevisionRef,
 )
-from tap.modules.knowledge.ports.models import AnswerGeneration, GeneratedClaim
+from tap.modules.knowledge.ports.models import (
+    AnswerGeneration,
+    Embedding,
+    GeneratedClaim,
+    GeneratedToolCall,
+    RedactionResult,
+    SearchHit,
+)
 
 
 def _bundle(*, query: str) -> EvidenceBundle:
@@ -122,6 +141,8 @@ class PhaseAnswers:
         self.generate_calls = 0
         self.verify_calls = 0
         self.save_calls: list[object] = []
+        self.generate_personas: list[object] = []
+        self.prepare_include_relations: list[bool] = []
 
     async def prepare_frozen(
         self,
@@ -133,8 +154,10 @@ class PhaseAnswers:
         graph_context=(),
         answer_execution=None,
         authorize=None,
+        include_relations: bool = True,
     ):
         self.prepare_calls += 1
+        self.prepare_include_relations.append(include_relations)
         if authorize is not None:
             await authorize()
         return _bundle(query=request.query)
@@ -149,8 +172,10 @@ class PhaseAnswers:
         model_alias=None,
         answer_execution=None,
         authorize=None,
+        persona=None,
     ):
         self.generate_calls += 1
+        self.generate_personas.append(persona)
         if authorize is not None:
             await authorize()
         return AnswerGeneration(
@@ -180,7 +205,7 @@ class PhaseAnswers:
         self.save_calls.append(response)
 
 
-async def _retrieve_route() -> tuple[TurnInput, object]:
+async def _retrieve_route(*, persona_version: str | None = None) -> tuple[TurnInput, object]:
     """A frozen turn input and admitted `retrieve`-route plan selecting the one
     revision `ready()`/`PhaseAnswers` are built around."""
 
@@ -207,6 +232,7 @@ async def _retrieve_route() -> tuple[TurnInput, object]:
                 "corpusVersion": authority.active_corpus_version,
             }
         ),
+        persona_version=persona_version,
     )
     plan = await AnswerPlanner().plan(
         PlanningInput(
@@ -278,6 +304,7 @@ def _out_of_scope_plan() -> AnswerPlan:
         template_digest=digest,
         deadline_at=time.time() + 30,
         remaining_seconds=30,
+        agent_intent="out_of_scope",
     )
 
 
@@ -310,6 +337,37 @@ async def test_steps_compose_to_answer_conversation() -> None:
     assert stepped.model_dump(mode="json", by_alias=True) == composed.model_dump(
         mode="json", by_alias=True
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_conversation_answer_threads_include_relations_false() -> None:
+    """I-1 (Task 6 fix round 1): `include_relations=False` must reach
+    `AuthorizedRetrieval.prepare_answer` through `prepare_conversation_answer`
+    -> `AnswerService.prepare_frozen` -> `KnowledgeAPI.prepare_frozen` --
+    Task 9's `seed_search` graph node call -- not silently default to `True`
+    at any hop."""
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    await service.prepare_conversation_answer(
+        request, frozen, answer_plan=plan, include_relations=False
+    )
+
+    assert answers.prepare_include_relations == [False]
+
+
+@pytest.mark.asyncio
+async def test_prepare_conversation_answer_defaults_include_relations_true() -> None:
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+
+    assert answers.prepare_include_relations == [True]
 
 
 @pytest.mark.asyncio
@@ -381,6 +439,61 @@ async def test_generate_rechecks_authority_before_model_call() -> None:
         await composed_service.answer_conversation(request, changed_frozen, answer_plan=plan)
     assert composed_answers.prepare_calls == 0
     assert composed_answers.generate_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_answer_resolves_and_forwards_the_frozen_persona() -> None:
+    """Task 1 fix round 1 (Important): the grounded conversation-turn path
+    (`generate_conversation_answer`) must resolve `frozen_input.persona_version`
+    via `persona_for` and pass that `TapperPersona` down to the generation
+    port -- a Turn frozen under a different persona version must not silently
+    answer under `CURRENT_PERSONA` once it reaches the grounded `model` node.
+    `persona_version=None` (every Turn frozen before this field existed, and
+    the default for a fresh one) must still resolve to `TAPPER_PERSONA_V1`."""
+
+    frozen, plan = await _retrieve_route(persona_version="tapper-persona-v1")
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    await service.generate_conversation_answer(step, frozen, answer_plan=plan)
+
+    assert answers.generate_personas == [TAPPER_PERSONA_V1]
+
+    legacy_frozen, legacy_plan = await _retrieve_route(persona_version=None)
+    legacy_answers = PhaseAnswers()
+    legacy_service = _service(legacy_answers)
+    legacy_request = RetrievalAnswerRequest(query=legacy_frozen.message)
+
+    legacy_step = await legacy_service.prepare_conversation_answer(
+        legacy_request, legacy_frozen, answer_plan=legacy_plan
+    )
+    await legacy_service.generate_conversation_answer(
+        legacy_step, legacy_frozen, answer_plan=legacy_plan
+    )
+
+    assert legacy_answers.generate_personas == [TAPPER_PERSONA_V1]
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_answer_fails_deterministically_on_unknown_persona() -> None:
+    """A Turn frozen with a persona version this build does not carry must
+    fail closed (`UnknownPersonaVersion`, a `ValueError`) before ever
+    entering the generation port -- never a silent fallback to the current
+    persona. `_authorized_frozen_context` resolves the persona on every
+    phase (both `prepare` and `generate`), so an unknown version is already
+    caught at `prepare`, before any retrieval or model call."""
+
+    frozen, plan = await _retrieve_route(persona_version="no-such-persona")
+    request = RetrievalAnswerRequest(query=frozen.message)
+    answers = PhaseAnswers()
+    service = _service(answers)
+
+    with pytest.raises(UnknownPersonaVersion):
+        await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    assert answers.prepare_calls == 0
+    assert answers.generate_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1004,3 +1117,626 @@ async def test_prepared_step_carries_retrieval_hits_labels_for_evidence_and_rela
         {"label": "S1", "title": "理赔手册.pdf", "location": "理赔流程 / 提交材料"},
         {"label": "R1", "title": "核保流程 需要 健康告知", "location": None},
     ]
+
+
+class ToolPhaseAnswers(PhaseAnswers):
+    """A `PhaseAnswers` double additionally standing in for the `knowledge.search`
+    /`graph.relations` tool surface (`search_more_frozen`/`relations_frozen`),
+    for `run_conversation_tool` tests."""
+
+    def __init__(
+        self,
+        *,
+        search_result: object = None,
+        relations_result: object = None,
+        relations_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self._search_result = search_result
+        self._relations_result = relations_result
+        self._relations_error = relations_error
+        self.search_calls: list[dict[str, object]] = []
+        self.relations_calls: list[dict[str, object]] = []
+
+    async def search_more_frozen(
+        self, bundle, query, source_ids, revisions, policy, *, answer_execution=None, authorize=None
+    ):
+        self.search_calls.append({"bundle": bundle, "query": query, "source_ids": source_ids})
+        if authorize is not None:
+            await authorize()
+        return self._search_result
+
+    async def relations_frozen(
+        self,
+        bundle,
+        query,
+        revisions,
+        policy,
+        *,
+        authorize=None,
+        turn_id=None,
+        answer_execution=None,
+    ):
+        self.relations_calls.append({"bundle": bundle, "query": query, "turn_id": turn_id})
+        if authorize is not None:
+            await authorize()
+        if self._relations_error is not None:
+            raise self._relations_error
+        return self._relations_result
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_tool_search_returns_prepared_step_and_hits() -> None:
+    """Task 6: a `knowledge.search` tool call grows the evidence pool and
+    returns a fresh `"prepared"` step; `retrieval_hits` carries only the
+    newly added labels, and the summary reports the count and label range."""
+    from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+    from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+    from tap.modules.knowledge.domain.models import (
+        ContentRole,
+        DocumentAnchor,
+        Evidence,
+        IndexRevision,
+        RevisionKind,
+        SourceFamily,
+        SourceRevisionRef,
+    )
+
+    frozen, plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    step = {
+        "kind": "prepared",
+        "bundle": encode_bundle(bundle),
+        "retrieval_hits": {},
+        "transcript": [],
+    }
+
+    source_hash = "sha256:" + "a" * 64
+    chunk_hash = "sha256:" + "b" * 64
+
+    def new_evidence_item(index: int) -> Evidence:
+        return Evidence(
+            family=SourceFamily.DOC,
+            chunk_id=f"h_{index}" + "1" * 60,
+            logical_chunk_id=f"h_{index}" + "2" * 60,
+            title="新文档.pdf",
+            content="新检索到的内容。",
+            source=SourceRevisionRef(
+                source_id="doc-a",
+                source_type="document",
+                revision_kind=RevisionKind.BLOB_VERSION,
+                revision="rev-1",
+                source_content_hash=source_hash,
+                anchor=DocumentAnchor(heading_path=("章节",)),
+            ),
+            chunk_content_hash=chunk_hash,
+            content_role=ContentRole.SOURCE,
+            citation_id=f"citation-new-{index}",
+            evidence_label=f"S{index}",
+            index_revision=IndexRevision(
+                physical_index="kb-doc-v1", schema_version="search-schema-v1", corpus_version="v1"
+            ),
+            embedding_model_version="tap-embed-fixed-v1",
+            acl_decision_id="decision-1",
+            score=0.8,
+        )
+
+    new_evidence = tuple(new_evidence_item(index) for index in (5, 6, 7))
+    new_bundle = replace(bundle, response=replace(bundle.response, evidence=new_evidence))
+
+    answers = ToolPhaseAnswers(search_result=(new_bundle, new_evidence))
+    service = _service(answers)
+    call = AdmittedToolCall(
+        call_id="call-1", tool_id="knowledge.search", arguments={"query": "更多信息"}
+    )
+
+    result = await service.run_conversation_tool(step, frozen, call, answer_plan=plan)
+
+    assert result["status"] == "completed"
+    assert result["step"]["kind"] == "prepared"
+    assert result["added_labels"] == ["S5", "S6", "S7"]
+    assert "+3" in result["summary"]
+    assert [item["label"] for item in result["retrieval_hits"]["labels"]] == ["S5", "S6", "S7"]
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_tool_relations_unavailable_fails_softly() -> None:
+    """Task 6: when the `graph.relations` tool fails (no configured relation
+    analysis port here), `run_conversation_tool` must not raise -- it reports
+    `status="failed"` and leaves the step's `bundle` untouched."""
+    from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+    from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+    from tap.modules.knowledge.application.retrieve import RelationAnalysisUnavailable
+
+    frozen, plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    step = {
+        "kind": "prepared",
+        "bundle": encode_bundle(bundle),
+        "retrieval_hits": {},
+        "transcript": [],
+    }
+
+    answers = ToolPhaseAnswers(relations_error=RelationAnalysisUnavailable("not configured"))
+    service = _service(answers)
+    call = AdmittedToolCall(
+        call_id="call-1", tool_id="graph.relations", arguments={"query": "关系"}
+    )
+
+    result = await service.run_conversation_tool(step, frozen, call, answer_plan=plan)
+
+    assert result["status"] == "failed"
+    assert result["step"]["bundle"] == step["bundle"]
+
+
+@pytest.mark.asyncio
+async def test_add_insights_records_dedupes_and_continues_label_sequence() -> None:
+    """Task 8: `insights.query` results grow the evidence pool through the
+    real `KnowledgeHttpService.add_insights_records` -- labels continue
+    `I<n>` without ever relabeling an existing record, and a repeated
+    `(queryId, metricId)` is deduped rather than appended again."""
+    from tap.modules.knowledge.application.evidence_bundle import decode_bundle, encode_bundle
+
+    frozen, _plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    bundle = replace(
+        bundle,
+        insights_records=(
+            {
+                "label": "I1",
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "first_pass_rate",
+                "value": 0.5,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+        ),
+    )
+    step = {"kind": "prepared", "bundle": encode_bundle(bundle), "transcript": []}
+    service = _service()
+
+    new_step, added_labels = await service.add_insights_records(
+        step,
+        (
+            {
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "first_pass_rate",
+                "value": 0.5,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+            {
+                "queryId": "query-a",
+                "metricVersion": "insights-metrics-v1",
+                "metricId": "p95_duration_seconds",
+                "value": 3.2,
+                "asOf": "2026-09-25T08:00:00+00:00",
+            },
+        ),
+    )
+
+    assert added_labels == ["I2"]
+    new_bundle = decode_bundle(new_step["bundle"])
+    assert [item["label"] for item in new_bundle.insights_records] == ["I1", "I2"]
+    assert new_bundle.insights_records[0]["metricId"] == "first_pass_rate"
+    assert new_bundle.insights_records[1]["metricId"] == "p95_duration_seconds"
+
+
+class ToolCallPhaseAnswers(PhaseAnswers):
+    """A `PhaseAnswers` double whose `generate_frozen` plays the model asking
+    to call a tool (Task 7): accepts and records the `tools`/`transcript`
+    kwargs `generate_conversation_answer` forwards, and returns an
+    `AnswerGeneration` carrying `tool_calls` whenever `tools` is non-empty."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.generate_tools: list[tuple[str, ...]] = []
+        self.generate_transcripts: list[tuple[object, ...]] = []
+
+    async def generate_frozen(
+        self,
+        bundle,
+        revisions,
+        policy,
+        *,
+        governance,
+        model_alias=None,
+        answer_execution=None,
+        authorize=None,
+        persona=None,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[object, ...] = (),
+    ):
+        self.generate_calls += 1
+        self.generate_tools.append(tools)
+        self.generate_transcripts.append(transcript)
+        if authorize is not None:
+            await authorize()
+        if tools:
+            return AnswerGeneration(
+                "",
+                (),
+                "qwen-plus",
+                "quick-hybrid-v1",
+                "provider-request-a",
+                tool_calls=(GeneratedToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+        return AnswerGeneration(
+            "The rule is grounded.",
+            (GeneratedClaim("The rule is grounded.", ("S1",)),),
+            "qwen-plus",
+            "quick-hybrid-v1",
+            "provider-request-a",
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_with_tools_yields_tool_calls_step() -> None:
+    """Task 7: when `generate_conversation_answer` is called with `tools` and
+    the model answers with tool calls, it returns a `"tool_calls"` step
+    carrying `pending_tool_calls` and the extended `transcript` -- not a
+    `"generated"` step."""
+    frozen, plan = await _retrieve_route()
+    request = RetrievalAnswerRequest(query=frozen.message)
+
+    answers = ToolCallPhaseAnswers()
+    service = _service(answers)
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    step = await service.generate_conversation_answer(
+        step, frozen, answer_plan=plan, tools=("knowledge.search",)
+    )
+
+    assert step["kind"] == "tool_calls"
+    assert step["pending_tool_calls"] == [
+        {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+    ]
+    assert step["transcript"][-1]["role"] == "assistant"
+    assert step["transcript"][-1]["toolCalls"] == step["pending_tool_calls"]
+    assert answers.generate_tools[-1] == ("knowledge.search",)
+
+
+class _RealChainEmbeddings:
+    """A minimal embedding port for the real-chain C-1 test below -- only the
+    model gateway (`answers`) and search port are meant to be fakes; this
+    embedding double exists purely so `AuthorizedRetrieval.prepare_answer`'s
+    real retrieval pipeline has something to embed the query with."""
+
+    embedding_model_id = "tap-embedding-v1"
+    embedding_dimension = 2
+
+    async def embed(self, query: str) -> Embedding:
+        return Embedding(
+            vector=(0.1, 0.2), model_id=self.embedding_model_id, provider_request_id="embed-1"
+        )
+
+
+class _RealChainSearch:
+    def __init__(self, hits: tuple[SearchHit, ...]) -> None:
+        self._hits = hits
+
+    async def search(self, execution) -> tuple[SearchHit, ...]:
+        return self._hits
+
+
+class _RealChainToolAnswers:
+    """Stands in for the model gateway at the bottom of the real
+    `AnswerService` -> `KnowledgeAPI` -> `AuthorizedRetrieval` chain: records
+    every `.answer()` kwarg it receives (so the test can assert `tools`/
+    `transcript` actually arrived) and returns tool calls whenever `tools`
+    is non-empty, exactly like a model asking to call a tool mid-turn."""
+
+    def __init__(self) -> None:
+        self.answer_kwargs: list[dict[str, object]] = []
+
+    async def answer(self, query, evidence, profile_id, **kwargs: object) -> AnswerGeneration:
+        del query, evidence, profile_id
+        self.answer_kwargs.append(kwargs)
+        if kwargs.get("tools"):
+            return AnswerGeneration(
+                "",
+                (),
+                "qwen-plus",
+                "quick-hybrid-v1",
+                "provider-request-real-chain",
+                tool_calls=(GeneratedToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+        return AnswerGeneration(
+            "The rule is grounded.",
+            (GeneratedClaim("The rule is grounded.", ("S1",)),),
+            "qwen-plus",
+            "quick-hybrid-v1",
+            "provider-request-real-chain",
+        )
+
+
+class _PassthroughRedactor:
+    async def redact(self, text: str) -> RedactionResult:
+        return RedactionResult(sanitized_text=text, redaction_version="redaction-v1")
+
+
+class _CurrentPolicyVerifier:
+    async def verify_current(self, expected):
+        return expected
+
+
+def _real_chain_search_hit(revision, *, variant: int = 1) -> SearchHit:
+    content = (
+        "错误码 E104 代表核保材料缺失。"
+        if variant == 1
+        else "错误码 E104 需补充体检报告后方可继续核保。"
+    )
+    return SearchHit(
+        family=SourceFamily.DOC,
+        chunk_id="h_" + str(variant) + "3" * 63,
+        logical_chunk_id="h_" + str(variant) + "4" * 63,
+        title="理赔手册.pdf",
+        content=content,
+        source=SourceRevisionRef(
+            source_id=revision.source_id,
+            source_type="document",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=revision.revision_id,
+            source_content_hash=revision.source_content_hash,
+            anchor=DocumentAnchor(heading_path=("理赔流程",)),
+        ),
+        # Must equal the real `sha256:`-prefixed hash of `content` --
+        # `AuthorizedRetrieval._hit_has_compatible_provenance` checks this
+        # before admitting the hit as evidence.
+        chunk_content_hash="sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        content_role=ContentRole.SOURCE,
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1",
+            schema_version="search-schema-v1",
+            corpus_version="tapper-demo-v1",
+        ),
+        embedding_model_version="tap-embedding-v1",
+        score=0.9,
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_conversation_answer_threads_tools_through_the_real_chain() -> None:
+    """C-1 (Task 7 fix round 1): `KnowledgeHttpService.generate_conversation_answer`
+    must thread `tools`/`transcript` all the way through the *real*
+    `AnswerService` -> `KnowledgeAPI` -> `AuthorizedRetrieval` chain (only the
+    model gateway and search port are fakes here) without either
+    intermediate layer raising `TypeError` for an unexpected kwarg -- and the
+    model gateway at the bottom must actually receive what was offered."""
+    frozen, plan = await _retrieve_route()
+    revision = ready()
+
+    answers_port = _RealChainToolAnswers()
+    knowledge_api = KnowledgeAPI(
+        search=_RealChainSearch((_real_chain_search_hit(revision),)),
+        embeddings=_RealChainEmbeddings(),
+        answers=answers_port,
+        policy_verifier=_CurrentPolicyVerifier(),
+        redactor=_PassthroughRedactor(),
+        id_factory=lambda: str(uuid4()),
+    )
+    repository = MemoryAnswerRepository((revision,))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    answer_service = AnswerService(repository=repository, knowledge=knowledge_api)
+    service = _service(answer_service)
+
+    request = RetrievalAnswerRequest(query=frozen.message)
+    step = await service.prepare_conversation_answer(request, frozen, answer_plan=plan)
+    assert step["kind"] == "prepared"
+
+    step = await service.generate_conversation_answer(
+        step,
+        frozen,
+        answer_plan=plan,
+        tools=("knowledge.search",),
+    )
+
+    assert step["kind"] == "tool_calls"
+    assert step["pending_tool_calls"] == [
+        {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+    ]
+    assert answers_port.answer_kwargs[-1]["tools"] == ("knowledge.search",)
+
+
+class _RoundAwareRealChainSearch:
+    """`SearchPort` double returning a distinct hit per call (I-2 fix round
+    1): `seed_search`'s initial retrieval and the `knowledge.search` tool
+    round each call `search()` once, and the test must prove the tool
+    round actually grows the evidence pool through the real pipeline, not
+    just a deduped repeat of the seed hit."""
+
+    def __init__(self, hits: tuple[SearchHit, ...]) -> None:
+        self._hits = hits
+        self.calls = 0
+
+    async def search(self, execution) -> tuple[SearchHit, ...]:
+        hit = self._hits[min(self.calls, len(self._hits) - 1)]
+        self.calls += 1
+        return (hit,)
+
+
+class _RealChainToolThenTextAnswers:
+    """Model gateway double at the bottom of the real `AnswerService` ->
+    `KnowledgeAPI` -> `AuthorizedRetrieval` chain: the first `.answer()`
+    call asks to call `knowledge.search` (regardless of what `tools` it
+    was offered), the second returns a grounded text answer -- recording
+    every kwarg (`tools`, `transcript`, ...) each call received so the
+    test can assert the second call's `transcript` actually carries the
+    first round's tool result."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.answer_kwargs: list[dict[str, object]] = []
+
+    async def answer(self, query, evidence, profile_id, **kwargs: object) -> AnswerGeneration:
+        del query, evidence, profile_id
+        self.calls += 1
+        self.answer_kwargs.append(kwargs)
+        if self.calls == 1:
+            return AnswerGeneration(
+                "",
+                (),
+                "qwen-plus",
+                "quick-hybrid-v1",
+                "provider-request-real-chain-loop-1",
+                tool_calls=(GeneratedToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+        return AnswerGeneration(
+            "The rule is grounded.",
+            (GeneratedClaim("The rule is grounded.", ("S1",)),),
+            "qwen-plus",
+            "quick-hybrid-v1",
+            "provider-request-real-chain-loop-2",
+        )
+
+
+class _EmittingConversations:
+    """Minimal `conversations` double for `ChatTurnNodes`: just enough to
+    satisfy `_emit_committed`'s `conversations.emit` call (`seed_search`'s
+    `retrieval.hits_ready` and `tools`' `task.step` events)."""
+
+    scope = VALIDATION_SCOPE
+
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict[str, object]]] = []
+
+    async def emit(self, conversation_id, turn_id, event_type, payload, *, lease_token=None):
+        self.emitted.append((event_type, dict(payload)))
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_runs_through_the_real_chain_and_informs_the_second_model_call() -> None:
+    """I-2 fix round 1: drive the bounded tool-calling loop through *real*
+    `ChatTurnNodes` -> `KnowledgeHttpService` -> `AnswerService` ->
+    `KnowledgeAPI` -> `AuthorizedRetrieval`, faking only the model gateway
+    and the search port. `model` returns `tool_calls`, `tools` actually
+    runs `knowledge.search` through the real retrieval pipeline and grows
+    the evidence pool, and the second `model` call must see the first
+    round's tool result message in the `transcript` it forwards to the
+    model gateway."""
+    frozen, _unused_plan = await _retrieve_route()
+    revision = ready()
+
+    answers_port = _RealChainToolThenTextAnswers()
+    search_port = _RoundAwareRealChainSearch(
+        (
+            _real_chain_search_hit(revision, variant=1),
+            _real_chain_search_hit(revision, variant=2),
+        )
+    )
+    knowledge_api = KnowledgeAPI(
+        search=search_port,
+        embeddings=_RealChainEmbeddings(),
+        answers=answers_port,
+        policy_verifier=_CurrentPolicyVerifier(),
+        redactor=_PassthroughRedactor(),
+        id_factory=lambda: str(uuid4()),
+    )
+    repository = MemoryAnswerRepository((revision,))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    answer_service = AnswerService(repository=repository, knowledge=knowledge_api)
+    service = _service(answer_service)
+
+    async def require_authorized() -> None:
+        return None
+
+    turn = SimpleNamespace(
+        turn_id="turn-real-chain-loop",
+        lease_token="lease-real-chain-loop",
+        attempt=1,
+        input_snapshot=SimpleNamespace(snapshot_id="snapshot-real-chain-loop", value=frozen),
+    )
+    conversations = _EmittingConversations()
+    nodes = ChatTurnNodes(
+        conversation_id="conversation-real-chain-loop",
+        turn=turn,
+        conversations=conversations,
+        steps=service,
+        planner=None,
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=require_authorized,
+    )
+
+    state: dict[str, object] = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+    }
+    state.update(await nodes.seed_search(state))
+    assert state["step"]["kind"] == "prepared"
+
+    state.update(await nodes.model(state))
+    assert state["step"]["kind"] == "tool_calls"
+    assert state["step"]["pending_tool_calls"] == [
+        {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+    ]
+
+    state.update(await nodes.tools(state))
+    assert state["step"]["kind"] == "prepared"
+    assert state["step"]["transcript"][-1]["role"] == "tool"
+    tool_message = json.loads(state["step"]["transcript"][-1]["content"])
+    assert tool_message["status"] == "completed"
+    assert search_port.calls == 2
+
+    # The graph's own `_run_budgeted` normally folds `tool_rounds_delta`
+    # into `budget_used.toolRounds` between node calls; driving nodes
+    # directly here, the test advances it itself before the second `model`
+    # call so `tool_rounds_used < maxToolRounds` still holds.
+    state["budget_used"] = {"modelCalls": 0, "costMicros": 0, "toolRounds": 1}
+    state.update(await nodes.model(state))
+
+    assert state["step"]["kind"] == "generated"
+    assert answers_port.calls == 2
+    second_call_transcript = answers_port.answer_kwargs[-1]["transcript"]
+    assert [item["role"] for item in second_call_transcript] == ["assistant", "tool"]
+    assert json.loads(second_call_transcript[-1]["content"])["status"] == "completed"
+
+    task_step_statuses = [
+        payload["status"]
+        for event_type, payload in conversations.emitted
+        if event_type == "task.step"
+    ]
+    assert task_step_statuses == ["running", "completed"]
+
+
+# Final review M-2: an 18-character resident ID starting at offset 45 of the
+# query straddles the 60-character summary cut -- truncating first would leave
+# a 15-digit fragment the ID pattern no longer recognizes.
+_STRADDLING_ID = "11010119900307123X"
+_STRADDLING_QUERY = "a" * 44 + " " + _STRADDLING_ID + " tail"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_id", ["knowledge.search", "graph.relations"])
+async def test_run_conversation_tool_summary_redacts_before_truncating(tool_id) -> None:
+    from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+    from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+    from tap.modules.knowledge.application.evidence_bundle import encode_bundle
+    from tap.modules.knowledge.application.retrieve import RelationAnalysisUnavailable
+
+    frozen, plan = await _retrieve_route()
+    bundle = _bundle(query=frozen.message)
+    step = {
+        "kind": "prepared",
+        "bundle": encode_bundle(bundle),
+        "retrieval_hits": {},
+        "transcript": [],
+    }
+    answers = ToolPhaseAnswers(
+        search_result=(bundle, ()),
+        relations_error=RelationAnalysisUnavailable("not configured"),
+    )
+    service = _service(
+        answers, redactor=PatternEgressRedactor(max_chars=262144, personal_data=True)
+    )
+    call = AdmittedToolCall(
+        call_id="call-1", tool_id=tool_id, arguments={"query": _STRADDLING_QUERY}
+    )
+
+    result = await service.run_conversation_tool(step, frozen, call, answer_plan=plan)
+
+    assert "[REDACTED_ID]" in result["summary"]
+    assert "1101011990" not in result["summary"]
+    # The tool itself still runs on the original query.
+    calls = answers.search_calls if tool_id == "knowledge.search" else answers.relations_calls
+    assert calls[0]["query"] == _STRADDLING_QUERY

@@ -599,6 +599,171 @@ describe("conversation stream reducer", () => {
   });
 });
 
+describe("task.step reduction", () => {
+  it("reduces task.step running then completed into one step", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      }),
+    );
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      },
+    ]);
+
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "completed",
+        summary: "Found 3 hits",
+        durationMs: 120,
+        toolRound: 1,
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "completed",
+        summary: "Found 3 hits",
+        durationMs: 120,
+        toolRound: 1,
+      },
+    ]);
+  });
+
+  it("keeps steps from an earlier attempt once a newer attempt's own steps and first draft arrive (review fix round 1)", () => {
+    // `turn.started` carries no `attempt` (`TurnStartedPayload = {state}`
+    // only), so there is no reliable signal to key a reset off — `steps`
+    // is never reset across attempts; `stepId` upsert is the only thing
+    // that keeps live and recovered (durable-replay) state in agreement.
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "answer.draft", {
+        attempt: 1,
+        seq: 1,
+        text: "attempt one",
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "task.step", {
+        stepId: "turn-1:r1:c0",
+        tool: "graph.relations",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      }),
+    );
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "graph.relations",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      },
+    ]);
+
+    // Attempt 2's own tool-round steps arrive before its first draft frame
+    // (the realistic ordering: a model's tool calls resolve before it
+    // drafts text).
+    state = reduceStreamEvent(
+      state,
+      envelope(3, "turn-1", "task.step", {
+        stepId: "turn-1:r2:c0",
+        tool: "insights.query",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 2,
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(4, "turn-1", "answer.draft", {
+        attempt: 2,
+        seq: 1,
+        text: "attempt two",
+      }),
+    );
+
+    // Attempt 1's step is retained, not wiped by attempt 2 starting.
+    expect(
+      state.turns["turn-1"]?.steps.find(
+        (step) => step.stepId === "turn-1:r1:c0",
+      ),
+    ).toBeDefined();
+    // A same-stepId terminal frame still overwrites the running one, not
+    // appends a second row.
+    state = reduceStreamEvent(
+      state,
+      envelope(5, "turn-1", "task.step", {
+        stepId: "turn-1:r2:c0",
+        tool: "insights.query",
+        status: "completed",
+        summary: "3 metrics",
+        durationMs: 40,
+        toolRound: 2,
+      }),
+    );
+    expect(state.turns["turn-1"]?.steps).toEqual([
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "graph.relations",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      },
+      {
+        stepId: "turn-1:r2:c0",
+        tool: "insights.query",
+        status: "completed",
+        summary: "3 metrics",
+        durationMs: 40,
+        toolRound: 2,
+      },
+    ]);
+  });
+
+  it("hits_ready with stepId merges labels", () => {
+    let state = createStreamState();
+    state = reduceStreamEvent(
+      state,
+      envelope(1, "turn-1", "retrieval.hits_ready", {
+        traceId: "trace-1",
+        authorizedHitCount: 1,
+        stepId: "turn-1:r1:c0",
+        labels: [{ label: "S1", title: "Policy handbook", location: null }],
+      }),
+    );
+
+    expect(state.turns["turn-1"]?.citationLabels).toEqual({
+      S1: { title: "Policy handbook", location: null },
+    });
+  });
+});
+
 describe("mergedDraftFacts", () => {
   it("takes the draft from the live stream (never the recovered record) after a reconnect mid-generation", () => {
     // Simulates a page reload while a turn is still generating: the

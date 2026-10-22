@@ -23,6 +23,15 @@ from tap.modules.ai.ports.insights import (
 )
 from tests.object_settings import S3_SETTINGS
 
+_METRICS_QUERY_ARGUMENTS = {
+    "metricIds": ["first_pass_rate"],
+    "filters": {},
+    "from": "2026-09-24",
+    "to": "2026-09-25",
+    "timezone": "UTC",
+    "asOf": "2026-09-25T08:00:00Z",
+}
+
 NOW = datetime(2026, 9, 25, 8, tzinfo=UTC)
 
 
@@ -365,6 +374,62 @@ async def test_runtime_rejects_unrelated_project_receipt_before_evidence_or_mode
             "Why failed?",
             conversation_id="conversation-a",
             turn_id="turn-a",
+        )
+
+
+@pytest.mark.asyncio
+async def test_query_metrics_scopes_to_turn_report_refs() -> None:
+    """Task 8: `insights.query`'s results authorize against exactly the
+    Turn's frozen `insights_report_refs`, never the project at large -- a fact
+    whose own `evidence_refs` reach outside that set is an authorization
+    change, not a usable metric."""
+
+    class Insights:
+        def __init__(self, evidence_refs: tuple[str, ...]) -> None:
+            self._evidence_refs = evidence_refs
+
+        async def query_insights(self, scope, query):
+            assert scope.authorized_resource_refs == ("report-1",)
+            return MetricResult(
+                query_id="query-a",
+                metric_version="insights-metrics-v1",
+                query=query,
+                fact_watermark=FactWatermark("insights-v1", 1),
+                metrics=(
+                    MetricFact("first_pass_rate", 1, 2, 0.5, "complete", (), self._evidence_refs),
+                ),
+                report_coverage=(),
+            )
+
+    runtime = ConfiguredInsightsExplanation(
+        insights=Insights(("report-1",)),
+        gateway=None,
+        model_alias="qwen-plus",
+        max_micros_per_token=1,
+        project_id="tapper-demo",
+        delegated_user_token="delegated-user-token-0001",
+        authorization_version="authz-1",
+    )
+    records = await runtime.query_metrics(VALIDATION_SCOPE, ("report-1",), _METRICS_QUERY_ARGUMENTS)
+
+    assert len(records) == 1
+    assert records[0]["metricId"] == "first_pass_rate"
+    assert records[0]["queryId"] == "query-a"
+    assert records[0]["metricVersion"] == "insights-metrics-v1"
+    assert records[0]["value"] == 0.5
+
+    runtime_outside = ConfiguredInsightsExplanation(
+        insights=Insights(("report-outside",)),
+        gateway=None,
+        model_alias="qwen-plus",
+        max_micros_per_token=1,
+        project_id="tapper-demo",
+        delegated_user_token="delegated-user-token-0001",
+        authorization_version="authz-1",
+    )
+    with pytest.raises(InsightsAuthorizationChanged):
+        await runtime_outside.query_metrics(
+            VALIDATION_SCOPE, ("report-1",), _METRICS_QUERY_ARGUMENTS
         )
 
 

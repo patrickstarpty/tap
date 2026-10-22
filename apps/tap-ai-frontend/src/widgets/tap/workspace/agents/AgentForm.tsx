@@ -1,5 +1,5 @@
 import { Button, Input } from "antd";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQueries } from "@tanstack/react-query";
 
 import {
@@ -8,6 +8,7 @@ import {
   fetchSkillRevisionDetail,
   useCreateAgent,
   useReviseAgent,
+  useTools,
   type AiAgentRevisionDetail,
   type SkillRevision,
   type SkillRevisionDetail,
@@ -75,10 +76,62 @@ export function AgentForm({
   );
   const [skillQuery, setSkillQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // `null` means "not yet decided": an edit/copy starts from the base
+  // Agent's own revised allowlist (set eagerly below, no tools fetch
+  // needed); a plain create (no base Agent) waits for `GET /ai/tools` so
+  // the initial checked set can be `required || defaultEnabled`, per
+  // tool, rather than guessing.
+  const [toolIds, setToolIds] = useState<readonly string[] | null>(
+    agent?.toolAllowlist ?? null,
+  );
 
   const createAgent = useCreateAgent(projectId);
   const reviseAgent = useReviseAgent(projectId);
   const isSaving = createAgent.isPending || reviseAgent.isPending;
+  // Reuses the same locale-from-copy trick `AgentsWorkspace` applies
+  // (`text.heading !== "Agents"`) -- `AgentForm` is only ever given a
+  // `WorkspaceCopy`, not a raw locale.
+  const toolsLocale = copy.agentsWorkspace.heading === "Agents" ? "en" : "zh";
+  const tools = useTools(projectId, toolsLocale);
+
+  // Only a brand-new Agent (no base revision to start from) needs the
+  // fetched tool catalog's `defaultEnabled` flags to seed its initial
+  // selection -- an edit/copy already has `toolIds` set from the base
+  // Agent's `toolAllowlist` above and must not have it overwritten once
+  // the catalog loads. Runs as an effect, not during render (review fix
+  // round 1, folded minor): a render-phase `setState` call works here (the
+  // `toolIds === null` guard prevents an infinite loop) but is the wrong
+  // tool for "derive state once an async query resolves" — an effect
+  // keeps the render itself pure and matches how every other async-derived
+  // field in this form (e.g. Skill budgets below) is computed.
+  useEffect(() => {
+    if (toolIds !== null || tools.data === undefined) return;
+    setToolIds(
+      tools.data
+        .filter((tool) => tool.required || tool.defaultEnabled)
+        .map((tool) => tool.toolId),
+    );
+  }, [toolIds, tools.data]);
+
+  const toggleTool = (toolId: string) => {
+    setToolIds((current) => {
+      const base = current ?? [];
+      return base.includes(toolId)
+        ? base.filter((id) => id !== toolId)
+        : [...base, toolId];
+    });
+  };
+
+  // Required tools are always checked and disabled regardless of
+  // `toolIds` (a defensive union, not a trust assumption): the submitted
+  // set always includes every required tool id even if `toolIds` was
+  // somehow missing one.
+  const requiredToolIds = (tools.data ?? [])
+    .filter((tool) => tool.required)
+    .map((tool) => tool.toolId);
+  const submittedToolIds = Array.from(
+    new Set([...requiredToolIds, ...(toolIds ?? [])]),
+  );
 
   const skillDetailQueries = useQueries({
     queries: skillRevisionIds.map((revisionId) => ({
@@ -144,7 +197,8 @@ export function AgentForm({
     descriptionValid &&
     systemInstructionValid &&
     !overBudget &&
-    !budgetUnknown;
+    !budgetUnknown &&
+    toolIds !== null;
 
   const toggleSkill = (revisionId: string) => {
     setSkillRevisionIds((current) =>
@@ -218,6 +272,7 @@ export function AgentForm({
             defaultModelAlias:
               defaultModelAlias.length > 0 ? defaultModelAlias : null,
             skillRevisionIds: [...skillRevisionIds],
+            toolIds: submittedToolIds,
           },
         });
         onSaved?.(result.revisionId);
@@ -229,6 +284,7 @@ export function AgentForm({
           defaultModelAlias:
             defaultModelAlias.length > 0 ? defaultModelAlias : null,
           skillRevisionIds: [...skillRevisionIds],
+          toolIds: submittedToolIds,
         });
         onSaved?.(result.revisionId);
       }
@@ -389,10 +445,25 @@ export function AgentForm({
             </div>
           ) : null}
         </fieldset>
-        <div className="tap-agent-tools-readonly">
-          <strong>{form.toolsLabel}</strong>
-          <p>{form.toolsBuiltIn}</p>
-        </div>
+        <fieldset>
+          <legend>{form.toolsLabel}</legend>
+          {tools.isError ? <p role="alert">{form.toolsLoadFailed}</p> : null}
+          {(tools.data ?? []).map((tool) => {
+            const checked =
+              tool.required || (toolIds ?? []).includes(tool.toolId);
+            return (
+              <label key={tool.toolId}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={tool.required}
+                  onChange={() => toggleTool(tool.toolId)}
+                />
+                <span>{tool.name}</span>
+              </label>
+            );
+          })}
+        </fieldset>
         {budgetUnknown ? <p role="status">{form.budgetCalculating}</p> : null}
         {skillSizesErrored ? (
           <p role="alert">{form.budgetUnavailable}</p>

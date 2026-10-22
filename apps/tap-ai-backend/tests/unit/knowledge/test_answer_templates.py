@@ -102,6 +102,7 @@ async def test_model_generation_consumes_pinned_template_and_preserves_schema():
                 provider_request_id="provider",
                 gateway_call_id="call",
                 actual_model="model",
+                tool_calls=(),
             )
 
     async def redact(text):

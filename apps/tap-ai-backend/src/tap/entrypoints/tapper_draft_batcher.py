@@ -48,6 +48,7 @@ from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.redaction_patterns import email_local_trailing_run_start
 
 _INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
+_CLARIFY_PREFIX = "CLARIFY:"
 
 # Mirrors `PatternEgressRedactor`'s placeholder markers -> the hit-count key
 # `KnowledgeHttpService._redact_answer_response` records on
@@ -77,6 +78,7 @@ class DraftBatcher:
         max_delay_s: float = 0.05,
         max_chars: int = 32,
         holdback_chars: int = 48,
+        start_seq: int = 0,
     ) -> None:
         self._turn_id = turn_id
         self._attempt = attempt
@@ -89,7 +91,16 @@ class DraftBatcher:
         self._unflushed_chars = 0
         self._last_flush_at = time.monotonic()
         self._sent_text = ""
-        self._seq = 0
+        # PR 5 (Task 9 fix round 1, C-1): the `model` graph node constructs a
+        # fresh `DraftBatcher` per tool-calling round, but every round for
+        # one Turn attempt shares the same `turn_id`/`attempt` draft stream
+        # key -- `seq` must keep increasing across rounds (never restart at
+        # 0), or `RedisDraftStream.replay`/`partial_text` (which sort by
+        # `seq` then cut before the *last* `reset` chunk) and the frontend
+        # reducer (which drops any `seq <= current.seq`) both corrupt a
+        # second round's chunks. The caller threads the last round's
+        # `current_seq` back in here as `start_seq`.
+        self._seq = start_seq
         self._degraded = drafts is None
         # Set only when `_redact` raised `RedactionUnavailable` on a *final*
         # flush (`close()`): no more raw text is ever coming for this
@@ -100,6 +111,13 @@ class DraftBatcher:
         # authoritative decision for the saved/returned answer either way.
         self._redaction_unavailable = False
         self._last_redacted = ""
+
+    @property
+    def current_seq(self) -> int:
+        """The last `seq` used (or `start_seq` if nothing was ever sent
+        yet) -- callers thread this back in as the next round's
+        `start_seq` so `seq` keeps increasing across rounds (C-1)."""
+        return self._seq
 
     async def push(self, text: str) -> None:
         if not text:
@@ -112,6 +130,21 @@ class DraftBatcher:
             or (now - self._last_flush_at) >= self._max_delay_s
         ):
             await self._flush(final=False)
+
+    async def discard(self) -> None:
+        """PR 5 (Task 9): a tool-calling round whose model response ends in
+        `tool_calls` may have streamed a preamble (prose before the tool
+        call) to Redis -- that preamble must never survive into the next
+        round's draft nor leak into the final answer (Review Focus 2). If
+        anything was ever sent for this attempt, append one `reset=True`
+        chunk so every reader discards it, then reset accumulation so the
+        next `push`/`close` call on this instance starts from zero."""
+        if self._sent_text:
+            await self._append(text="", reset=True)
+        self._raw = ""
+        self._unflushed_chars = 0
+        self._sent_text = ""
+        self._last_redacted = ""
 
     async def close(self) -> str:
         await self._flush(final=True)
@@ -139,6 +172,9 @@ class DraftBatcher:
         # flush -- including a final one where the whole answer is nothing
         # but the sentinel.
         visible_raw = self._raw.replace(_INSUFFICIENT_EVIDENCE_SENTINEL, "")
+        lstripped = visible_raw.lstrip()
+        if lstripped.startswith(_CLARIFY_PREFIX):
+            visible_raw = lstripped[len(_CLARIFY_PREFIX) :].lstrip()
         try:
             redacted = await self._redact(visible_raw)
         except RedactionUnavailable:

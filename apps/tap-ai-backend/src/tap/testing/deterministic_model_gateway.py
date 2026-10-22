@@ -19,12 +19,20 @@ from tap.modules.ai.adapters.litellm import (
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
 from tap.modules.ai.domain.models import (
+    ModelMessage,
     ModelOperation,
     ModelRequest,
     ModelStreamEvent,
     ModelTextDelta,
+    ModelToolCall,
 )
+from tap.modules.ai.domain.tools import tool_for_wire_name
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
+from tap.modules.chat.application.plan_answer import (
+    is_comparison_question,
+    is_relation_question,
+)
+from tap.modules.chat.domain.answer_plan import derive_agent_intent
 from tap.testing.deterministic_model import (
     _ANSWER_DELAY_SECONDS,
     _CANCELLATION_QUERY_SUFFIX,
@@ -49,6 +57,188 @@ _ABSTENTION_QUERY_SUFFIX = " [e2e-abstain]"
 # `parse_inline_answer`'s `_MARKER` (only `[S1]`-`[R999]`-shaped) never
 # mistakes it for one.
 _SKILL_MARKER = re.compile(r"\[e2e-skill:[^\[\]]+\]")
+
+# Task 11/12: markers an isolated E2E journey (or the intent golden fake
+# gate) can put in the question text to force the fake `AnswerPlan` stub's
+# `agent_intent` observability classification (never the authoritative
+# `intent`/`route`, which stay driven by `is_relation_question`/
+# `is_comparison_question` as before) without needing a real model. Matched
+# against the raw question text, the same string the stub already decodes
+# out of `request.context`'s `question` key.
+_OUT_OF_SCOPE_MARKER = "[e2e-out-of-scope]"
+_TOOL_MARKER_PREFIX = "[e2e-tool:"
+
+# Task 12: isolated E2E/integration marker the fake gateway matches against
+# the question text (same `query` field the markers above decode out of
+# `request.context`) to force the model's answer branch into a `CLARIFY:`
+# reply, exercising the `answerKind = "clarification"` path end to end
+# without a real model.
+_CLARIFY_MARKER = "[e2e-clarify]"
+_CLARIFY_REPLY = "CLARIFY: 请说明你指的是哪个产品或版本？"
+
+# Final review C-1: `[e2e-insights-only]` makes the grounded answer cite only
+# the Insights (`I<n>`) records in the pool -- no S/R claim at all -- so the
+# insights-only answer shape (Decision C: no claims, non-empty
+# `insightsFacts`) is exercised end to end without a real model.
+_INSIGHTS_ONLY_MARKER = "[e2e-insights-only]"
+
+# Task 12: one marker produces one native tool call per model round --
+# `[e2e-tool:<toolId>:<argument text>]`, matched in the order it appears in
+# the question. `toolId` is the dotted tool id (`knowledge.search`,
+# `graph.relations`, `insights.query`), never the online wire/function name.
+_TOOL_CALL_MARKER = re.compile(r"\[e2e-tool:([^:\[\]]+):([^\[\]]*)\]")
+
+# Task 12: `insights.query`'s input contract has no free-text `query` field
+# (spec 4.4/`_INSIGHTS_QUERY_SCHEMA`), so an `[e2e-tool:insights.query:...]`
+# marker always produces this fixed, schema-valid call instead of echoing
+# its argument text -- `from_date < to_date`, an IANA `timezone`, and an
+# `asOf` `datetime.fromisoformat`-parseable instant (see
+# `StructuredInsightsTool.invoke` / `MetricQuery.__post_init__`,
+# `modules/ai/ports/insights.py`).
+_FIXED_INSIGHTS_ARGUMENTS: dict[str, Any] = {
+    "metricIds": ["first_pass_rate"],
+    "filters": {},
+    "from": "2026-01-01",
+    "to": "2026-01-31",
+    "timezone": "UTC",
+    "asOf": "2026-01-31T00:00:00Z",
+}
+
+
+def _question_from_context(context: str) -> str:
+    """The question text under the top-level `query` key `trusted_value`
+    (`KnowledgeModelGateway.answer`) always carries -- shared by every
+    marker this fake gateway matches against the question, independent of
+    whether `context` also carries an `untrusted.evidence` grounded-answer
+    section (Task 12's tool-calling markers must still work before any
+    evidence/relation record has been fabricated)."""
+
+    try:
+        parsed = json.loads(context)
+    except (ValueError, TypeError):
+        return ""
+    query = parsed.get("query") if isinstance(parsed, dict) else None
+    return query if isinstance(query, str) else ""
+
+
+def _tool_call_markers(question: str) -> list[tuple[str, str]]:
+    """Every `[e2e-tool:<toolId>:<argument text>]` marker in `question`, in
+    the order it appears (first-to-last == the order the isolated E2E/
+    integration test wrote them into the question)."""
+
+    return [(match.group(1), match.group(2)) for match in _TOOL_CALL_MARKER.finditer(question)]
+
+
+def _consumed_tool_marker_keys(
+    messages: tuple[ModelMessage, ...],
+) -> set[tuple[str, str | None]]:
+    """The `(toolId, argument text)` pairs already produced as a native tool
+    call in an earlier round of this same turn, decoded from the assistant
+    `ModelMessage`s the gateway's native tool-calling protocol folds prior
+    rounds into (`_transcript_messages`, `modules/knowledge/adapters/
+    litellm.py`). `insights.query` has no `query` argument of its own
+    (its call is always the fixed `_FIXED_INSIGHTS_ARGUMENTS`), so any prior
+    `insights.query` call consumes every `[e2e-tool:insights.query:...]`
+    marker regardless of its argument text -- keyed on `None` for both
+    sides instead."""
+
+    consumed: set[tuple[str, str | None]] = set()
+    for message in messages:
+        if message.role != "assistant":
+            continue
+        for call in message.tool_calls:
+            definition = tool_for_wire_name(call.name)
+            if definition is None:
+                continue
+            tool_id = definition.tool_id
+            if tool_id == "insights.query":
+                consumed.add((tool_id, None))
+                continue
+            try:
+                parsed_args = json.loads(call.arguments_json)
+            except (ValueError, TypeError):
+                parsed_args = None
+            query = parsed_args.get("query") if isinstance(parsed_args, dict) else None
+            consumed.add((tool_id, query if isinstance(query, str) else None))
+    return consumed
+
+
+def _called_tool_ids(messages: tuple[ModelMessage, ...]) -> frozenset[str]:
+    """Tool ids this turn has already issued a native tool call for, in any
+    prior round -- used to keep a relation-question's automatic
+    `graph.relations` call (branch 2 of the fake tool-calling contract) from
+    firing more than once per turn even once its own marker-consumption key
+    (which `insights.query`-style calls do not carry) would not otherwise
+    prevent a repeat."""
+
+    called: set[str] = set()
+    for message in messages:
+        if message.role != "assistant":
+            continue
+        for call in message.tool_calls:
+            definition = tool_for_wire_name(call.name)
+            if definition is not None:
+                called.add(definition.tool_id)
+    return frozenset(called)
+
+
+def _tool_call_arguments(tool_id: str, argument_text: str) -> dict[str, Any] | None:
+    if tool_id in ("knowledge.search", "graph.relations"):
+        return {"query": argument_text}
+    if tool_id == "insights.query":
+        return dict(_FIXED_INSIGHTS_ARGUMENTS)
+    return None
+
+
+def _fake_tool_call(request: ModelRequest) -> ModelToolCall | None:
+    """The fake gateway's deterministic tool-calling decision for one model
+    round (Task 12), evaluated fresh from `request` alone -- no state is
+    kept across calls, mirroring every other marker this fake matches.
+
+    1. The first `[e2e-tool:<toolId>:...]` marker in the question not yet
+       consumed by an earlier round's native tool call produces that call.
+    2. Failing that, a relation question (`is_relation_question`, the
+       planner's own public heuristic -- Task 4's ruling that the fake
+       reuses it rather than duplicating it) whose turn offers
+       `graph.relations` and has not already called it gets one automatic
+       `graph.relations` call, so the relation-answer E2E journey still
+       exercises the tool-calling path instead of falling back to the old
+       inline-relation answer.
+    3. Otherwise `None`: the caller falls through to its existing final-
+       answer logic.
+    """
+
+    offered_wire_names = {spec.tool_id: spec.wire_name for spec in request.tools}
+    if not offered_wire_names:
+        return None
+    question = _question_from_context(request.context)
+    prior_tool_messages = sum(1 for message in request.messages if message.role == "tool")
+    consumed = _consumed_tool_marker_keys(request.messages)
+    for tool_id, argument_text in _tool_call_markers(question):
+        if tool_id not in offered_wire_names:
+            continue
+        key = (tool_id, None) if tool_id == "insights.query" else (tool_id, argument_text)
+        if key in consumed:
+            continue
+        arguments = _tool_call_arguments(tool_id, argument_text)
+        if arguments is None:
+            continue
+        return ModelToolCall(
+            f"fake-{prior_tool_messages}",
+            offered_wire_names[tool_id],
+            json.dumps(arguments),
+        )
+    if (
+        "graph.relations" in offered_wire_names
+        and "graph.relations" not in _called_tool_ids(request.messages)
+        and is_relation_question(question)
+    ):
+        return ModelToolCall(
+            f"fake-{prior_tool_messages}",
+            offered_wire_names["graph.relations"],
+            json.dumps({"query": question}),
+        )
+    return None
 
 
 def _skill_marker_in_prompt(prompt: str) -> str | None:
@@ -165,11 +355,16 @@ def _grounded_claims_from_context(context: str) -> list[dict[str, Any]]:
         untrusted = parsed_context.get("untrusted", {})
         evidence = untrusted.get("evidence", [])
         relations = untrusted.get("relations", [])
+        insights = untrusted.get("insights", [])
     except (ValueError, AttributeError):
         evidence = []
         relations = []
+        insights = []
     claims: list[dict[str, Any]] = []
     used: set[str] = set()
+    if _INSIGHTS_ONLY_MARKER in _question_from_context(context):
+        evidence = []
+        relations = []
     # A relation question's fake answer must still cite the edge
     # (`R1`), not only chunk evidence, or the `R`-label reconciliation
     # in `relation_claims.py` strips every edge citation and the
@@ -215,6 +410,19 @@ def _grounded_claims_from_context(context: str) -> list[dict[str, Any]]:
             claims.append({"text": sentence, "evidenceLabels": [item["label"]]})
         if len(claims) == 5:
             break
+    # Task 8/12: an `insights.query` record (`I<n>`) never grounds a
+    # knowledge citation -- `AuthorizedRetrieval.verify_answer`
+    # (`application/retrieve.py`) only ever surfaces it through
+    # `insights_facts` once some claim's `evidenceLabels` actually cites
+    # the label, so the fake must produce one (distinct from every S/R
+    # claim above, since `len(claims) == 5` there must not starve this).
+    for item in insights:
+        if len(claims) == 5:
+            break
+        sentence = f"{item['metricId']} is {item['value']}."
+        if sentence not in used:
+            used.add(sentence)
+            claims.append({"text": sentence, "evidenceLabels": [item["label"]]})
     return claims
 
 
@@ -305,6 +513,42 @@ class DeterministicModelGateway(LiteLLMModelGateway):
             # into a cited claim instead and reset this to `None` so the
             # trailing-echo check further down does not double it.
             skill_marker = _skill_marker_in_prompt(request.prompt)
+            # Task 12: native tool calling only ever happens for a CHAT
+            # request that was actually offered `tools` this round (the
+            # gateway's own `_validate` rejects `tools` on any other
+            # operation) -- checked before every other branch below so a
+            # pending marker/relation-question call wins even on a request
+            # that would otherwise also match PromptSuggestions/AnswerPlan's
+            # STRUCTURED shape (impossible in practice, since those never
+            # carry `tools`, but this keeps the precedence explicit).
+            if request.operation is ModelOperation.CHAT and request.tools:
+                tool_call = _fake_tool_call(request)
+                if tool_call is not None:
+                    body = {
+                        "model": "fake/deterministic-chat-v1",
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": tool_call.call_id,
+                                            "function": {
+                                                "name": tool_call.name,
+                                                "arguments": tool_call.arguments_json,
+                                            },
+                                        }
+                                    ],
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": len(request.context.split()),
+                            "completion_tokens": 0,
+                        },
+                    }
+                    return body, httpx.Headers()
             if (
                 request.operation is ModelOperation.STRUCTURED
                 and isinstance(request.schema, dict)
@@ -329,6 +573,85 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     for source in data.get("sources", [])[:8]
                 ]
                 content = json.dumps({"suggestions": suggestions})
+            elif (
+                request.operation is ModelOperation.STRUCTURED
+                and isinstance(request.schema, dict)
+                and request.schema.get("title") == "AnswerPlan"
+            ):
+                # The planner (`ModelGatewayPlanner`) now consults the model
+                # on every `retrieve`/`graph` turn, not only `complex_query`
+                # ones (Task 4); echo back a schema-conformant suggestion
+                # that keeps the planner's own deterministic route/intent
+                # (never overriding it) with a bounded, non-authoritative
+                # observability classification, instead of falling through
+                # to the generic `{"answer": "Grounded"}` stub below, which
+                # would always degrade this plan to `invalid-plan`.
+                try:
+                    data = json.loads(request.context)
+                    if not isinstance(data, dict):
+                        data = {}
+                except ValueError:
+                    data = {}
+                raw_question = data.get("question")
+                question: str = raw_question if isinstance(raw_question, str) else ""
+                source_ids = [item for item in data.get("sourceIds", []) if isinstance(item, str)]
+                # Mirror the planner's own relation/comparison heuristics
+                # (imported, not duplicated) instead of hard-coding
+                # `retrieve`/`factual_lookup`: a fake suggestion that
+                # silently overrode a relation question's `graph` route, or
+                # a comparison question's `comparison` intent and
+                # `multi_step_qa` agent intent, would change which seam the
+                # turn exercises purely because the model got consulted --
+                # not because any answer actually changed.
+                # Task 11: `[e2e-out-of-scope]` is authoritative, not just
+                # observability -- it also forces the legacy `intent`/`route`
+                # so `AnswerPlan.__post_init__`'s out-of-scope agreement
+                # invariant (`agent_intent == "out_of_scope"` iff
+                # `intent == "out_of_scope"`) holds.
+                if _OUT_OF_SCOPE_MARKER in question:
+                    intent, route = "out_of_scope", "direct"
+                elif is_relation_question(question):
+                    intent, route = "relation", "graph"
+                elif is_comparison_question(question):
+                    intent, route = "comparison", "retrieve"
+                else:
+                    intent, route = "factual_lookup", "retrieve"
+                queries = (
+                    [
+                        {
+                            "id": "q1",
+                            "text": question,
+                            "depends_on": [],
+                            "evidence_goal": question,
+                            "source_ids": source_ids,
+                        }
+                    ]
+                    if source_ids and route in ("retrieve", "graph")
+                    else []
+                )
+                # Task 11: `[e2e-tool:` only overrides the observability-only
+                # `agent_intent` (never limits which tools a turn may use,
+                # per the planner prompt) -- the out-of-scope marker above
+                # already took the authoritative branch, so it also wins
+                # here even if a question somehow carried both markers.
+                if intent == "out_of_scope":
+                    agent_intent = "out_of_scope"
+                elif _TOOL_MARKER_PREFIX in question:
+                    agent_intent = "multi_step_qa"
+                else:
+                    agent_intent = derive_agent_intent(intent, route, len(queries))
+                content = json.dumps(
+                    {
+                        "intent": intent,
+                        "route": route,
+                        "confidence": 0.9,
+                        "standalone_query": question,
+                        "missing": [],
+                        "queries": queries,
+                        "agent_intent": agent_intent,
+                        "intent_reason": "deterministic fake",
+                    }
+                )
             elif request.operation is ModelOperation.STRUCTURED:
                 # Baseline conformance for any other structured schema (test
                 # design, graph extraction, chat planning, ...): a minimal,
@@ -336,6 +659,16 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 # STRUCTURED output at all (PR 3 streams inline-marked Markdown
                 # instead, handled below), so this never needs evidence/relations.
                 content = json.dumps({"answer": "Grounded"})
+            elif _CLARIFY_MARKER in _question_from_context(request.context):
+                # Task 12: `[e2e-clarify]` forces the same `CLARIFY:`-prefixed
+                # reply shape a real model takes when it cannot answer
+                # without more information (`_CLARIFY_PREFIX`,
+                # `modules/knowledge/adapters/litellm.py`'s `answer`): the
+                # caller strips the prefix and returns `answerKind =
+                # "clarification"` with no claims/citations. Checked before
+                # the grounded-answer branch so it fires even when the
+                # turn's evidence pool is non-empty.
+                content = _CLARIFY_REPLY
             elif _is_grounded_answer_context(request.context):
                 # `KnowledgeModelGateway.answer` (PR 3) now streams a Markdown chat
                 # answer with inline `[S1]`/`[R1]` markers instead of requesting the

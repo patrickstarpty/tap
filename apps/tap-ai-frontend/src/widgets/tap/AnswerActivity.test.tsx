@@ -1,12 +1,24 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createElement, type ReactNode } from "react";
 import { expect, it } from "vitest";
 
 import {
   AnswerActivity,
   AnswerProgress,
+  AssistantResponse,
   shouldShowAnswerFeedback,
 } from "./TapperWorkspace";
+import type { AssistantTurn } from "./workspace/model";
+import { WORKSPACE_COPY } from "./workspace/copy";
+
+function queryWrapper({ children }: { children: ReactNode }) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return createElement(QueryClientProvider, { client }, children);
+}
 
 it("shows the answer summary line and expands event details on click", async () => {
   render(
@@ -191,11 +203,196 @@ it("hides the seed/path rows when there is no seed count and no paths", () => {
   expect(screen.queryByText(/seed entit/u)).not.toBeInTheDocument();
 });
 
+it("renders a tool step row with round, tool name and duration (en)", async () => {
+  render(
+    <AnswerActivity
+      locale="en"
+      sourceCount={1}
+      shownCitationCount={1}
+      chunkCitationCount={1}
+      edgeCitationCount={0}
+      graphContext={null}
+      events={[]}
+      steps={[
+        {
+          stepId: "turn-1:r1:c0",
+          tool: "knowledge.search",
+          status: "completed",
+          summary: "Found 3 hits",
+          durationMs: 120,
+          toolRound: 1,
+        },
+      ]}
+    />,
+  );
+  const summary = screen.getByText(
+    "Searched 1 source · 1 passage · 0 relations",
+  );
+  await userEvent.click(summary);
+  expect(
+    screen.getByText(
+      "Round 1 · Knowledge search · Done · Found 3 hits · 120 ms",
+    ),
+  ).toBeVisible();
+});
+
+it("renders a tool step row with round, tool name and duration (zh)", async () => {
+  render(
+    <AnswerActivity
+      locale="zh"
+      sourceCount={1}
+      shownCitationCount={1}
+      chunkCitationCount={1}
+      edgeCitationCount={0}
+      graphContext={null}
+      events={[]}
+      steps={[
+        {
+          stepId: "turn-1:r2:c1",
+          tool: "graph.relations",
+          status: "rejected",
+          summary: "来源超出范围",
+          durationMs: 5,
+          toolRound: 2,
+        },
+      ]}
+    />,
+  );
+  const summary = screen.getByText("搜索 1 个来源 · 1 段原文 · 0 条关系");
+  await userEvent.click(summary);
+  expect(
+    screen.getByText("第 2 轮 · 关系分析 · 已拒绝 · 来源超出范围 · 5 ms"),
+  ).toBeVisible();
+});
+
 it("describes a running answer using only its selected source snapshot", () => {
   render(<AnswerProgress locale="en" sourceCount={2} />);
   expect(screen.getByRole("status")).toHaveTextContent(
     "Using 2 selected sources · Generating answer…",
   );
+});
+
+it("clarification answer shows needs-more-information label without citation warning", () => {
+  const turn: AssistantTurn = {
+    id: "turn-1",
+    intent: "answer",
+    locale: "zh",
+    modelId: "model-1",
+    prompt: "报销多少？",
+    sourceReferences: [],
+    status: "completed",
+    response: {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "请问您指的是哪一份保单？",
+      answerKind: "clarification",
+      abstained: false,
+      claims: [],
+      citations: [],
+    },
+  };
+  render(
+    createElement(AssistantResponse, {
+      contentCopy: WORKSPACE_COPY.zh,
+      turn,
+      onOpenCitation: () => {},
+      onRetryConversation: () => {},
+    }),
+    { wrapper: queryWrapper },
+  );
+
+  expect(screen.getByText("需要补充信息")).toBeVisible();
+  expect(screen.getByText("请问您指的是哪一份保单？")).toBeVisible();
+  expect(screen.queryByText("回答格式无法核验，请重新提问。")).toBeNull();
+});
+
+it("insights-only answer shows body and Insights metrics without citation warning", () => {
+  const turn: AssistantTurn = {
+    id: "turn-1",
+    intent: "answer",
+    locale: "zh",
+    modelId: "model-1",
+    prompt: "本周首次通过率如何？",
+    sourceReferences: [],
+    status: "completed",
+    response: {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "本周首次通过率为 0.92。",
+      answerKind: "answer",
+      abstained: false,
+      claims: [],
+      citations: [],
+      insightsFacts: [
+        {
+          label: "I1",
+          queryId: "insq-1",
+          metricId: "first_pass_rate",
+          value: 0.92,
+          asOf: "2026-01-31T00:00:00Z",
+        },
+      ],
+    },
+  };
+  render(
+    createElement(AssistantResponse, {
+      contentCopy: WORKSPACE_COPY.zh,
+      turn,
+      onOpenCitation: () => {},
+      onRetryConversation: () => {},
+    }),
+    { wrapper: queryWrapper },
+  );
+
+  expect(screen.getByText("本周首次通过率为 0.92。")).toBeVisible();
+  expect(screen.getByText("Insights 指标")).toBeVisible();
+  expect(screen.getByText(/first_pass_rate/)).toBeVisible();
+  expect(screen.queryByText("回答格式无法核验，请重新提问。")).toBeNull();
+});
+
+it("a claim-less answer without Insights facts still shows the citation format warning", () => {
+  const turn: AssistantTurn = {
+    id: "turn-1",
+    intent: "answer",
+    locale: "zh",
+    modelId: "model-1",
+    prompt: "本周首次通过率如何？",
+    sourceReferences: [],
+    status: "completed",
+    response: {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "没有依据的回答。",
+      answerKind: "answer",
+      abstained: false,
+      claims: [],
+      citations: [],
+      insightsFacts: [],
+    },
+  };
+  render(
+    createElement(AssistantResponse, {
+      contentCopy: WORKSPACE_COPY.zh,
+      turn,
+      onOpenCitation: () => {},
+      onRetryConversation: () => {},
+    }),
+    { wrapper: queryWrapper },
+  );
+
+  expect(screen.getByText("回答格式无法核验，请重新提问。")).toBeVisible();
 });
 
 it("gates the answer feedback control to a completed turn with a durable conversation", () => {

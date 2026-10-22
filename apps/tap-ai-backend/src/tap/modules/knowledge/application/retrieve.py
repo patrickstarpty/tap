@@ -24,6 +24,7 @@ from tap.modules.access.domain.policy import (
 )
 from tap.modules.ai.application.agents.protocol import AgentContext
 from tap.modules.ai.application.agents.registry import AgentRegistry
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.knowledge.application.answer_templates import assemble_answer
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
@@ -38,6 +39,7 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationContext,
     RelationContextStatus,
     RelationEvidence,
+    merge_relation_contexts,
 )
 from tap.modules.knowledge.application.relation_claims import (
     ClaimChunkSection,
@@ -73,6 +75,7 @@ from tap.modules.knowledge.domain.models import (
     Evidence,
     FailureAnchor,
     FilterableSubtree,
+    InsightsFact,
     ModelCallProvenance,
     OpenApiAnchor,
     QueryPlan,
@@ -115,6 +118,12 @@ _MAX_EVIDENCE = 20
 # answer should not crowd out other evidence with many augmented chunks.
 _MAX_AUGMENT_MERGE = 5
 _AUGMENT_TOP_K = 20
+
+
+class RelationAnalysisUnavailable(RuntimeError):
+    """Raised by `analyse_relations` when no `RelationAnalysis` port is
+    configured on this `AuthorizedRetrieval` -- the `graph.relations` tool is
+    not available for this turn's knowledge boundary."""
 
 
 class RelationAnalysis(Protocol):
@@ -391,6 +400,7 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
+        persona: TapperPersona = CURRENT_PERSONA,
     ) -> AnswerResponse:
         prepared = await self.prepare_answer(
             request,
@@ -414,6 +424,7 @@ class AuthorizedRetrieval:
             prepared,
             governance=governance,
             model_alias=model_alias,
+            persona=persona,
         )
         return await self.verify_answer(
             prepared, generation, policy, frozen_policy=frozen_policy, authorize=authorize
@@ -429,6 +440,7 @@ class AuthorizedRetrieval:
         graph_context: tuple[Mapping[str, object], ...] = (),
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
+        include_relations: bool = True,
     ) -> AnswerResponse | EvidenceBundle:
         answer_input = None
         missing = False
@@ -589,7 +601,7 @@ class AuthorizedRetrieval:
             await authorize()
 
         relation: RelationContext | None = None
-        if self._relation_analysis is not None:
+        if include_relations and self._relation_analysis is not None:
             relation = await self._relation_analysis.analyse(
                 request.query,
                 run.response.evidence,
@@ -604,7 +616,12 @@ class AuthorizedRetrieval:
                 AbstentionReason.CONFLICTING_SOURCES,
                 relation=self._baseline_relation_outcome(relation),
             )
-        if relation is not None and self._retrieval_augment and relation.augment_chunks:
+        if (
+            include_relations
+            and relation is not None
+            and self._retrieval_augment
+            and relation.augment_chunks
+        ):
             run, relation = await self._augment_from_relations(
                 run,
                 relation,
@@ -637,6 +654,172 @@ class AuthorizedRetrieval:
             relation_first=relation_first,
         )
 
+    async def search_more(
+        self,
+        bundle: EvidenceBundle,
+        query: str,
+        source_ids: tuple[str, ...],
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool = False,
+        authorize=None,
+    ) -> tuple[EvidenceBundle, tuple[Evidence, ...]]:
+        """The `knowledge.search` tool: run one more authorized retrieval
+        against `bundle.request`'s resource selection (replacing only its
+        `query`), restricted to the intersection of `source_ids` and the
+        bundle's already-selected sources (`source_ids == ()` means every
+        already-selected source). Searches at the retrieval profile's own
+        candidate limit (not just the pool's remaining capacity, fix round 1
+        I-3): a real search index ranks already-seen chunks first, so
+        bounding the request itself to `capacity` (e.g. 2 once the pool holds
+        18) can starve a near-full pool of genuinely new hits even though
+        plenty exist further down the ranking -- the merge loop below is what
+        enforces `_MAX_EVIDENCE`, not the request size. New hits are deduped
+        against the pool by `(source_id, revision, chunk_id)` and appended
+        continuing from `S{len(pool) + 1}`; existing labels are never
+        reassigned. Returns the unchanged bundle and `()` once the pool is
+        already at `_MAX_EVIDENCE` or nothing new was found."""
+        capacity = _MAX_EVIDENCE - len(bundle.response.evidence)
+        if capacity <= 0:
+            return bundle, ()
+        plan_source_ids = {resource.source_id for resource in bundle.plan.resources}
+        allowed_source_ids = (
+            plan_source_ids if not source_ids else (set(source_ids) & plan_source_ids)
+        )
+        if not allowed_source_ids:
+            return bundle, ()
+        resource_refs = tuple(
+            ref for ref in bundle.request.resource_refs if ref.source_id in allowed_source_ids
+        )
+        if authorize is not None:
+            await authorize()
+        run = await self._retrieve(
+            replace(
+                bundle.request.as_search_request(),
+                query=query,
+                resource_refs=resource_refs,
+                top_k=None,
+            ),
+            policy,
+            frozen_policy=frozen_policy,
+            answer_plan_id=bundle.plan.answer_plan_id,
+            authorize=authorize,
+        )
+        if self._publication_authority is not None and bundle.publication is not None:
+            await self._publication_authority.revalidate(bundle.publication)
+        if self._publication_authority is not None and run.publication is not None:
+            await self._publication_authority.revalidate(run.publication)
+        existing = {
+            (item.source.source_id, item.source.revision, item.chunk_id)
+            for item in bundle.response.evidence
+        }
+        merged = list(bundle.response.evidence)
+        added: list[Evidence] = []
+        for item in run.response.evidence:
+            if len(merged) >= _MAX_EVIDENCE:
+                break
+            identity = (item.source.source_id, item.source.revision, item.chunk_id)
+            if identity in existing:
+                continue
+            existing.add(identity)
+            labeled = replace(item, evidence_label=f"S{len(merged) + 1}")
+            merged.append(labeled)
+            added.append(labeled)
+        if not added:
+            return bundle, ()
+        publication = bundle.publication
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                policy.project_id,
+                tuple(sorted({item.source.revision for item in merged})),
+            )
+        merged_tuple = tuple(merged)
+        relation = bundle.relation
+        if relation is not None:
+            # Same discipline as `_augment_from_relations`: a relation
+            # support that was snippet-only (never cited as S) may now match
+            # one of the newly added S labels -- rebind it so the model sees
+            # one citation, not a duplicate snippet plus a separate S entry.
+            relation = relation.rebind(tuple(_evidence_ref(item) for item in merged_tuple))
+        new_bundle = replace(
+            bundle,
+            response=replace(bundle.response, evidence=merged_tuple),
+            publication=publication,
+            relation=relation,
+        )
+        return new_bundle, tuple(added)
+
+    async def analyse_relations(
+        self,
+        bundle: EvidenceBundle,
+        query: str,
+        *,
+        authorize=None,
+        turn_id: str | None = None,
+        policy: RetrievalPolicyContext | None = None,
+        frozen_policy: bool = False,
+    ) -> tuple[EvidenceBundle, tuple[RelationEvidence, ...]]:
+        """The `graph.relations` tool: run the deterministic relation
+        analysis against the bundle's current evidence pool and merge the
+        result onto `bundle.relation` with `merge_relation_contexts` (R
+        labels continue, never relabel). Raises `RelationAnalysisUnavailable`
+        if this retrieval has no configured relation analysis port.
+        `policy` enables `_augment_from_relations` to re-authorize and fetch
+        `merged.augment_chunks` as fresh S-labeled support (same as the
+        single-shot path); when omitted (no live policy to re-authorize
+        against, e.g. a resumed graph node that only wants the relation
+        labels), augmentation is skipped even if `self._retrieval_augment`
+        is enabled."""
+        if self._relation_analysis is None:
+            raise RelationAnalysisUnavailable("relation analysis is not configured")
+        if authorize is not None:
+            await authorize()
+        new_context = await self._relation_analysis.analyse(
+            query,
+            bundle.response.evidence,
+            tuple(sorted({resource.revision for resource in bundle.plan.resources})),
+            turn_id=turn_id,
+        )
+        merged = merge_relation_contexts(bundle.relation, new_context)
+        existing_labels = (
+            frozenset()
+            if bundle.relation is None
+            else {relation.label for relation in bundle.relation.relations}
+        )
+        added_relations = tuple(
+            relation for relation in merged.relations if relation.label not in existing_labels
+        )
+        new_bundle = replace(bundle, relation=merged)
+        if (
+            policy is not None
+            and self._retrieval_augment
+            and merged.augment_chunks
+            and len(new_bundle.response.evidence) < _MAX_EVIDENCE
+        ):
+            run = _RetrievalRun(
+                response=new_bundle.response,
+                plan=new_bundle.plan,
+                context_snapshot=new_bundle.context_snapshot,
+                policy=policy,
+                publication=new_bundle.publication,
+            )
+            run, merged = await self._augment_from_relations(
+                run,
+                merged,
+                bundle.request,
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=bundle.plan.answer_plan_id,
+                authorize=authorize,
+            )
+            new_bundle = replace(
+                new_bundle,
+                response=run.response,
+                publication=run.publication,
+                relation=merged,
+            )
+        return new_bundle, added_relations
+
     async def generate_answer(
         self,
         bundle: EvidenceBundle,
@@ -647,6 +830,9 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerGeneration:
         """Rechecks current revision/policy and authorizes before generating.
 
@@ -666,7 +852,13 @@ class AuthorizedRetrieval:
         if authorize is not None:
             await authorize()
         return await self._generate_from_bundle(
-            bundle, governance=governance, model_alias=model_alias, on_text=on_text
+            bundle,
+            governance=governance,
+            model_alias=model_alias,
+            on_text=on_text,
+            persona=persona,
+            tools=tools,
+            transcript=transcript,
         )
 
     async def _generate_from_bundle(
@@ -676,6 +868,9 @@ class AuthorizedRetrieval:
         governance=None,
         model_alias: str | None = None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
@@ -684,6 +879,10 @@ class AuthorizedRetrieval:
             or bundle.answer_input is not None
             or bundle.relation is not None
             or on_text is not None
+            or persona is not CURRENT_PERSONA
+            or bool(tools)
+            or bool(transcript)
+            or bool(bundle.insights_records)
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -695,10 +894,16 @@ class AuthorizedRetrieval:
                 model_alias=model_alias,
                 relation_context=bundle.relation,
                 relation_first=bundle.relation_first,
+                persona=persona,
                 **(
                     {"answer_input": bundle.answer_input} if bundle.answer_input is not None else {}
                 ),
                 **({"on_text": on_text} if on_text is not None else {}),
+                **({"tools": tools} if tools else {}),
+                **({"transcript": transcript} if transcript else {}),
+                **(
+                    {"insights_records": bundle.insights_records} if bundle.insights_records else {}
+                ),
             )
             if use_extended_answer
             else await self._answers.answer(
@@ -724,6 +929,34 @@ class AuthorizedRetrieval:
         self._validate_binding(current, bundle.plan, bundle.context_snapshot)
         if self._publication_authority is not None and bundle.publication is not None:
             await self._publication_authority.revalidate(bundle.publication)
+        if generation.answer_kind == "clarification" and not generation.text.strip():
+            # Defense in depth: a clarification with no question to show the
+            # user is the no-evidence/abstain outcome (ruling, fix round 1),
+            # never a completed turn -- even if some future caller reaches
+            # here with `answer_kind == "clarification"` and blank text,
+            # `KnowledgeModelGateway.answer` no longer produces this shape.
+            return self._abstain(
+                bundle.response,
+                AbstentionReason.INSUFFICIENT_EVIDENCE,
+                relation=self._baseline_relation_outcome(bundle.relation),
+            )
+        if generation.answer_kind == "clarification":
+            return AnswerResponse(
+                trace_id=bundle.response.trace_id,
+                query_plan_id=bundle.response.query_plan_id,
+                context_snapshot_id=bundle.response.context_snapshot_id,
+                corpus_version=bundle.response.corpus_version,
+                retrieval_profile_id=bundle.response.retrieval_profile_id,
+                answer=generation.text,
+                abstained=False,
+                claims=(),
+                citations=(),
+                embedding_provenance=bundle.response.embedding_provenance,
+                answer_provenance=self._generation_provenance(generation),
+                degraded_mode=bundle.response.degraded_mode,
+                degradation_reasons=bundle.response.degradation_reasons,
+                answer_kind="clarification",
+            )
         if bundle.flow_context and any(
             not flowchart_claim_is_consistent(
                 claim.evidence_labels, cast(dict[str, Any], bundle.flow_context)
@@ -735,6 +968,68 @@ class AuthorizedRetrieval:
                 AbstentionReason.INSUFFICIENT_EVIDENCE,
                 relation=self._baseline_relation_outcome(bundle.relation),
             )
+
+        # Task 8: Insights (`I<n>`) labels never generate a knowledge citation
+        # -- strip them from `generation.claims` before relation reconciliation
+        # (which resolves every remaining label against S/R citations and
+        # would otherwise abstain the whole answer over an unresolvable `I`
+        # label). A claim that cited only an Insights label is dropped as a
+        # claim entirely; its sentence stays in `generation.text` verbatim
+        # (parsing already removed the `[I<n>]` marker itself), and the cited
+        # record is surfaced through `insights_facts` instead.
+        insights_by_label = {
+            str(record["label"]): record for record in bundle.insights_records if "label" in record
+        }
+        insights_facts: tuple[InsightsFact, ...] = ()
+        if insights_by_label:
+            referenced_labels: list[str] = []
+            kept_claims: list[GeneratedClaim] = []
+            for claim in generation.claims:
+                other_labels = tuple(
+                    label for label in claim.evidence_labels if label not in insights_by_label
+                )
+                for label in claim.evidence_labels:
+                    if label in insights_by_label and label not in referenced_labels:
+                        referenced_labels.append(label)
+                if other_labels:
+                    kept_claims.append(
+                        claim
+                        if other_labels == claim.evidence_labels
+                        else replace(claim, evidence_labels=other_labels)
+                    )
+            generation = replace(generation, claims=tuple(kept_claims))
+            insights_facts = tuple(
+                InsightsFact(
+                    label=label,
+                    query_id=str(insights_by_label[label]["queryId"]),
+                    metric_id=str(insights_by_label[label]["metricId"]),
+                    value=cast(Any, insights_by_label[label]["value"]),
+                    as_of=str(insights_by_label[label]["asOf"]),
+                )
+                for label in referenced_labels
+            )
+            if not generation.claims and generation.text.strip() and insights_facts:
+                # No S/R claim survived stripping, but the text still carries
+                # at least one cited Insights fact -- an insights-only answer,
+                # not an abstention (ruling, Task 8).
+                return AnswerResponse(
+                    trace_id=bundle.response.trace_id,
+                    query_plan_id=bundle.response.query_plan_id,
+                    context_snapshot_id=bundle.response.context_snapshot_id,
+                    corpus_version=bundle.response.corpus_version,
+                    retrieval_profile_id=bundle.response.retrieval_profile_id,
+                    answer=generation.text,
+                    abstained=False,
+                    claims=(),
+                    citations=(),
+                    embedding_provenance=bundle.response.embedding_provenance,
+                    answer_provenance=self._generation_provenance(generation),
+                    degraded_mode=bundle.response.degraded_mode,
+                    degradation_reasons=bundle.response.degradation_reasons,
+                    answer_kind=generation.answer_kind,
+                    insights_facts=insights_facts,
+                    relation=self._baseline_relation_outcome(bundle.relation),
+                )
 
         relation_outcome: RelationOutcome | None = None
         stripped = 0
@@ -951,6 +1246,7 @@ class AuthorizedRetrieval:
             degraded_mode=bundle.missing or stripped > 0 or unresolvable_cited > 0,
             degradation_reasons=degradation_reasons,
             relation=relation_outcome,
+            insights_facts=insights_facts,
         )
 
     async def _augment_from_relations(

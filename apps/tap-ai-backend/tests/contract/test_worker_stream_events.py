@@ -123,6 +123,59 @@ def test_turn_completed_accepts_stale_and_empty_graph_context_status(status: str
     ChatEventEnvelope.model_validate(envelope)
 
 
+@pytest.mark.parametrize(
+    "insights_facts",
+    [
+        None,
+        [
+            {
+                "label": "I1",
+                "queryId": "query-1",
+                "metricId": "first_pass_rate",
+                "value": 0.92,
+                "asOf": "2026-10-01",
+            }
+        ],
+    ],
+    ids=["none", "cited"],
+)
+def test_turn_completed_streams_the_http_answer_dump_with_insights_facts(
+    insights_facts: list[dict[str, object]] | None,
+) -> None:
+    """The worker persists `turn.completed` as the HTTP `RetrievalAnswerResponse`
+    dump, which always carries `insightsFacts` (PR 5 Task 8); the strict
+    stream contract must accept it or every SSE replay of a terminal answer
+    fails mid-body."""
+    from tap.contracts.chat_stream import RetrievalAnswerResponse as StreamAnswer
+    from tap.contracts.http import RetrievalAnswerResponse as HttpAnswer
+
+    answer = HttpAnswer.model_validate(
+        {
+            "traceId": "trace-1",
+            "queryPlanId": "plan-1",
+            "contextSnapshotId": "context-1",
+            "corpusVersion": "tapper-demo-v1",
+            "retrievalProfileId": "quick-hybrid-v1",
+            "degradedMode": False,
+            "answer": "首次通过率为 92%。",
+            "abstained": False,
+            "claims": [],
+            "citations": [],
+            "insightsFacts": insights_facts,
+        }
+    ).model_dump(mode="json", by_alias=True)
+    assert "insightsFacts" in answer
+
+    envelope = ChatEventEnvelope.model_validate(
+        _envelope(sequence=1, event_type="turn.completed", payload={"answer": answer})
+    ).model_dump(mode="json", by_alias=True)
+
+    assert envelope["event"]["payload"]["answer"]["insightsFacts"] == insights_facts
+    assert set(StreamAnswer.model_json_schema(by_alias=True)["properties"]) == set(
+        HttpAnswer.model_json_schema(by_alias=True)["properties"]
+    )
+
+
 @pytest.mark.asyncio
 async def test_knowledge_events_validate_against_contract() -> None:
     conversations = _KnowledgeConversations()

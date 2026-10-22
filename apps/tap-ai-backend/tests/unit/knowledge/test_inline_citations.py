@@ -21,7 +21,7 @@ from tap.modules.ai.domain.models import (
     text_digest,
 )
 from tap.modules.knowledge.adapters.grounded_output import parse_inline_answer
-from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
+from tap.modules.knowledge.adapters.litellm import _TOOL_LOOP_PROMPT, KnowledgeModelGateway
 from tap.modules.knowledge.domain.models import (
     CodeAnchor,
     ContentRole,
@@ -193,12 +193,13 @@ def _answer_gateway(stream_gateway) -> KnowledgeModelGateway:
     )
 
 
-def _result(output: str) -> ModelResult:
+def _result(output: str, *, tool_calls: tuple[object, ...] = ()) -> ModelResult:
     return ModelResult(
         output=output,
         actual_model="qwen-plus",
         usage=ModelUsage(),
         actual_provider="dashscope",
+        tool_calls=tool_calls,
         audit=ModelCallAudit(
             VALIDATION_SCOPE,
             "qwen-plus",
@@ -346,3 +347,203 @@ async def test_on_text_receives_every_delta() -> None:
 
     assert received == chunks
     assert generation.claims[0].evidence_labels == ("S1",)
+
+
+@pytest.mark.asyncio
+async def test_clarify_prefix_yields_clarification_generation() -> None:
+    class ClarifyGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("  CLARIFY: 你指的是哪个产品版本？")
+            yield _result("  CLARIFY: 你指的是哪个产品版本？")
+
+    generation = await _answer_gateway(ClarifyGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "clarification"
+    assert generation.text == "你指的是哪个产品版本？"
+    assert generation.claims == ()
+
+
+@pytest.mark.asyncio
+async def test_clarify_marker_mid_text_is_ordinary_text() -> None:
+    class MidTextGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("保单生效[S1]。CLARIFY: x")
+            yield _result("保单生效[S1]。CLARIFY: x")
+
+    generation = await _answer_gateway(MidTextGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "answer"
+
+
+@pytest.mark.asyncio
+async def test_clarify_prefix_with_no_question_abstains_instead_of_an_empty_clarification() -> None:
+    """Ruling (task reviewer, fix round 1): a `CLARIFY:` prefix with nothing
+    after it carries no question to show the user -- per the plan ("正文为空
+    时按无依据处理"), this is the no-evidence/abstain outcome, not an empty
+    clarification, so `answer_kind` must stay `"answer"` (the turn then
+    abstains downstream in `verify_answer`, never completes with a blank
+    clarification)."""
+
+    class EmptyClarifyGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta("CLARIFY:")
+            yield _result("CLARIFY:")
+
+    generation = await _answer_gateway(EmptyClarifyGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "answer"
+    assert generation.text == ""
+    assert generation.claims == ()
+
+
+@pytest.mark.asyncio
+async def test_answer_with_tools_returns_tool_calls_without_parsing() -> None:
+    """PR 5 Task 7: when the model asks to call a tool, `answer` returns the
+    tool calls verbatim and never attempts to parse the (discarded) draft
+    text as a grounded answer."""
+    from tap.modules.ai.domain.models import ModelToolCall
+
+    captured: dict[str, object] = {}
+
+    class ToolCallGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured["request"] = request
+            yield ModelTextDelta("let me check")
+            yield _result(
+                "let me check",
+                tool_calls=(ModelToolCall("c1", "knowledge_search", '{"query":"q"}'),),
+            )
+
+    generation = await _answer_gateway(ToolCallGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1", tools=("knowledge.search",)
+    )
+
+    assert generation.text == ""
+    assert generation.claims == ()
+    assert len(generation.tool_calls) == 1
+    assert generation.tool_calls[0].name == "knowledge_search"
+    assert generation.tool_calls[0].arguments_json == '{"query":"q"}'
+    request = captured["request"]
+    assert request.tools[0].tool_id == "knowledge.search"
+    assert _TOOL_LOOP_PROMPT in request.prompt
+
+
+@pytest.mark.asyncio
+async def test_answer_without_tools_omits_tool_loop_prompt() -> None:
+    """PR 5 Task 7: with no tools offered, the request carries no tool specs
+    and the prompt is not padded with the tool-loop instructions."""
+    captured: dict[str, object] = {}
+
+    class PlainGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured["request"] = request
+            yield ModelTextDelta("结论成立[S1]。")
+            yield _result("结论成立[S1]。")
+
+    await _answer_gateway(PlainGateway()).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    request = captured["request"]
+    assert request.tools == ()
+    assert _TOOL_LOOP_PROMPT not in request.prompt
+
+
+@pytest.mark.asyncio
+async def test_transcript_reaches_model_messages_redacted() -> None:
+    """PR 5 Task 7: a tool message's `content` in the transcript is redacted
+    the same way every other model-bound text is before it reaches the
+    gateway's native `ModelMessage` transcript."""
+    from tap.modules.ai.domain.models import ModelMessage
+
+    captured: dict[str, object] = {}
+
+    async def redact(text: str) -> str:
+        return text.replace("user@example.com", "[REDACTED_EMAIL]")
+
+    class CapturingGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            captured["request"] = request
+            yield ModelTextDelta("结论成立[S1]。")
+            yield _result("结论成立[S1]。")
+
+    gateway = KnowledgeModelGateway(
+        CapturingGateway(),
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+
+    await gateway.answer(
+        "query",
+        (evidence(label="S1"),),
+        "quick-hybrid-v1",
+        tools=("knowledge.search",),
+        transcript=(
+            {
+                "role": "assistant",
+                "toolCalls": [
+                    {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
+                ],
+            },
+            {"role": "tool", "toolCallId": "c1", "content": "contact user@example.com"},
+        ),
+    )
+
+    request = captured["request"]
+    assert isinstance(request.messages[-1], ModelMessage)
+    assert request.messages[-1].role == "tool"
+    assert "[REDACTED_EMAIL]" in request.messages[-1].content
+
+
+def _text_gateway(text: str):
+    class TextGateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(text)
+            yield _result(text)
+
+    return TextGateway()
+
+
+@pytest.mark.asyncio
+async def test_clarify_reply_at_the_300_character_bound_is_a_clarification() -> None:
+    question = "你" * 299 + "？"
+    generation = await _answer_gateway(_text_gateway(f"CLARIFY: {question}\n")).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "clarification"
+    assert generation.text == question
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "CLARIFY: " + "你" * 301,
+        "CLARIFY: 你指的是哪个版本？\n保单生效[S1]。",
+    ],
+)
+async def test_long_or_multiline_clarify_reply_is_a_grounded_answer(reply) -> None:
+    """Final review M-5: only a single line of at most 300 characters after
+    `CLARIFY:` is a clarification; a longer or multi-line reply is handled
+    as an ordinary answer and goes through inline-citation grounding, so a
+    model cannot bypass grounding with a `CLARIFY:` prefix."""
+    generation = await _answer_gateway(_text_gateway(reply)).answer(
+        "query", (evidence(label="S1"),), "quick-hybrid-v1"
+    )
+
+    assert generation.answer_kind == "answer"
+    if "[S1]" in reply:
+        assert generation.claims and generation.claims[0].evidence_labels == ("S1",)
+    else:
+        assert generation.claims == ()

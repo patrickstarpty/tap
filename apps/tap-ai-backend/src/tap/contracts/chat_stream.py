@@ -168,6 +168,17 @@ class GraphContextSummaryView(StreamContractModel):
     relation_count: int = Field(ge=0)
 
 
+class InsightsFactView(StreamContractModel):
+    """Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited
+    `I<n>` Insights metric record, in citation order."""
+
+    label: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    value: float | int | None = None
+    as_of: str = Field(min_length=1)
+
+
 class RetrievalAnswerResponse(StreamContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -179,6 +190,7 @@ class RetrievalAnswerResponse(StreamContractModel):
     answer: str
     abstained: bool
     abstention_reason: AbstentionReason | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
     claims: list[AnswerClaim]
     citations: list[Citation]
     graph_context_status: Literal[
@@ -186,6 +198,7 @@ class RetrievalAnswerResponse(StreamContractModel):
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
     graph_context: GraphContextSummaryView | None = None
+    insights_facts: list[InsightsFactView] | None = None
 
 
 class TurnStartedPayload(StreamContractModel):
@@ -252,11 +265,34 @@ class RetrievalHitsReadyPayload(StreamContractModel):
     trace_id: str = Field(min_length=1)
     authorized_hit_count: int = Field(ge=0)
     labels: list[RetrievalHitsLabelView] | None = None
+    # PR 5 (Task 9): set when this hit-count came from a `tools` graph-node
+    # tool call (`knowledge.search`/`graph.relations`), so the client can
+    # correlate it with the `task.step` that produced it; `None` for the
+    # original `seed_search`-produced event.
+    step_id: str | None = None
 
 
 class RetrievalHitsReadyEvent(StreamContractModel):
     type: Literal["retrieval.hits_ready"]
     payload: RetrievalHitsReadyPayload
+
+
+class TaskStepPayload(StreamContractModel):
+    """One bounded tool-calling round's per-call progress (PR 5 Task 9):
+    `status` moves `running` -> a terminal state (`completed`/`rejected`/
+    `failed`); `step_id` is `f"{turnId}:r{round}:c{index}"`, unique per call."""
+
+    step_id: str = Field(min_length=1)
+    tool: str = Field(min_length=1)
+    status: Literal["running", "completed", "rejected", "failed"]
+    summary: str = Field(max_length=200)
+    duration_ms: int = Field(ge=0)
+    tool_round: int = Field(ge=1)
+
+
+class TaskStepEvent(StreamContractModel):
+    type: Literal["task.step"]
+    payload: TaskStepPayload
 
 
 class GraphContextReadyPayload(StreamContractModel):
@@ -441,6 +477,7 @@ ChatStreamEvent = Annotated[
     | StageStartedEvent
     | StageCompletedEvent
     | RetrievalHitsReadyEvent
+    | TaskStepEvent
     | GraphContextReadyEvent
     | RerankCompletedEvent
     | AnswerDraftEvent

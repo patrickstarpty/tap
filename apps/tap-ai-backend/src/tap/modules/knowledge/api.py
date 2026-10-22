@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -28,6 +28,9 @@ from tap.contracts.http import (
 )
 from tap.contracts.http import (
     GraphEndpointView as HttpGraphEndpointView,
+)
+from tap.contracts.http import (
+    InsightsFactView as HttpInsightsFactView,
 )
 from tap.contracts.http import (
     OpenApiAnchor as HttpOpenApiAnchor,
@@ -63,6 +66,7 @@ from tap.contracts.http import (
 from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.knowledge.application.answer_templates import (
     get_template,
     latest_template_version,
@@ -199,6 +203,7 @@ class KnowledgeAPI:
         graph_context=(),
         answer_execution=None,
         authorize=None,
+        include_relations: bool = True,
     ):
         import asyncio
 
@@ -213,6 +218,7 @@ class KnowledgeAPI:
                 graph_context=graph_context,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                include_relations=include_relations,
             )
 
     async def generate_frozen(
@@ -225,6 +231,9 @@ class KnowledgeAPI:
         answer_execution=None,
         authorize=None,
         on_text=None,
+        persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
     ):
         import asyncio
 
@@ -239,6 +248,9 @@ class KnowledgeAPI:
                 model_alias=model_alias,
                 authorize=authorize,
                 on_text=on_text,
+                persona=persona,
+                tools=tools,
+                transcript=transcript,
             )
 
     async def verify_frozen(
@@ -261,6 +273,56 @@ class KnowledgeAPI:
                 policy,
                 frozen_policy=True,
                 authorize=authorize,
+            )
+
+    async def search_more_frozen(
+        self,
+        bundle,
+        query,
+        source_ids,
+        policy,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """The `knowledge.search` tool's frozen entrypoint (Task 6)."""
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.search_more(
+                bundle,
+                query,
+                source_ids,
+                policy,
+                frozen_policy=True,
+                authorize=authorize,
+            )
+
+    async def relations_frozen(
+        self,
+        bundle,
+        query,
+        policy,
+        *,
+        turn_id=None,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """The `graph.relations` tool's frozen entrypoint (Task 6)."""
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.analyse_relations(
+                bundle,
+                query,
+                authorize=authorize,
+                turn_id=turn_id,
+                policy=policy,
+                frozen_policy=True,
             )
 
 
@@ -343,6 +405,7 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
             if response.abstention_reason is not None
             else None
         ),
+        answer_kind=response.answer_kind,
         claims=[
             HttpClaim(
                 claim_id=item.claim_id,
@@ -357,6 +420,19 @@ def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
         graph_context_status=graph_context_status,
         graph_snapshot_id=graph_snapshot_id,
         graph_context=graph_context,
+        insights_facts=(
+            [
+                HttpInsightsFactView(
+                    label=item.label,
+                    query_id=item.query_id,
+                    metric_id=item.metric_id,
+                    value=item.value,
+                    as_of=item.as_of,
+                )
+                for item in response.insights_facts
+            ]
+            or None
+        ),
     )
 
 

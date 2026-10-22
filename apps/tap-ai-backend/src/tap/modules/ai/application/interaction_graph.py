@@ -68,20 +68,29 @@ class VersionedGraphRunner:
             configurable["execution_mode"] = execution_mode
         return cast(RunnableConfig, {"configurable": configurable})
 
-    async def start(self, *, run_id: str, state: Mapping[str, Any]) -> dict[str, Any]:
+    async def start(
+        self,
+        *,
+        run_id: str,
+        state: Mapping[str, Any],
+        recursion_limit: int | None = None,
+    ) -> dict[str, Any]:
+        config = self._config(
+            run_id,
+            graph_version=self._graph_version,
+            state_schema_version=self._state_schema_version,
+            execution_mode=cast(str | None, state.get("execution_mode")),
+        )
+        if recursion_limit is not None:
+            config = cast(RunnableConfig, {**config, "recursion_limit": recursion_limit})
         result = await self._compiled.ainvoke(
             cast(Any, state),
-            self._config(
-                run_id,
-                graph_version=self._graph_version,
-                state_schema_version=self._state_schema_version,
-                execution_mode=cast(str | None, state.get("execution_mode")),
-            ),
+            config,
             durability=cast(Literal["sync"], "sync"),
         )
         return cast(dict[str, Any], result)
 
-    async def resume(self, *, run_id: str) -> dict[str, Any]:
+    async def resume(self, *, run_id: str, recursion_limit: int | None = None) -> dict[str, Any]:
         config = self._config(run_id)
         snapshot = await self._compiled.aget_state(config)
         if not snapshot.values:
@@ -96,6 +105,8 @@ class VersionedGraphRunner:
             )
         if not await self._authorize():
             raise PermissionError("graph run authorization changed")
+        if recursion_limit is not None:
+            config = cast(RunnableConfig, {**config, "recursion_limit": recursion_limit})
         result = await self._compiled.ainvoke(
             None, config, durability=cast(Literal["sync"], "sync")
         )

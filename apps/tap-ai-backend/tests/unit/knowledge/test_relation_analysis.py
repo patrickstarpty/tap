@@ -35,12 +35,14 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationContext,
     RelationContextStatus,
     RelationEvidence,
+    RelationGraphChanged,
     RelationPath,
     RelationSupport,
     assemble,
     expand,
     expansion_depth,
     find_paths,
+    merge_relation_contexts,
     rank_edges,
     seed_from_evidence,
     seed_from_query,
@@ -1002,3 +1004,55 @@ def test_relation_support_rejects_empty_string_snippet_alongside_evidence_label(
             evidence_label="S1",
             snippet="",
         )
+
+
+def _merge_relation(label: str, edge_id: str) -> RelationEvidence:
+    return RelationEvidence(
+        label=label,
+        edge_id=edge_id,
+        subject_node_id="A",
+        subject_label="节点 A",
+        subject_aliases=(),
+        object_node_id="B",
+        object_label="节点 B",
+        object_aliases=(),
+        relation_type="REQUIRES",
+        relation_label="REQUIRES",
+        origin="EXTRACTED",
+        confidence=0.9,
+        support=(
+            RelationSupport(
+                chunk_id=f"chunk-{edge_id}",
+                source_revision_id="rev-1",
+                document_revision_id="rev-1",
+                content_digest="d1",
+                anchor={},
+                evidence_label="S1",
+            ),
+        ),
+        on_path=False,
+    )
+
+
+def test_merge_relation_contexts_returns_new_when_current_is_none() -> None:
+    new = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="7",
+        relations=(_merge_relation("R1", "edge-1"),),
+    )
+    assert merge_relation_contexts(None, new) is new
+
+
+def test_merge_relation_contexts_rejects_graph_version_change() -> None:
+    current = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="7",
+        relations=(_merge_relation("R1", "edge-1"),),
+    )
+    new = RelationContext(
+        status=RelationContextStatus.APPLIED,
+        graph_version="8",
+        relations=(_merge_relation("R1", "edge-2"),),
+    )
+    with pytest.raises(RelationGraphChanged):
+        merge_relation_contexts(current, new)

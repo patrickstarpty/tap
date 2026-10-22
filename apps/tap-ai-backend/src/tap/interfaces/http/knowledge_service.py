@@ -6,7 +6,8 @@ import asyncio
 import dataclasses
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -48,6 +49,7 @@ from tap.modules.knowledge.domain.models import (
     SearchResponse,
 )
 from tap.modules.knowledge.domain.sources import SourceCommand
+from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 
 
 class AnswerBudgetExhausted(TimeoutError):
@@ -103,6 +105,19 @@ def _retrieval_hits_payload(response: Any, relation: Any | None) -> dict[str, ob
     }
 
 
+def _tool_call_summary(tool_id: str, query: str, labels: tuple[str, ...], *, unit: str) -> str:
+    """`run_conversation_tool`'s `summary` text: `tool_id “<query>” → +N
+    条<unit>（<first label>–<last label>）`, or `→ 无新<unit>` when nothing new
+    was admitted into the pool (already full, or every candidate deduped
+    against an existing label). `query` is already redacted and bounded by
+    `KnowledgeHttpService._summary_query` (final review M-2)."""
+    prefix = f"{tool_id} “{query}”"
+    if not labels:
+        return f"{prefix} → 无新{unit}"
+    label_range = labels[0] if labels[0] == labels[-1] else f"{labels[0]}–{labels[-1]}"
+    return f"{prefix} → +{len(labels)} 条{unit}（{label_range}）"
+
+
 class DocumentOperations(Protocol):
     @property
     def scope(self) -> ProjectScopeContext: ...
@@ -138,6 +153,10 @@ class AnswerOperations(Protocol):
 
     async def resolve_conversation_selection(self, revision_ids): ...
 
+    async def search_more_frozen(self, *args, **kwargs): ...
+
+    async def relations_frozen(self, *args, **kwargs): ...
+
 
 class CitationOperations(Protocol):
     @property
@@ -172,6 +191,7 @@ class KnowledgeHttpService:
         models: Any | None = None,
         answer_planner: Any | None = None,
         redactor: Any | None = None,
+        relations_available: bool = False,
     ) -> None:
         if corpus_version not in {"tapper-demo-v1", "tapper-demo-v2"}:
             raise ValueError("unsupported projection corpus")
@@ -181,9 +201,31 @@ class KnowledgeHttpService:
         self._searches = searches
         self._sources = sources
         self._corpus_version = corpus_version
+        # Task 6: whether the underlying `AuthorizedRetrieval` this service's
+        # `answers` boundary was built with has a configured relation
+        # analysis port -- i.e. whether `graph.relations` can ever succeed
+        # for this deployment. Set by the composition root that wires
+        # `AuthorizedRetrieval(relation_analysis=...)`.
+        self.relations_available = relations_available
         self._models = models
         self.answer_planner = answer_planner
         self._redactor = redactor
+
+    async def _summary_query(self, query: str) -> str:
+        """The tool query as shown in a `task.step` summary: redacted first,
+        then cut to 60 characters (final review M-2) -- cutting first could
+        split an ID/email into a fragment no redaction pattern matches. The
+        caller (`ChatTurnNodes.tools`) redacts the whole summary again with
+        the v2 chat egress rules; a redaction failure here degrades to a
+        content-free placeholder rather than failing the tool call."""
+        report = getattr(self._redactor, "redact_with_report", None)
+        if report is None:
+            return query[:60]
+        try:
+            redacted, _hits = await report(query)
+        except RedactionUnavailable:
+            return "内容已隐去"
+        return redacted[:60]
 
     async def redaction_report(self, text: str) -> Mapping[str, int]:
         """Egress-redaction hit counts for `text`, by pattern kind; empty
@@ -405,13 +447,21 @@ class KnowledgeHttpService:
         )
 
     async def prepare_conversation_answer(
-        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+        self,
+        request: RetrievalAnswerRequest,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        include_relations: bool = True,
     ):
         """Resumable prepare phase: retrieval (or a non-retrieval route's
         complete answer) only, re-deriving and re-checking authority from
         `frozen_input`, bounded by the plan's persisted deadline from the
         start -- including the non-retrieval model call, which otherwise has
-        no time limit of its own."""
+        no time limit of its own. `include_relations=False` (Task 9's
+        `seed_search` graph node call) skips relation analysis inline --
+        `graph.relations` runs it later, as a tool call."""
         async with self._plan_deadline(answer_plan):
             context = await self._authorized_frozen_context(
                 original_question=request.query,
@@ -437,6 +487,7 @@ class KnowledgeHttpService:
                 governance=governance,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                include_relations=include_relations,
             )
             if isinstance(prepared, AnswerResponse):
                 return {"kind": "verified", "response": to_json(prepared)}
@@ -451,7 +502,14 @@ class KnowledgeHttpService:
             }
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools: tuple[str, ...] = (),
     ):
         """Resumable generate phase: only acts on a `"prepared"` step,
         re-authorizing from `frozen_input` before the model call, bounded by
@@ -459,11 +517,17 @@ class KnowledgeHttpService:
         returned unchanged. `on_text` (PR 3) is the `model` graph node's
         draft-streaming callback, passed through to the knowledge gateway's
         streaming model call; omitted entirely when `None` so a
-        `generate_frozen` double that does not know about it is unaffected."""
+        `generate_frozen` double that does not know about it is unaffected.
+        `tools` (PR 5 Task 7) are the tool IDs offered this round; when the
+        model asks to call one, this returns a `"tool_calls"` step carrying
+        `pending_tool_calls` and the extended `transcript` instead of a
+        `"generated"` step -- the model's draft is discarded unparsed
+        (`AnswerGeneration.text` stays `""`)."""
         async with self._plan_deadline(answer_plan):
             if step.get("kind") != "prepared":
                 return step
             answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            from tap.modules.ai.domain.persona import persona_for
             from tap.modules.knowledge.application.evidence_bundle import decode_bundle
             from tap.platform.serialization.dataclass_json import to_json
 
@@ -477,6 +541,7 @@ class KnowledgeHttpService:
                 raise ValueError("resumed step no longer matches a retrieval route")
             revisions, policy, governance = context
             bundle = decode_bundle(step["bundle"])
+            transcript = step.get("transcript", [])
             generation = await self._answers.generate_frozen(
                 bundle,
                 revisions,
@@ -485,8 +550,29 @@ class KnowledgeHttpService:
                 model_alias=frozen_input.model_alias,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                persona=persona_for(frozen_input.persona_version),
                 **({"on_text": on_text} if on_text is not None else {}),
+                **({"tools": tools} if tools else {}),
+                **({"transcript": tuple(transcript)} if transcript else {}),
             )
+            if generation.tool_calls:
+                pending_tool_calls = [
+                    {
+                        "callId": call.call_id,
+                        "name": call.name,
+                        "argumentsJson": call.arguments_json,
+                    }
+                    for call in generation.tool_calls
+                ]
+                return {
+                    "kind": "tool_calls",
+                    "bundle": step["bundle"],
+                    "transcript": [
+                        *transcript,
+                        {"role": "assistant", "toolCalls": pending_tool_calls},
+                    ],
+                    "pending_tool_calls": pending_tool_calls,
+                }
             return {
                 "kind": "generated",
                 "bundle": step["bundle"],
@@ -680,10 +766,12 @@ class KnowledgeHttpService:
         recheck on resume. Returns either `(revisions, policy, governance)`
         for a route that still requires retrieval, or a complete
         `RetrievalAnswerResponse` for a route that never reaches it."""
+        from tap.modules.ai.domain.persona import persona_for
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
         from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 
+        persona = persona_for(frozen_input.persona_version)
         revisions = tuple(
             sorted(
                 (
@@ -752,6 +840,7 @@ class KnowledgeHttpService:
                 original_question,
                 model_alias=frozen_input.model_alias,
                 governance=governance,
+                persona=persona,
                 **(
                     {"answer_plan_id": answer_plan.plan_id, "answer_input": answer_input}
                     if answer_plan is not None
@@ -797,6 +886,7 @@ class KnowledgeHttpService:
                 governance=governance,
                 answer_plan_id=answer_plan.plan_id,
                 answer_input=answer_input,
+                persona=persona,
             )
             if authorize is not None:
                 await authorize()
@@ -835,6 +925,7 @@ class KnowledgeHttpService:
             degraded_mode=False,
             answer=answer,
             abstained=False,
+            answer_kind="clarification" if plan.route == "clarify" else "answer",
             claims=[],
             citations=[],
             graph_context_status="NOT_SELECTED",
@@ -855,6 +946,173 @@ class KnowledgeHttpService:
             citations=[],
             graph_context_status="NOT_SELECTED",
         )
+
+    async def run_conversation_tool(
+        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+    ):
+        """Grow a `"prepared"` step's evidence pool through one admitted
+        `knowledge.search`/`graph.relations` tool call: re-authorize from
+        `frozen_input` (same recheck every other resumable phase performs),
+        then delegate to `search_more_frozen`/`relations_frozen`.
+
+        `SearchUnavailable`/`ModelUnavailable` propagate uncaught (transient,
+        PR 2's retry policy owns them); `RelationAnalysisUnavailable`,
+        `RelationGraphChanged`, and a relation result that never reached
+        `APPLIED` are soft failures -- the step/pool is returned unchanged
+        and `status="failed"`, so the turn can keep going instead of failing
+        outright over one tool call."""
+        from tap.modules.knowledge.application.evidence_bundle import decode_bundle, encode_bundle
+        from tap.modules.knowledge.application.relation_analysis import RelationGraphChanged
+        from tap.modules.knowledge.application.retrieve import RelationAnalysisUnavailable
+        from tap.modules.knowledge.domain.models import RelationContextStatus
+
+        if call.tool_id not in {"knowledge.search", "graph.relations"}:
+            raise ValueError(f"run_conversation_tool does not support {call.tool_id!r}")
+
+        async with self._plan_deadline(answer_plan):
+            context = await self._authorized_frozen_context(
+                original_question=frozen_input.message,
+                frozen_input=frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+            )
+            if isinstance(context, RetrievalAnswerResponse):
+                raise ValueError("resumed step no longer matches a retrieval route")
+            revisions, policy, _governance = context
+            answer_execution = self._execution(answer_plan) if answer_plan is not None else None
+            bundle = decode_bundle(step["bundle"])
+            query = str(call.arguments.get("query", ""))
+            summary_query = await self._summary_query(query)
+            transcript = step.get("transcript", [])
+
+            if call.tool_id == "knowledge.search":
+                source_ids = tuple(call.arguments.get("sourceIds") or ())
+                new_bundle, added = await self._answers.search_more_frozen(
+                    bundle,
+                    query,
+                    source_ids,
+                    revisions,
+                    policy,
+                    answer_execution=answer_execution,
+                    authorize=authorize,
+                )
+                added_labels = [item.evidence_label for item in added]
+                retrieval_hits = _retrieval_hits_payload(
+                    SimpleNamespace(evidence=added, trace_id=new_bundle.response.trace_id), None
+                )
+                return {
+                    "step": {
+                        "kind": "prepared",
+                        "bundle": encode_bundle(new_bundle),
+                        "transcript": transcript,
+                    },
+                    "status": "completed",
+                    "summary": _tool_call_summary(
+                        "knowledge.search", summary_query, tuple(added_labels), unit="证据"
+                    ),
+                    "added_labels": added_labels,
+                    "retrieval_hits": retrieval_hits,
+                }
+
+            # graph.relations
+            try:
+                new_bundle, added_relations = await self._answers.relations_frozen(
+                    bundle,
+                    query,
+                    revisions,
+                    policy,
+                    authorize=authorize,
+                    turn_id=None if answer_plan is None else answer_plan.turn_id,
+                    answer_execution=answer_execution,
+                )
+            except (RelationAnalysisUnavailable, RelationGraphChanged):
+                return {
+                    "step": step,
+                    "status": "failed",
+                    "summary": f'graph.relations "{summary_query}" → 关系分析不可用',
+                    "added_labels": [],
+                    "retrieval_hits": None,
+                }
+            if (
+                new_bundle.relation is None
+                or new_bundle.relation.status is not RelationContextStatus.APPLIED
+            ):
+                return {
+                    "step": step,
+                    "status": "failed",
+                    "summary": f'graph.relations "{summary_query}" → 无新关系',
+                    "added_labels": [],
+                    "retrieval_hits": None,
+                }
+            added_labels = [relation.label for relation in added_relations]
+            existing_identity = {
+                (item.source.source_id, item.source.revision, item.chunk_id)
+                for item in bundle.response.evidence
+            }
+            added_evidence = tuple(
+                item
+                for item in new_bundle.response.evidence
+                if (item.source.source_id, item.source.revision, item.chunk_id)
+                not in existing_identity
+            )
+            retrieval_hits = _retrieval_hits_payload(
+                SimpleNamespace(evidence=added_evidence, trace_id=new_bundle.response.trace_id),
+                SimpleNamespace(relations=added_relations) if added_relations else None,
+            )
+            return {
+                "step": {
+                    "kind": "prepared",
+                    "bundle": encode_bundle(new_bundle),
+                    "transcript": transcript,
+                },
+                "status": "completed",
+                "summary": _tool_call_summary(
+                    "graph.relations", summary_query, tuple(added_labels), unit="关系"
+                ),
+                "added_labels": added_labels,
+                "retrieval_hits": retrieval_hits,
+            }
+
+    async def add_insights_records(
+        self, step, records: Sequence[Mapping[str, object]]
+    ) -> tuple[Any, list[str]]:
+        """Grow a `"prepared"` step's evidence pool with `insights.query`
+        metric records (Task 8): dedupe by `(queryId, metricId)` against
+        what the pool already has, then continue the `I<n>` label sequence
+        -- same discipline as `knowledge.search`/`graph.relations`, never
+        relabeling an existing record. Capped at 20 records, same as S/R."""
+        from tap.modules.knowledge.application.evidence_bundle import decode_bundle, encode_bundle
+
+        bundle = decode_bundle(step["bundle"])
+        existing_records = list(bundle.insights_records)
+        existing_keys = {
+            (str(item.get("queryId")), str(item.get("metricId"))) for item in existing_records
+        }
+        max_label = 0
+        for item in existing_records:
+            label = str(item.get("label", ""))
+            if label.startswith("I") and label[1:].isdigit():
+                max_label = max(max_label, int(label[1:]))
+
+        added_labels: list[str] = []
+        for record in records:
+            key = (str(record.get("queryId")), str(record.get("metricId")))
+            if key in existing_keys or len(existing_records) >= 20:
+                continue
+            max_label += 1
+            label = f"I{max_label}"
+            labeled = {**dict(record), "label": label}
+            existing_records.append(labeled)
+            existing_keys.add(key)
+            added_labels.append(label)
+
+        new_bundle = dataclasses.replace(bundle, insights_records=tuple(existing_records))
+        new_step = {
+            "kind": step["kind"],
+            "bundle": encode_bundle(new_bundle),
+            "transcript": step.get("transcript", []),
+        }
+        return new_step, added_labels
 
     @staticmethod
     def _generation_governance(frozen_input):

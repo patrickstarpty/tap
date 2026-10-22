@@ -30,7 +30,17 @@ from tap.contracts.http import (
 from tap.contracts.problems import build_problem
 from tap.entrypoints.tapper_draft_batcher import DraftBatcher
 from tap.modules.ai.application.chat_graph import ChatGraphNodes, ChatGraphState
-from tap.modules.ai.ports.insights import InsightsQueryUnavailable
+from tap.modules.ai.domain.persona import persona_for
+from tap.modules.ai.domain.tool_calls import (
+    MAX_REQUESTED_TOOL_CALLS_PER_ROUND,
+    AdmittedToolCall,
+    RejectedToolCall,
+    RequestedToolCall,
+    admit_tool_calls,
+)
+from tap.modules.ai.domain.tool_calls import step_id as _tool_step_id
+from tap.modules.ai.domain.tools import tool_for_wire_name, visible_tool_ids
+from tap.modules.ai.ports.insights import InsightsAuthorizationChanged, InsightsQueryUnavailable
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.ports import ConversationAnswerStep, ConversationAnswerSteps
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
@@ -42,6 +52,7 @@ from tap.modules.chat.domain.conversations import (
     RetrievalSummary,
 )
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+from tap.platform.budget import TurnBudgetExhausted
 from tap.platform.telemetry import current_binding
 
 
@@ -62,7 +73,20 @@ def _event_key(event_type: str, payload: Mapping[str, object] | None) -> str:
     bare `event_type` -- so a re-run of `verify` after a transient failure
     recognizes its own earlier `stage.started` as already committed instead
     of emitting it again, without conflating it with an unrelated event
-    type that happens to share the same bare name."""
+    type that happens to share the same bare name.
+
+    PR 5 (Task 9): when `payload` carries a `stepId` (a `task.step`, or a
+    `tools`-node `retrieval.hits_ready` correlated to one), the key is
+    `f"{type}:{stepId}:{status}"` (the `status` suffix omitted when absent)
+    -- so a resumed `tools` node that re-emits the same step's `running`
+    event is never conflated with its own later `completed`/`rejected`/
+    `failed` terminal event for the same `stepId`."""
+    if isinstance(payload, Mapping) and "stepId" in payload:
+        status = payload.get("status")
+        step_id = payload["stepId"]
+        if status is not None:
+            return f"{event_type}:{step_id}:{status}"
+        return f"{event_type}:{step_id}"
     stage = payload.get("stage") if isinstance(payload, Mapping) else None
     return f"{event_type}:{stage}" if stage is not None else event_type
 
@@ -102,7 +126,7 @@ def _evidence_checkpoint(
     return result
 
 
-_STEP_KINDS = frozenset({"prepared", "generated", "verified", "final"})
+_STEP_KINDS = frozenset({"prepared", "generated", "verified", "final", "tool_calls"})
 
 
 def _require_step(state: ChatGraphState) -> ConversationAnswerStep:
@@ -242,8 +266,13 @@ class SingleShotAnswerSteps:
         self._knowledge = knowledge
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
     ) -> ConversationAnswerStep:
+        # `include_relations` is accepted and ignored: a single-shot
+        # `answer()`/`answer_conversation()` double always produces its
+        # complete answer (including any relation analysis it ever does)
+        # in this one call -- there is no separate inline-vs-tool relation
+        # phase to skip here.
         answer_boundary = getattr(self._knowledge, "answer_conversation", None)
         answer = (
             await answer_boundary(
@@ -261,10 +290,19 @@ class SingleShotAnswerSteps:
         return cast(ConversationAnswerStep, {"kind": "final", "response": answer})
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools: tuple[str, ...] = (),
     ) -> ConversationAnswerStep:
         # `prepare` already produced the complete answer; there is nothing
         # left to stream, so `on_text` (if given) is simply never called.
+        # `tools` is likewise accepted and ignored: a single-shot `answer()`
+        # double has no tool-calling round to offer them to.
         return step
 
     async def verify_conversation_answer(
@@ -293,6 +331,23 @@ class SingleShotAnswerSteps:
             claims=[],
             citations=[],
             graph_context_status="NOT_SELECTED",
+        )
+
+    async def run_conversation_tool(
+        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+    ):
+        # `prepare` already produced the complete answer in one call (no
+        # `EvidenceBundle` is ever checkpointed here), so this single-shot
+        # adapter never reaches the bounded tool-calling loop that admits a
+        # `knowledge.search`/`graph.relations` call in the first place.
+        raise ValueError("single-shot answer boundary does not support conversation tool calls")
+
+    async def add_insights_records(self, step, records):
+        # Same reasoning as `run_conversation_tool`: a single-shot `answer()`
+        # double never checkpoints an `EvidenceBundle` and its generation
+        # never produces `tool_calls`, so this is unreachable in practice.
+        raise NotImplementedError(
+            "single-shot answer boundary does not support insights.query records"
         )
 
 
@@ -363,6 +418,7 @@ class ChatTurnNodes:
             insights_explain=self.insights_explain,
             seed_search=self.seed_search,
             model=self.model,
+            tools=self.tools,
             verify=self.verify,
             finalize=self.finalize,
             ingress=self.ingress,
@@ -371,7 +427,8 @@ class ChatTurnNodes:
     async def ingress(self, state: ChatGraphState) -> dict[str, object]:
         budget = dict(state.get("budget") or {})
         result: dict[str, object] = {}
-        if "startedAtMs" not in budget:
+        is_fresh_run = "startedAtMs" not in budget
+        if is_fresh_run:
             budget["startedAtMs"] = int(time.time() * 1000)
             result["budget"] = budget
             result["budget_used"] = {"modelCalls": 0, "costMicros": 0, "toolRounds": 0}
@@ -380,6 +437,36 @@ class ChatTurnNodes:
         audit_span.set_attribute("tap.budget.max_seconds", float(budget.get("maxSeconds", 0.0)))
         audit_span.set_attribute("tap.budget.max_tool_rounds", int(budget.get("maxToolRounds", 0)))
         audit_span.set_attribute("tap.budget.max_cost_micros", int(budget.get("maxCostMicros", 0)))
+        if is_fresh_run:
+            value = self._turn.input_snapshot.value
+            persona_version = persona_for(getattr(value, "persona_version", None)).version
+            result["persona_version"] = persona_version
+            audit_span.set_attribute("tap.persona.version", persona_version)
+            agent_revision_id = getattr(value, "agent_revision_id", None)
+            agent_tool_allowlist = tuple(getattr(value, "agent_tool_allowlist", ()) or ())
+            agent: dict[str, object] | None = None
+            if agent_revision_id is not None:
+                agent = {
+                    "revisionId": agent_revision_id,
+                    "toolAllowlist": list(agent_tool_allowlist),
+                }
+                audit_span.set_attribute("tap.agent.revision_id", agent_revision_id)
+            relations_available = bool(getattr(self._knowledge, "relations_available", False))
+            insights_available = (
+                self._insights_explanation is not None
+                and bool(getattr(value, "insights_report_refs", ()))
+                and getattr(value, "insights_query_id", None) is None
+            )
+            tools = list(
+                visible_tool_ids(
+                    agent_allowlist=None if agent is None else frozenset(agent_tool_allowlist),
+                    relations_available=relations_available,
+                    insights_available=insights_available,
+                )
+            )
+            result["agent"] = agent
+            result["tools"] = tools
+            audit_span.set_attribute("tap.agent.tools", ",".join(tools))
         return result
 
     def _active_plan(self, state: ChatGraphState) -> AnswerPlan | None:
@@ -437,6 +524,10 @@ class ChatTurnNodes:
             else tuple(item.input_snapshot for item in (await load(self._conversation_id)).turns)
         )
         plan = await self._planner.plan(planning_input(self._turn.input_snapshot, history=history))
+        audit_span.set_attribute("tap.plan.intent", plan.agent_intent)
+        if plan.intent_reason:
+            audit_span.set_attribute("tap.plan.intent_reason", plan.intent_reason)
+        audit_span.set_attribute("tap.plan.answer_intent", plan.intent)
         route = "out_of_scope" if plan.intent == "out_of_scope" else "chat"
         result: dict[str, object] = {
             "route": route,
@@ -477,7 +568,11 @@ class ChatTurnNodes:
         # `TurnProcessor.process` call).
         started_at_ms = int(time.time() * 1000)
         step = await self._steps.prepare_conversation_answer(
-            request, value, answer_plan=active_plan, authorize=self._require_authorized
+            request,
+            value,
+            answer_plan=active_plan,
+            authorize=self._require_authorized,
+            include_relations=False,
         )
         result: dict[str, object] = {"step": step, "started_at_ms": started_at_ms}
         retrieval_hits = step.get("retrieval_hits") if isinstance(step, dict) else None
@@ -535,6 +630,22 @@ class ChatTurnNodes:
         except RedactionUnavailable:
             return False, None
 
+    async def _redact_summary(self, text: str) -> str:
+        """PR 5 (Task 9 fix round 1): every `task.step` `summary` can carry
+        model-controlled text (the running query, a rejected call's own
+        wire-format name, `run_conversation_tool`'s echoed query) -- it must
+        pass through the same v2 conversation-egress redactor as the final
+        answer before it is ever emitted, truncated to `TaskStepPayload`'s
+        200-char bound *after* redaction (so a redaction placeholder is
+        never itself cut off). `RedactionUnavailable` (an unterminated
+        credential-looking value) must never fail the Turn over a status
+        summary -- it degrades to a safe, content-free placeholder."""
+        try:
+            redacted = await self._redact(text)
+        except RedactionUnavailable:
+            return "内容已隐去（无法安全脱敏）"
+        return redacted[:200]
+
     async def _emit_committed(
         self, state: ChatGraphState, event_type: str, payload: Mapping[str, object] | None
     ) -> list[str] | None:
@@ -579,16 +690,326 @@ class ChatTurnNodes:
             attempt=self._turn.attempt,
             drafts=self._drafts,
             redact=self._redact,
+            start_seq=int(state.get("draft_seq", 0)),
         )
+        budget = state.get("budget") or {}
+        budget_used = state.get("budget_used") or {}
+        max_tool_rounds = int(budget.get("maxToolRounds", 0))
+        tool_rounds_used = int(budget_used.get("toolRounds", 0))
+        visible_tools = tuple(state.get("tools") or ())
+        offered = visible_tools if tool_rounds_used < max_tool_rounds else ()
         step = await self._steps.generate_conversation_answer(
             _require_step(state),
             self._turn.input_snapshot.value,
             answer_plan=active_plan,
             authorize=self._require_authorized,
             on_text=batcher.push,
+            tools=offered,
         )
-        await batcher.close()
-        return {"step": step}
+        if step.get("kind") == "tool_calls":
+            await batcher.discard()
+            if not offered:
+                # Review Focus 4 fix round 1: the final round offered no
+                # tools (`offered == ()`), yet the model still requested
+                # one -- structurally this should be unreachable (the
+                # gateway declares no callable functions when `tools` is
+                # empty), but a non-compliant model must still never fail
+                # the Turn outright. Fall back to the existing out-of-
+                # scope-style abstention path instead of entering `tools`
+                # (which would raise `TurnBudgetExhausted("tool-rounds")`).
+                response = await self._steps.refuse_out_of_scope(
+                    self._turn.input_snapshot.value, answer_plan=active_plan
+                )
+                step = {
+                    "kind": "final",
+                    "response": response.model_dump(mode="json", by_alias=True),
+                }
+        else:
+            await batcher.close()
+        if not offered and visible_tools:
+            audit_span = self._turn_span if self._turn_span is not None else get_current_span()
+            audit_span.set_attribute("tap.agent.tool_rounds_exhausted", True)
+        return {"step": step, "draft_seq": batcher.current_seq}
+
+    async def tools(self, state: ChatGraphState) -> dict[str, object]:
+        """Execute one bounded tool-calling round (PR 5 Task 9): admits the
+        model's pending tool calls against this Turn's visible tools and
+        frozen source selection, runs each admitted call (soft-failing an
+        `insights.query` authorization change rather than failing the
+        Turn), and emits a `running` then terminal `task.step` for every
+        requested call (admitted or rejected) plus a `stepId`-correlated
+        `retrieval.hits_ready` for a knowledge/relation call that grew the
+        evidence pool. `AuthorizationDenied`/`PermissionError` from
+        `run_conversation_tool`'s re-authorization recheck propagate
+        uncaught -- only `InsightsAuthorizationChanged` is treated as a
+        soft per-call failure."""
+        budget = state.get("budget") or {}
+        budget_used = state.get("budget_used") or {}
+        max_tool_rounds = int(budget.get("maxToolRounds", 0))
+        tool_rounds_used = int(budget_used.get("toolRounds", 0))
+        round_number = tool_rounds_used + 1
+        if round_number > max_tool_rounds:
+            raise TurnBudgetExhausted("tool-rounds")
+
+        active_plan = self._active_plan(state)
+        step = _require_step(state)
+        value = self._turn.input_snapshot.value
+        selected_source_ids = frozenset(item.source_id for item in value.resolved_resources)
+        pending_raw = step.get("pending_tool_calls") or []
+        requested = tuple(
+            RequestedToolCall(
+                call_id=str(item["callId"]),
+                name=str(item["name"]),
+                arguments_json=str(item["argumentsJson"]),
+            )
+            for item in cast(list[dict[str, str]], pending_raw)
+        )
+        outcomes = admit_tool_calls(
+            requested,
+            visible=tuple(state.get("tools") or ()),
+            selected_source_ids=selected_source_ids,
+        )
+
+        current_step: dict[str, object] = dict(step)
+        transcript = list(cast("list[dict[str, object]]", current_step.get("transcript") or []))
+        committed = list(state.get("committed_stream_events") or ())
+
+        async def emit(event_type: str, payload: Mapping[str, object]) -> None:
+            nonlocal committed
+            updated = await self._emit_committed(
+                cast(ChatGraphState, {**state, "committed_stream_events": committed}),
+                event_type,
+                payload,
+            )
+            if updated is not None:
+                committed = updated
+
+        for index, outcome in enumerate(outcomes):
+            this_step_id = _tool_step_id(self._turn.turn_id, round_number, index)
+            if (
+                isinstance(outcome, RejectedToolCall)
+                and index >= MAX_REQUESTED_TOOL_CALLS_PER_ROUND
+            ):
+                # Final review M-8: past the requested-call total, a call is
+                # answered in the transcript (every model call id needs its
+                # tool reply) but emits no `task.step` events -- the round's
+                # step count stays bounded however many calls the model asks
+                # for.
+                transcript.append(
+                    {
+                        "role": "tool",
+                        "toolCallId": outcome.call_id,
+                        "toolId": outcome.name,
+                        "content": json.dumps({"status": "rejected", "reason": outcome.reason}),
+                    }
+                )
+                continue
+            if isinstance(outcome, RejectedToolCall):
+                # Fix round 1: `outcome.name` is the model's own (possibly
+                # unknown) wire-format function name -- resolve it to a
+                # canonical tool id for the `tool` field when it names a
+                # real tool, else a safe non-empty placeholder; the raw
+                # name only ever appears inside the (redacted) summary.
+                definition = tool_for_wire_name(outcome.name)
+                tool_identifier = definition.tool_id if definition is not None else "unknown"
+                summary = await self._redact_summary(f"{outcome.name} → 已拒绝（{outcome.reason}）")
+                # Fix round 1 (Review Focus 3): a rejected call never runs,
+                # but still reports `running` before its terminal status --
+                # the same two-event shape every admitted call gets.
+                await emit(
+                    "task.step",
+                    {
+                        "stepId": this_step_id,
+                        "tool": tool_identifier,
+                        "status": "running",
+                        "summary": summary,
+                        "durationMs": 0,
+                        "toolRound": round_number,
+                    },
+                )
+                await emit(
+                    "task.step",
+                    {
+                        "stepId": this_step_id,
+                        "tool": tool_identifier,
+                        "status": "rejected",
+                        "summary": summary,
+                        "durationMs": 0,
+                        "toolRound": round_number,
+                    },
+                )
+                transcript.append(
+                    {
+                        "role": "tool",
+                        "toolCallId": outcome.call_id,
+                        "toolId": outcome.name,
+                        "content": json.dumps({"status": "rejected", "reason": outcome.reason}),
+                    }
+                )
+                continue
+
+            call = cast(AdmittedToolCall, outcome)
+            started_at = time.monotonic()
+            # Final review M-2: redact the query before cutting it to 60
+            # characters, so an ID/email straddling the cut is never split
+            # into an unrecognizable fragment.
+            running_query = (await self._redact_summary(str(call.arguments.get("query", ""))))[:60]
+            running_summary = await self._redact_summary(f'{call.tool_id} "{running_query}"')
+            await emit(
+                "task.step",
+                {
+                    "stepId": this_step_id,
+                    "tool": call.tool_id,
+                    "status": "running",
+                    "summary": running_summary,
+                    "durationMs": 0,
+                    "toolRound": round_number,
+                },
+            )
+
+            if call.tool_id == "insights.query":
+                if self._insights_explanation is None:
+                    # Fix round 1: no Insights runtime is configured for
+                    # this deployment -- a structurally impossible call
+                    # given `visible_tool_ids`'s `insights_available` gate,
+                    # but still a soft per-call failure, never an
+                    # `AssertionError` that would crash the Turn.
+                    summary = await self._redact_summary("insights.query → 查询服务不可用")
+                    await emit(
+                        "task.step",
+                        {
+                            "stepId": this_step_id,
+                            "tool": call.tool_id,
+                            "status": "failed",
+                            "summary": summary,
+                            "durationMs": 0,
+                            "toolRound": round_number,
+                        },
+                    )
+                    transcript.append(
+                        {
+                            "role": "tool",
+                            "toolCallId": call.call_id,
+                            "toolId": call.tool_id,
+                            "content": json.dumps({"status": "failed", "summary": summary}),
+                        }
+                    )
+                    continue
+                try:
+                    records = await self._insights_explanation.query_metrics(
+                        self._conversations.scope,
+                        tuple(getattr(value, "insights_report_refs", ())),
+                        call.arguments,
+                    )
+                except InsightsAuthorizationChanged:
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    summary = await self._redact_summary("insights.query → 查询授权已变更")
+                    await emit(
+                        "task.step",
+                        {
+                            "stepId": this_step_id,
+                            "tool": call.tool_id,
+                            "status": "failed",
+                            "summary": summary,
+                            "durationMs": duration_ms,
+                            "toolRound": round_number,
+                        },
+                    )
+                    transcript.append(
+                        {
+                            "role": "tool",
+                            "toolCallId": call.call_id,
+                            "toolId": call.tool_id,
+                            "content": json.dumps({"status": "failed", "summary": summary}),
+                        }
+                    )
+                    continue
+                new_step, added_labels = await self._steps.add_insights_records(
+                    cast(ConversationAnswerStep, current_step), records
+                )
+                current_step = dict(new_step)
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                summary = await self._redact_summary(
+                    f"insights.query → +{len(added_labels)} 条指标"
+                    if added_labels
+                    else "insights.query → 无新指标"
+                )
+                await emit(
+                    "task.step",
+                    {
+                        "stepId": this_step_id,
+                        "tool": call.tool_id,
+                        "status": "completed",
+                        "summary": summary,
+                        "durationMs": duration_ms,
+                        "toolRound": round_number,
+                    },
+                )
+                transcript.append(
+                    {
+                        "role": "tool",
+                        "toolCallId": call.call_id,
+                        "toolId": call.tool_id,
+                        "content": json.dumps(
+                            {
+                                "status": "completed",
+                                "summary": summary,
+                                "addedLabels": added_labels,
+                            }
+                        ),
+                    }
+                )
+                continue
+
+            tool_result = await self._steps.run_conversation_tool(
+                cast(ConversationAnswerStep, current_step),
+                value,
+                call,
+                answer_plan=active_plan,
+                authorize=self._require_authorized,
+            )
+            current_step = dict(tool_result["step"])
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            status = tool_result["status"]
+            summary = await self._redact_summary(str(tool_result["summary"]))
+            await emit(
+                "task.step",
+                {
+                    "stepId": this_step_id,
+                    "tool": call.tool_id,
+                    "status": status,
+                    "summary": summary,
+                    "durationMs": duration_ms,
+                    "toolRound": round_number,
+                },
+            )
+            retrieval_hits = tool_result.get("retrieval_hits")
+            if retrieval_hits:
+                redacted = await self._redact_labels(retrieval_hits)
+                if redacted is not None:
+                    await emit("retrieval.hits_ready", {**redacted, "stepId": this_step_id})
+            transcript.append(
+                {
+                    "role": "tool",
+                    "toolCallId": call.call_id,
+                    "toolId": call.tool_id,
+                    "content": json.dumps(
+                        {
+                            "status": status,
+                            "summary": summary,
+                            "addedLabels": tool_result.get("added_labels", []),
+                        }
+                    ),
+                }
+            )
+
+        current_step["kind"] = "prepared"
+        current_step["transcript"] = transcript
+        current_step.pop("pending_tool_calls", None)
+        result: dict[str, object] = {"step": current_step, "tool_rounds_delta": 1}
+        if committed != list(state.get("committed_stream_events") or ()):
+            result["committed_stream_events"] = committed
+        return result
 
     async def verify(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)

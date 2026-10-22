@@ -60,6 +60,78 @@ it("keeps an explicit New chat when durable history arrives afterwards", async (
   );
 });
 
+it("keeps New chat sendable when it is clicked as durable history auto-selects", async () => {
+  // E2E regression: history loads, the workspace auto-selects the most
+  // recent conversation, and New chat is clicked in the same instant --
+  // after that selection commits but before its follow-up effect flushes.
+  // The draft must survive, so the composer still creates a conversation.
+  const created: string[] = [];
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.endsWith("/conversations")) {
+      return json({
+        items: [
+          {
+            conversationId: "conversation-old",
+            title: "Earlier question",
+            createdAt: "2026-09-28T08:00:00Z",
+            updatedAt: "2026-09-28T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    }
+    if (request.method === "POST" && url.pathname.endsWith("/conversations")) {
+      created.push(url.pathname);
+      return json(
+        {
+          conversationId: "conversation-new",
+          turnId: "turn-new",
+          state: "queued",
+        },
+        202,
+      );
+    }
+    // Durable detail/events/stream stay in flight, as in the E2E race.
+    return new Promise<Response>(() => undefined);
+  });
+  renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+  const newChat = screen.getByRole("button", { name: "New chat" });
+  let clicked = false;
+  const observer = new MutationObserver(() => {
+    if (clicked) return;
+    const restored = Array.from(
+      document.querySelectorAll('[aria-current="page"]'),
+    ).some((element) => element.textContent?.includes("Earlier question"));
+    if (restored) {
+      clicked = true;
+      newChat.click();
+    }
+  });
+  observer.observe(document.body, {
+    attributes: true,
+    attributeFilter: ["aria-current"],
+    childList: true,
+    subtree: true,
+  });
+  try {
+    await waitFor(() => expect(clicked).toBe(true));
+  } finally {
+    observer.disconnect();
+  }
+
+  const user = userEvent.setup();
+  await user.type(
+    screen.getByRole("textbox", { name: "Message Tapper" }),
+    "After the race",
+  );
+  await user.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  expect(screen.queryByText(/Message was not sent/u)).toBeNull();
+});
+
 const ANSWER = {
   traceId: "trace-1",
   queryPlanId: "plan-1",
@@ -84,6 +156,7 @@ function completedConversation({
   extraSpans = [],
   api = fakeKnowledgeClient(),
   graphContextEvent,
+  taskStepEvents = [],
   state = "completed",
   myFeedback = null,
   resolvedResources = [
@@ -100,14 +173,20 @@ function completedConversation({
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
   graphContextEvent?: Record<string, unknown>;
+  /** `task.step` payloads (review fix round 1, Important 1) — a durable
+   * event type, replayed through `GET .../events` the same as any other,
+   * so this exercises the real reducer's `task.step` branch rather than
+   * stubbing `AssistantTurn.steps` directly. */
+  taskStepEvents?: readonly Record<string, unknown>[];
   state?: "completed" | "abstained" | "canceled" | "failed";
   myFeedback?: { rating: "up" | "down"; comment?: string | null } | null;
   resolvedResources?: readonly Record<string, unknown>[];
 }) {
+  let nextSequence = 1;
   const events = [
     {
       eventId: "event-1",
-      sequence: 1,
+      sequence: nextSequence++,
       turnId: "turn-1",
       occurredAt: "2026-09-29T08:00:00Z",
       eventType: "stage.completed",
@@ -118,16 +197,24 @@ function completedConversation({
       : [
           {
             eventId: "event-graph",
-            sequence: 2,
+            sequence: nextSequence++,
             turnId: "turn-1",
             occurredAt: "2026-09-29T08:00:00Z",
             eventType: "graph.context_ready",
             payload: graphContextEvent,
           },
         ]),
+    ...taskStepEvents.map((payload, index) => ({
+      eventId: `event-step-${index}`,
+      sequence: nextSequence++,
+      turnId: "turn-1",
+      occurredAt: "2026-09-29T08:00:00Z",
+      eventType: "task.step",
+      payload,
+    })),
     {
       eventId: "event-2",
-      sequence: graphContextEvent === undefined ? 2 : 3,
+      sequence: nextSequence++,
       turnId: "turn-1",
       occurredAt: "2026-09-29T08:00:01Z",
       eventType: "turn.completed",
@@ -217,6 +304,48 @@ function completedConversation({
     api,
   });
 }
+
+it("shows a completed task.step row alongside the trace panel for a terminal, traced turn (review fix round 1, Important 1)", async () => {
+  // `task.step` is a durable event type replayed through `GET
+  // .../events`, same as `graph.context_ready` above -- this exercises
+  // the real reducer (`reduceStreamEvent`'s `task.step` branch) through
+  // the full `TapperWorkspace` render tree, not a unit test of the
+  // reducer or of `AnswerActivity` in isolation. Before this fix, the
+  // terminal-with-trace branch rendered only `AnswerGraphSummary` +
+  // `DurableTracePanel`, never `AnswerActivity`/any step list, so a
+  // completed tool round's step was invisible once a turn had a trace.
+  completedConversation({
+    traceId: "trace-1",
+    taskStepEvents: [
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "running",
+        summary: "",
+        durationMs: 0,
+        toolRound: 1,
+      },
+      {
+        stepId: "turn-1:r1:c0",
+        tool: "knowledge.search",
+        status: "completed",
+        summary: "Found 2 hits",
+        durationMs: 80,
+        toolRound: 1,
+      },
+    ],
+  });
+
+  await screen.findByRole("button", { name: "Regenerate" });
+  expect(
+    await screen.findByRole("button", { name: /^Trace:/u }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Round 1 · Knowledge search · Done · Found 2 hits · 80 ms",
+    ),
+  ).toBeVisible();
+});
 
 it("shows trace panel for terminal turn with traceId", async () => {
   completedConversation({ traceId: "trace-1" });

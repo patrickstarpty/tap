@@ -2233,6 +2233,7 @@ def _assemble_http_services(
         # personal_data=True (C1): output redaction and the input hit report
         # are chat egress, so phone/ID rules apply here too.
         redactor=PatternEgressRedactor(max_chars=262144, personal_data=True),
+        relations_available=relation_analysis is not None,
     )
     prompt_suggestions = None
     prompt_suggestion_store = None

@@ -87,6 +87,22 @@ export interface CitationLabelInfo {
   location: string | null;
 }
 
+/**
+ * One bounded tool-calling round's per-call progress, reduced from
+ * `task.step` SSE frames (LangGraph PR 5, Task 9/10). The same `stepId`
+ * arrives first as `"running"` and later as a terminal status
+ * (`"completed"`/`"rejected"`/`"failed"`) — the terminal frame always
+ * overwrites the running one in place rather than appending a second row.
+ */
+export interface TaskStepView {
+  stepId: string;
+  tool: string;
+  status: "running" | "completed" | "rejected" | "failed";
+  summary: string;
+  durationMs: number;
+  toolRound: number;
+}
+
 export interface StreamTurnState {
   answer: string;
   error: string | null;
@@ -120,6 +136,11 @@ export interface StreamTurnState {
    * `turn.canceled` was recorded, or `null` when the turn was canceled
    * before any draft text existed. */
   partialAnswer: string | null;
+  /** Tool-calling round steps across the whole turn, in first-seen order,
+   * upserted by `stepId` (`f"{turnId}:r{round}:c{index}"`) — never reset on
+   * a new attempt, since `turn.started` carries no `attempt` to key a
+   * reset off (review ruling, fix round 1). */
+  steps: readonly TaskStepView[];
 }
 
 export interface ConversationStreamState {
@@ -139,6 +160,7 @@ const emptyTurn = (): StreamTurnState => ({
   citationLabels: {},
   stage: null,
   partialAnswer: null,
+  steps: [],
 });
 
 export function createStreamState(): ConversationStreamState {
@@ -305,12 +327,58 @@ export function reduceStreamEvent(
     const isNewAttempt =
       typeof payload.attempt === "number" &&
       (current.draft === null || payload.attempt > current.draft.attempt);
+    // `steps` is never reset on a new attempt (review ruling, fix round 1):
+    // `TurnStartedPayload` carries no `attempt` at all (`{state: "running"}`
+    // only — confirmed against the generated schema and the backend
+    // emitter, which writes `turn.started` once per claimed Turn, not per
+    // attempt), so there is no event that reliably marks "a newer attempt
+    // started" for `steps` to key off. `task.step`'s own `stepId`
+    // (`f"{turnId}:r{round}:c{index}"`) already upserts in place, so live
+    // and recovered (durable-replay) state agree without needing a reset
+    // here at all.
     next = {
       ...current,
       draft,
       status: "running",
       stage: isNewAttempt ? null : current.stage,
     };
+  } else if (event.type === "task.step") {
+    const stepId = payload.stepId;
+    const tool = payload.tool;
+    const status = payload.status;
+    const summary = payload.summary;
+    const durationMs = payload.durationMs;
+    const toolRound = payload.toolRound;
+    if (
+      typeof stepId === "string" &&
+      typeof tool === "string" &&
+      (status === "running" ||
+        status === "completed" ||
+        status === "rejected" ||
+        status === "failed") &&
+      typeof summary === "string" &&
+      typeof durationMs === "number" &&
+      typeof toolRound === "number"
+    ) {
+      const step: TaskStepView = {
+        stepId,
+        tool,
+        status,
+        summary,
+        durationMs,
+        toolRound,
+      };
+      const existingIndex = current.steps.findIndex(
+        (candidate) => candidate.stepId === stepId,
+      );
+      const steps =
+        existingIndex === -1
+          ? [...current.steps, step]
+          : current.steps.map((candidate, index) =>
+              index === existingIndex ? step : candidate,
+            );
+      next = { ...current, steps };
+    }
   } else if (event.type === "retrieval.hits_ready") {
     const labels = payload.labels;
     if (Array.isArray(labels)) {

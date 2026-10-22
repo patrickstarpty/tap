@@ -75,9 +75,11 @@ import {
   mergedDraftFacts,
   reduceStreamEvent,
   type GraphContextSummary,
+  type TaskStepView,
 } from "../../features/conversations/model/stream";
 import { DraftAnswer } from "../../features/conversations/components/DraftAnswer";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
+import type { RetrievalAnswerResponse } from "../../features/knowledge/api/types";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
 import { EvidencePanel } from "../../features/knowledge/components/EvidencePanel";
@@ -361,6 +363,60 @@ export function shouldShowAnswerFeedback(
   return turn.status === "completed" && conversationId !== undefined;
 }
 
+/**
+ * Formats one `task.step` row per the Task 10 contract, shared by
+ * `AnswerActivity` (folded into its collapsible activity panel) and
+ * `TaskStepList` (rendered directly, with no panel to expand, while a
+ * turn is still running or in the terminal-with-trace branch) so the two
+ * call sites never drift (review fix round 1, Important 1).
+ */
+function formatTaskStepRows(
+  steps: readonly TaskStepView[],
+  locale: "en" | "zh",
+): string[] {
+  const chatCopy = WORKSPACE_COPY[locale].chat;
+  return steps.map((step) =>
+    chatCopy.toolStepRow(
+      step.toolRound,
+      chatCopy.toolName(step.tool),
+      // Folded minor (review fix round 1): an empty summary (e.g. a
+      // `running` step that has no summary yet) must not leave a
+      // dangling " · " separator in the row.
+      step.summary.length === 0
+        ? chatCopy.stepStatus[step.status]
+        : `${chatCopy.stepStatus[step.status]} · ${step.summary}`,
+      step.durationMs,
+    ),
+  );
+}
+
+/**
+ * A turn's `task.step` rows, rendered directly (no collapsible panel to
+ * expand first) — used in the queued/running branch (no other activity
+ * summary exists yet to attach a toggle to) and in the terminal-with-trace
+ * branch (`DurableTracePanel` already covers the full event log; the step
+ * rows still need to surface here directly, review fix round 1, Important
+ * 1). `AnswerActivity` folds the same rows (via `formatTaskStepRows`) into
+ * its own collapsible panel instead, for the terminal-without-trace case.
+ */
+function TaskStepList({
+  steps,
+  locale,
+}: {
+  steps: readonly TaskStepView[];
+  locale: "en" | "zh";
+}) {
+  if (steps.length === 0) return null;
+  const rows = formatTaskStepRows(steps, locale);
+  return (
+    <ol className="tap-task-steps">
+      {rows.map((row, index) => (
+        <li key={`${index}-${row}`}>{row}</li>
+      ))}
+    </ol>
+  );
+}
+
 export function AnswerActivity({
   events,
   locale,
@@ -369,6 +425,7 @@ export function AnswerActivity({
   chunkCitationCount,
   edgeCitationCount,
   graphContext,
+  steps = [],
 }: {
   events: readonly ActivityEvent[];
   locale: "en" | "zh";
@@ -377,6 +434,7 @@ export function AnswerActivity({
   chunkCitationCount: number;
   edgeCitationCount: number;
   graphContext: GraphContextSummary | null;
+  steps?: readonly TaskStepView[];
 }) {
   const context = events.find(
     (event) => event.eventType === "context.assembled",
@@ -426,7 +484,8 @@ export function AnswerActivity({
     edgeCitationCount,
     graphContext,
   });
-  const allRows = [...rows, ...graphRows];
+  const stepRows = formatTaskStepRows(steps, locale);
+  const allRows = [...rows, ...stepRows, ...graphRows];
   if (allRows.length === 0) return null;
   return (
     <details className="tap-answer-activity">
@@ -468,6 +527,91 @@ export function AnswerProgress({
       {sources}
       {action}
     </p>
+  );
+}
+
+/**
+ * A `CLARIFY:`-prefixed answer (`answerKind === "clarification"`, LangGraph
+ * PR 5 Task 5/10): plain body text with a "needs more information" label,
+ * never routed through `GroundedAnswer` -- a clarification's `claims`/
+ * `citations` are always empty by contract, which `GroundedAnswer`'s
+ * `validateAnswerGraph` would otherwise reject as a format error.
+ */
+function ClarificationAnswer({
+  answer,
+  locale,
+}: {
+  answer: string;
+  locale: "en" | "zh";
+}) {
+  const copy = WORKSPACE_COPY[locale].chat;
+  return (
+    <div className="tapper-clarification-answer">
+      <p className="tapper-clarification-label">{copy.clarificationLabel}</p>
+      <p>{answer}</p>
+    </div>
+  );
+}
+
+/**
+ * An insights-only answer (final review C-1, Decision C): non-abstained, no
+ * knowledge claims, and at least one cited Insights (`I<n>`) record. Its
+ * facts live in `insightsFacts` (rendered by `InsightsFactsList` below), so
+ * it is never routed through `GroundedAnswer`, whose `validateAnswerGraph`
+ * requires knowledge claims and citations. Every other claim-less shape still
+ * goes to `GroundedAnswer` and its format warning.
+ */
+function isInsightsOnlyAnswer(response: RetrievalAnswerResponse): boolean {
+  return (
+    !response.abstained &&
+    response.answerKind !== "clarification" &&
+    typeof response.answer === "string" &&
+    response.answer.length > 0 &&
+    Array.isArray(response.claims) &&
+    response.claims.length === 0 &&
+    (response.insightsFacts?.length ?? 0) > 0
+  );
+}
+
+function InsightsOnlyAnswer({ answer }: { answer: string }) {
+  return (
+    <div className="tapper-insights-only-answer">
+      <p>{answer}</p>
+    </div>
+  );
+}
+
+/**
+ * The Insights metric records (`I<n>`-labeled) a claim actually cited
+ * (LangGraph PR 5 Task 8/10, Decision C) -- shown below the answer
+ * regardless of `answerKind`, since no knowledge citation is ever
+ * generated for an Insights label.
+ */
+function InsightsFactsList({
+  facts,
+  locale,
+}: {
+  facts: NonNullable<RetrievalAnswerResponse["insightsFacts"]>;
+  locale: "en" | "zh";
+}) {
+  if (facts.length === 0) return null;
+  const copy = WORKSPACE_COPY[locale].chat;
+  return (
+    <div className="tapper-insights-facts">
+      <h3>{copy.insightsMetricsHeading}</h3>
+      <ul>
+        {facts.map((fact) => (
+          <li key={fact.label}>
+            {copy.insightsFactRow(
+              fact.label,
+              fact.metricId,
+              fact.value ?? null,
+              fact.asOf,
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -697,7 +841,7 @@ function DurableTracePanel({
   );
 }
 
-function AssistantResponse({
+export function AssistantResponse({
   contentCopy,
   turn,
   insightsClient,
@@ -864,6 +1008,7 @@ function AssistantResponse({
                 edgeCitationCount={edgeCitationCount}
                 graphContext={graphContext}
               />
+              <TaskStepList steps={turn.steps ?? []} locale={turn.locale} />
               <DurableTracePanel
                 projectId={projectId}
                 conversationId={conversationId}
@@ -881,6 +1026,7 @@ function AssistantResponse({
               chunkCitationCount={chunkCitationCount}
               edgeCitationCount={edgeCitationCount}
               graphContext={graphContext}
+              steps={turn.steps ?? []}
             />
           )}
           {graphContext !== null &&
@@ -892,13 +1038,26 @@ function AssistantResponse({
               title={contentCopy.chat.noRelationEvidence}
             />
           ) : null}
-          <GroundedAnswer
-            response={turn.response}
+          {turn.response.answerKind === "clarification" ? (
+            <ClarificationAnswer
+              answer={turn.response.answer}
+              locale={turn.locale}
+            />
+          ) : isInsightsOnlyAnswer(turn.response) ? (
+            <InsightsOnlyAnswer answer={turn.response.answer} />
+          ) : (
+            <GroundedAnswer
+              response={turn.response}
+              locale={turn.locale}
+              citationNumbering="shown-order"
+              onOpenCitation={onOpenCitation}
+              historicalCitationQueryFor={historicalCitationQueryFor}
+              onPreviewCitation={onPreviewCitation}
+            />
+          )}
+          <InsightsFactsList
+            facts={turn.response.insightsFacts ?? []}
             locale={turn.locale}
-            citationNumbering="shown-order"
-            onOpenCitation={onOpenCitation}
-            historicalCitationQueryFor={historicalCitationQueryFor}
-            onPreviewCitation={onPreviewCitation}
           />
           <TurnContext
             copy={contentCopy}
@@ -947,6 +1106,7 @@ function AssistantResponse({
             sourceCount={turn.sourceReferences.length}
             status={turn.status}
           />
+          <TaskStepList steps={turn.steps ?? []} locale={turn.locale} />
           {(draft !== null && draft.text.length > 0) || stage === "verify" ? (
             <DraftAnswer
               draft={draft}
@@ -1339,7 +1499,17 @@ export function TapperWorkspace() {
       return changed ? next : current;
     });
   }, [projectId, publishedSourcesQuery.data, publishedSourcesQuery.isSuccess]);
-  const [activeConversationId, setActiveConversationId] = useState("draft");
+  const [activeConversationId, setActiveConversationIdState] =
+    useState("draft");
+  // The most recent selection, readable by a `setConversations` updater that
+  // an effect queued from an older render: history auto-selection and a New
+  // chat click can land in the same instant, and that stale updater must not
+  // drop the draft the user just switched to.
+  const latestActiveConversationId = useRef("draft");
+  const setActiveConversationId = useCallback((id: string) => {
+    latestActiveConversationId.current = id;
+    setActiveConversationIdState(id);
+  }, []);
   const insightsClient = useConversationClient(projectId);
   const queryClient = useQueryClient();
   const conversationList = useConversationList(projectId);
@@ -1662,11 +1832,10 @@ export function TapperWorkspace() {
     if (conversationList.data === undefined) return;
     const summaries = conversationList.data.pages.flatMap((page) => page.items);
     setConversations((current) => {
+      const activeId = latestActiveConversationId.current;
       if (
         summaries.length === 0 &&
-        current.some(
-          (item) => item.id === activeConversationId && item.id !== "draft",
-        )
+        current.some((item) => item.id === activeId && item.id !== "draft")
       )
         return current;
       const restored = summaries.map((summary) => {
@@ -1678,7 +1847,7 @@ export function TapperWorkspace() {
           : { ...existing, title: summary.title };
       });
       const draft = current.find((item) => item.id === "draft");
-      return (activeConversationId === "draft" || summaries.length === 0) &&
+      return (activeId === "draft" || summaries.length === 0) &&
         draft !== undefined
         ? [draft, ...restored]
         : restored;
@@ -1730,6 +1899,7 @@ export function TapperWorkspace() {
         citationLabels: draftFacts.citationLabels,
         stage: streamed?.stage ?? null,
         partialAnswer: streamed?.partialAnswer ?? null,
+        steps: streamed?.steps ?? [],
         traceId: turn.traceId ?? null,
         myFeedback:
           turn.myFeedback == null

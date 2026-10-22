@@ -24,7 +24,7 @@ from tap.platform.budget import (
 from tap.platform.telemetry import span
 
 CHAT_GRAPH_VERSION = "tapper-chat-v2"
-CHAT_STATE_SCHEMA_VERSION = 2
+CHAT_STATE_SCHEMA_VERSION = 3
 
 
 class GraphRunCanceled(PermissionError):
@@ -53,6 +53,19 @@ class ChatGraphState(TypedDict, total=False):
     result: dict[str, object]
     budget: dict[str, int | float]
     budget_used: dict[str, int]
+    # PR 5 (Task 9): the Turn's pinned `TapperPersona` version, the frozen
+    # Agent identity (`None` for an Agent-less Turn), and the model-callable
+    # tool ids visible for this Turn (registry order) -- all stamped once by
+    # `ingress` on a fresh run and never rewritten on a mid-node-retry resume.
+    persona_version: str
+    agent: dict[str, object] | None
+    tools: list[str]
+    # PR 5 (Task 9 fix round 1, C-1): the next `seq` the `model` node's
+    # `DraftBatcher` should start from -- carries the draft stream's
+    # monotonic counter across separate `DraftBatcher` instances (one per
+    # tool-calling round) for the same Turn attempt, and across a
+    # checkpoint resume.
+    draft_seq: int
     # PR 3: stream event types already committed early (via `conversations.
     # emit`) by `seed_search`/`verify`, so `finalize`'s own `streamEvents`
     # batch never repeats them.
@@ -61,6 +74,14 @@ class ChatGraphState(TypedDict, total=False):
 
 GraphNode = Callable[[ChatGraphState], Awaitable[dict[str, Any]]]
 AuthorizationCheck = Callable[[], Awaitable[bool]]
+
+
+def _recursion_limit(budget: TurnBudget) -> int:
+    """The LangGraph `recursion_limit` for one chat Turn run: each tool
+    round costs two super-steps (`model` -> `tools` -> back to `model`),
+    plus a fixed overhead for `ingress`/`guard_in`/`seed_search`/`verify`/
+    `finalize` and LangGraph's own internal bookkeeping steps."""
+    return 2 * budget.max_tool_rounds + 12
 
 
 async def _default_ingress(state: ChatGraphState) -> dict[str, Any]:
@@ -80,12 +101,13 @@ async def _default_ingress(state: ChatGraphState) -> dict[str, Any]:
     return {}
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ChatGraphNodes:
     guard_in: GraphNode
     insights_explain: GraphNode
     seed_search: GraphNode
     model: GraphNode
+    tools: GraphNode
     verify: GraphNode
     finalize: GraphNode
     ingress: GraphNode = _default_ingress
@@ -128,6 +150,7 @@ class ChatGraph:
             "seed_search", RunnableLambda(self._wrap("seed_search", nodes.seed_search))
         )
         builder.add_node("model", RunnableLambda(self._wrap("model", nodes.model)))
+        builder.add_node("tools", RunnableLambda(self._wrap("tools", nodes.tools)))
         builder.add_node("verify", RunnableLambda(self._wrap("verify", nodes.verify)))
         builder.add_node(
             "finalize",
@@ -150,8 +173,13 @@ class ChatGraph:
         )
         builder.add_conditional_edges(
             "model",
+            self._route_after_model,
+            {"finalize": "finalize", "tools": "tools", "continue": "verify"},
+        )
+        builder.add_conditional_edges(
+            "tools",
             self._route_on_failure,
-            {"finalize": "finalize", "continue": "verify"},
+            {"finalize": "finalize", "continue": "model"},
         )
         builder.add_edge("verify", "finalize")
         builder.add_edge("insights_explain", "finalize")
@@ -181,6 +209,15 @@ class ChatGraph:
     @staticmethod
     def _route_on_failure(state: ChatGraphState) -> str:
         return "finalize" if state.get("failure") else "continue"
+
+    @staticmethod
+    def _route_after_model(state: ChatGraphState) -> str:
+        if state.get("failure"):
+            return "finalize"
+        step = state.get("step")
+        if isinstance(step, dict) and step.get("kind") == "tool_calls":
+            return "tools"
+        return "continue"
 
     def _wrap(
         self,
@@ -272,14 +309,16 @@ class ChatGraph:
         seconds_used = time.monotonic() - node_started
         total_calls = calls_used + meter.calls
         total_cost = cost_used + meter.cost_micros
+        total_tool_rounds = tool_rounds_used + int(result.pop("tool_rounds_delta", 0))
         node_span.set_attribute("tap.budget.model_calls_used", total_calls)
         node_span.set_attribute("tap.budget.cost_micros_used", total_cost)
         node_span.set_attribute("tap.budget.seconds_used", seconds_used)
+        node_span.set_attribute("tap.budget.tool_rounds_used", total_tool_rounds)
         merged = dict(result)
         merged["budget_used"] = {
             "modelCalls": total_calls,
             "costMicros": total_cost,
-            "toolRounds": tool_rounds_used,
+            "toolRounds": total_tool_rounds,
         }
         return merged
 
@@ -301,11 +340,13 @@ class ChatGraph:
             "failure": None,
             "budget": budget.to_dict(),
         }
-        result = await self._runner.start(run_id=run_id, state=state)
+        result = await self._runner.start(
+            run_id=run_id, state=state, recursion_limit=_recursion_limit(budget)
+        )
         return cast(ChatGraphState, result)
 
-    async def resume(self, *, run_id: str) -> ChatGraphState:
-        result = await self._runner.resume(run_id=run_id)
+    async def resume(self, *, run_id: str, budget: TurnBudget = TurnBudget()) -> ChatGraphState:
+        result = await self._runner.resume(run_id=run_id, recursion_limit=_recursion_limit(budget))
         return cast(ChatGraphState, result)
 
     async def has_checkpoint(self, *, run_id: str) -> bool:

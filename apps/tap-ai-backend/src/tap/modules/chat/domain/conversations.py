@@ -147,6 +147,15 @@ class TurnInput:
     retrieval_policy_digest: str = "sha256:" + "0" * 64
     insights_query_id: str | None = None
     insights_report_refs: tuple[str, ...] = ()
+    # The persona version this Turn is pinned to (`TapperPersona.version`).
+    # `None` means every Turn frozen before this field existed, and reads as
+    # `tapper-persona-v1` (`persona_for(None)`) -- the only persona that ever
+    # existed, so this is not a behavior change for them. Dropped from
+    # `material()` below only when it is `None` (same pattern as
+    # `skill_notices` / `requested_skill_revision_ids`), so an old Turn's
+    # persisted digest does not retroactively change when this field is
+    # added; a pinned version is part of the digest.
+    persona_version: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.message, str) or not self.message.strip():
@@ -234,13 +243,14 @@ class TurnInput:
                 raise ValueError("agent output schema digest differs from frozen content")
         if set(self.agent_tool_allowlist) - known_tool_ids():
             raise ValueError("agent tool authority is outside the closed allowlist")
-        if self.insights_query_id is None and self.insights_report_refs:
-            raise ValueError("Insights report refs require a historical query")
-        if self.insights_query_id is not None and (
-            not self.insights_query_id.strip()
-            or not self.insights_report_refs
-            or len(self.insights_report_refs) > 20
+        if self.insights_report_refs and (
+            len(self.insights_report_refs) > 20
             or len(set(self.insights_report_refs)) != len(self.insights_report_refs)
+            or any(not isinstance(ref, str) or not ref.strip() for ref in self.insights_report_refs)
+        ):
+            raise ValueError("Insights report refs must be bounded, unique and nonblank")
+        if self.insights_query_id is not None and (
+            not self.insights_query_id.strip() or not self.insights_report_refs
         ):
             raise ValueError("Insights query and report refs must be bounded")
 
@@ -258,9 +268,11 @@ class TurnInput:
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})
         value["resolved_resources"] = resources
-        if self.insights_query_id is None:
+        if self.insights_query_id is None and not self.insights_report_refs:
             value.pop("insights_query_id")
             value.pop("insights_report_refs")
+        if self.persona_version is None:
+            value.pop("persona_version")
         return {"projectId": project_id, "turnId": turn_id, **value}
 
 
@@ -424,6 +436,14 @@ class ConversationEvent:
             "stage.completed",
             "retrieval.hits_ready",
             "graph.context_ready",
+            # PR 5 (Task 9): one `task.step` per native tool call (running,
+            # then a terminal completed/rejected/failed), emitted by the
+            # `tools` graph node. Missing from this closed set is a
+            # production bug -- every real `task.step` emission through
+            # `ConversationService.emit` would raise the same
+            # `ValueError("unknown conversation event")` this MySQL
+            # integration test caught (Task 12).
+            "task.step",
             "rerank.completed",
             # C-1: no code writes this anymore (PR 3 moved the model's answer
             # to Redis drafts), but older `develop`/`main` builds persisted it

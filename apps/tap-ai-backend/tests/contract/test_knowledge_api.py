@@ -526,6 +526,11 @@ class FakeModelPort:
     def __init__(self) -> None:
         self.embedding_queries: list[str] = []
         self.answer_evidence: list[tuple[Evidence, ...]] = []
+        # Task 1 fix round 1: every extended `.answer()` kwarg this fake was
+        # called with (e.g. `persona`), one dict per call -- lets a caller
+        # assert the frozen persona reached this boundary without needing a
+        # stricter, call-shape-specific double.
+        self.answer_kwargs: list[dict[str, object]] = []
 
     async def embed(self, query: str) -> Embedding:
         self.embedding_queries.append(query)
@@ -536,10 +541,11 @@ class FakeModelPort:
         )
 
     async def answer(
-        self, query: str, evidence: tuple[Evidence, ...], profile_id: str
+        self, query: str, evidence: tuple[Evidence, ...], profile_id: str, **kwargs: object
     ) -> AnswerGeneration:
         del query, profile_id
         self.answer_evidence.append(evidence)
+        self.answer_kwargs.append(kwargs)
         return AnswerGeneration(
             text="Policy facts are verified server-side.",
             claims=(
@@ -584,6 +590,55 @@ def api(search: FakeSearchPort, model: FakeModelPort) -> KnowledgeAPI:
         redactor=PassthroughRedactor(),
         id_factory=lambda: next(ids),
     )
+
+
+class _CountingRelationAnalysis:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+        self.calls += 1
+        from tap.modules.knowledge.application.relation_analysis import (
+            RelationContext,
+            RelationContextStatus,
+        )
+
+        return RelationContext(status=RelationContextStatus.EMPTY, graph_version="1")
+
+
+@pytest.mark.asyncio
+async def test_prepare_frozen_threads_include_relations_to_prepare_answer() -> None:
+    """I-1 (Task 6 fix round 1): `KnowledgeAPI.prepare_frozen` must forward
+    `include_relations` unchanged to `AuthorizedRetrieval.prepare_answer` --
+    `False` must skip relation analysis entirely."""
+    relation = _CountingRelationAnalysis()
+    ids = iter(
+        (
+            "operation-1",
+            "query-plan-1",
+            "context-snapshot-1",
+            "trace-1",
+            "citation-1",
+            "claim-1",
+            *(f"generated-{index}" for index in range(100)),
+        )
+    )
+    model = FakeModelPort()
+    knowledge = KnowledgeAPI(
+        search=FakeSearchPort((search_hit(),)),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=lambda: next(ids),
+        relation_analysis=relation,
+    )
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    await knowledge.prepare_frozen(request, policy, include_relations=False)
+
+    assert relation.calls == 0
 
 
 @pytest.mark.asyncio

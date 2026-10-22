@@ -1482,6 +1482,11 @@ def test_graph_reasoning_flag_controls_whether_relation_analysis_is_wired(
         assert retrieval._relation_analysis is not None
     else:
         assert retrieval._relation_analysis is None
+    # I-2 (Task 6 fix round 1): `KnowledgeHttpService.relations_available` --
+    # whether `graph.relations` can ever succeed for this deployment -- must
+    # track the same `relation_analysis is not None` wiring, not default to
+    # `False` regardless of `graph_reasoning`.
+    assert services.knowledge.relations_available is graph_reasoning
 
 
 def test_runtime_has_no_legacy_combined_model_factory() -> None:

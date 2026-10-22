@@ -10,6 +10,7 @@ from typing import Literal, Protocol, TypedDict
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import RetrievalAnswerResponse
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.tool_calls import AdmittedToolCall
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
 
 
@@ -233,7 +234,7 @@ class ConversationAnswerStep(TypedDict, total=False):
     unchanged).
     """
 
-    kind: Literal["prepared", "generated", "verified", "final"]
+    kind: Literal["prepared", "generated", "verified", "final", "tool_calls"]
     bundle: dict[str, object]
     generation: dict[str, object]
     response: dict[str, object]
@@ -243,6 +244,28 @@ class ConversationAnswerStep(TypedDict, total=False):
     # `seed_search` graph node emits immediately, without itself needing to
     # decode the opaque `bundle`.
     retrieval_hits: dict[str, object]
+    # PR 5 (Task 6/9): present on a `"tool_calls"` step -- the model's own
+    # prose/tool-call history for the bounded tool-calling loop, kept
+    # alongside `bundle` so a resumed `tools`/`model` node can rebuild the
+    # next model call's conversation without re-deriving it. A `"prepared"`
+    # step produced outside the loop (e.g. `seed_search`) carries `[]`.
+    transcript: list[dict[str, object]]
+    # PR 5 (Task 9): the model's requested tool calls this round, admitted or
+    # not yet executed -- `{"callId", "name", "argumentsJson"}` per call.
+    pending_tool_calls: list[dict[str, str]]
+
+
+class ConversationToolResult(TypedDict):
+    """`KnowledgeHttpService.run_conversation_tool`'s result: the updated
+    (or, on failure, unchanged) `"prepared"` `ConversationAnswerStep`, plus
+    what changed, for the `tools` graph node to turn into a `task.step` event
+    and a tool result message fed back to the model."""
+
+    step: ConversationAnswerStep
+    status: Literal["completed", "failed"]
+    summary: str
+    added_labels: list[str]
+    retrieval_hits: dict[str, object] | None
 
 
 class ConversationAnswerSteps(Protocol):
@@ -251,7 +274,7 @@ class ConversationAnswerSteps(Protocol):
     these four, and a LangGraph node may instead call each on its own."""
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None
+        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
     ) -> ConversationAnswerStep: ...
 
     async def generate_conversation_answer(
@@ -262,6 +285,7 @@ class ConversationAnswerSteps(Protocol):
         answer_plan=None,
         authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        tools: tuple[str, ...] = (),
     ) -> ConversationAnswerStep: ...
 
     async def verify_conversation_answer(
@@ -285,3 +309,19 @@ class ConversationAnswerSteps(Protocol):
     async def refuse_out_of_scope(
         self, frozen_input, *, answer_plan
     ) -> RetrievalAnswerResponse: ...
+
+    async def run_conversation_tool(
+        self,
+        step: ConversationAnswerStep,
+        frozen_input,
+        call: AdmittedToolCall,
+        *,
+        answer_plan=None,
+        authorize=None,
+    ) -> ConversationToolResult: ...
+
+    async def add_insights_records(
+        self,
+        step: ConversationAnswerStep,
+        records: Sequence[Mapping[str, object]],
+    ) -> tuple[ConversationAnswerStep, list[str]]: ...

@@ -123,6 +123,7 @@ class ToolDescriptor(ContractModel):
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
     required: StrictBool
+    default_enabled: StrictBool
 
 
 class ToolPage(ContractModel):
@@ -1060,6 +1061,19 @@ class GraphContextSummaryView(ContractModel):
     relation_count: int = Field(ge=0)
 
 
+class InsightsFactView(ContractModel):
+    """One `I<n>`-labeled Insights metric record a claim actually cited
+    (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+    Insights label -- a cited record surfaces here instead, in citation
+    order."""
+
+    label: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    value: float | int | None = None
+    as_of: str = Field(min_length=1)
+
+
 class RetrievalAnswerResponse(ContractModel):
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
@@ -1071,6 +1085,7 @@ class RetrievalAnswerResponse(ContractModel):
     answer: str
     abstained: bool
     abstention_reason: AbstentionReason | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
     claims: list[RetrievalClaim]
     citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
     graph_context_status: Literal[
@@ -1078,6 +1093,7 @@ class RetrievalAnswerResponse(ContractModel):
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
     graph_context: GraphContextSummaryView | None = None
+    insights_facts: list[InsightsFactView] | None = None
 
     @model_validator(mode="after")
     def validate_graph_context(self) -> Self:
@@ -1216,6 +1232,20 @@ class ConversationCreateRequest(ContractModel):
     document_revision_ids: Annotated[list[str], Field(max_length=50)] = []
     agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
+    # Task 8: a plain conversation Turn may freeze `insightsReportRefs` alone
+    # (no historical `insights_query_id` -- that field has no HTTP entry
+    # point yet, joint analysis is covered by integration tests only, user
+    # decision B). Bounded/unique/nonblank the same as
+    # `TurnInput.insights_report_refs` -- per-item constraints below (not
+    # just the list-level `max_length`) so a blank or duplicate ref fails
+    # here as a 4xx validation error, not `TurnInput.__post_init__`'s
+    # `ValueError` surfacing as a misleading 503 (fix round 1, I-1).
+    insights_report_refs: Annotated[
+        list[
+            Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+        ],
+        Field(max_length=20),
+    ] = []
 
     @field_validator("message")
     @classmethod
@@ -1223,6 +1253,13 @@ class ConversationCreateRequest(ContractModel):
         if not value.strip():
             raise ValueError("message must be nonblank")
         return value
+
+    @field_validator("insights_report_refs")
+    @classmethod
+    def unique_insights_report_refs(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("insights report refs must be unique")
+        return values
 
 
 class ConversationResolvedResourceView(ContractModel):
@@ -1375,6 +1412,10 @@ class ConversationEventItem(ContractModel):
         "retrieval.hits_ready",
         "graph.context_ready",
         "rerank.completed",
+        # PR 5 (Task 9/12): one `task.step` per native tool call, persisted
+        # the same way every other mid-turn event is (see `ConversationEvent`,
+        # `modules/chat/domain/conversations.py`).
+        "task.step",
         "citation.resolved",
         "turn.completed",
         "turn.abstained",

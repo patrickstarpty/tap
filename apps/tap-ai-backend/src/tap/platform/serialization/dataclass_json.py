@@ -146,6 +146,17 @@ def _decode_union(tp: Any, data: object) -> Any:
         raise TypeError(f"unexpected null for non-optional union {tp!r}")
     if len(non_none) == 1:
         return _decode(non_none[0], data)
+    # A plain numeric union (`float | int | None`, e.g. `InsightsFact.value`,
+    # PR 5 Task 8/12): JSON has one number type, so `int` and `float` are
+    # never ambiguous by a `__type__` tag the way two dataclass members
+    # would be -- decode by the value's own runtime shape, matching how
+    # `to_json` already encodes `int`/`float` as themselves with no tag.
+    if non_none and all(candidate in (int, float) for candidate in non_none):
+        if isinstance(data, bool) or not isinstance(data, (int, float)):
+            raise TypeError(f"expected a numeric value for union {tp!r}")
+        if int in non_none and (float not in non_none or isinstance(data, int)):
+            return int(data)
+        return float(data)
     if isinstance(data, MappingABC) and _TYPE_TAG in data:
         tag = data[_TYPE_TAG]
         for candidate in non_none:

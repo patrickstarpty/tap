@@ -8,7 +8,13 @@ from uuid import uuid4
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
 from tap.modules.ai.ports.gateway import ModelGateway
-from tap.modules.chat.domain.answer_plan import INTENTS, MISSING_FIELDS, ROUTES, PlanningInput
+from tap.modules.chat.domain.answer_plan import (
+    AGENT_INTENTS,
+    INTENTS,
+    MISSING_FIELDS,
+    ROUTES,
+    PlanningInput,
+)
 
 _QUERY_PROPERTIES = {
     "id": {"type": "string"},
@@ -18,9 +24,19 @@ _QUERY_PROPERTIES = {
     "source_ids": {"type": "array", "items": {"type": "string"}},
 }
 PLANNER_SCHEMA: dict[str, Any] = {
+    "title": "AnswerPlan",
     "type": "object",
     "additionalProperties": False,
-    "required": ["intent", "route", "confidence", "standalone_query", "missing", "queries"],
+    "required": [
+        "intent",
+        "route",
+        "confidence",
+        "standalone_query",
+        "missing",
+        "queries",
+        "agent_intent",
+        "intent_reason",
+    ],
     "properties": {
         "intent": {"type": "string", "enum": sorted(INTENTS)},
         "route": {"type": "string", "enum": sorted(ROUTES)},
@@ -37,6 +53,8 @@ PLANNER_SCHEMA: dict[str, Any] = {
                 "properties": _QUERY_PROPERTIES,
             },
         },
+        "agent_intent": {"type": "string", "enum": sorted(AGENT_INTENTS)},
+        "intent_reason": {"type": "string", "maxLength": 300},
     },
 }
 PLANNER_PROMPT = (
@@ -50,7 +68,9 @@ PLANNER_PROMPT = (
     "what depends on or follows something, or which rules affect an entity. "
     "Use intent out_of_scope with route direct and no queries when the request is unrelated to "
     "the project's knowledge, software testing or quality work, or asks for content Tapper must "
-    "not produce."
+    "not produce. Also classify agent_intent for observability only (it never limits tools): "
+    "knowledge_qa, multi_step_qa, document_analysis, insights_analysis, clarify or out_of_scope, "
+    "with a one-sentence intent_reason."
 )
 
 

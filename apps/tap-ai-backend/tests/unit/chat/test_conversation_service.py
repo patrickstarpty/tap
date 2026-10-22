@@ -282,6 +282,50 @@ async def test_complete_evidence_persists_graph_context_ready_stream_event():
     assert graph_context_ready_events[0].payload["status"] == "APPLIED"
 
 
+@pytest.mark.asyncio
+async def test_complete_evidence_persists_task_step_stream_event():
+    """`task.step` (LangGraph PR 5 Task 9/12, one per native tool call) must
+    be a recognized stream event type in `ConversationEvent.__post_init__`'s
+    closed set, not just the SSE/HTTP-history contracts in isolation --
+    Task 12's real MySQL integration test caught this missing from both
+    `ConversationEvent` and `ConversationEventItem` (`contracts/http.py`);
+    this unit test pins the fix at the `ConversationService` boundary so a
+    future edit to the closed set cannot silently drop it again."""
+    service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    await service.create("conversation-1", "turn-1", "request-1", _input())
+    evidence = AnswerEvidence(
+        "Grounded",
+        "completed",
+        RetrievalSummary("completed"),
+        GraphContextStatus.NOT_SELECTED,
+    )
+    completed = await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        evidence,
+        terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+        stream_events=(
+            (
+                "task.step",
+                {
+                    "stepId": "turn-1:r1:c0",
+                    "tool": "knowledge.search",
+                    "status": "completed",
+                    "summary": 'knowledge.search "x" → +1 条证据（S2）',
+                    "durationMs": 42,
+                    "toolRound": 1,
+                },
+            ),
+        ),
+    )
+    assert completed.state == "completed"
+    detail = await service.load("conversation-1")
+    task_step_events = [event for event in detail.events if event.event_type == "task.step"]
+    assert len(task_step_events) == 1
+    assert task_step_events[0].payload["status"] == "completed"
+    assert task_step_events[0].payload["stepId"] == "turn-1:r1:c0"
+
+
 def test_snapshot_digest_is_bound_to_project_turn_and_immutable_input():
     service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
     turn, _ = service._turn("conversation-1", "turn-1", "request-1", _input())

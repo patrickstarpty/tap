@@ -1833,7 +1833,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDraftEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["TaskStepEvent"] | components["schemas"]["GraphContextReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDraftEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -2032,6 +2032,11 @@ export interface components {
              * @default []
              */
             documentRevisionIds?: string[];
+            /**
+             * Insightsreportrefs
+             * @default []
+             */
+            insightsReportRefs?: string[];
             /** Message */
             message: string;
             /** Modelalias */
@@ -2068,7 +2073,7 @@ export interface components {
              * Eventtype
              * @enum {string}
              */
-            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "graph.context_ready" | "rerank.completed" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
+            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "graph.context_ready" | "rerank.completed" | "task.step" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
             /** Occurredat */
             occurredAt: string;
             /** Payload */
@@ -2806,6 +2811,28 @@ export interface components {
              * @enum {string}
              */
             stopReason: "completed" | "budget-exhausted" | "insights-unavailable";
+        };
+        /**
+         * InsightsFactView
+         * @description One `I<n>`-labeled Insights metric record a claim actually cited
+         *     (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+         *     Insights label -- a cited record surfaces here instead, in citation
+         *     order.
+         */
+        InsightsFactView: {
+            /** Asof */
+            asOf: string;
+            /** Label */
+            label: string;
+            /** Metricid */
+            metricId: string;
+            /** Queryid */
+            queryId: string;
+            /**
+             * Value
+             * @default null
+             */
+            value?: number | null;
         };
         JsonValue: unknown;
         /** KnowledgeChunk */
@@ -4377,6 +4404,12 @@ export interface components {
             abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
+            /**
+             * Answerkind
+             * @default answer
+             * @enum {string}
+             */
+            answerKind?: "answer" | "clarification";
             /** Citations */
             citations: components["schemas"]["RetrievalCitation"][];
             /** Claims */
@@ -4405,6 +4438,11 @@ export interface components {
              * @default null
              */
             graphSnapshotId?: string | null;
+            /**
+             * Insightsfacts
+             * @default null
+             */
+            insightsFacts?: components["schemas"]["InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -4543,6 +4581,8 @@ export interface components {
             authorizedHitCount: number;
             /** Labels */
             labels?: components["schemas"]["RetrievalHitsLabelView"][] | null;
+            /** Stepid */
+            stepId?: string | null;
             /** Traceid */
             traceId: string;
         };
@@ -4995,6 +5035,38 @@ export interface components {
          * @description A closed, structural location inside one authorized source family.
          */
         "StructuralAnchor-Input": components["schemas"]["DocumentAnchor-Input"] | components["schemas"]["CodeAnchor-Input"] | components["schemas"]["BddAnchor-Input"] | components["schemas"]["OpenApiAnchor-Input"] | components["schemas"]["FailureAnchor-Input"];
+        /** TaskStepEvent */
+        TaskStepEvent: {
+            payload: components["schemas"]["TaskStepPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.step";
+        };
+        /**
+         * TaskStepPayload
+         * @description One bounded tool-calling round's per-call progress (PR 5 Task 9):
+         *     `status` moves `running` -> a terminal state (`completed`/`rejected`/
+         *     `failed`); `step_id` is `f"{turnId}:r{round}:c{index}"`, unique per call.
+         */
+        TaskStepPayload: {
+            /** Durationms */
+            durationMs: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "rejected" | "failed";
+            /** Stepid */
+            stepId: string;
+            /** Summary */
+            summary: string;
+            /** Tool */
+            tool: string;
+            /** Toolround */
+            toolRound: number;
+        };
         /** TestPlanCaseView */
         "TestPlanCaseView-Input": {
             /** Caseid */
@@ -5434,6 +5506,8 @@ export interface components {
         };
         /** ToolDescriptor */
         ToolDescriptor: {
+            /** Defaultenabled */
+            defaultEnabled: boolean;
             /** Description */
             description: string;
             /** Name */
@@ -5694,6 +5768,23 @@ export interface components {
             /** Nodeid */
             nodeId: string;
         };
+        /**
+         * InsightsFactView
+         * @description Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited
+         *     `I<n>` Insights metric record, in citation order.
+         */
+        tap__contracts__chat_stream__InsightsFactView: {
+            /** Asof */
+            asOf: string;
+            /** Label */
+            label: string;
+            /** Metricid */
+            metricId: string;
+            /** Queryid */
+            queryId: string;
+            /** Value */
+            value?: number | null;
+        };
         /** OpenApiAnchor */
         tap__contracts__chat_stream__OpenApiAnchor: {
             /** Jsonpointer */
@@ -5715,6 +5806,12 @@ export interface components {
             abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
+            /**
+             * Answerkind
+             * @default answer
+             * @enum {string}
+             */
+            answerKind?: "answer" | "clarification";
             /** Citations */
             citations: components["schemas"]["Citation"][];
             /** Claims */
@@ -5736,6 +5833,8 @@ export interface components {
             graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
+            /** Insightsfacts */
+            insightsFacts?: components["schemas"]["tap__contracts__chat_stream__InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
@@ -5840,6 +5939,25 @@ export interface components {
             /** Nodeid */
             nodeId: string;
         };
+        /**
+         * InsightsFactView
+         * @description One `I<n>`-labeled Insights metric record a claim actually cited
+         *     (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+         *     Insights label -- a cited record surfaces here instead, in citation
+         *     order.
+         */
+        tap__contracts__http__InsightsFactView: {
+            /** Asof */
+            asOf: string;
+            /** Label */
+            label: string;
+            /** Metricid */
+            metricId: string;
+            /** Queryid */
+            queryId: string;
+            /** Value */
+            value?: number | null;
+        };
         /** OpenApiAnchor */
         tap__contracts__http__OpenApiAnchor: {
             /** Jsonpointer */
@@ -5861,6 +5979,12 @@ export interface components {
             abstentionReason?: components["schemas"]["AbstentionReason"] | null;
             /** Answer */
             answer: string;
+            /**
+             * Answerkind
+             * @default answer
+             * @enum {string}
+             */
+            answerKind?: "answer" | "clarification";
             /** Citations */
             citations: components["schemas"]["RetrievalCitation"][];
             /** Claims */
@@ -5882,6 +6006,8 @@ export interface components {
             graphContextStatus?: "APPLIED" | "NOT_READY" | "STALE" | "FAILED" | "UNAVAILABLE" | "NOT_SELECTED" | "EMPTY";
             /** Graphsnapshotid */
             graphSnapshotId?: string | null;
+            /** Insightsfacts */
+            insightsFacts?: components["schemas"]["tap__contracts__http__InsightsFactView"][] | null;
             /** Queryplanid */
             queryPlanId: string;
             /** Retrievalprofileid */
