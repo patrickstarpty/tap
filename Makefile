@@ -214,7 +214,7 @@ TAP_CHAT_RELATIONS_BASELINE ?=
 TAP_CHAT_RELATIONS_OBSERVATIONS ?= .local/chat-relations/observations.json
 TAP_CHAT_RELATIONS_REPORT ?= .local/chat-relations/report.json
 
-quality-chat-relations-real: ## ask the relation golden set through the real Tapper chat agent loop (opt-in; requires a running `make demo-dev` stack with TAPPER_GRAPH_REASONING=1, corpus.json from `load-graph-real-corpus.py upload`, published sources; no Agent unless TAP_CHAT_RELATIONS_AGENT is set; golden questions only, no regression groups; gates against TAP_CHAT_RELATIONS_BASELINE when set, otherwise report-only)
+quality-chat-relations-real: ## ask the relation golden set through the real Tapper chat agent loop (opt-in; requires a running `make demo-dev` stack with TAPPER_GRAPH_REASONING=1, corpus.json from `load-graph-real-corpus.py upload`, published sources; no Agent unless TAP_CHAT_RELATIONS_AGENT is set; golden questions only, no regression groups; gates against TAP_CHAT_RELATIONS_BASELINE when set, otherwise report-only; an unresolved provider model makes the gate incomparable unless TAP_CHAT_RELATIONS_ALLOW_ALIAS_ONLY=1)
 	@if [ "$${TAP_RUN_QUALITY_CHAT_RELATIONS:-}" != "1" ]; then echo "quality-chat-relations-real requires TAP_RUN_QUALITY_CHAT_RELATIONS=1" >&2; exit 2; fi
 	@case "$${TAP_QUALITY_GRAPH_RELATIONS_DATASET_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-chat-relations-real requires explicit dataset authorization" >&2; exit 2;; esac
 	@case "$${TAP_QUALITY_MODEL_EXECUTION_AUTHORIZATION:-}" in approved:?*) ;; *) echo "quality-chat-relations-real requires explicit model execution authorization" >&2; exit 2;; esac

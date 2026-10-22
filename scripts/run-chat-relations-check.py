@@ -35,7 +35,10 @@ Gate rule (exit code):
   `run-graph-relations-candidate.py --mode real` observations), the baseline must be
   comparable -- same goldenDigest, corpusDigest, graphVersion, real execution,
   graphReasoning True, and every answer's model call uses the baseline's alias and
-  (normalized) provider model id, see `model_check` -- or the report is written with
+  (normalized) provider model id, see `model_check`; a call with no recorded
+  upstream model is incomparable too unless `--allow-alias-only-model-check` (env
+  `TAP_CHAT_RELATIONS_ALLOW_ALIAS_ONLY=1`) accepts alias-only identity, which the
+  report records under `gate.aliasOnlyModelCheck` -- or the report is written with
   gate mode `incomparable` and the run exits 2; then, scored
   over the same selected questions, the gate passes (exit 0) only when
   1. `relationPassRateNotBelowBaseline`: chat pass rate >= single-shot pass rate,
@@ -50,6 +53,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import socket
 import statistics
 import sys
@@ -489,13 +493,17 @@ _UNASKED_OUTCOMES = frozenset({"timeout", "error"})
 
 
 def model_check(
-    answers: Sequence[Mapping[str, Any]], baseline: Mapping[str, Any]
+    answers: Sequence[Mapping[str, Any]],
+    baseline: Mapping[str, Any],
+    *,
+    allow_alias_only: bool = False,
 ) -> dict[str, Any]:
-    """Every answered question's model calls must use the baseline's alias and,
-    where the call recorded one, its (normalized) provider model id
-    (`answer_provenance.provider_model_id` in the single-shot run). Calls without an
-    upstream model are listed under `unresolved` rather than hidden. A question
-    that was never answered (`timeout`/`error`) has no model to compare."""
+    """Every answered question's model calls must use the baseline's alias and its
+    (normalized) provider model id (`answer_provenance.provider_model_id` in the
+    single-shot run). A question with any call lacking an upstream model is
+    `unresolved`: its provider model identity cannot be checked, which makes the
+    baseline gate incomparable unless `allow_alias_only` accepts alias-only identity.
+    A question that was never answered (`timeout`/`error`) has no model to compare."""
     baseline_model = baseline.get("model")
     alias = baseline_model.get("alias") if isinstance(baseline_model, Mapping) else None
     actual = _normalized_model(
@@ -541,7 +549,8 @@ def model_check(
         "baselineActual": actual or None,
         "mismatches": mismatches,
         "unresolved": unresolved,
-        "passed": not mismatches,
+        "aliasOnlyAllowed": allow_alias_only,
+        "passed": not mismatches and (allow_alias_only or not unresolved),
     }
 
 
@@ -580,6 +589,7 @@ def build_report(
     *,
     question_ids: Sequence[str] | None = None,
     baseline: Mapping[str, Any] | None = None,
+    allow_alias_only: bool = False,
 ) -> dict[str, Any]:
     """Score chat observations (and optionally a single-shot baseline) with the
     shared evaluator over the selected golden questions; apply the gate rule."""
@@ -622,11 +632,17 @@ def build_report(
     if baseline is None:
         gate: dict[str, Any] = {"mode": "report-only", "checks": [], "passed": True}
     else:
-        models = model_check(answers, baseline)
+        models = model_check(answers, baseline, allow_alias_only=allow_alias_only)
         reasons = _comparability_reasons(observations, baseline) + [
             f"model mismatch for {item['questionId']}: {item['reason']}"
             for item in models["mismatches"]
         ]
+        if models["unresolved"] and not allow_alias_only:
+            reasons.append(
+                "provider model unresolved (no upstreamModel on an answer call) for "
+                f"{', '.join(models['unresolved'])}; pass --allow-alias-only-model-check "
+                "(TAP_CHAT_RELATIONS_ALLOW_ALIAS_ONLY=1) to accept alias-only identity"
+            )
         baseline_report = _EVALUATOR.evaluate(golden_subset, baseline)
         baseline_summary = baseline_report["summary"]
         baseline_wrong = _wrong_count(baseline_report)
@@ -669,6 +685,8 @@ def build_report(
             gate = {
                 "mode": "baseline",
                 "checks": checks,
+                # Questions gated on alias-only model identity (opt-in).
+                "aliasOnlyModelCheck": list(models["unresolved"]),
                 "passed": all(check["passed"] for check in checks),
             }
 
@@ -1055,6 +1073,14 @@ def main() -> int:
     )
     parser.add_argument("--turn-timeout-seconds", type=float, default=300.0)
     parser.add_argument(
+        "--allow-alias-only-model-check",
+        action="store_true",
+        default=os.environ.get("TAP_CHAT_RELATIONS_ALLOW_ALIAS_ONLY") == "1",
+        help="accept alias-only model identity when an answer call recorded no "
+        "upstream model (default: such a baseline-gated run is incomparable, exit 2); "
+        "env TAP_CHAT_RELATIONS_ALLOW_ALIAS_ONLY=1",
+    )
+    parser.add_argument(
         "--score-only",
         action="store_true",
         help="re-score an existing --observations file without calling the API",
@@ -1092,6 +1118,7 @@ def main() -> int:
             observations,
             question_ids=question_ids or None,
             baseline=baseline,
+            allow_alias_only=arguments.allow_alias_only_model_check,
         )
     except (ValueError, OSError, KeyError, urllib.error.URLError) as error:
         print(f"error: {error}", file=sys.stderr)

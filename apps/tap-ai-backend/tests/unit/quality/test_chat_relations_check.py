@@ -561,12 +561,55 @@ def test_model_check_compares_alias_and_normalized_provider_model_id() -> None:
     chat = _chat_with_models(golden, script.answer_models(REALISTIC_TRACE))
     baseline = _baseline(golden, [_single_shot("q-01", GOOD)])
     baseline["model"] = {"alias": "chat-default", "actual": "OpenAI/GPT-X "}
-    report = script.build_report(golden, chat, baseline=baseline)
+    report = script.build_report(golden, chat, baseline=baseline, allow_alias_only=True)
     assert report["gate"]["mode"] == "baseline"
     check = report["modelCheck"]
     assert check["mismatches"] == []
     # The streamed chat call had no resolved upstream model: listed, not hidden.
     assert check["unresolved"] == ["q-01"]
+
+
+RESOLVED = [{"alias": "chat-default", "upstreamModel": "openai/gpt-x", "provider": "openai"}]
+UNRESOLVED = [{"alias": "chat-default", "upstreamModel": None, "provider": "unknown"}]
+
+
+def _gated(models_by_question: dict[str, list[dict[str, Any]]], **options: Any):
+    golden = _golden(*models_by_question)
+    answers = []
+    for question_id, models in models_by_question.items():
+        entry = _entry(question_id, called=True, citations=GOOD)
+        entry["answerModels"] = models
+        answers.append(entry)
+    baseline = _baseline(golden, [_single_shot(q, GOOD) for q in models_by_question])
+    return script.build_report(golden, _observations(golden, answers), baseline=baseline, **options)
+
+
+def test_every_question_unresolved_makes_the_gate_incomparable() -> None:
+    report = _gated({"q-01": UNRESOLVED, "q-02": UNRESOLVED})
+    assert report["gate"]["mode"] == "incomparable"
+    assert any("q-01" in r and "q-02" in r for r in report["gate"]["reasons"])
+    assert script.exit_code(report) == 2
+
+
+def test_one_unresolved_question_makes_the_gate_incomparable() -> None:
+    report = _gated({"q-01": RESOLVED, "q-02": UNRESOLVED})
+    assert report["gate"]["mode"] == "incomparable"
+    reasons = [r for r in report["gate"]["reasons"] if "unresolved" in r]
+    assert reasons and "q-02" in reasons[0] and "q-01" not in reasons[0]
+    assert script.exit_code(report) == 2
+
+
+def test_alias_only_opt_in_gates_normally_and_is_flagged() -> None:
+    report = _gated({"q-01": RESOLVED, "q-02": UNRESOLVED}, allow_alias_only=True)
+    assert report["gate"]["mode"] == "baseline"
+    assert report["gate"]["aliasOnlyModelCheck"] == ["q-02"]
+    assert report["modelCheck"]["aliasOnlyAllowed"] is True
+    assert script.exit_code(report) == 0
+
+    resolved = _gated({"q-01": RESOLVED})
+    assert resolved["gate"]["mode"] == "baseline"
+    assert resolved["gate"]["aliasOnlyModelCheck"] == []
+    assert resolved["modelCheck"]["aliasOnlyAllowed"] is False
 
 
 def test_model_check_rejects_an_answer_without_a_recorded_model() -> None:
