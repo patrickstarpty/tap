@@ -20,6 +20,28 @@ describe("DraftAnswer", () => {
     expect(badge.getAttribute("title")).toContain("Policy handbook");
   });
 
+  it("renders a space-padded marker as the same badge, like the backend parser", () => {
+    render(
+      <DraftAnswer
+        draft={{
+          attempt: 1,
+          seq: 1,
+          text: "A rule applies[ S3 ]. Another[S03].",
+        }}
+        citationLabels={{ S3: { title: "Policy handbook", location: null } }}
+        stage={null}
+        partialAnswer={null}
+        canceled={false}
+      />,
+    );
+
+    const badge = screen.getByText("[S3]");
+    expect(badge.getAttribute("title")).toBe("Policy handbook");
+    expect(screen.queryByText(/\[ S3 \]/u)).toBeNull();
+    // A leading zero is not a label in the backend grammar either.
+    expect(screen.getByText(/Another\[S03\]\./u)).toBeVisible();
+  });
+
   it("renders an unknown inline label as plain text", () => {
     render(
       <DraftAnswer

@@ -21,8 +21,11 @@ type DraftLocale = keyof typeof DRAFT_COPY;
 
 /** A label like `"S3"`/`"R1"` (no brackets — matches `RetrievalHitsLabelView.label`),
  * matched against the `[S3]`/`[R1]` markers `reduceStreamEvent` may still be
- * assembling mid-word in an in-flight draft. */
-const LABEL_PATTERN = /\[(S\d+|R\d+)\]/g;
+ * assembling mid-word in an in-flight draft. Same grammar as the backend
+ * `_MARKER` (`knowledge/adapters/grounded_output.py`): an `S`/`R`/`I` label
+ * 1–999 with no leading zero, optionally padded by spaces/tabs inside the
+ * brackets (`[ S1 ]`). */
+const LABEL_PATTERN = /\[[ \t]*([SRI][1-9][0-9]{0,2})[ \t]*\]/g;
 
 interface DraftMdNode {
   type: string;
