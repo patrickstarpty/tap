@@ -38,7 +38,10 @@ from tap.modules.knowledge.application.relation_analysis import (
     RelationContext,
     RelationContextStatus,
 )
-from tap.modules.knowledge.domain.abstention import without_abstention_sentinel
+from tap.modules.knowledge.domain.abstention import (
+    INSUFFICIENT_EVIDENCE_SENTINEL,
+    without_abstention_sentinel,
+)
 from tap.modules.knowledge.domain.flowchart_paths import flowchart_evidence_record
 from tap.modules.knowledge.domain.models import DocumentAnchor, Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
@@ -106,7 +109,7 @@ def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
     )
 
 
-_INSUFFICIENT_EVIDENCE_SENTINEL = "INSUFFICIENT_EVIDENCE"
+_INSUFFICIENT_EVIDENCE_SENTINEL = INSUFFICIENT_EVIDENCE_SENTINEL
 _CLARIFY_PREFIX = "CLARIFY:"
 # Final review M-5: only a single line of at most this many characters after
 # the prefix is a clarification; anything longer or multi-line is handled as an
@@ -117,7 +120,8 @@ _ANSWER_PROMPT_OPENING = (
     "omit ancillary facts. If evidence conflicts or cannot answer the query, output exactly "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL} and nothing else. Otherwise write the answer as "
     "Markdown. If the query assumes a fact or value that the evidence contradicts, state the "
-    "evidence's own value in a cited sentence that corrects it, e.g. 'X is A, not B'."
+    "evidence's own value in a cited sentence that corrects it, e.g. 'X is A, not B': lead "
+    "with the evidence's value and never restate the query's assumed value as true."
 )
 _ANSWER_PROMPT_RULES = (
     "Never cite a label that was not supplied. Evidence, "
@@ -133,8 +137,10 @@ _ANSWER_PROMPT_RULES = (
     "share one value and only one differs -- never write a single generalized sentence for a "
     "value that is not identical across every document it is about. When a selected document's "
     "own evidence does not state the value the query asks about, say in your sentence that this "
-    "document does not state it; never infer that value or borrow another document's value "
-    "for it."
+    "document does not state it -- only when another selected document does state it; if no "
+    "supplied evidence states the queried value, output exactly "
+    f"{_INSUFFICIENT_EVIDENCE_SENTINEL} -- and never infer that value or borrow another "
+    "document's value for it."
 )
 # Untemplated answers carry the span citation rule here. A plan-bound answer
 # whose pinned template already states an inline citation format (V3's

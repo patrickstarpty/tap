@@ -827,3 +827,68 @@ def test_both_answer_contracts_ask_to_correct_a_contradicted_premise() -> None:
     rule = "If the query assumes a fact or value that the evidence contradicts"
     assert rule in knowledge_litellm._ANSWER_PROMPT
     assert rule in knowledge_litellm._TEMPLATED_ANSWER_PROMPT
+
+
+@pytest.mark.parametrize(
+    ("text", "claim", "answer"),
+    [
+        (
+            "- 期限最长6个月[S2]。具体以保单为准。",
+            "期限最长6个月。",
+            "- 期限最长6个月。具体以保单为准。",
+        ),
+        (
+            "- The term is at most 6 months[S2]. See the policy.",
+            "The term is at most 6 months.",
+            "- The term is at most 6 months. See the policy.",
+        ),
+    ],
+    ids=("zh", "en"),
+)
+def test_a_list_item_claim_keeps_the_terminator_after_its_marker(text, claim, answer) -> None:
+    parsed_answer, claims = _parse(text, _steps_pool())
+
+    assert [item.text for item in claims] == [claim]
+    assert parsed_answer == answer
+
+
+@pytest.mark.parametrize(
+    ("text", "answer"),
+    [
+        (
+            "- 尊享智选康惠团体医疗保险的被保险人为团体成员[S1]。\n"
+            "- 尊享智选康惠团体医疗保险的投保年龄为0周岁至70周岁[S2]。具体以保单为准。",
+            "- 尊享智选康惠团体医疗保险的被保险人为团体成员。\n- 具体以保单为准。",
+        ),
+        (
+            "1. 尊享智选康惠团体医疗保险的被保险人为团体成员[S1]。\n"
+            "2. 尊享智选康惠团体医疗保险的投保年龄为0周岁至70周岁[S2]，另见条款",
+            "1. 尊享智选康惠团体医疗保险的被保险人为团体成员。\n2. 另见条款",
+        ),
+    ],
+    ids=("bullet", "numbered"),
+)
+def test_a_rejected_span_keeps_the_list_prefix_of_the_text_left_on_its_line(text, answer) -> None:
+    from test_grounded_output import GROUP, LIFE
+
+    parsed_answer, claims = _parse(text, (GROUP, LIFE))
+
+    assert [item.text for item in claims] == ["尊享智选康惠团体医疗保险的被保险人为团体成员。"]
+    assert parsed_answer == answer
+
+
+def test_premise_and_unstated_value_rules_are_scoped() -> None:
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+    from tap.modules.knowledge.domain.abstention import INSUFFICIENT_EVIDENCE_SENTINEL
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert (
+            "lead with the evidence's value and never restate the query's assumed value as true"
+            in contract
+        )
+        assert "only when another selected document does state it" in contract
+        assert (
+            "if no supplied evidence states the queried value, output exactly "
+            f"{INSUFFICIENT_EVIDENCE_SENTINEL}" in contract
+        )
+    assert knowledge_litellm._INSUFFICIENT_EVIDENCE_SENTINEL is INSUFFICIENT_EVIDENCE_SENTINEL

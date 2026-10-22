@@ -186,6 +186,12 @@ def _list_item_marker_run_end(masked: str, index: int) -> int | None:
         if following is None:
             break
         end = following.end()
+    # A sentence terminator right after the markers ends the cited sentence
+    # with it, so the claim keeps its `。`/`.` and the uncited remainder does
+    # not start with one. A comma or similar stays outside: it continues the
+    # line's own, uncited text.
+    while end < len(masked) and masked[end] in _CJK_TERMINATORS + _ASCII_TERMINATORS:
+        end += 1
     line_end = masked.find("\n", end)
     rest = masked[end : len(masked) if line_end == -1 else line_end]
     if all(character in _TRAILING_PUNCTUATION for character in rest):
@@ -314,6 +320,7 @@ def parse_inline_answer(
     return answer, tuple(claims)
 
 
+_LINE_MARKUP_PREFIX = re.compile(r"[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+|#{1,6}[ \t]+)")
 _EMPTY_MARKUP_LINE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)]|#{1,6})?[ \t]*")
 
 
@@ -331,6 +338,15 @@ def _without_spans(text: str, masked: str, spans: Sequence[tuple[int, int]]) -> 
         remaining = masked[line_start:start] + masked[end:line_end]
         if "\n" not in masked[start:end] and _EMPTY_MARKUP_LINE.fullmatch(remaining):
             start, end = line_start, min(line_end + 1, len(masked))
+        elif start == line_start:
+            # The rejected span opens a list/heading line that keeps other
+            # text: keep the line's markup prefix, and drop punctuation the
+            # removed span left leading the remainder.
+            prefix = _LINE_MARKUP_PREFIX.match(masked, line_start)
+            if prefix is not None and prefix.end() <= end:
+                start = prefix.end()
+            while end < line_end and masked[end] in _TRAILING_PUNCTUATION:
+                end += 1
         text, masked = text[:start] + text[end:], masked[:start] + masked[end:]
     return text, masked
 
