@@ -414,6 +414,18 @@ button:focus-visible,
   font-size: 15px;
 }
 
+/* Tailwind's preflight resets every list to `list-style: none` with no
+   padding; answer Markdown keeps its numbers and bullets. */
+.tapper-markdown ol {
+  list-style: decimal outside;
+  padding-left: 1.5em;
+}
+
+.tapper-markdown ul {
+  list-style: disc outside;
+  padding-left: 1.5em;
+}
+
 .tapper-markdown pre {
   max-width: 100%;
   overflow-x: auto;
