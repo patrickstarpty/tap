@@ -3112,6 +3112,39 @@ def test_planner_timeout_defaults_to_the_measured_budget_and_wires_into_the_plan
     assert custom.planner_timeout_seconds == 4.5
 
 
+def test_stream_idle_and_max_timeouts_default_and_wire_into_the_gateway():
+    """Capability-4 validation D3: streamed answers get an idle and an overall
+    bound of their own instead of sharing the 15 s model timeout."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    assert settings.model_stream_idle_seconds == 15.0
+    assert settings.model_stream_max_seconds == 180.0
+    config = module._create_embeddings(settings).gateway._config
+    assert (config.stream_idle_seconds, config.stream_max_seconds) == (15.0, 180.0)
+
+    custom = module.TapperSettings.from_mapping(
+        valid_settings()
+        | {"TAPPER_MODEL_STREAM_IDLE_SECONDS": "20", "TAPPER_MODEL_STREAM_MAX_SECONDS": "240"}
+    )
+    config = module._create_embeddings(custom).gateway._config
+    assert (config.stream_idle_seconds, config.stream_max_seconds) == (20.0, 240.0)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TAPPER_MODEL_STREAM_IDLE_SECONDS", "0"),
+        ("TAPPER_MODEL_STREAM_IDLE_SECONDS", "61"),
+        ("TAPPER_MODEL_STREAM_MAX_SECONDS", "nan"),
+        ("TAPPER_MODEL_STREAM_MAX_SECONDS", "301"),
+    ],
+)
+def test_stream_timeouts_are_bounded_settings(name, value):
+    module = _runtime()
+    with pytest.raises(ValueError, match=name):
+        module.TapperSettings.from_mapping(valid_settings() | {name: value})
+
+
 @pytest.mark.parametrize("value", ["0", "nan", "16"])
 def test_planner_timeout_must_fit_inside_the_model_gateway_timeout(value):
     """The gateway rejects a request whose timeout exceeds its own, which the

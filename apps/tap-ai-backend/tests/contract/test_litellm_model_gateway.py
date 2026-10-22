@@ -3149,7 +3149,7 @@ async def test_chat_stream_stalled_provider_past_deadline_raises_unavailable():
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=tracking)
 
     recorder = FakeRecorder()
-    gateway = configured_gateway(respond, recorder=recorder)
+    gateway = configured_gateway(respond, recorder=recorder, stream_idle_seconds=0.05)
     stalled_request = replace(request(), timeout_seconds=0.05)
 
     collected = []
@@ -3161,6 +3161,157 @@ async def test_chat_stream_stalled_provider_past_deadline_raises_unavailable():
     assert tracking.closed
     assert len(recorder.records) == 1
     assert recorder.records[0].status == "error"
+
+
+class _PacedByteStream(httpx.AsyncByteStream):
+    """Yields each chunk after `delay` seconds (a slow-but-steady provider), then
+    optionally keeps sending `filler` forever (keep-alive chunks with no token)."""
+
+    def __init__(self, chunks: list[bytes], *, delay: float, filler: bytes | None = None) -> None:
+        self._chunks = chunks
+        self._delay = delay
+        self._filler = filler
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            await asyncio.sleep(self._delay)
+            yield chunk
+        while self._filler is not None:
+            await asyncio.sleep(self._delay)
+            yield self._filler
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _paced_events(count: int) -> list[dict[str, object]]:
+    pieces = [
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [{"index": 0, "delta": {"content": f"p{index} "}, "finish_reason": None}],
+        }
+        for index in range(count)
+    ]
+    pieces.append(
+        {
+            "model": "dashscope/qwen-plus",
+            "choices": [{"index": 0, "delta": {"content": "end"}, "finish_reason": "stop"}],
+        }
+    )
+    return pieces
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_slow_but_steady_answer_outlives_the_first_token_timeout():
+    """Capability-4 validation D3: the request timeout bounds only connect and the
+    first token; a long answer whose chunks keep arriving within the idle timeout
+    must complete even though its total duration far exceeds that timeout."""
+
+    paced = _PacedByteStream([*_lines(_paced_events(7)), b"data: [DONE]\n\n"], delay=0.03)
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=paced)
+
+    gateway = configured_gateway(respond, stream_idle_seconds=0.2, stream_max_seconds=5)
+    steady_request = replace(request(), timeout_seconds=0.1)
+
+    events = [event async for event in gateway.chat_stream(steady_request)]
+
+    results = [event for event in events if isinstance(event, ModelResult)]
+    assert len(results) == 1
+    assert results[0].output.endswith("p6 end")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_stall_after_the_first_token_fails_on_the_idle_timeout():
+    tracking = _TrackingByteStream(_lines(_stream_events(None)[:1]))
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=tracking)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(
+        respond, recorder=recorder, stream_idle_seconds=0.05, stream_max_seconds=5
+    )
+
+    collected = []
+    with pytest.raises(ModelGatewayUnavailable):
+        async for event in gateway.chat_stream(request()):
+            collected.append(event)
+
+    assert any(isinstance(event, ModelTextDelta) for event in collected)
+    assert tracking.closed
+    assert recorder.records[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_without_a_first_token_fails_on_the_first_token_timeout():
+    """Keep-alive chunks without any token do not count as progress: the first
+    token must arrive within the request timeout even when the idle timeout is
+    never hit."""
+
+    role_only = {
+        "model": "dashscope/qwen-plus",
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+    }
+    paced = _PacedByteStream(_lines([role_only]), delay=0.02, filler=_lines([role_only])[0])
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=paced)
+
+    gateway = configured_gateway(respond, stream_idle_seconds=1, stream_max_seconds=5)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    with pytest.raises(ModelGatewayUnavailable):
+        async for _ in gateway.chat_stream(replace(request(), timeout_seconds=0.15)):
+            pass
+
+    assert loop.time() - started < 0.6
+    assert paced.closed
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_steady_stream_is_still_bounded_by_the_overall_cap():
+    paced = _PacedByteStream(
+        _lines(_paced_events(1)[:1]), delay=0.02, filler=_lines(_paced_events(1)[:1])[0]
+    )
+
+    def respond(incoming):
+        del incoming
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=paced)
+
+    gateway = configured_gateway(respond, stream_idle_seconds=1, stream_max_seconds=0.2)
+
+    with pytest.raises(ModelGatewayUnavailable):
+        async for _ in gateway.chat_stream(request()):
+            pass
+
+    assert paced.closed
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"stream_idle_seconds": 0},
+        {"stream_idle_seconds": 301},
+        {"stream_max_seconds": 0},
+        {"stream_max_seconds": float("inf")},
+    ],
+)
+def test_stream_timeouts_are_bounded(changes):
+    config = LiteLLMModelGatewayConfig(
+        base_url="https://litellm.example",
+        api_key="private-provider-key",
+        roles=ROLES,
+        embedding_dimension=2,
+    )
+    with pytest.raises(ValueError):
+        replace(config, **changes)
 
 
 @pytest.mark.asyncio
