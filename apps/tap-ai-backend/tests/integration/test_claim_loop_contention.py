@@ -14,7 +14,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tap.entrypoints import relay_reconciler, tapper_generation_worker, tapper_ingestion_worker
@@ -33,8 +33,10 @@ from tap.modules.graph.adapters.mysql import graph_extraction_job
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import GraphJobRequest
-from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
-from tap.modules.test_management.application.generation import TestDesignWorker
+from tap.modules.test_management.adapters.mysql import test_plan_generation_job
+from tap.modules.test_management.application.generation import (
+    TestDesignWorker as DesignWorker,
+)
 from tap.platform.db.project_scope import scope_predicates
 from tap.platform.db.schema import outbox
 from tap.platform.db.session import create_engine_and_session_factory
@@ -43,6 +45,12 @@ from tests.integration.lock_contention_support import (
     inject_lock_errors,
     locking_read_of,
     worker_settings,
+)
+from tests.integration.plan_generation_support import (
+    generation_request,
+    plan_repository,
+    seed_completed_turn,
+    seed_test_design_authority,
 )
 from tests.owned_mysql import owned_project_database_url
 
@@ -206,36 +214,56 @@ def test_graph_extraction_claim_contention_skips_one_poll(owned_project_mysql) -
 
 
 def test_test_design_claim_contention_skips_one_poll(owned_project_mysql) -> None:
-    """No generation job is seeded: its prerequisites (published knowledge and a
-    completed Turn) live in other test modules' private helpers. The claim's
-    real locking read still runs and loses on every attempt of the first poll,
-    and the loop must poll again instead of ending."""
-
     async def body(database_url: str, engine: AsyncEngine, sessions) -> None:  # type: ignore[no-untyped-def]
-        repository = MysqlTestPlanRepository(
-            sessions, scope=VALIDATION_SCOPE, model_alias="qwen-plus"
+        publication = await seed_test_design_authority(sessions)
+        await seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
+        repository = plan_repository(sessions)
+        request = generation_request(publication)
+        requested_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
+        await repository.request_generation(VALIDATION_SCOPE, request, now=requested_at)
+
+        remaining = [3]  # every attempt of the loop's only poll loses
+        inject_lock_errors(
+            engine,
+            matches=locking_read_of("test_plan_generation_job", skip_locked=True),
+            remaining=remaining,
+            code=1205,
         )
-        claims = locking_read_of("test_plan_generation_job", skip_locked=True)
-        remaining = [3]
-        inject_lock_errors(engine, matches=claims, remaining=remaining, code=1205)
-        polled: list[str] = []
-
-        @event.listens_for(engine.sync_engine, "after_cursor_execute")
-        def count(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
-            del conn, cursor, parameters, context, executemany
-            if claims(statement):
-                polled.append("claimed")
-
-        worker = TestDesignWorker(
+        worker = DesignWorker(
             jobs=repository,
             generator=_NeverCalled(),  # type: ignore[arg-type]
             scope=VALIDATION_SCOPE,
             worker_id="contended",
         )
-        await _run_shared_loop(worker, database_url, worker_id="contended", iterations=3)
+        await _run_shared_loop(worker, database_url, worker_id="contended", iterations=1)
 
         assert remaining[0] == 0
-        assert polled == ["claimed", "claimed"]  # polls two and three ran the claim
+        job = test_plan_generation_job.c.job_id == request.job_id
+        row = await _row(sessions, test_plan_generation_job, job)
+        assert row["status"] == "PENDING" and row["lease_token"] is None
+        assert row["lease_owner"] is None and row["attempt_count"] == 0
+
+        claimed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        (claim,) = await repository.claim_generation_jobs(
+            VALIDATION_SCOPE,
+            worker_id="later",
+            now=claimed_at,
+            lease_duration=LEASE,
+            limit=5,
+        )
+        assert claim.job.request.job_id == request.job_id
+        row = await _row(sessions, test_plan_generation_job, job)
+        assert row["attempt_count"] == 1 and row["lease_owner"] == "later"
+        assert (
+            await repository.claim_generation_jobs(
+                VALIDATION_SCOPE,
+                worker_id="duplicate",
+                now=claimed_at,
+                lease_duration=LEASE,
+                limit=5,
+            )
+            == ()
+        )
 
     _scenario(owned_project_mysql, body)
 
