@@ -108,3 +108,51 @@ def test_every_other_error_still_ends_the_loop(error: BaseException) -> None:
             )
         )
     assert worker.passes == 1
+
+
+def test_suggestion_daily_refresh_lost_to_lock_contention_does_not_end_the_loop() -> None:
+    """`request_daily_refresh` takes a blocking range `FOR UPDATE` before the
+    claim and is not inside the claim retry; the loop guard must cover it."""
+
+    from datetime import datetime, timezone
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.chat.application.suggestions import SuggestionRefreshWorker
+
+    class Store:
+        def __init__(self) -> None:
+            self.daily = 0
+            self.claims = 0
+
+        async def request_daily_refresh(self, *, now: datetime) -> int:
+            del now
+            self.daily += 1
+            if self.daily == 1:
+                raise _mysql_error(1213)
+            return 0
+
+        async def claim_due(self, **kwargs: object) -> tuple[()]:
+            del kwargs
+            self.claims += 1
+            return ()
+
+    store = Store()
+    worker = SuggestionRefreshWorker(
+        store=store,  # type: ignore[arg-type]
+        service=object(),  # type: ignore[arg-type]
+        worker_id="suggestions",
+        clock=lambda: datetime(2026, 10, 22, tzinfo=timezone.utc),
+        scope=VALIDATION_SCOPE,
+    )
+
+    asyncio.run(
+        run_worker_loop(
+            worker=worker,
+            wakeups=_Wakeups(),
+            settings=SETTINGS,
+            stop=asyncio.Event(),
+            max_iterations=2,
+        )
+    )
+
+    assert store.daily == 2 and store.claims == 1
