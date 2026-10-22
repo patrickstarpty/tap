@@ -3041,6 +3041,122 @@ async def test_chat_stream_yields_deltas_then_result_with_usage_and_upstream_mod
     assert record.output_tokens == 3
 
 
+PRICED_MODELS = (
+    model_entry(
+        "qwen-plus",
+        "chat",
+        supports_response_schema=True,
+        input_cost_per_token=4e-07,
+        output_cost_per_token=1.2e-06,
+    ),
+    model_entry("text-embedding-v4", "embedding"),
+)
+
+
+def _streamed_cost_response(*, cost_header: str | None = None, usage=None):
+    def respond(incoming):
+        events = _stream_events(incoming)
+        if usage is not None:
+            events[-1] = {"model": "dashscope/qwen-plus", "choices": [], "usage": usage}
+        # LiteLLM 1.87 sends streamed headers before generation: no response cost.
+        headers = {
+            "content-type": "text/event-stream",
+            "x-litellm-model-id": "deployment-qwen-plus",
+            "x-litellm-response-cost-original": "0.0",
+        }
+        if cost_header is not None:
+            headers["x-litellm-response-cost"] = cost_header
+        return httpx.Response(200, headers=headers, content=_sse_body(events))
+
+    return respond
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_prices_the_final_usage_chunk_with_the_deployment_rates():
+    """Capability-4 validation D4: a streamed call has no response-cost header,
+    so its cost comes from the final `include_usage` chunk priced at the served
+    deployment's LiteLLM rates -- recorded on the model_call row and counted by
+    the Turn's cost meter exactly as a non-streamed call's header cost is."""
+    from tap.platform.budget import CallMeter, metered
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(
+        _streamed_cost_response(usage={"prompt_tokens": 15, "completion_tokens": 116}),
+        models=PRICED_MODELS,
+        recorder=recorder,
+    )
+    meter = CallMeter(remaining_calls=5, remaining_cost_micros=1_000_000)
+
+    with metered(meter):
+        events = [event async for event in gateway.chat_stream(request())]
+
+    result = events[-1]
+    assert isinstance(result, ModelResult)
+    # 15 x 4e-07 + 116 x 1.2e-06, the value LiteLLM's own non-streamed header reports.
+    assert result.cost_usd == Decimal("0.0001452000")
+    assert recorder.records[0].cost_usd == Decimal("0.0001452000")
+    assert meter.cost_micros == 145
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_prices_cached_prompt_tokens_at_the_cache_read_rate():
+    models = (
+        model_entry(
+            "qwen-plus",
+            "chat",
+            supports_response_schema=True,
+            input_cost_per_token=4e-07,
+            output_cost_per_token=1.2e-06,
+            cache_read_input_token_cost=1e-07,
+        ),
+        model_entry("text-embedding-v4", "embedding"),
+    )
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "prompt_tokens_details": {"cached_tokens": 4},
+    }
+    gateway = configured_gateway(_streamed_cost_response(usage=usage), models=models)
+
+    events = [event async for event in gateway.chat_stream(request())]
+
+    # 6 x 4e-07 + 4 x 1e-07 + 2 x 1.2e-06
+    assert events[-1].cost_usd == Decimal("0.0000052000")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_a_reported_cost_header_over_the_usage_price():
+    gateway = configured_gateway(
+        _streamed_cost_response(cost_header="0.0012"), models=PRICED_MODELS
+    )
+
+    events = [event async for event in gateway.chat_stream(request())]
+
+    assert events[-1].cost_usd == Decimal("0.0012000000")
+
+
+@pytest.mark.parametrize(
+    ("models", "usage"),
+    [
+        # The deployment publishes no rates: cost stays unknown, never zero.
+        (DEFAULT_MODELS, {"prompt_tokens": 4, "completion_tokens": 3}),
+        # No usage chunk arrived.
+        (PRICED_MODELS, {}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_chat_stream_cost_stays_unknown_without_rates_or_usage(models, usage):
+    recorder = FakeRecorder()
+    gateway = configured_gateway(
+        _streamed_cost_response(usage=usage), models=models, recorder=recorder
+    )
+
+    events = [event async for event in gateway.chat_stream(request())]
+
+    assert events[-1].cost_usd is None
+    assert recorder.records[0].cost_usd is None
+
+
 @pytest.mark.asyncio
 async def test_chat_stream_interrupted_raises_unavailable_and_still_records():
     events = _stream_events(None)[:2]

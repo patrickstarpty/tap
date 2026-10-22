@@ -152,6 +152,12 @@ def _chunk_finish_reason(chunk: dict[str, Any]) -> str | None:
     return reason if isinstance(reason, str) else None
 
 
+def _cached_prompt_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("prompt_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    return cached if type(cached) is int and 0 <= cached <= 1000000 else 0
+
+
 def _validate_usage_tokens(usage: dict[str, Any]) -> tuple[int | None, int | None]:
     """Shared by `_normalize` and `chat_stream`: usage token fields must be bounded ints
     or absent; any other type or out-of-range value makes the whole call unavailable."""
@@ -981,6 +987,7 @@ class LiteLLMModelGateway:
                     rejected_delta = False
                     tool_call_fragments: dict[int, dict[str, str | None]] = {}
                     headers = httpx.Headers()
+                    cached_tokens = 0
 
                     post_stream = self._post_stream(request, payload, attempts)
                     async with contextlib.aclosing(post_stream):
@@ -1046,6 +1053,7 @@ class LiteLLMModelGateway:
                             usage_field = chunk.get("usage")
                             if isinstance(usage_field, dict):
                                 input_tokens, output_tokens = _validate_usage_tokens(usage_field)
+                                cached_tokens = _cached_prompt_tokens(usage_field)
 
                     full_text = "".join(chunks)
                     tool_calls: tuple[ModelToolCall, ...] = ()
@@ -1089,6 +1097,10 @@ class LiteLLMModelGateway:
                         else full_text
                     )
                     cost_usd = _parse_cost_header(headers.get("x-litellm-response-cost"))
+                    if cost_usd is None:
+                        cost_usd = self._streamed_cost(
+                            headers, input_tokens, output_tokens, cached_tokens
+                        )
                     upstream_model = self._upstream_model(headers)
                     actual, provider = _resolve_actual_model(returned_model, upstream_model)
                     normalized_usage = ModelUsage(input_tokens, output_tokens)
@@ -1274,6 +1286,30 @@ class LiteLLMModelGateway:
                 if attempt == max_retries:
                     raise ModelGatewayUnavailable() from None
         raise ModelGatewayUnavailable()
+
+    def _streamed_cost(
+        self,
+        headers: httpx.Headers,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_tokens: int,
+    ) -> Decimal | None:
+        """Cost of a streamed call (capability-4 validation D4).
+
+        LiteLLM sends a streamed response's headers before generation, so no
+        `x-litellm-response-cost` arrives; price the final `include_usage` chunk
+        with the served deployment's published rates instead -- the same
+        `model_info` rates LiteLLM computes its non-streamed header from. Unknown
+        deployment, rates or usage leave the cost unknown, never zero."""
+
+        deployment_id = headers.get("x-litellm-model-id")
+        routes = self._catalog.cached_routes()
+        if not deployment_id or routes is None or input_tokens is None or output_tokens is None:
+            return None
+        rates = routes.deployment_rates(deployment_id)
+        if rates is None:
+            return None
+        return _parse_cost_header(str(rates.cost(input_tokens, output_tokens, cached_tokens)))
 
     def _upstream_model(self, headers: httpx.Headers) -> str | None:
         """Map LiteLLM's served deployment id to its upstream model from cached routes only."""
