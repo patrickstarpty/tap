@@ -195,6 +195,13 @@ async def test_model_out_of_scope_intent_requires_direct_route_without_queries()
             ]
         },
         {"acl_digest": "model-controlled"},
+        # A blank restatement is only admitted where nothing is searched
+        # (direct/clarify); retrieval plans keep requiring one, and queries.
+        {"standalone_query": ""},
+        {"standalone_query": "  "},
+        {"queries": []},
+        {"intent": "relation", "route": "graph", "standalone_query": ""},
+        {"intent": "relation", "route": "graph", "queries": []},
     ],
 )
 async def test_invalid_model_suggestions_fall_back_to_one_original_query(bad):

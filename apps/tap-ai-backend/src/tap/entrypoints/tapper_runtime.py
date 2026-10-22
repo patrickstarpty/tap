@@ -37,6 +37,7 @@ from tap.modules.ai.application.agent_authoring import AgentAuthoringService
 from tap.modules.ai.application.catalog import ModelCatalog
 from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
+from tap.modules.chat.application.plan_answer import DEFAULT_PLANNER_TIMEOUT_SECONDS
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
@@ -168,7 +169,7 @@ class TapperSettings:
     redis_stream_pool_size: int = 50
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
-    planner_timeout_seconds: float = 6.0
+    planner_timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS
     graph_extraction_timeout_seconds: float = 240.0
     graph_extraction_max_tokens: int = 8192
     graph_worker_concurrency: int = 4
@@ -610,7 +611,10 @@ class TapperSettings:
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
             ),
             planner_timeout_seconds=_duration(
-                values, "TAPPER_PLANNER_TIMEOUT_SECONDS", 6.0, maximum=60
+                values,
+                "TAPPER_PLANNER_TIMEOUT_SECONDS",
+                DEFAULT_PLANNER_TIMEOUT_SECONDS,
+                maximum=60,
             ),
             graph_extraction_timeout_seconds=_duration(
                 values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 240.0, maximum=300
@@ -2023,7 +2027,7 @@ def _assemble_http_services(
     graph_retrieval_augment: bool = True,
     graph_reasoning: bool = True,
     turn_max_attempts: int = 3,
-    planner_timeout_seconds: float = 6.0,
+    planner_timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
     event_wakeups: EventWakeups | None = None,
     draft_stream: DraftStream | None = None,
 ) -> HttpServices:
