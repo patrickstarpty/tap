@@ -114,6 +114,18 @@ class TeamReport:
     previous: PeriodReport
 
 
+@dataclass(frozen=True, slots=True)
+class ExportBundle:
+    """`AgentTeamService.export_data`'s payload (spec 5, Task 9): the
+    selected period's roster/people report plus the flattened per-Agent
+    trend points (each already at `period.granularity`, spec 2.1) the CSV
+    export's `trend.csv` needs. Unlike `report()`, this never touches the
+    previous period -- the export has no "previous" file."""
+
+    report: PeriodReport
+    trend: tuple[TrendPoint, ...]
+
+
 @dataclass(slots=True)
 class _RuntimeData:
     status: RuntimeStatus
@@ -513,6 +525,19 @@ class AgentTeamService:
         status = _combine_status(current_status, previous_status)
         computed_at = min(current_computed_at, previous_computed_at)
         data = TeamReport(current=current, previous=previous)
+        return self._view(period, status, computed_at, data)
+
+    async def export_data(self, period: Period) -> TeamView[ExportBundle]:
+        """Task 9's CSV zip export source data: the selected period's roster/
+        people report (reusing `_period_report`, so this never re-queries
+        anything `report()`/`members()`/`people()` don't already) plus every
+        Agent's trend points for that period, flattened in roster order.
+        Each `MemberRow` already carries its own `trend` tuple at
+        `period.granularity` (spec 2.1), so this needs no extra Langfuse
+        call beyond what `_load_runtime` already made."""
+        report, status, computed_at = await self._period_report(period)
+        trend = tuple(point for row in report.members for point in row.trend)
+        data = ExportBundle(report=report, trend=trend)
         return self._view(period, status, computed_at, data)
 
     # ------------------------------------------------------------------

@@ -14269,7 +14269,6 @@
   "paths": {
     "/api/v1/projects/{project_id}/ai/agent-team/export": {
       "get": {
-        "description": "Route shell only: Task 9 implements the CSV zip body.",
         "operationId": "agent_team_export",
         "parameters": [
           {
@@ -14356,16 +14355,6 @@
               }
             },
             "description": "Request validation failed"
-          },
-          "501": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            },
-            "description": "Export not yet implemented"
           }
         },
         "summary": "Export Agent Team",

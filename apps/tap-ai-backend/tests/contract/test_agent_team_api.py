@@ -350,12 +350,23 @@ def test_get_report_returns_current_and_previous() -> None:
     assert "current" in data and "previous" in data
 
 
-def test_export_is_a_registered_but_unimplemented_shell() -> None:
-    client, _store, _metrics = _app(store=_seeded_store())
+def test_export_returns_a_csv_zip() -> None:
+    import zipfile
+    from io import BytesIO
+
+    client, _store, _metrics = _app(
+        store=_seeded_store(), metrics=FakeMetrics(stats=[_stats("agent-1")])
+    )
 
     response = client.get(f"{BASE}/agent-team/export?{PERIOD_QS}")
 
-    assert response.status_code == 501
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="agent-team-2026-10-01-2026-10-23.zip"'
+    )
+    with zipfile.ZipFile(BytesIO(response.content)) as archive:
+        assert set(archive.namelist()) == {"roster.csv", "people.csv", "trend.csv"}
 
 
 # -- writes ---------------------------------------------------------------

@@ -6,10 +6,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Export Agent Team
-         * @description Route shell only: Task 9 implements the CSV zip body.
-         */
+        /** Export Agent Team */
         get: operations["agent_team_export"];
         put?: never;
         post?: never;
@@ -6720,15 +6717,6 @@ export interface operations {
             };
             /** @description Request validation failed */
             422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description Export not yet implemented */
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,9 +1,8 @@
 """Agent team view HTTP surface (spec 2026-10-22-agent-team-view-design.md,
 section 5): team-wide reads, per-Agent/per-person detail, the org chart,
-the printable report, and the three personnel writes. All logic lives in
-``AgentTeamService`` (Task 7); this module only shapes the public contract.
-
-``export`` (CSV zip) is registered as a shell only -- Task 9 fills it in.
+the printable report, the CSV zip export, and the three personnel writes.
+All logic lives in ``AgentTeamService`` (Task 7) and ``build_export`` (Task
+9); this module only shapes the public contract.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from tap.contracts.http import (
     AgentOwnerTransferRequest,
@@ -43,6 +42,7 @@ from tap.contracts.http import (
 from tap.interfaces.http.dependencies import agent_team_service
 from tap.interfaces.http.problems import problem_response_metadata, skill_problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
+from tap.modules.agent_team.application.export import build_export
 from tap.modules.agent_team.application.service import AgentTeamRejected, PersonDetail, TeamReport
 from tap.modules.agent_team.domain.models import (
     AgentKind,
@@ -405,13 +405,22 @@ async def get_report(
             "description": "CSV zip export (roster, people, trend detail)",
             "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
         },
-        501: problem_response_metadata("Export not yet implemented"),
     },
 )
 async def export_agent_team(request: Request, period: Period = Depends(_period_query)) -> Response:
-    """Route shell only: Task 9 implements the CSV zip body."""
-    del request, period
-    raise HTTPException(status_code=501, detail="agent team export is not implemented yet")
+    view = await agent_team_service(request).export_data(period)
+    content = build_export(
+        view.data.report,
+        list(view.data.trend),
+        period=period,
+        runtime_status=view.runtime_status,
+    )
+    filename = f"agent-team-{period.start.isoformat()}-{period.end.isoformat()}.zip"
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # -- personnel writes -----------------------------------------------------
