@@ -1231,6 +1231,8 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
         [
             "docker",
             "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
             "-p",
             "tap-insights-local",
             "--profile",
@@ -1314,6 +1316,76 @@ def test_demo_up_scopes_provider_secrets_to_the_gateway_process(
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_langfuse_bootstrap_scopes_provider_secrets_from_its_own_subprocesses(
+    tmp_path: Path,
+) -> None:
+    """`demo-up` and `langfuse-up` both run this script directly (not through the
+    generic `_run_make_with_stubs` harness, which stubs `bash` itself and so never
+    actually executes it). It must never leak gateway provider secrets to the
+    `docker`/`uv` subprocesses it owns, even though those secrets are present in
+    its caller's environment (as they are at the point `demo-up` calls it)."""
+
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    log = tmp_path / "calls.log"
+    secret_names = (
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_API_BASE",
+        "OPENAI_API_KEY",
+        "BAILIAN_API_KEY",
+        "BAILIAN_API_BASE",
+        "LITELLM_EMBEDDING_API_KEY",
+        "LITELLM_EMBEDDING_API_BASE",
+    )
+    assertion = "\n".join(
+        f'[ -z "${{{name}:-}}" ] || exit 71' for name in secret_names
+    )
+    for command in ("docker", "uv"):
+        script = stubs / command
+        extra = (
+            '\ncase " $* " in\n'
+            '  *" ps -q tap-minio "*) printf "%s\\n" "deadbeefcafe";;\n'
+            "esac\n"
+            if command == "docker"
+            else ""
+        )
+        script.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            f"{assertion}\n"
+            f'printf "{command} %s\\n" "$*" >> "{log}"\n'
+            "cat >/dev/null\n"
+            f"{extra}"
+            "exit 0\n"
+        )
+        script.chmod(0o755)
+
+    completed = subprocess.run(
+        ["bash", str(ROOT / "deploy/local/langfuse/bootstrap.sh")],
+        cwd=ROOT,
+        env=os.environ
+        | {
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "DASHSCOPE_API_KEY": "current-provider-secret",
+            "DASHSCOPE_API_BASE": "https://provider-secret.invalid/v1",
+            "OPENAI_API_KEY": "legacy-openai-secret",
+            "BAILIAN_API_KEY": "legacy-bailian-secret",
+            "BAILIAN_API_BASE": "https://legacy-provider-secret.invalid/v1",
+            "LITELLM_EMBEDDING_API_KEY": "direct-research-secret",
+            "LITELLM_EMBEDDING_API_BASE": "https://research-secret.invalid/v1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert any("clickhouse-client" in line for line in calls)
+    assert any("python -" in line for line in calls)
+    assert "provider-secret" not in completed.stdout + completed.stderr
 
 
 def test_demo_check_keeps_only_the_current_gateway_provider_secret(
@@ -2083,6 +2155,41 @@ def test_langfuse_check_ok(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     assert asyncio.run(safe_check._check_langfuse(settings, {})) is True
 
 
+def test_langfuse_check_strips_trailing_slash_from_host(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000/",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+        }
+    )
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url: str):  # type: ignore[no-untyped-def]
+            assert url == "http://127.0.0.1:23000/api/public/health"
+            return Response()
+
+    monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is True
+
+
 def test_langfuse_check_failed_has_remediation() -> None:
     from tap.entrypoints.tapper_runtime import TapperSettings
 
@@ -2091,6 +2198,76 @@ def test_langfuse_check_failed_has_remediation() -> None:
     assert settings.langfuse_host is None
 
     assert asyncio.run(safe_check._check_langfuse(settings, {})) is False
+    assert safe_check._REMEDIATION["langfuse"] == "start-langfuse"
+
+
+def test_disk_headroom_hint_fires_below_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+
+    class Completed:
+        stdout = (
+            "Filesystem           1K-blocks      Used Available Use% Mounted on\n"
+            "overlay               20000000  19000000    900000  96% /\n"
+        )
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return Completed()
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    hint = safe_check._docker_disk_headroom_hint({})
+
+    assert hint is not None
+    assert "disk headroom low" in hint
+
+
+def test_disk_headroom_hint_silent_above_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+
+    class Completed:
+        stdout = (
+            "Filesystem           1K-blocks      Used Available Use% Mounted on\n"
+            "overlay              100000000   1000000  99000000   1% /\n"
+        )
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return Completed()
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    assert safe_check._docker_disk_headroom_hint({}) is None
+
+
+def test_disk_headroom_hint_silent_on_query_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise safe_check.subprocess.CalledProcessError(1, ["docker"])
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    assert safe_check._docker_disk_headroom_hint({}) is None
+
+
+def test_disk_headroom_hint_uses_configured_insights_project(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+    seen: dict[str, list[str]] = {}
+
+    class Completed:
+        stdout = (
+            "Filesystem           1K-blocks      Used Available Use% Mounted on\n"
+            "overlay              100000000   1000000  99000000   1% /\n"
+        )
+
+    def fake_run(args, **_kwargs):  # type: ignore[no-untyped-def]
+        seen["args"] = args
+        return Completed()
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    safe_check._docker_disk_headroom_hint({"TAP_INSIGHTS_COMPOSE_PROJECT": "tap-insights-custom"})
+
+    assert "tap-insights-custom" in seen["args"]
     assert safe_check._REMEDIATION["langfuse"] == "start-langfuse"
 
 

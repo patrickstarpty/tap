@@ -406,7 +406,7 @@ demo-up: ## start durable Tapper middleware and initialize exact owned resources
 	tapper_insights_project="$${TAP_INSIGHTS_COMPOSE_PROJECT:-tap-insights-local}"; \
 	printf '%s' "$$tapper_insights_project" | grep -Eq '^tap-insights-[a-z0-9][a-z0-9_-]{2,48}$$' || { echo "invalid owned TAP Insights Compose project" >&2; exit 2; }; \
 	export TAP_INSIGHTS_COMPOSE_PROJECT="$$tapper_insights_project"; \
-	docker compose -p "$$tapper_insights_project" --profile insights up -d --wait --wait-timeout 180 clickhouse; \
+	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_insights_project" --profile insights up -d --wait --wait-timeout 180 clickhouse; \
 	bash "$(TAP_REPO_ROOT)/deploy/local/langfuse/bootstrap.sh"; \
 	docker compose -f "$(TAP_REPO_ROOT)/compose.yaml" -p "$$tapper_demo_project" --profile langfuse up -d --wait --wait-timeout 180 langfuse-postgres langfuse-web langfuse-worker; \
 	unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE; \

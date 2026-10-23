@@ -6,8 +6,9 @@
 #   2. create the langfuse MinIO bucket on tap-minio, which lives in the
 #      Tapper demo Compose project, through its loopback S3 port with the
 #      backend's pinned botocore (no extra container image).
-# Run via `make langfuse-up` after the insights ClickHouse is healthy and the
-# Tapper demo's redis/tap-minio are running.
+# Run via `make langfuse-up`, or via `make demo-up` (which now starts Langfuse by
+# default and calls this script directly), after the insights ClickHouse is
+# healthy and the Tapper demo's redis/tap-minio are running.
 
 set -euo pipefail
 
@@ -20,6 +21,13 @@ if [[ -f "$repo_root/.env" ]]; then
   . "$repo_root/.env"
   set +a
 fi
+
+# Mirror the Makefile's demo-up provider-secret scope exactly: this script's own
+# `uv run` call below (and any other owned subprocess) must never see gateway
+# provider secrets, even if .env re-populates them above.
+unset DASHSCOPE_API_KEY DASHSCOPE_API_BASE
+unset OPENAI_API_KEY BAILIAN_API_KEY BAILIAN_API_BASE
+unset LITELLM_EMBEDDING_API_KEY LITELLM_EMBEDDING_API_BASE
 
 TAP_TAPPER_COMPOSE_PROJECT="${TAP_TAPPER_COMPOSE_PROJECT:-tap-tapper-demo}"
 TAP_INSIGHTS_COMPOSE_PROJECT="${TAP_INSIGHTS_COMPOSE_PROJECT:-tap-insights-local}"
