@@ -9,12 +9,20 @@ later only changes that single function.
 from __future__ import annotations
 
 import calendar
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal
+from decimal import Decimal
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
+
+if TYPE_CHECKING:
+    # Only for type checking: `ports.py` imports this module at runtime, so an
+    # eager import here would be circular. Annotations are strings (PEP 563,
+    # `from __future__ import annotations` above), so this import never runs.
+    from tap.modules.agent_team.ports import ServedActor, TrendPoint
 
 TAPPER_DEFAULT_AGENT_KEY = "tapper_default"
 UNKNOWN_AGENT_KEY = "unknown"
@@ -147,3 +155,109 @@ def new_event(
         note=note,
         occurred_at=now,
     )
+
+
+# --- Agent team view read models (spec 1.4, 2.2-2.6; Task 7) ---------------
+#
+# These are the view-layer dataclasses `AgentTeamService`
+# (`application/service.py`) returns; field names are the snake_case form of
+# the HTTP contract's camelCase fields (Task 8 wires the HTTP layer, unchanged
+# here).
+
+RuntimeStatus = Literal["ok", "syncing", "unavailable"]
+AgentKind = Literal["custom", "built_in", "tapper_default"]
+MemberStatus = Literal["active", "idle", "disabled"]
+
+
+@dataclass(frozen=True, slots=True)
+class MemberRow:
+    """One roster row: Task 1's personnel fields (spec 1.2) merged with
+    Task 4/5's runtime metrics (spec 2.2) and Task 6's MySQL-derived
+    satisfaction/maintenance/pending-feedback (spec 2.3/2.4).
+
+    `owner_actor_id` is always `None` for `kind in ("built_in",
+    "tapper_default")` -- the frontend shows "Tapper 内置" instead (spec 1.1).
+    `top_served` holds at most the top 3 served actors by run count."""
+
+    agent_key: str
+    name: str
+    kind: AgentKind
+    job_title: str | None
+    owner_actor_id: str | None
+    joined_at: datetime | None
+    status: MemberStatus
+    runs: int
+    failures: int
+    abstained: int
+    canceled: int
+    latency_total_ms: int
+    latency_p50_ms: int | None
+    cost_usd: Decimal
+    served_count: int
+    top_served: tuple[ServedActor, ...]
+    last_run_at: datetime | None
+    satisfaction: float | None
+    satisfaction_sample: Literal["ok", "insufficient"]
+    last_maintenance_at: datetime | None
+    pending_feedback: int
+    maintenance: Mapping[MaintenanceKind, int]
+    trend: tuple[TrendPoint, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TeamSummary:
+    """Spec 2.6's team-wide summary. `agent_total`/`active`/`idle` cover only
+    enabled custom and built-in Agents (never `tapper_default`); totals are
+    computed directly from the period's `agent_stats`, never by summing
+    trend points (spec 2.1 clips trend buckets at the period's edges)."""
+
+    agent_total: int
+    active: int
+    idle: int
+    owners_avg: float
+    served_avg: float
+    runs: int
+    latency_total_ms: int
+    cost_usd: Decimal
+    maintenance_total: int
+
+
+@dataclass(frozen=True, slots=True)
+class PersonRow:
+    """Spec 2.5's per-person row. `runs` is this actor's own run count across
+    every Agent that served them in the period."""
+
+    actor_id: str
+    owned_agents: int
+    owned_runs: int
+    served_by_agents: int
+    runs: int
+    maintenance: int
+
+
+@dataclass(frozen=True, slots=True)
+class OrgChart:
+    """Spec 1.2's org chart: `owns` edges (solid, from each Agent's current
+    owner) and `serves` edges (dashed, from everyone who called that Agent in
+    the period). Built-in and `tapper_default` Agents carry no `owns` edge."""
+
+    people: tuple[str, ...]
+    agents: tuple[str, ...]
+    edges: tuple[tuple[str, str, Literal["owns", "serves"]], ...]
+
+
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True, slots=True)
+class TeamView(Generic[_T]):
+    """Envelope every Agent team query returns (spec 5): the Langfuse-derived
+    `runtime_status`/`computed_at` (spec 5.1), the echoed period/timezone/
+    granularity (spec 2.1), and the view-specific `data`."""
+
+    runtime_status: RuntimeStatus
+    computed_at: datetime
+    timezone: str
+    period: Period
+    granularity: str
+    data: _T
