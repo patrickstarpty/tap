@@ -150,6 +150,55 @@ def test_settings_accept_existing_trace_redaction_rules_file(tmp_path: Path) -> 
     assert settings.trace_redaction_rules == rules_path
 
 
+def test_agent_team_runtime_metrics_defaults_to_langfuse() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.agent_team_runtime_metrics == "langfuse"
+
+
+def test_agent_team_runtime_metrics_turn_table_rejected_outside_e2e_mode() -> None:
+    with pytest.raises(ValueError, match="TAP_AGENT_TEAM_RUNTIME_METRICS"):
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table"}
+        )
+
+
+def test_agent_team_runtime_metrics_turn_table_accepted_in_e2e_mode() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table",
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "TAPPER_GRAPH_EXTRACTION_MODE": "fake",
+        }
+    )
+
+    assert settings.agent_team_runtime_metrics == "turn_table"
+
+
+def test_agent_team_service_uses_unavailable_adapter_without_langfuse_host() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import (
+        OwnedResources,
+        _create_agent_team_service,
+        _UnavailableAgentRuntimeMetrics,
+    )
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.langfuse_host is None
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    resources = OwnedResources()
+    try:
+        service = _create_agent_team_service(settings, engine, VALIDATION_SCOPE, resources)
+        assert isinstance(service._metrics._inner, _UnavailableAgentRuntimeMetrics)
+        assert service._check_sync_lag is False
+    finally:
+        asyncio.run(engine.dispose())
+
+
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
         S3_SETTINGS

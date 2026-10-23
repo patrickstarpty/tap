@@ -1148,6 +1148,10 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
         encoding="utf-8",
     )
     helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
+    (isolated / "deploy/local/langfuse").mkdir(parents=True)
+    bootstrap = isolated / "deploy/local/langfuse/bootstrap.sh"
+    bootstrap.write_text("#!/bin/sh\nset -eu\n:\n", encoding="utf-8")
+    bootstrap.chmod(bootstrap.stat().st_mode | stat.S_IXUSR)
     stubs = isolated / "bin"
     stubs.mkdir()
     marker = isolated / "projects.log"
@@ -1177,7 +1181,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert marker.read_text(encoding="utf-8").splitlines() == ["tap-tapper-demo"] * 5
+    assert marker.read_text(encoding="utf-8").splitlines() == ["tap-tapper-demo"] * 7
     assert "provider-secret" not in completed.stdout + completed.stderr
 
 
@@ -1222,6 +1226,44 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
         "bash",
         str(ROOT / "scripts/build-tapper-object-store.sh"),
         "verify-container",
+    ]
+    assert calls[4:7] == [
+        [
+            "docker",
+            "compose",
+            "-p",
+            "tap-insights-local",
+            "--profile",
+            "insights",
+            "up",
+            "-d",
+            "--wait",
+            "--wait-timeout",
+            "180",
+            "clickhouse",
+        ],
+        [
+            "bash",
+            str(ROOT / "deploy/local/langfuse/bootstrap.sh"),
+        ],
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
+            "-p",
+            "tap-tapper-demo",
+            "--profile",
+            "langfuse",
+            "up",
+            "-d",
+            "--wait",
+            "--wait-timeout",
+            "180",
+            "langfuse-postgres",
+            "langfuse-web",
+            "langfuse-worker",
+        ],
     ]
     assert calls[-3:] == [
         [
@@ -1965,7 +2007,7 @@ def test_safe_check_milvus_reader_uses_configured_schema() -> None:
     assert target.schema_sha256 == doc_schema_sha256("doc-schema-v2")
 
 
-def test_safe_check_runs_all_five_probes_independently(
+def test_safe_check_runs_all_six_probes_independently(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
     from tap.entrypoints.tapper_runtime import TapperSettings
@@ -1983,19 +2025,73 @@ def test_safe_check_runs_all_five_probes_independently(
 
         return run
 
-    for name in ("mysql", "redis", "blob", "milvus", "models"):
+    for name in ("mysql", "redis", "blob", "milvus", "models", "langfuse"):
         monkeypatch.setattr(safe_check, f"_check_{name}", probe(name))
 
     states = asyncio.run(safe_check.checks(settings, {}))
 
-    assert set(events) == {"mysql", "redis", "blob", "milvus", "models"}
+    assert set(events) == {"mysql", "redis", "blob", "milvus", "models", "langfuse"}
     assert states == {
         "mysql": True,
         "redis": False,
         "blob": True,
         "milvus": True,
         "models": True,
+        "langfuse": True,
     }
+
+
+def test_order_has_six_checks() -> None:
+    safe_check = _load_safe_check_module()
+
+    assert safe_check._ORDER == ("mysql", "redis", "blob", "milvus", "models", "langfuse")
+    assert set(safe_check._REMEDIATION) == set(safe_check._ORDER)
+
+
+def test_langfuse_check_ok(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+        }
+    )
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url: str):  # type: ignore[no-untyped-def]
+            assert url == "http://127.0.0.1:23000/api/public/health"
+            return Response()
+
+    monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is True
+
+
+def test_langfuse_check_failed_has_remediation() -> None:
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.langfuse_host is None
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is False
+    assert safe_check._REMEDIATION["langfuse"] == "start-langfuse"
 
 
 def test_safe_check_cli_suppresses_worker_thread_rpc_details(
@@ -2024,6 +2120,7 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
         "blob failed start-blob",
         "milvus failed start-milvus",
         "models failed configure-models",
+        "langfuse failed start-langfuse",
     ]
     assert "provider-secret-rpc-detail" not in provider_output.getvalue()
 
@@ -3352,6 +3449,10 @@ def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: 
     log = root / "order.log"
     image = "sha256:" + "a" * 64
     container = "b" * 64
+    (root / "deploy/local/langfuse").mkdir(parents=True)
+    bootstrap = root / "deploy/local/langfuse/bootstrap.sh"
+    bootstrap.write_text(f'#!/bin/sh\nset -eu\nprintf "bootstrap-langfuse\\n" >> "{log}"\n')
+    bootstrap.chmod(0o755)
     helper = root / "scripts/build-tapper-object-store.sh"
     helper.write_text(
         "#!/bin/bash\nset -eu\n"
@@ -3388,7 +3489,10 @@ def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: 
     assert "--profile milvus up" in calls[1]
     assert calls[2].endswith("ps -q tap-minio")
     assert calls[3] == "helper verify-container " + container
-    assert "alembic" in calls[4]
+    assert "--profile insights up" in calls[4]
+    assert calls[5] == "bootstrap-langfuse"
+    assert "--profile langfuse up" in calls[6]
+    assert "alembic" in calls[7]
 
 
 def test_minio_dev_missing_receipt_stops_before_children(tmp_path: Path) -> None:

@@ -180,7 +180,7 @@ make demo-dev
 
 上游模型写在 `deploy/local/litellm/config.yaml` 里，`.env` 只放凭据（`DASHSCOPE_API_KEY`、`DASHSCOPE_API_BASE`）；后端角色由 `TAPPER_DEFAULT_CHAT_MODEL`、`TAPPER_EMBEDDING_MODEL`、`TAPPER_VISION_MODEL` 指向 `config.yaml` 里的 `model_name`，详见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)。
 
-`make demo-up` 启动并初始化 MySQL、Redis、MinIO、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
+`make demo-up` 启动并初始化 MySQL、Redis、MinIO、Milvus 与 LiteLLM，并默认启动本地 Langfuse（insights ClickHouse、`langfuse-postgres`、`langfuse-web`、`langfuse-worker`）；`make langfuse-up`/`make langfuse-down` 仍可单独启动或停止 Langfuse。`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
 
 | 组件           | 默认 loopback 端口 | 职责                                                                             |
 | -------------- | ------------------ | -------------------------------------------------------------------------------- |
@@ -224,7 +224,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 
 ### `demo-check` 故障定位
 
-`make demo-check` 独立检查五个组件，只输出组件、结果和安全修复码：
+`make demo-check` 独立检查六个组件，只输出组件、结果和安全修复码：
 
 | 组件 / 修复码               | 处理方式                                                                                                                                                                                                                                                                                                                                                                                      |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -233,6 +233,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 | Blob / `start-blob`         | 先运行 `make object-store-build PLATFORM=linux/arm64`，核对 `.env.example` 的显式 `TAPPER_S3_*` 配置，再运行 `make demo-up`。                                                                                                                                                                                                                                                                 |
 | Milvus / `start-milvus`     | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。                                                                                                                                                                                                                                                                                           |
 | Models / `configure-models` | 默认 V1 在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、完整 Workspace `/compatible-mode/v1` 地址、`TAPPER_DEFAULT_CHAT_MODEL` 与 `TAPPER_EMBEDDING_MODEL`，重启 `make demo-up` 后确认这两个角色在 LiteLLM 模型目录中存在且能力符合要求（见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)）。                                                                                |
+| Langfuse / `start-langfuse` | 运行 `make demo-up`（默认启动 Langfuse）或单独运行 `make langfuse-up`；确认 `.env` 中 `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` 与 `langfuse-web` 发布端口一致。通过时若本机 Docker 磁盘余量低于 5 GB 会额外提示清理空间。                                                                                                                                                 |
 
 ### 确定性 E2E 与真实模型 smoke
 
