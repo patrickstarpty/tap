@@ -1293,10 +1293,6 @@ _ROUND4_LABELS = frozenset(f"S{number}" for number in range(1, 10))
             'page.fill("#smsCode", "123456")  # 固定验证码 [S2]',
             'page.fill("#smsCode", "123456")  # 固定验证码',
         ),
-        (
-            'assert page.is_visible("text=审核时限为3个工作日")  # [S1]',
-            'assert page.is_visible("text=审核时限为3个工作日")  #',
-        ),
         ("# 1. 使用 TEST_ 账号登录（满足 S9）", "# 1. 使用 TEST_ 账号登录"),
         (
             "# 6. 输入银行信息并提交（验证第三方账户被拦截）[S7][S8]",
@@ -1309,6 +1305,25 @@ _ROUND4_LABELS = frozenset(f"S{number}" for number in range(1, 10))
         ("// 提交前校验（对应 S1、S2）", "// 提交前校验"),
         ("# 上传材料（参考 S8）", "# 上传材料"),
         ("# 时效（符合 S1）", "# 时效"),
+        ("# 3. 进入通道，验证时效提示 [S1]。", "# 3. 进入通道，验证时效提示。"),
+        # A trailing comment after code that is only a marker run (the most
+        # common Q1 leak in the 20-run recheck) goes with its comment token.
+        (
+            'assert page.is_visible("text=审核时限为3个工作日")  # [S1]',
+            'assert page.is_visible("text=审核时限为3个工作日")',
+        ),
+        ('page.fill("#sms-code", "123456")  # [S2]', 'page.fill("#sms-code", "123456")'),
+        # A marker run after a closed call at the end of a code line.
+        (
+            'assert not page.locator("text=第三方账户").is_visible() [S7]',
+            'assert not page.locator("text=第三方账户").is_visible()',
+        ),
+        # A marker closing the comment's own parentheses.
+        (
+            "# 4. 跳过纸质材料上传（验证无强制字段 [S1][S8]）",
+            "# 4. 跳过纸质材料上传（验证无强制字段）",
+        ),
+        ("// 提交银行信息 [S7][S8]", "// 提交银行信息"),
         # In-process Q1 probe forms after the first fix.
         (
             "# （依据S1：无需邮寄纸质材料；故该页应无“身份证复印件”等必填控件）",
@@ -1354,6 +1369,20 @@ def test_bracketed_markers_and_cued_labels_in_code_comments_are_removed(line, ex
         'text = "未闭合 [S1]',
         "# 参数（mode，S1）",
         "# 选项（A；S9 级）",
+        # Fix round 1: a marker that is not the citation at the end of a
+        # comment's own text is ordinary comment content.
+        "# pattern [S1]",
+        "# group [S1] captures the id",
+        "# - [S1] pending review",
+        "# checklist: [S1] done, [S2] todo",
+        "# steps: [S1][S2]",
+        "# e.g. [S1]",
+        "# config keys: [S1]",
+        "# 例如 [S1]",
+        # A whole-line comment that is only a marker is kept.
+        "# [S1]",
+        "value = fetch()[S1]",
+        'assert ok, "未显示银行转账支付方式[S7]"',
     ],
 )
 def test_strings_indexes_and_unsupplied_markers_in_code_are_kept(line) -> None:
