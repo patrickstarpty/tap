@@ -1504,8 +1504,8 @@ def test_text_that_is_not_a_source_legend_is_kept(text) -> None:
         ("按指引完成侦察 [webapp-testing]", "按指引完成侦察"),
         # Replayed Q1 forms: right after inline code or a closing parenthesis.
         (
-            "可按需添加 `page.screenshot()` 或 `page.on(\"console\", ...)` [webapp-testing]。",
-            "可按需添加 `page.screenshot()` 或 `page.on(\"console\", ...)`。",
+            '可按需添加 `page.screenshot()` 或 `page.on("console", ...)` [webapp-testing]。',
+            '可按需添加 `page.screenshot()` 或 `page.on("console", ...)`。',
         ),
         (
             "需配合脚本启动服务（例：`npm run dev`）[webapp-testing]。",
