@@ -13,6 +13,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 import sqlalchemy as sa
 from scripts.migration_support import IsolatedMysql
 
@@ -21,6 +22,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore, agent_maintenance_event
 from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY, Period, new_event
+from tap.modules.agent_team.ports import FeedbackNotFound, HistoryCursorInvalid
 from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import conversation, turn_input_snapshot
@@ -436,6 +438,9 @@ def test_resolve_writes_feedback_and_event_atomically(owned_project_mysql: Isola
             )
             assert result.feedback_id == "fb-1"
             assert result.agent_key == "agent-a"
+            assert result.resolved_by == "resolver-actor"
+            assert result.resolution_note == "fixed the prompt"
+            assert result.resolved_at == resolved_at.replace(tzinfo=UTC)
 
             async with sessions() as session:
                 row = (
@@ -502,7 +507,7 @@ def test_resolve_twice_returns_first_resolution(owned_project_mysql: IsolatedMys
                     VALIDATION_SCOPE, agent_id, "feedback_resolved", feedback_id="fb-1", now=when
                 )
 
-            await store.resolve_feedback(
+            first = await store.resolve_feedback(
                 "fb-1", "resolver-1", "first note", factory("first note", _T0 + timedelta(hours=1))
             )
             second = await store.resolve_feedback(
@@ -512,6 +517,12 @@ def test_resolve_twice_returns_first_resolution(owned_project_mysql: IsolatedMys
                 factory("second note", _T0 + timedelta(hours=2)),
             )
             assert second.feedback_id == "fb-1"
+            # Spec 5.1's "repeat submission returns the original result":
+            # the second call's resolution fields must match the first's,
+            # not the second caller's own (resolver-2/"second note") input.
+            assert second.resolved_by == first.resolved_by == "resolver-1"
+            assert second.resolution_note == first.resolution_note == "first note"
+            assert second.resolved_at == first.resolved_at
 
             async with sessions() as session:
                 row = (
@@ -880,6 +891,265 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
 
             counts = await store.maintenance_counts(Period.parse(_T0.date(), _T0.date()))
             assert all(agent_id != "agent-other" for agent_id, _, _, _ in counts)
+
+            ratings = {
+                row.agent_key for row in await store.ratings(Period.parse(_T0.date(), _T0.date()))
+            }
+            assert "agent-other" not in ratings
+
+            history = await store.history("agent-other", cursor=None)
+            assert history.events == ()
+
+            # The only Turn/maintenance event in this scenario belong to
+            # OTHER_SCOPE; VALIDATION_SCOPE's own active-actor set for the
+            # same period must be empty, not leak OTHER_SCOPE's activity.
+            actors = await store.active_actors(Period.parse(_T0.date(), _T0.date()))
+            assert actors == set()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_feedback_not_found_raises(owned_project_mysql: IsolatedMysql) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            store = _store(sessions)
+            with pytest.raises(FeedbackNotFound):
+                await store.resolve_feedback(
+                    "fb-missing",
+                    "resolver",
+                    None,
+                    lambda agent_id: new_event(
+                        VALIDATION_SCOPE,
+                        agent_id,
+                        "feedback_resolved",
+                        feedback_id="fb-missing",
+                        now=_T0,
+                    ),
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_feedback_skips_event_for_default_agent(owned_project_mysql: IsolatedMysql) -> None:
+    """Feedback on a Turn with no selected Agent (`tapper_default`) must still
+    resolve -- just without a `feedback_resolved` event, since there is no
+    real `ai_agent` row to attach one to (the FK would reject it)."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            async with engine.begin() as connection:
+                await _insert_turn(
+                    connection,
+                    VALIDATION_SCOPE,
+                    turn_id="default-turn",
+                    created_at=_T0,
+                    agent_revision_id=None,
+                )
+                await _insert_feedback(
+                    connection,
+                    VALIDATION_SCOPE,
+                    feedback_id="fb-default",
+                    turn_id="default-turn",
+                    conversation_id="c1",
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    rating="down",
+                    comment=None,
+                )
+
+            store = _store(sessions)
+            calls: list[str] = []
+
+            def factory(agent_id: str):
+                calls.append(agent_id)
+                return new_event(
+                    VALIDATION_SCOPE,
+                    agent_id,
+                    "feedback_resolved",
+                    feedback_id="fb-default",
+                    now=_T0,
+                )
+
+            result = await store.resolve_feedback("fb-default", "resolver", "n/a", factory)
+            assert result.agent_key == TAPPER_DEFAULT_AGENT_KEY
+            assert result.resolved_by == "resolver"
+            assert calls == []  # event_factory must not even be called
+
+            async with sessions() as session:
+                row = (
+                    await session.execute(
+                        sa.select(answer_feedback.c.resolved_at).where(
+                            answer_feedback.c.feedback_id == "fb-default"
+                        )
+                    )
+                ).one()
+                assert row.resolved_at is not None
+
+                events = (
+                    await session.execute(
+                        sa.select(agent_maintenance_event).where(
+                            agent_maintenance_event.c.feedback_id == "fb-default"
+                        )
+                    )
+                ).all()
+                assert events == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_feedback_concurrent_calls_write_one_event(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            async with engine.begin() as connection:
+                await _insert_agent(
+                    connection, VALIDATION_SCOPE, agent_id="agent-a", revision_id="rev-a"
+                )
+                await _insert_turn(
+                    connection,
+                    VALIDATION_SCOPE,
+                    turn_id="t1",
+                    created_at=_T0,
+                    agent_revision_id="rev-a",
+                )
+                await _insert_feedback(
+                    connection,
+                    VALIDATION_SCOPE,
+                    feedback_id="fb-1",
+                    turn_id="t1",
+                    conversation_id="c1",
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    rating="down",
+                    comment=None,
+                )
+
+            store_a = _store(sessions)
+            store_b = _store(sessions)
+
+            def factory(resolver: str, when: datetime):
+                return lambda agent_id: new_event(
+                    VALIDATION_SCOPE, agent_id, "feedback_resolved", feedback_id="fb-1", now=when
+                )
+
+            result_a, result_b = await asyncio.gather(
+                store_a.resolve_feedback(
+                    "fb-1", "resolver-a", "note-a", factory("resolver-a", _T0 + timedelta(hours=1))
+                ),
+                store_b.resolve_feedback(
+                    "fb-1", "resolver-b", "note-b", factory("resolver-b", _T0 + timedelta(hours=2))
+                ),
+            )
+
+            assert result_a.resolved_by == result_b.resolved_by
+            assert result_a.resolution_note == result_b.resolution_note
+            assert result_a.resolved_at == result_b.resolved_at
+
+            async with sessions() as session:
+                events = (
+                    await session.execute(
+                        sa.select(agent_maintenance_event).where(
+                            agent_maintenance_event.c.feedback_id == "fb-1"
+                        )
+                    )
+                ).all()
+                assert len(events) == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_history_cursor_invalid_raises(owned_project_mysql: IsolatedMysql) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            store = _store(sessions)
+            for tampered in (
+                "not-base64!!",
+                "",
+                "====",
+                "YWJj",
+            ):  # "YWJj" decodes to "abc", not JSON
+                with pytest.raises(HistoryCursorInvalid):
+                    await store.history("agent-a", tampered)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_rerating_without_comment_change_makes_it_pending(
+    owned_project_mysql: IsolatedMysql,
+) -> None:
+    """A rating-only change (comment stays the same) must still reset the
+    resolution: here the new rating value ('down') on its own qualifies the
+    feedback as pending regardless of the comment."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            async with engine.begin() as connection:
+                await _insert_agent(
+                    connection, VALIDATION_SCOPE, agent_id="agent-a", revision_id="rev-a"
+                )
+                await _insert_turn(
+                    connection,
+                    VALIDATION_SCOPE,
+                    turn_id="t1",
+                    created_at=_T0,
+                    agent_revision_id="rev-a",
+                )
+                await _insert_feedback(
+                    connection,
+                    VALIDATION_SCOPE,
+                    feedback_id="fb-1",
+                    turn_id="t1",
+                    conversation_id="c1",
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    rating="up",
+                    comment=None,
+                    resolved_at=_T0,
+                    resolved_by=VALIDATION_SCOPE.actor_id,
+                )
+
+            feedback_repo = MysqlFeedbackRepository(sessions, scope=VALIDATION_SCOPE)
+            await feedback_repo.upsert(
+                AnswerFeedback(
+                    feedback_id="fb-1",
+                    project_id=VALIDATION_SCOPE.project_id,
+                    conversation_id="c1",
+                    turn_id="t1",
+                    actor_id=VALIDATION_SCOPE.actor_id,
+                    trace_id=None,
+                    rating="down",
+                    comment=None,
+                    created_at=_T0,
+                    updated_at=_T0 + timedelta(hours=2),
+                )
+            )
+
+            store = _store(sessions)
+            pending = {item.feedback_id for item in await store.pending_feedback()}
+            assert "fb-1" in pending
         finally:
             await engine.dispose()
 

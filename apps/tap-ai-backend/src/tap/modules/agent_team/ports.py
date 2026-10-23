@@ -74,6 +74,11 @@ class FeedbackNotFound(Exception):
     this Project (the service layer maps this to `feedback_not_found`)."""
 
 
+class HistoryCursorInvalid(Exception):
+    """`history`'s `cursor` argument is not an opaque token this store issued
+    (malformed base64/JSON, or missing/wrong-typed fields)."""
+
+
 @dataclass(frozen=True, slots=True)
 class AgentRecord:
     agent_id: str
@@ -113,6 +118,21 @@ class HistoryPage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedFeedback:
+    feedback_id: str
+    agent_key: str
+    turn_id: str
+    conversation_id: str
+    actor_id: str
+    rating: str | None
+    comment: str | None
+    updated_at: datetime
+    resolved_at: datetime
+    resolved_by: str
+    resolution_note: str | None
+
+
 class AgentTeamStore(Protocol):
     """MySQL read models and writes for the Agent team view: Agent roster and
     personnel fields, satisfaction/maintenance (spec 2.3/2.4), per-person
@@ -146,7 +166,8 @@ class AgentTeamStore(Protocol):
     async def history(self, agent_id: str, cursor: str | None, limit: int = 50) -> HistoryPage:
         """Maintenance events for one Agent, newest first (`occurred_at` desc,
         `event_id` as a deterministic tiebreaker). `cursor` is an opaque,
-        base64-encoded page token."""
+        base64-encoded page token. Raises `HistoryCursorInvalid` when `cursor`
+        is not a token this store issued."""
         ...
 
     async def last_maintenance(self) -> dict[str, datetime]:
@@ -186,10 +207,18 @@ class AgentTeamStore(Protocol):
         actor_id: str,
         note: str | None,
         event_factory: Callable[[str], MaintenanceEvent],
-    ) -> PendingFeedback:
+    ) -> ResolvedFeedback:
         """Marks `feedback_id` resolved and writes the Turn's frozen Agent's
         `feedback_resolved` event (`event_factory` is called with that
-        `agent_id`) in one transaction. Already-resolved feedback is returned
-        unchanged and writes no event. Raises `FeedbackNotFound` when
-        `feedback_id` does not exist in this Project."""
+        `agent_id`) in one transaction, locking the row so two concurrent
+        calls for the same `feedback_id` serialize rather than both writing
+        an event. Already-resolved feedback is returned unchanged (spec
+        5.1's "repeat submission returns the original result") and writes no
+        event, and no event is written -- `event_factory` is not even called
+        -- when the Turn's frozen `agent_key` is `tapper_default` or
+        `unknown`: neither names a real `ai_agent` row, so
+        `agent_maintenance_event`'s FK would reject the insert and roll back
+        the whole resolution; the feedback is still marked resolved. Raises
+        `FeedbackNotFound` when `feedback_id` does not exist in this
+        Project."""
         ...

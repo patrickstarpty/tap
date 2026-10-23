@@ -13,6 +13,7 @@ yet defined).
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from collections import defaultdict
 from collections.abc import Callable
@@ -25,13 +26,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tap.modules.access.adapters.mysql import actor_principal
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.adapters.agent_keys import resolve_agent_keys
-from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, Period
+from tap.modules.agent_team.domain.models import (
+    TAPPER_DEFAULT_AGENT_KEY,
+    UNKNOWN_AGENT_KEY,
+    MaintenanceEvent,
+    MaintenanceKind,
+    Period,
+)
 from tap.modules.agent_team.ports import (
     AgentRecord,
     FeedbackNotFound,
+    HistoryCursorInvalid,
     HistoryPage,
     PendingFeedback,
     RatingCounts,
+    ResolvedFeedback,
 )
 from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.chat.adapters.mysql import chat_turn
@@ -89,9 +98,20 @@ def _encode_history_cursor(occurred_at: datetime, event_id: str) -> str:
 
 
 def _decode_history_cursor(cursor: str) -> tuple[datetime, str]:
-    decoded = base64.urlsafe_b64decode(cursor.encode("ascii"))
-    payload = json.loads(decoded)
-    return datetime.fromisoformat(payload["occurredAt"]), payload["eventId"]
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("ascii"))
+        payload = json.loads(decoded)
+        return datetime.fromisoformat(payload["occurredAt"]), payload["eventId"]
+    except (ValueError, TypeError, KeyError, binascii.Error) as error:
+        raise HistoryCursorInvalid(cursor) from error
+
+
+# A Turn with no selected Agent (`tapper_default`) or whose frozen revision
+# no longer resolves to one (`unknown`) has no `ai_agent` row to attach a
+# `feedback_resolved` event to; `agent_maintenance_event.agent_id`'s FK would
+# reject such an insert, so `resolve_feedback` skips writing an event (and
+# does not call `event_factory`) for these.
+_UNRESOLVABLE_AGENT_KEYS = frozenset({TAPPER_DEFAULT_AGENT_KEY, UNKNOWN_AGENT_KEY})
 
 
 def _to_event(row) -> MaintenanceEvent:
@@ -261,6 +281,10 @@ class MysqlAgentTeamStore:
                                 answer_feedback.c.rating == "down",
                                 answer_feedback.c.comment.is_not(None),
                             ),
+                        )
+                        .order_by(
+                            answer_feedback.c.updated_at.desc(),
+                            answer_feedback.c.feedback_id,
                         )
                     )
                 )
@@ -476,8 +500,15 @@ class MysqlAgentTeamStore:
         actor_id: str,
         note: str | None,
         event_factory: Callable[[str], MaintenanceEvent],
-    ) -> PendingFeedback:
+    ) -> ResolvedFeedback:
         async with self._sessions.begin() as session:
+            # `FOR UPDATE` on the feedback row itself serializes concurrent
+            # `resolve_feedback` calls for the same `feedback_id`: the second
+            # caller blocks here until the first commits, then its own read
+            # (a locking "current read", not the transaction's repeatable-read
+            # snapshot) sees the first caller's committed resolution -- so at
+            # most one event is ever written, and the loser still returns the
+            # real (first) resolution rather than stale/duplicate data.
             row = (
                 (
                     await session.execute(
@@ -490,18 +521,14 @@ class MysqlAgentTeamStore:
                             answer_feedback.c.comment,
                             answer_feedback.c.updated_at,
                             answer_feedback.c.resolved_at,
-                            turn_input_snapshot.c.snapshot,
-                        )
-                        .select_from(
-                            answer_feedback.outerjoin(
-                                turn_input_snapshot,
-                                turn_input_snapshot.c.turn_id == answer_feedback.c.turn_id,
-                            )
+                            answer_feedback.c.resolved_by,
+                            answer_feedback.c.resolution_note,
                         )
                         .where(
                             *scope_predicates(answer_feedback, self._scope),
                             answer_feedback.c.feedback_id == feedback_id,
                         )
+                        .with_for_update()
                     )
                 )
                 .mappings()
@@ -509,15 +536,22 @@ class MysqlAgentTeamStore:
             )
             if row is None:
                 raise FeedbackNotFound(feedback_id)
+            snapshot = await session.scalar(
+                select(turn_input_snapshot.c.snapshot).where(
+                    turn_input_snapshot.c.turn_id == row["turn_id"]
+                )
+            )
             agent_keys = await resolve_agent_keys(
-                session, self._scope.project_id, {row["turn_id"]: row["snapshot"]}
+                session, self._scope.project_id, {row["turn_id"]: snapshot}
             )
             agent_key = agent_keys[row["turn_id"]]
+
             if row["resolved_at"] is not None:
-                # Already resolved: return the existing resolution unchanged
-                # and write no event (spec 5.1's "repeat submission returns
-                # the original result").
-                return PendingFeedback(
+                # Already resolved (by this call's own previous attempt, or
+                # by whoever held the row lock before us): return the
+                # existing resolution unchanged and write no event (spec
+                # 5.1's "repeat submission returns the original result").
+                return ResolvedFeedback(
                     feedback_id=row["feedback_id"],
                     agent_key=agent_key,
                     turn_id=row["turn_id"],
@@ -526,8 +560,22 @@ class MysqlAgentTeamStore:
                     rating=row["rating"],
                     comment=row["comment"],
                     updated_at=_aware(row["updated_at"]),
+                    resolved_at=_aware(row["resolved_at"]),
+                    resolved_by=row["resolved_by"],
+                    resolution_note=row["resolution_note"],
                 )
-            event = event_factory(agent_key)
+
+            if agent_key in _UNRESOLVABLE_AGENT_KEYS:
+                # No real `ai_agent` row to attach an event to -- resolve the
+                # feedback but write no event, and never call `event_factory`.
+                event = None
+                resolved_at = datetime.now(UTC)
+            else:
+                event = event_factory(agent_key)
+                resolved_at = (
+                    event.occurred_at if event.occurred_at.tzinfo else _aware(event.occurred_at)
+                )
+
             await session.execute(
                 update(answer_feedback)
                 .where(
@@ -535,24 +583,25 @@ class MysqlAgentTeamStore:
                     answer_feedback.c.feedback_id == feedback_id,
                 )
                 .values(
-                    resolved_at=event.occurred_at,
+                    resolved_at=resolved_at,
                     resolved_by=actor_id,
                     resolution_note=note,
                 )
             )
-            await session.execute(
-                agent_maintenance_event.insert().values(
-                    event_id=event.event_id,
-                    agent_id=event.agent_id,
-                    kind=event.kind,
-                    revision_id=event.revision_id,
-                    feedback_id=event.feedback_id,
-                    note=event.note,
-                    occurred_at=event.occurred_at,
-                    **scope_values(self._scope),
+            if event is not None:
+                await session.execute(
+                    agent_maintenance_event.insert().values(
+                        event_id=event.event_id,
+                        agent_id=event.agent_id,
+                        kind=event.kind,
+                        revision_id=event.revision_id,
+                        feedback_id=event.feedback_id,
+                        note=event.note,
+                        occurred_at=event.occurred_at,
+                        **scope_values(self._scope),
+                    )
                 )
-            )
-        return PendingFeedback(
+        return ResolvedFeedback(
             feedback_id=row["feedback_id"],
             agent_key=agent_key,
             turn_id=row["turn_id"],
@@ -561,4 +610,7 @@ class MysqlAgentTeamStore:
             rating=row["rating"],
             comment=row["comment"],
             updated_at=_aware(row["updated_at"]),
+            resolved_at=resolved_at,
+            resolved_by=actor_id,
+            resolution_note=note,
         )
