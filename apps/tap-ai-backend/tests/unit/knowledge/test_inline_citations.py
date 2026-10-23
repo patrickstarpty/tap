@@ -891,7 +891,8 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
         # the value (stated after it, b-001 kept writing a cited
         # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
         abstain = (
-            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            "Otherwise, if the query asks only for a specific fact or value (such as an address, "
+            "date, amount, duration or name) that no supplied evidence states, "
             f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         scoped = "When some selected documents state that value and another selected document"
@@ -945,7 +946,8 @@ def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> 
             "abstain only when no supplied evidence is relevant to the request."
         )
         assert contract.index("A request to compose something") < contract.index(
-            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            "Otherwise, if the query asks only for a specific fact or value (such as an address, "
+            "date, amount, duration or name) that no supplied evidence states, "
             f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         assert contract.count("A request to compose something") == 1
@@ -1127,3 +1129,154 @@ def test_markers_in_tilde_or_unclosed_fences_are_not_claims(code) -> None:
     assert [claim.evidence_labels for claim in claims] == [("S2",)]
     # The code is kept verbatim, not treated as a rejected cited span.
     assert answer == "期限最长6个月。\n\n" + code
+
+
+def test_the_value_lookup_abstention_is_scoped_to_a_specific_fact() -> None:
+    """N5: on the governed tool path the generic "looks up a fact or value"
+    abstention still beat the composed-request rule (Q3 7/10; without it 9/10;
+    scoped to a specific fact 10/10, b-001 still 6/6 abstained)."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert "looks up a fact or value" not in contract
+
+
+_CODE_LABELS = frozenset({"S1", "S2", "S8", "S9"})
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            "```python\n# 1. 使用 TEST_ 账号登录（S9）\n"
+            "page.fill('#username', 'TEST_01')  # 测试账号（S1, S8）\n```",
+            "```python\n# 1. 使用 TEST_ 账号登录\n"
+            "page.fill('#username', 'TEST_01')  # 测试账号\n```",
+        ),
+        ("```js\n// 登录 (S1/S2)\nlogin();\n```", "```js\n// 登录\nlogin();\n```"),
+        ("~~~\n# 验证码固定（S2）\n~~~", "~~~\n# 验证码固定\n~~~"),
+        # Real round-3 probe forms: a cue inside the parentheses, and a label
+        # prefixing a description (only the label goes).
+        ("```python\n# 2. 进入快速通道（依据 S1, S8）\n```", "```python\n# 2. 进入快速通道\n```"),
+        (
+            "```python\n# 4. 处理验证码（S2：固定值 123456）\n```",
+            "```python\n# 4. 处理验证码（固定值 123456）\n```",
+        ),
+        ("说明。\n\n    # 重置数据（S9）\n    reset()", "说明。\n\n    # 重置数据\n    reset()"),
+    ],
+)
+def test_a_parenthesized_label_in_a_code_comment_is_removed(code, expected) -> None:
+    """N1-R: the model kept writing "（S9）" and "（S1, S8）" into code comments."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == expected
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "```python\nS1 = load('S1')\nresult = run(S1)  # 运行 S1 档位\n```",
+        "```python\nvalue = check(S1, S2)\n```",
+        "```python\npage.fill('#otp（S1）', '123456')\n```",
+        "```js\nfetch('http://host/a(S1)')  // 请求\n```",
+        "```python\n# 档位（S5）\n```",
+        "```python\n# 档位（S1 级）\n```",
+        "运行 `step（S1）` 即可。",
+    ],
+)
+def test_code_label_tokens_outside_a_comment_label_are_kept(code) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == code
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("按 Skill 指引执行[webapp-testing]。", "按 Skill 指引执行 webapp-testing。"),
+        ("参考 [webapp-testing skill] 的做法。", "参考 webapp-testing skill 的做法。"),
+        ("见 [ webapp-testing ]。", "见 webapp-testing。"),
+    ],
+)
+def test_a_bracketed_skill_name_becomes_plain_text(text, expected) -> None:
+    """N1-R: "[webapp-testing]" reads like a citation; it is not one. Only the
+    brackets go (the conservative option), so no content is lost."""
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "参见 [webapp-testing](https://example.test/skill) 文档。",
+        "勾选 [x] 后提交。",
+        "其他 [other-skill] 标记保留。",
+        "```python\nitems = ['webapp-testing']\nx = d[webapp-testing]\n```",
+    ],
+)
+def test_other_brackets_are_not_skill_pseudo_citations(text) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == text
+
+
+@pytest.mark.asyncio
+async def test_a_governed_answer_drops_comment_labels_and_skill_brackets() -> None:
+    reply = (
+        "期限最长6个月[S2]。按 Skill 指引执行[Test steps]。\n\n"
+        "```python\n# 登录测试环境（S1）\npage.goto(url)\n```"
+    )
+
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    generation = await _answer_gateway(Gateway()).answer(
+        "问题", _steps_pool(), "quick-hybrid-v1", governance=_governance()
+    )
+
+    assert generation.text == (
+        "期限最长6个月。按 Skill 指引执行 Test steps。\n\n"
+        "```python\n# 登录测试环境\npage.goto(url)\n```"
+    )
+
+
+def test_a_sentence_about_methods_or_a_skill_carries_no_label() -> None:
+    """N6: a closing sentence about networkidle and the Skill's best practice
+    cited two unrelated test-environment rules."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert (
+            "Label only text that restates supplied evidence; a sentence about methods, tools or "
+            "a Skill's guidance carries no label." in contract
+        )
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        # An escaped quote does not end the string, so "#" is still inside it.
+        '```python\ns = "a\\"b # (S1)"\n```',
+        # A label right after a call name is an argument list, not a citation.
+        "```python\n# call check(S1) before submit\n```",
+        "```python\n# wraps validate(S1, S2)\n```",
+        "```js\n// see obj.run(S1)\n```",
+    ],
+)
+def test_escaped_quotes_and_call_arguments_in_code_are_kept(code) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == code
+
+
+def test_a_comment_after_an_escaped_quote_still_loses_its_label() -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    code = "```python\nx = 'it\\'s' # note (S1)\n```"
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == (
+        "```python\nx = 'it\\'s' # note\n```"
+    )

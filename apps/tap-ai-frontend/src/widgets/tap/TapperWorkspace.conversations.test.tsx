@@ -153,6 +153,7 @@ const ANSWER = {
 
 function completedConversation({
   traceId,
+  answer = ANSWER,
   extraSpans = [],
   api = fakeKnowledgeClient(),
   graphContextEvent,
@@ -170,6 +171,7 @@ function completedConversation({
   ],
 }: {
   traceId: string | null;
+  answer?: Record<string, unknown>;
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
   graphContextEvent?: Record<string, unknown>;
@@ -217,8 +219,8 @@ function completedConversation({
       sequence: nextSequence++,
       turnId: "turn-1",
       occurredAt: "2026-09-29T08:00:01Z",
-      eventType: "turn.completed",
-      payload: { answer: ANSWER },
+      eventType: state === "abstained" ? "turn.abstained" : "turn.completed",
+      payload: { answer },
     },
   ];
   vi.stubGlobal("fetch", async (request: Request) => {
@@ -450,6 +452,71 @@ it("replays a persisted graph.context_ready event and shows the summary line", a
   await screen.findByRole("button", { name: "Regenerate" });
   expect(
     screen.getByText("Searched 1 source · 0 passages · 3 relations"),
+  ).toBeInTheDocument();
+});
+
+function chunkCitation(citationId: string) {
+  return {
+    citationId,
+    evidenceLabel: citationId,
+    kind: "chunk",
+    chunkId: `chunk-${citationId}`,
+    logicalChunkId: `logical-${citationId}`,
+    source: {
+      sourceId: "source-1",
+      sourceType: "doc",
+      revisionKind: "blob_version",
+      revision: "revision-1",
+      sourceContentHash: "sha256:source",
+      anchor: { type: "document", page: 1 },
+    },
+    chunkContentHash: "sha256:chunk",
+    contentRole: "source",
+  };
+}
+
+it("counts the passages retrieved for an abstained turn, not only cited ones", async () => {
+  // Capability-4 validation round 3: an abstained Turn whose retrieval
+  // returned 10 passages read "Searched 2 sources · 0 passages".
+  completedConversation({
+    traceId: "trace-1",
+    state: "abstained",
+    answer: {
+      ...ANSWER,
+      answer: "",
+      abstained: true,
+      claims: [],
+      citations: [chunkCitation("S1"), chunkCitation("S2")],
+    },
+  });
+
+  expect(
+    await screen.findByText("Searched 1 source · 2 passages · 0 relations"),
+  ).toBeInTheDocument();
+});
+
+it("counts every retrieved passage for a completed turn, cited or not", async () => {
+  completedConversation({
+    traceId: "trace-1",
+    answer: {
+      ...ANSWER,
+      claims: [
+        {
+          claimId: "claim-1",
+          text: "Verified identity is required.",
+          citationIds: ["S1"],
+        },
+      ],
+      citations: [
+        chunkCitation("S1"),
+        chunkCitation("S2"),
+        chunkCitation("S3"),
+      ],
+    },
+  });
+
+  expect(
+    await screen.findByText("Searched 1 source · 3 passages · 0 relations"),
   ).toBeInTheDocument();
 });
 

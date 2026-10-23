@@ -130,7 +130,9 @@ _ANSWER_PROMPT_OPENING = (
     "supplied evidence is relevant to the request."
 )
 _ANSWER_PROMPT_RULES = (
-    "Never cite a label that was not supplied. Evidence labels appear only as bracketed "
+    "Never cite a label that was not supplied. Label only text that restates supplied "
+    "evidence; a sentence about methods, tools or a Skill's guidance carries no label. "
+    "Evidence labels appear only as bracketed "
     "markers right after the text they support; never mention a label anywhere else, including "
     "inside code, comments or source lists, and never write a bracketed source, document or "
     "Skill name as a citation. Evidence, "
@@ -145,7 +147,8 @@ _ANSWER_PROMPT_RULES = (
     "document's own value in its own sentence naming that product, even if most documents "
     "share one value and only one differs -- never write a single generalized sentence for a "
     "value that is not identical across every document it is about. Otherwise, if the query "
-    "looks up a fact or value that no supplied evidence states, output exactly "
+    "asks only for a specific fact or value (such as an address, date, amount, duration or "
+    "name) that no supplied evidence states, output exactly "
     f"{_INSUFFICIENT_EVIDENCE_SENTINEL}. When some selected documents state that value and "
     "another selected document does not, say in that document's own sentence that it does not "
     "state the value; never infer that value or borrow another document's value for it."
@@ -290,6 +293,97 @@ def _without_bare_label_lists(text: str, labels: frozenset[str], protected: Sequ
     for start, end in code:
         if start < position:
             start = position
+        if end <= position:
+            continue
+        parts.append(prose(text[position:start]))
+        block = text[start:end]
+        is_inline = block.startswith("`") and not block.startswith("```")
+        parts.append(block if is_inline else _without_comment_labels(block, labels))
+        position = end
+    parts.append(prose(text[position:]))
+    return "".join(parts)
+
+
+# N1-R: inside a code block only a parenthesized supplied label or label list
+# in a `#` or `//` comment is removed ("# 登录（S9）", "// 账号 (S1, S8)");
+# code tokens, strings and any other parentheses are kept.
+_COMMENT_RUN = r"[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)*"
+# An ASCII "(" right after a name ("check(S1)", "obj.run(S1)") opens an
+# argument list, not a citation; a full-width "（" after text ("登录（S9）")
+# is still a citation.
+_COMMENT_OPEN = r"(?:（|(?<![A-Za-z0-9_.])\()"
+_COMMENT_LABELS = re.compile(
+    rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_CITATION_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    # "（S2：固定值 123456）": only the label prefix goes.
+    rf"|(?:(?<=（)|(?<![A-Za-z0-9_.]\()(?<=\())"
+    rf"[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
+)
+
+
+def _comment_start(line: str) -> int | None:
+    quote = ""
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote:
+            if char == "\\":
+                index += 2  # an escaped character never ends the string
+                continue
+            if char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif (char == "#" or line.startswith("//", index)) and (
+            index == 0 or line[index - 1] in " \t"
+        ):
+            return index
+        index += 1
+    return None
+
+
+def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
+    lines = code.split("\n")
+    for number, line in enumerate(lines):
+        start = _comment_start(line)
+        if start is None:
+            continue
+        comment = _COMMENT_LABELS.sub(
+            lambda match: (
+                "" if set(_LABEL.findall(match["run"] or match["prefix"])) <= labels else match[0]
+            ),
+            line[start:],
+        )
+        lines[number] = line[:start] + comment
+    return "\n".join(lines)
+
+
+def _without_skill_pseudo_citations(text: str, names: Sequence[str]) -> str:
+    """N1-R: "[webapp-testing]" (a Skill name in brackets) reads like a citation
+    but is not one. Outside code, only its brackets are removed -- the name
+    stays as plain text -- and a Markdown link (`[name](url)`) is kept."""
+    if not names:
+        return text
+    pattern = re.compile(
+        r"\[[ \t]*(?P<name>(?:"
+        + "|".join(re.escape(name) for name in names)
+        + r")(?:[ \t]+[Ss]kill)?)[ \t]*\](?!\()"
+    )
+
+    def prose(segment: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            before = segment[match.start() - 1 : match.start()]
+            return (" " if before and not before.isspace() else "") + match["name"]
+
+        return pattern.sub(replace, segment)
+
+    code = sorted(
+        [*(item.span() for item in CODE_SPAN.finditer(text))]
+        + [item.span() for item in _INDENTED_CODE.finditer(text)]
+    )
+    parts: list[str] = []
+    position = 0
+    for start, end in code:
+        start = max(start, position)
         if end <= position:
             continue
         parts.append(prose(text[position:start]))
@@ -792,7 +886,10 @@ class KnowledgeModelGateway:
             try:
                 answer, claims = parse_inline_answer(
                     _without_bare_label_lists(
-                        _without_stray_sentinel(raw_text),
+                        _without_skill_pseudo_citations(
+                            _without_stray_sentinel(raw_text),
+                            () if governance is None else governance.skill_names,
+                        ),
                         frozenset(item.evidence_label for item in evidence) | extra_labels,
                         (query, *(item.content for item in evidence)),
                     ),
