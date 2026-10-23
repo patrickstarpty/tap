@@ -62,7 +62,7 @@ flowchart LR
 | 项 | 内容 | 状态 |
 | --- | --- | --- |
 | V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 已设计（[spec](../specs/2026-10-22-agent-team-view-design.md)；V2 第一个实施） |
-| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 长任务（`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片） | 已设计（[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；在 V2.1 之后，与 V2.2 的先后待定） |
+| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 长任务（`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片） | 已设计（[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；V2 第二个实施，在 V2.1 之后、V2.2 主动框架之前） |
 | V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.4 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
