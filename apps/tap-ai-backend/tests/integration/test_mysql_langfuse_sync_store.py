@@ -44,6 +44,7 @@ async def _insert_span(
     turn_id: str | None = None,
     job_id: str | None = None,
     started_at: datetime | None = None,
+    name: str = "turn.execute",
 ) -> None:
     await connection.execute(
         sa.insert(trace_span).values(
@@ -53,7 +54,7 @@ async def _insert_span(
             turn_id=turn_id,
             job_id=job_id,
             service_name="tap-ai-backend",
-            name="turn.execute",
+            name=name,
             status="ok",
             status_message=None,
             started_at=started_at or recorded_at,
@@ -91,6 +92,26 @@ async def _insert_conversation_and_turn(
             last_sequence=0,
             created_at=_T0,
             traceparent=None,
+            **_scope_values(),
+        )
+    )
+
+
+async def _insert_turn_input_snapshot(
+    connection: AsyncConnection,
+    *,
+    turn_id: str,
+    agent_revision_id: str | None,
+) -> None:
+    from tap.modules.chat.adapters.mysql_conversations import turn_input_snapshot
+
+    await connection.execute(
+        sa.insert(turn_input_snapshot).values(
+            snapshot_id=f"snap-{uuid4().hex[:16]}",
+            turn_id=turn_id,
+            snapshot_digest="sha256:" + uuid4().hex,
+            snapshot={"agent_revision_id": agent_revision_id},
+            created_at=_T0,
             **_scope_values(),
         )
     )
@@ -647,6 +668,155 @@ def test_load_trace_joins_calls_content_and_conversation(
             assert job_bundle is not None
             assert job_bundle.conversation_id is None
             assert job_bundle.job_id == "job-1"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_standalone_execute_root_gets_no_agent_tag(owned_project_mysql: IsolatedMysql) -> None:
+    """`test_load_trace_joins_calls_content_and_conversation` already inserts a
+    Turn trace whose root span is named `turn.execute` (the default) -- per
+    spec 2.2, only a `turn.request`-rooted trace is tagged. This asserts that
+    directly: `agent_key`/`turn_outcome` must stay `None`."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_id = uuid4().hex
+            turn_id = f"turn-{uuid4().hex[:8]}"
+            chat_id = f"chat-{uuid4().hex[:8]}"
+            async with engine.begin() as connection:
+                await _insert_conversation_and_turn(connection, turn_id=turn_id, chat_id=chat_id)
+                await _insert_span(
+                    connection,
+                    trace_id=trace_id,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0,
+                    turn_id=turn_id,
+                    name="turn.execute",
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            bundle = await store.load_trace(trace_id)
+            assert bundle is not None
+            assert bundle.agent_key is None
+            assert bundle.turn_outcome is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_load_trace_resolves_agent_id_from_snapshot(owned_project_mysql: IsolatedMysql) -> None:
+    async def scenario() -> None:
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+        from tap.modules.ai.application.assets import validation_asset_seed
+
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            catalog_engine = create_async_engine(
+                owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy")
+            )
+            try:
+                catalog = MysqlAssetCatalog(
+                    async_sessionmaker(catalog_engine, expire_on_commit=False),
+                    scope=VALIDATION_SCOPE,
+                )
+                seed = validation_asset_seed(VALIDATION_SCOPE)
+                await catalog.seed(seed)
+            finally:
+                await catalog_engine.dispose()
+            agent_revision_id = seed.agents[0].revision_id
+            agent_id = seed.agents[0].asset_id
+
+            trace_id = uuid4().hex
+            turn_id = f"turn-{uuid4().hex[:8]}"
+            chat_id = f"chat-{uuid4().hex[:8]}"
+            async with engine.begin() as connection:
+                await _insert_conversation_and_turn(connection, turn_id=turn_id, chat_id=chat_id)
+                await _insert_turn_input_snapshot(
+                    connection, turn_id=turn_id, agent_revision_id=agent_revision_id
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=trace_id,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0,
+                    turn_id=turn_id,
+                    name="turn.request",
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            bundle = await store.load_trace(trace_id)
+            assert bundle is not None
+            assert bundle.agent_key == agent_id
+            # `_insert_conversation_and_turn` creates the Turn with state
+            # "completed" -- a terminal state, so `turn_outcome` is set too.
+            assert bundle.turn_outcome == "completed"
+
+            # No `turn_input_snapshot` row at all -> falls back to the
+            # Tapper default agent.
+            default_trace_id = uuid4().hex
+            default_turn_id = f"turn-{uuid4().hex[:8]}"
+            default_chat_id = f"chat-{uuid4().hex[:8]}"
+            async with engine.begin() as connection:
+                await _insert_conversation_and_turn(
+                    connection, turn_id=default_turn_id, chat_id=default_chat_id
+                )
+                await _insert_turn_input_snapshot(
+                    connection, turn_id=default_turn_id, agent_revision_id=None
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=default_trace_id,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0,
+                    turn_id=default_turn_id,
+                    name="turn.request",
+                )
+            default_bundle = await store.load_trace(default_trace_id)
+            assert default_bundle is not None
+            assert default_bundle.agent_key == "tapper_default"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_unknown_revision_tags_unknown(owned_project_mysql: IsolatedMysql) -> None:
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_id = uuid4().hex
+            turn_id = f"turn-{uuid4().hex[:8]}"
+            chat_id = f"chat-{uuid4().hex[:8]}"
+            async with engine.begin() as connection:
+                await _insert_conversation_and_turn(connection, turn_id=turn_id, chat_id=chat_id)
+                await _insert_turn_input_snapshot(
+                    connection, turn_id=turn_id, agent_revision_id="no-such-revision"
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=trace_id,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0,
+                    turn_id=turn_id,
+                    name="turn.request",
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            bundle = await store.load_trace(trace_id)
+            assert bundle is not None
+            assert bundle.agent_key == "unknown"
         finally:
             await engine.dispose()
 

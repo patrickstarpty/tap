@@ -134,13 +134,18 @@ def to_langfuse_trace(
         "tap.redaction_version": REDACTION_VERSION,
         "tap.service_name": root.service_name if root is not None else "",
     }
+    tags: tuple[str, ...] = (f"project:{bundle.project_id}",)
+    if bundle.agent_key is not None:
+        tags = (*tags, f"agent:{bundle.agent_key}")
+    if bundle.turn_outcome is not None:
+        tags = (*tags, f"outcome:{bundle.turn_outcome}")
     return LangfuseTrace(
         id=bundle.trace_id,
         name=root.name if root is not None else bundle.trace_id,
         session_id=bundle.conversation_id,
         user_id=bundle.actor_id,
         environment=environment,
-        tags=(f"project:{bundle.project_id}",),
+        tags=tags,
         metadata=metadata,
         observations=observations,
     )

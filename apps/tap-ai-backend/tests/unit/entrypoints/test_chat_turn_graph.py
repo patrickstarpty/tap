@@ -1403,6 +1403,70 @@ async def test_disallowed_tool_call_is_rejected_without_execution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_each_admitted_tool_call_gets_a_tool_span(span_recorder) -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-span", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {"callId": "call-1", "name": "knowledge_search", "argumentsJson": '{"query": "x"}'}
+            ],
+        },
+    }
+
+    await nodes.tools(state)
+
+    tool_spans = [
+        s for s in span_recorder.get_finished_spans() if s.name == "tool.knowledge.search"
+    ]
+    assert len(tool_spans) == 1
+    assert tool_spans[0].attributes["tap.tool.step_id"] == "turn-tools-span:r1:c0"
+
+
+@pytest.mark.asyncio
+async def test_rejected_tool_call_has_no_tool_span(span_recorder) -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-tools-rejected-span", resolved_resources=(_resource("s1"),)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    nodes = _tool_loop_nodes(turn=turn, steps=steps, conversations=conversations)
+
+    state = {
+        "tools": ["knowledge.search"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": "call-1",
+                    "name": "knowledge_search",
+                    "argumentsJson": json.dumps({"query": "x", "sourceIds": ["out-of-scope"]}),
+                }
+            ],
+        },
+    }
+
+    await nodes.tools(state)
+
+    assert not any(s.name.startswith("tool.") for s in span_recorder.get_finished_spans())
+
+
+@pytest.mark.asyncio
 async def test_final_round_offers_no_tools_after_max_rounds() -> None:
     turn = _frozen_turn_for_planning(turn_id="turn-final-round")
     conversations = _Conversations(turn)
