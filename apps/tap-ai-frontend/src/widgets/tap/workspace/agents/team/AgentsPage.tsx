@@ -6,6 +6,8 @@ import {
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 import { PeriodPicker, type PeriodSelection } from "./PeriodPicker";
+import { RuntimeBadge } from "./RuntimeBadge";
+import { TeamTab } from "./TeamTab";
 import "./team.css";
 
 export type AgentsTab = "mine" | "team" | "report" | "config";
@@ -18,6 +20,7 @@ export interface AgentsPageProps {
   copy: WorkspaceCopy;
   configTab: ReactNode;
   initialTab?: AgentsTab;
+  onOpenMember?: (agentKey: string) => void;
 }
 
 function isTab(value: string | null): value is AgentsTab {
@@ -35,19 +38,6 @@ function writeUrlTab(tab: AgentsTab) {
   window.history.replaceState(window.history.state, "", url);
 }
 
-function formatTime(value: string, timeZone: string, locale: string): string {
-  try {
-    return new Intl.DateTimeFormat(locale, {
-      timeZone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
-}
-
 function todayUtc(): Date {
   return new Date();
 }
@@ -57,6 +47,7 @@ export function AgentsPage({
   copy,
   configTab,
   initialTab,
+  onOpenMember = () => undefined,
 }: AgentsPageProps) {
   const text = copy.agentTeam;
   const [tab, setTab] = useState<AgentsTab>(
@@ -114,7 +105,15 @@ export function AgentsPage({
               value={selection}
               onChange={setSelection}
             />
-            {rangeInvalid ? null : (
+            {rangeInvalid ? null : tab === "team" ? (
+              <TeamTab
+                projectId={projectId}
+                copy={copy}
+                period={period}
+                onOpenMember={onOpenMember}
+                onCreateAgent={() => select("config")}
+              />
+            ) : (
               <TeamFreshness
                 projectId={projectId}
                 copy={copy}
@@ -141,7 +140,6 @@ function TeamFreshness({
   to: string;
 }) {
   const text = copy.agentTeam;
-  const locale = text.heading === "Agent team" ? "en" : "zh-CN";
   const period = useMemo(() => ({ from, to }), [from, to]);
   const summary = useTeamSummary(projectId, period);
   if (summary.isPending) return <p role="status">{text.loading}</p>;
@@ -156,19 +154,11 @@ function TeamFreshness({
     );
   const view = summary.data;
   return (
-    <div className="tap-team-freshness">
-      {view.runtimeStatus === "unavailable" ? (
-        <p role="status">{text.runtimeUnavailable}</p>
-      ) : view.runtimeStatus === "syncing" ? (
-        <p role="status">{text.runtimeSyncing}</p>
-      ) : (
-        <p>{text.runtimeLag}</p>
-      )}
-      <p>
-        {text.updatedAt
-          .replace("{time}", formatTime(view.computedAt, view.timezone, locale))
-          .replace("{timezone}", view.timezone)}
-      </p>
-    </div>
+    <RuntimeBadge
+      status={view.runtimeStatus}
+      computedAt={view.computedAt}
+      timezone={view.timezone}
+      copy={copy}
+    />
   );
 }

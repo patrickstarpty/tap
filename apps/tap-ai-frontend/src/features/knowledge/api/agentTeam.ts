@@ -14,6 +14,7 @@ export type AgentTeamSummaryView = Schemas["AgentTeamSummaryView"];
 export type AgentTeamMembersView = Schemas["AgentTeamMembersView"];
 export type AgentTeamMemberView = Schemas["AgentTeamMemberView"];
 export type AgentTeamMemberRow = Schemas["AgentTeamMemberRow"];
+export type AgentTeamPersonRow = Schemas["AgentTeamPersonRow"];
 export type AgentTeamPeopleView = Schemas["AgentTeamPeopleView"];
 export type AgentTeamPersonView = Schemas["AgentTeamPersonView"];
 export type AgentTeamOrgChartView = Schemas["AgentTeamOrgChartView"];

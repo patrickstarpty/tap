@@ -403,6 +403,54 @@ export interface WorkspaceCopy {
     loading: string;
     loadFailed: string;
     retry: string;
+    team: {
+      viewLabel: string;
+      viewCards: string;
+      viewTable: string;
+      filterOwner: string;
+      filterStatus: string;
+      filterKind: string;
+      allOwners: string;
+      allStatuses: string;
+      allKinds: string;
+      kinds: { custom: string; built_in: string; tapper_default: string };
+      rosterHeading: string;
+      peopleHeading: string;
+      trendHeading: string;
+      noJobTitle: string;
+      ownerLabel: string;
+      runsTrend: string;
+      topServed: string;
+      noServed: string;
+      lastRun: string;
+      lastMaintenance: string;
+      pendingFeedback: string;
+      noPeople: string;
+      columns: {
+        name: string;
+        jobTitle: string;
+        owner: string;
+        status: string;
+        kind: string;
+        runs: string;
+        failures: string;
+        latencyTotal: string;
+        latencyP50: string;
+        cost: string;
+        served: string;
+        lastRun: string;
+        satisfaction: string;
+        lastMaintenance: string;
+        pendingFeedback: string;
+        joinedAt: string;
+        actor: string;
+        ownedAgents: string;
+        ownedRuns: string;
+        servedByAgents: string;
+        calls: string;
+        maintenance: string;
+      };
+    };
   };
   migrationBanner: {
     heading: string;
@@ -956,6 +1004,58 @@ export const WORKSPACE_COPY = {
       loading: "Loading team data...",
       loadFailed: "Team data could not be loaded.",
       retry: "Retry",
+      team: {
+        viewLabel: "Roster view",
+        viewCards: "Cards",
+        viewTable: "Table",
+        filterOwner: "Owner",
+        filterStatus: "Status",
+        filterKind: "Type",
+        allOwners: "All owners",
+        allStatuses: "All statuses",
+        allKinds: "All types",
+        kinds: {
+          custom: "Custom",
+          built_in: "Built-in",
+          tapper_default: "Tapper default",
+        },
+        rosterHeading: "Roster",
+        peopleHeading: "People",
+        trendHeading: "Run trend",
+        noJobTitle: "No job title",
+        ownerLabel: "Owner",
+        runsTrend: "Runs in period",
+        topServed: "Top served",
+        noServed: "No one yet",
+        lastRun: "Last run",
+        lastMaintenance: "Last maintenance",
+        pendingFeedback: "Pending feedback",
+        noPeople: "No people in this period",
+        columns: {
+          name: "Name",
+          jobTitle: "Job title",
+          owner: "Owner",
+          status: "Status",
+          kind: "Type",
+          runs: "Runs",
+          failures: "Failures",
+          latencyTotal: "Total latency",
+          latencyP50: "Median latency",
+          cost: "Cost",
+          served: "People served",
+          lastRun: "Last run",
+          satisfaction: "Satisfaction",
+          lastMaintenance: "Last maintenance",
+          pendingFeedback: "Pending feedback",
+          joinedAt: "Joined",
+          actor: "Person",
+          ownedAgents: "Agents owned",
+          ownedRuns: "Runs of owned Agents",
+          servedByAgents: "Agents used",
+          calls: "Calls made",
+          maintenance: "Maintenance actions",
+        },
+      },
     },
     migrationBanner: {
       heading: "Local drafts found",
@@ -1498,6 +1598,58 @@ export const WORKSPACE_COPY = {
       loading: "正在加载团队数据…",
       loadFailed: "无法加载团队数据。",
       retry: "重试",
+      team: {
+        viewLabel: "花名册视图",
+        viewCards: "卡片",
+        viewTable: "表格",
+        filterOwner: "负责人",
+        filterStatus: "状态",
+        filterKind: "类型",
+        allOwners: "全部负责人",
+        allStatuses: "全部状态",
+        allKinds: "全部类型",
+        kinds: {
+          custom: "自定义",
+          built_in: "内置",
+          tapper_default: "Tapper 默认",
+        },
+        rosterHeading: "花名册",
+        peopleHeading: "人员",
+        trendHeading: "运行趋势",
+        noJobTitle: "未设岗位",
+        ownerLabel: "负责人",
+        runsTrend: "周期内运行",
+        topServed: "主要服务对象",
+        noServed: "暂无",
+        lastRun: "最近运行",
+        lastMaintenance: "最近维护",
+        pendingFeedback: "待处理反馈",
+        noPeople: "该周期内没有人员",
+        columns: {
+          name: "名称",
+          jobTitle: "岗位",
+          owner: "负责人",
+          status: "状态",
+          kind: "类型",
+          runs: "运行次数",
+          failures: "失败",
+          latencyTotal: "总耗时",
+          latencyP50: "中位耗时",
+          cost: "成本",
+          served: "服务人数",
+          lastRun: "最近运行",
+          satisfaction: "满意度",
+          lastMaintenance: "最近维护",
+          pendingFeedback: "待处理反馈",
+          joinedAt: "入职日期",
+          actor: "人员",
+          ownedAgents: "负责 Agent 数",
+          ownedRuns: "负责 Agent 运行量",
+          servedByAgents: "被服务 Agent 数",
+          calls: "调用次数",
+          maintenance: "维护动作数",
+        },
+      },
     },
     migrationBanner: {
       heading: "发现本地草稿",

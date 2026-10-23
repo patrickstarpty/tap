@@ -1,0 +1,318 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  useTeamMembers,
+  useTeamPeople,
+  useTeamSummary,
+} from "../../../../../features/knowledge/api/agentTeam";
+import { WORKSPACE_COPY } from "../../copy";
+import { TeamTab } from "./TeamTab";
+
+vi.mock(
+  "../../../../../features/knowledge/api/agentTeam",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../../../features/knowledge/api/agentTeam")
+      >();
+    return {
+      ...actual,
+      useTeamSummary: vi.fn(),
+      useTeamMembers: vi.fn(),
+      useTeamPeople: vi.fn(),
+    };
+  },
+);
+
+const period = { from: "2026-09-24", to: "2026-10-23" };
+
+function row(over: Record<string, unknown>) {
+  return {
+    agentKey: "a1",
+    name: "Reviewer",
+    kind: "custom",
+    jobTitle: "Test reviewer",
+    ownerActorId: "alice",
+    status: "active",
+    runs: 12,
+    failures: 1,
+    abstained: 0,
+    canceled: 0,
+    latencyTotalMs: 90_000,
+    latencyP50Ms: 800,
+    costUsd: "1.5",
+    satisfaction: 0.8,
+    satisfactionSample: "ok",
+    servedCount: 3,
+    topServed: [
+      { actorId: "u1", runs: 5 },
+      { actorId: "u2", runs: 4 },
+      { actorId: "u3", runs: 2 },
+      { actorId: "u4", runs: 1 },
+    ],
+    lastRunAt: "2026-10-22T10:30:00Z",
+    lastMaintenanceAt: "2026-10-20T09:00:00Z",
+    joinedAt: "2026-09-01T00:00:00Z",
+    pendingFeedback: 2,
+    maintenance: {},
+    trend: [
+      {
+        agentKey: "a1",
+        bucketStart: "2026-10-21",
+        runs: 3,
+        failures: 0,
+        latencyTotalMs: 0,
+        costUsd: "0",
+      },
+      {
+        agentKey: "a1",
+        bucketStart: "2026-10-22",
+        runs: 9,
+        failures: 1,
+        latencyTotalMs: 0,
+        costUsd: "0",
+      },
+    ],
+    ...over,
+  };
+}
+
+const base = {
+  runtimeStatus: "ok",
+  computedAt: "2026-10-23T08:00:00Z",
+  timezone: "UTC",
+  period,
+  granularity: "day",
+};
+
+function ready(data: unknown) {
+  return { isPending: false, isError: false, refetch: vi.fn(), data };
+}
+
+function setup(
+  members: unknown[],
+  runtimeStatus: "ok" | "unavailable" = "ok",
+  summary: Record<string, unknown> = {},
+) {
+  const b = { ...base, runtimeStatus };
+  vi.mocked(useTeamSummary).mockReturnValue(
+    ready({
+      ...b,
+      data: {
+        agentTotal: 4,
+        active: 2,
+        idle: 1,
+        ownersAvg: 1.5,
+        servedAvg: 2,
+        runs: 120,
+        latencyTotalMs: 3_600_000,
+        costUsd: "12.5",
+        maintenanceTotal: 7,
+        ...summary,
+      },
+    }) as never,
+  );
+  vi.mocked(useTeamMembers).mockReturnValue(
+    ready({ ...b, data: members }) as never,
+  );
+  vi.mocked(useTeamPeople).mockReturnValue(
+    ready({
+      ...b,
+      data: [
+        {
+          actorId: "bob",
+          ownedAgents: 1,
+          ownedRuns: 5,
+          servedByAgents: 1,
+          runs: 9,
+          maintenance: 0,
+        },
+        {
+          actorId: "alice",
+          ownedAgents: 3,
+          ownedRuns: 50,
+          servedByAgents: 2,
+          runs: 4,
+          maintenance: 6,
+        },
+      ],
+    }) as never,
+  );
+}
+
+function renderTab(
+  lang: "en" | "zh" = "zh",
+  handlers: { open?: () => void; create?: () => void } = {},
+) {
+  return render(
+    <TeamTab
+      projectId="p1"
+      copy={WORKSPACE_COPY[lang]}
+      period={period}
+      onOpenMember={handlers.open ?? vi.fn()}
+      onCreateAgent={handlers.create ?? vi.fn()}
+    />,
+  );
+}
+
+beforeEach(() => vi.clearAllMocks());
+
+describe("TeamTab", () => {
+  it("shows the summary numbers and freshness line", () => {
+    setup([row({})]);
+    renderTab();
+    expect(screen.getByText("运行次数").nextSibling).toHaveTextContent("120");
+    expect(screen.getByText("Agent 数").nextSibling).toHaveTextContent("4");
+    expect(screen.getByText("人均负责 Agent").nextSibling).toHaveTextContent(
+      "1.5",
+    );
+    expect(screen.getByText("维护动作").nextSibling).toHaveTextContent("7");
+    expect(screen.getByText("数据更新于 08:00（UTC）")).toBeVisible();
+  });
+
+  it("renders a member card with every field", () => {
+    setup([row({})]);
+    renderTab();
+    expect(
+      screen.getByText("R", { selector: ".tap-team-avatar" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
+    expect(screen.getByText("Test reviewer")).toBeVisible();
+    expect(screen.getByText("alice", { selector: "dd" })).toBeVisible();
+    expect(screen.getByText("活跃", { selector: "dd" })).toBeVisible();
+    expect(screen.getByRole("img", { name: /Reviewer/ })).toBeVisible();
+    expect(screen.getByText("80%")).toBeVisible();
+    expect(screen.getByText("u1, u2, u3")).toBeVisible();
+    expect(screen.getByText("2026/10/22 10:30")).toBeVisible();
+    expect(screen.getByText("2026/10/20 09:00")).toBeVisible();
+  });
+
+  it("labels built-in members and insufficient satisfaction samples", () => {
+    setup([
+      row({
+        kind: "built_in",
+        ownerActorId: null,
+        satisfaction: null,
+        satisfactionSample: "insufficient",
+      }),
+    ]);
+    renderTab();
+    expect(screen.getByText("Tapper 内置", { selector: "dd" })).toBeVisible();
+    expect(screen.getByText("样本不足")).toBeVisible();
+  });
+
+  it("opens a member from its card", async () => {
+    setup([row({})]);
+    const open = vi.fn();
+    renderTab("zh", { open });
+    await userEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+    expect(open).toHaveBeenCalledWith("a1");
+  });
+
+  it("passes owner, status and kind filters to the request", async () => {
+    setup([
+      row({}),
+      row({ agentKey: "a2", name: "Other", ownerActorId: "bob" }),
+    ]);
+    renderTab();
+    await userEvent.selectOptions(screen.getByLabelText("负责人"), "bob");
+    await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
+    await userEvent.selectOptions(screen.getByLabelText("类型"), "built_in");
+    const last = vi.mocked(useTeamMembers).mock.calls.at(-1)!;
+    expect(last[2]).toMatchObject({
+      owner: "bob",
+      status: "idle",
+      kind: "built_in",
+    });
+  });
+
+  it("switches to the table and sorts through request parameters", async () => {
+    setup([row({})]);
+    renderTab("en");
+    const runsHeader = () =>
+      screen.getAllByText("Runs", { selector: ".ant-table-column-title" })[0];
+    await userEvent.click(screen.getByRole("button", { name: "Table" }));
+    await userEvent.click(runsHeader());
+    expect(vi.mocked(useTeamMembers).mock.calls.at(-1)![2]).toMatchObject({
+      sort: "runs",
+      order: "asc",
+    });
+    await userEvent.click(runsHeader());
+    expect(vi.mocked(useTeamMembers).mock.calls.at(-1)![2]).toMatchObject({
+      sort: "runs",
+      order: "desc",
+    });
+    await userEvent.click(
+      screen.getAllByText("Total latency", {
+        selector: ".ant-table-column-title",
+      })[0],
+    );
+    expect(vi.mocked(useTeamMembers).mock.calls.at(-1)![2]).toMatchObject({
+      sort: "latency_total_ms",
+    });
+  });
+
+  it("sorts the people table by column", async () => {
+    setup([row({})]);
+    renderTab("en");
+    const table = screen.getByText("Person").closest("table")!;
+    const names = () =>
+      within(table)
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.firstElementChild!.textContent);
+    expect(names()).toEqual(["bob", "alice"]);
+    await userEvent.click(
+      screen.getByText("Agents owned", { selector: ".ant-table-column-title" }),
+    );
+    await userEvent.click(
+      screen.getByText("Agents owned", { selector: ".ant-table-column-title" }),
+    );
+    expect(names()).toEqual(["alice", "bob"]);
+    await userEvent.click(
+      screen.getByText("Person", { selector: ".ant-table-column-title" }),
+    );
+    expect(names()).toEqual(["alice", "bob"]);
+  });
+
+  it("keeps the roster and marks run data unavailable instead of zero", () => {
+    setup(
+      [
+        row({
+          runs: null,
+          status: null,
+          failures: null,
+          trend: [],
+          lastRunAt: null,
+          satisfaction: null,
+        }),
+      ],
+      "unavailable",
+      {
+        runs: null,
+        active: null,
+        idle: null,
+        latencyTotalMs: null,
+        costUsd: null,
+      },
+    );
+    renderTab();
+    expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
+    expect(screen.getAllByText("运行数据暂不可用").length).toBeGreaterThan(1);
+    expect(
+      screen.queryByText("0", { selector: ".tap-team-card *" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("运行次数").nextSibling).toHaveTextContent("—");
+  });
+
+  it("guides to creating an Agent when the roster is empty", async () => {
+    setup([]);
+    const create = vi.fn();
+    renderTab("zh", { create });
+    expect(screen.getByText("还没有 Agent，新建一个")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "新建 Agent" }));
+    expect(create).toHaveBeenCalled();
+  });
+});

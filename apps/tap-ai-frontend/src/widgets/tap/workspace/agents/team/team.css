@@ -36,3 +36,131 @@
   opacity: 0.7;
   font-size: 0.85em;
 }
+
+.tap-team-runtime-mark {
+  display: block;
+  color: var(--tap-muted);
+  font-size: 0.8em;
+}
+
+.tap-team-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.tap-team-summary > div {
+  padding: 8px 12px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+}
+
+.tap-team-summary dt {
+  color: var(--tap-muted);
+  font-size: 0.8em;
+}
+
+.tap-team-summary dd {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 1.25em;
+  font-weight: 600;
+}
+
+.tap-team-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tap-team-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tap-team-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-team-card {
+  padding: 12px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+}
+
+.tap-team-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tap-team-card-head p {
+  margin: 0;
+  color: var(--tap-muted);
+}
+
+.tap-team-card-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tap-team-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--tap-brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+.tap-team-card dl {
+  margin: 10px 0 0;
+}
+
+.tap-team-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.tap-team-card dt {
+  color: var(--tap-muted);
+}
+
+.tap-team-card dd {
+  margin: 0;
+  text-align: right;
+}
+
+.tap-team-trend-readout {
+  display: flex;
+  gap: 12px;
+  min-height: 1.4em;
+  color: var(--tap-muted);
+  font-size: 0.85em;
+}
+
+.tap-team-empty {
+  padding: 24px;
+  border: 1px dashed var(--tap-line-strong);
+  border-radius: 8px;
+  text-align: center;
+}

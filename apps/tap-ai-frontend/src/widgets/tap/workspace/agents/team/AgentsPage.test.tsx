@@ -2,7 +2,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useTeamSummary } from "../../../../../features/knowledge/api/agentTeam";
+import {
+  useTeamMembers,
+  useTeamPeople,
+  useTeamSummary,
+} from "../../../../../features/knowledge/api/agentTeam";
 import { WORKSPACE_COPY } from "../../copy";
 import { AgentsPage } from "./AgentsPage";
 
@@ -13,11 +17,35 @@ vi.mock(
       await importOriginal<
         typeof import("../../../../../features/knowledge/api/agentTeam")
       >();
-    return { ...actual, useTeamSummary: vi.fn() };
+    return {
+      ...actual,
+      useTeamSummary: vi.fn(),
+      useTeamMembers: vi.fn(),
+      useTeamPeople: vi.fn(),
+    };
   },
 );
 
 function mockSummary(runtimeStatus: "ok" | "unavailable" = "ok") {
+  const base = {
+    runtimeStatus,
+    computedAt: "2026-10-23T08:00:00Z",
+    timezone: "UTC",
+    period: { from: "2026-09-24", to: "2026-10-23" },
+    granularity: "day",
+  };
+  vi.mocked(useTeamMembers).mockReturnValue({
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    data: { ...base, data: [] },
+  } as never);
+  vi.mocked(useTeamPeople).mockReturnValue({
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    data: { ...base, data: [] },
+  } as never);
   vi.mocked(useTeamSummary).mockReturnValue({
     isPending: false,
     isError: false,
@@ -28,7 +56,17 @@ function mockSummary(runtimeStatus: "ok" | "unavailable" = "ok") {
       timezone: "UTC",
       period: { from: "2026-09-24", to: "2026-10-23" },
       granularity: "day",
-      data: {},
+      data: {
+        agentTotal: 0,
+        ownersAvg: 0,
+        servedAvg: 0,
+        maintenanceTotal: 0,
+        runs: null,
+        active: null,
+        idle: null,
+        latencyTotalMs: null,
+        costUsd: null,
+      },
     },
   } as never);
 }
@@ -105,7 +143,7 @@ describe("AgentsPage", () => {
       "true",
     );
     expect(screen.getByRole("tab", { name: "配置" })).toBeInTheDocument();
-    expect(screen.getByText("运行数据暂不可用")).toBeInTheDocument();
+    expect(screen.getAllByText("运行数据暂不可用")[0]).toBeInTheDocument();
   });
 
   it("shows the update time in the server timezone, not the browser's", () => {

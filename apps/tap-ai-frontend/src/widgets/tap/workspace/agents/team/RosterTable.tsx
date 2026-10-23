@@ -1,0 +1,205 @@
+import { Table, type TableProps } from "antd";
+
+import type { AgentTeamMemberRow } from "../../../../../features/knowledge/api/agentTeam";
+import {
+  formatCost,
+  formatCount,
+  formatDate,
+  formatDateTime,
+  formatDuration,
+} from "./format";
+import {
+  RunValue,
+  SatisfactionValue,
+  StatusValue,
+  ownerName,
+  type CellContext,
+} from "./memberCells";
+
+export interface RosterSort {
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
+export interface RosterTableProps {
+  rows: AgentTeamMemberRow[];
+  ctx: CellContext;
+  sorting: RosterSort;
+  onSort: (next: RosterSort) => void;
+  onOpenMember: (agentKey: string) => void;
+}
+
+export function RosterTable({
+  rows,
+  ctx,
+  sorting,
+  onSort,
+  onOpenMember,
+}: RosterTableProps) {
+  const labels = ctx.copy.agentTeam.team;
+  const cols = labels.columns;
+  const n = (value: number | null) =>
+    value === null ? null : formatCount(value, ctx.locale);
+  const sortable = (key: string) => ({
+    sorter: true as const,
+    sortOrder:
+      sorting.sort === key
+        ? sorting.order === "desc"
+          ? ("descend" as const)
+          : ("ascend" as const)
+        : null,
+    key,
+  });
+  const columns: TableProps<AgentTeamMemberRow>["columns"] = [
+    {
+      title: cols.name,
+      ...sortable("name"),
+      render: (_: unknown, row) => (
+        <button
+          type="button"
+          className="tap-team-card-name"
+          onClick={() => onOpenMember(row.agentKey)}
+        >
+          {row.name}
+        </button>
+      ),
+    },
+    {
+      title: cols.jobTitle,
+      key: "jobTitle",
+      render: (_: unknown, row) => row.jobTitle ?? labels.noJobTitle,
+    },
+    {
+      title: cols.owner,
+      key: "owner",
+      render: (_: unknown, row) => ownerName(row, ctx.copy),
+    },
+    {
+      title: cols.status,
+      key: "status",
+      render: (_: unknown, row) => <StatusValue row={row} ctx={ctx} />,
+    },
+    {
+      title: cols.kind,
+      key: "kind",
+      render: (_: unknown, row) => labels.kinds[row.kind],
+    },
+    {
+      title: cols.runs,
+      ...sortable("runs"),
+      render: (_: unknown, row) => <RunValue value={n(row.runs)} ctx={ctx} />,
+    },
+    {
+      title: cols.failures,
+      ...sortable("failures"),
+      render: (_: unknown, row) => (
+        <RunValue value={n(row.failures)} ctx={ctx} />
+      ),
+    },
+    {
+      title: cols.latencyTotal,
+      ...sortable("latency_total_ms"),
+      render: (_: unknown, row) => (
+        <RunValue
+          value={
+            row.latencyTotalMs === null
+              ? null
+              : formatDuration(row.latencyTotalMs, ctx.locale)
+          }
+          ctx={ctx}
+        />
+      ),
+    },
+    {
+      title: cols.latencyP50,
+      ...sortable("latency_p50_ms"),
+      render: (_: unknown, row) => (
+        <RunValue
+          value={
+            row.latencyP50Ms === null
+              ? null
+              : formatDuration(row.latencyP50Ms, ctx.locale)
+          }
+          ctx={ctx}
+        />
+      ),
+    },
+    {
+      title: cols.cost,
+      ...sortable("cost_usd"),
+      render: (_: unknown, row) => (
+        <RunValue
+          value={
+            row.costUsd === null ? null : formatCost(row.costUsd, ctx.locale)
+          }
+          ctx={ctx}
+        />
+      ),
+    },
+    {
+      title: cols.served,
+      ...sortable("served_count"),
+      render: (_: unknown, row) => (
+        <RunValue value={n(row.servedCount)} ctx={ctx} />
+      ),
+    },
+    {
+      title: cols.lastRun,
+      ...sortable("last_run_at"),
+      render: (_: unknown, row) => (
+        <RunValue
+          value={
+            row.lastRunAt === null
+              ? null
+              : formatDateTime(row.lastRunAt, ctx.timezone, ctx.locale)
+          }
+          ctx={ctx}
+        />
+      ),
+    },
+    {
+      title: cols.satisfaction,
+      ...sortable("satisfaction"),
+      render: (_: unknown, row) => <SatisfactionValue row={row} ctx={ctx} />,
+    },
+    {
+      title: cols.lastMaintenance,
+      ...sortable("last_maintenance_at"),
+      render: (_: unknown, row) =>
+        formatDateTime(row.lastMaintenanceAt, ctx.timezone, ctx.locale),
+    },
+    {
+      title: cols.pendingFeedback,
+      ...sortable("pending_feedback"),
+      render: (_: unknown, row) => formatCount(row.pendingFeedback, ctx.locale),
+    },
+    {
+      title: cols.joinedAt,
+      ...sortable("joined_at"),
+      render: (_: unknown, row) =>
+        formatDate(row.joinedAt, ctx.timezone, ctx.locale),
+    },
+  ];
+  return (
+    <Table<AgentTeamMemberRow>
+      size="small"
+      rowKey="agentKey"
+      pagination={false}
+      dataSource={rows}
+      columns={columns}
+      scroll={{ x: "max-content" }}
+      showSorterTooltip={false}
+      onChange={(_p, _f, sorter) => {
+        const single = Array.isArray(sorter) ? sorter[0] : sorter;
+        if (single?.order && typeof single.columnKey === "string") {
+          onSort({
+            sort: single.columnKey,
+            order: single.order === "descend" ? "desc" : "asc",
+          });
+        } else {
+          onSort({});
+        }
+      }}
+    />
+  );
+}
