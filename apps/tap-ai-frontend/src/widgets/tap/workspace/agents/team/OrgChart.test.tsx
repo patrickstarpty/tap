@@ -43,11 +43,19 @@ describe("OrgChart", () => {
   it("highlights a person's relations and toggles off", async () => {
     const { container } = setup();
     const dimmed = () =>
-      [...container.querySelectorAll("line")].map((l) =>
+      [...container.querySelectorAll("line[data-edge-kind]")].map((l) =>
         l.getAttribute("data-dimmed"),
       );
     await userEvent.click(screen.getByRole("button", { name: "alice" }));
     expect(dimmed()).toEqual(["false", "true", "true"]);
+    expect(
+      screen.getByRole("button", { name: "bob" }).getAttribute("data-dimmed"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("button", { name: "alice" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
     await userEvent.click(screen.getByRole("button", { name: "alice" }));
     expect(dimmed()).toEqual(["false", "false", "false"]);
   });

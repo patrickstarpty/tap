@@ -18,6 +18,16 @@ const NODE_H = 28;
 const LEFT_X = 8;
 const RIGHT_X = WIDTH - NODE_W - 8;
 
+function edgeStyle(kind: "owns" | "serves") {
+  return kind === "owns"
+    ? { stroke: "var(--tap-brand)", strokeWidth: 2 }
+    : {
+        stroke: "var(--tap-muted)",
+        strokeWidth: 1.5,
+        strokeDasharray: "5 4",
+      };
+}
+
 function activate(action: () => void) {
   return (event: KeyboardEvent) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -54,14 +64,20 @@ export function OrgChart({
   return (
     <div className="tap-org-chart">
       <div className="tap-org-chart-legend">
-        <span>{labels.orgChartOwns}: ───</span>
-        <span>{labels.orgChartServes}: - - -</span>
+        {(["owns", "serves"] as const).map((kind) => (
+          <span key={kind}>
+            <svg aria-hidden="true" width={28} height={8} viewBox="0 0 28 8">
+              <line x1={0} y1={4} x2={28} y2={4} {...edgeStyle(kind)} />
+            </svg>{" "}
+            {kind === "owns" ? labels.orgChartOwns : labels.orgChartServes}
+          </span>
+        ))}
       </div>
       <svg
         role="group"
         aria-label={labels.orgChartLabel}
         viewBox={`0 0 ${WIDTH} ${height}`}
-        height={height}
+        preserveAspectRatio="xMinYMin meet"
       >
         {chart.edges.map((edge) => {
           const from = personIndex.get(edge.from);
@@ -77,11 +93,7 @@ export function OrgChart({
               y1={rowY(from) + NODE_H / 2}
               x2={RIGHT_X}
               y2={rowY(to) + NODE_H / 2}
-              stroke={
-                edge.kind === "owns" ? "var(--tap-brand)" : "var(--tap-muted)"
-              }
-              strokeWidth={edge.kind === "owns" ? 2 : 1.5}
-              strokeDasharray={edge.kind === "serves" ? "5 4" : undefined}
+              {...edgeStyle(edge.kind)}
             />
           );
         })}

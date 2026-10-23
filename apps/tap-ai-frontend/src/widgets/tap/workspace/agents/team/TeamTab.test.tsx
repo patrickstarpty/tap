@@ -256,6 +256,43 @@ describe("TeamTab", () => {
     });
   });
 
+  it("keeps agent names in the org chart when a roster filter applies", async () => {
+    const all = [
+      row({}),
+      row({ agentKey: "a2", name: "Other", ownerActorId: "bob" }),
+    ];
+    setup(all);
+    const b = { ...base, runtimeStatus: "ok" };
+    vi.mocked(useTeamMembers).mockImplementation(((
+      _id: string,
+      per: unknown,
+      f: { owner?: string | null },
+    ) =>
+      ready({
+        ...b,
+        data:
+          per === period
+            ? all.filter((m) => !f.owner || m.ownerActorId === f.owner)
+            : sparkRows(all),
+      })) as never);
+    vi.mocked(useOrgChart).mockReturnValue(
+      ready({
+        ...b,
+        data: {
+          people: ["alice", "bob"],
+          agents: ["a1", "a2"],
+          edges: [
+            { from: "alice", to: "a1", kind: "owns" },
+            { from: "bob", to: "a2", kind: "owns" },
+          ],
+        },
+      }) as never,
+    );
+    renderTab();
+    await userEvent.selectOptions(screen.getByLabelText("负责人"), "alice");
+    expect(screen.getByRole("button", { name: "Other" })).toBeTruthy();
+  });
+
   it("switches to the table and sorts through request parameters", async () => {
     setup([row({})]);
     renderTab("en");

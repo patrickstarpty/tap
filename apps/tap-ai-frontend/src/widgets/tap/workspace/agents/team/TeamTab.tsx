@@ -85,8 +85,14 @@ export function TeamTab({
     ]),
   ].sort();
   const agentNames = useMemo(
-    () => Object.fromEntries((rows ?? []).map((r) => [r.agentKey, r.name])),
-    [rows],
+    () =>
+      Object.fromEntries(
+        [...(spark.data?.data ?? []), ...(rows ?? [])].map((r) => [
+          r.agentKey,
+          r.name,
+        ]),
+      ),
+    [spark.data, rows],
   );
   const sparklineByAgentKey = useMemo(() => {
     const map = new Map<string, number[]>();
