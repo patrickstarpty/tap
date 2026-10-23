@@ -1358,36 +1358,191 @@ def test_bracketed_markers_and_cued_labels_in_code_comments_are_removed(line, ex
 @pytest.mark.parametrize(
     "line",
     [
-        'page.fill("#otp", "[S2]")  # 输入验证码',
+        # An index glued to a name or a call is code, not a citation.
         "# 读取 items[S1] 的值",
+        "value = data[S1]  # 取值",
+        "value = fetch()[S1]",
+        "value = table[0][S1]",
         "# call check(S1) before submit",
         "# 未提供的标签 [S12]",
         "# 满足条件时提交（满足 S1 级要求）",
-        "value = data[S1]  # 取值",
-        "value = data [S1]",
-        'text = "备注 [S1]"',
-        'text = "未闭合 [S1]',
         "# 参数（mode，S1）",
         "# 选项（A；S9 级）",
-        # Fix round 1: a marker that is not the citation at the end of a
-        # comment's own text is ordinary comment content.
-        "# pattern [S1]",
-        "# group [S1] captures the id",
-        "# - [S1] pending review",
-        "# checklist: [S1] done, [S2] todo",
-        "# steps: [S1][S2]",
-        "# e.g. [S1]",
-        "# config keys: [S1]",
-        "# 例如 [S1]",
-        # A whole-line comment that is only a marker is kept.
-        "# [S1]",
-        "value = fetch()[S1]",
-        'assert ok, "未显示银行转账支付方式[S7]"',
+        "# 参考（手册）与依据（规范）",
     ],
 )
-def test_strings_indexes_and_unsupplied_markers_in_code_are_kept(line) -> None:
+def test_indexes_unsupplied_markers_and_label_like_text_in_code_are_kept(line) -> None:
     from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
 
     block = "```python\n" + line + "\n```"
 
     assert _without_bare_label_lists(block, _ROUND4_LABELS, ()) == block
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # Exact capability-4 round-5 Q1 lines: markers in string literals (N8),
+        # in the middle of a comment (N1-R3) and after a cue (N9).
+        (
+            'assert page.is_visible("text=审核时限：3个工作日"), "未显示3个工作日审核承诺[S1]"',
+            'assert page.is_visible("text=审核时限：3个工作日"), "未显示3个工作日审核承诺"',
+        ),
+        (
+            'assert not page.is_visible("text=现金领取"), "错误显示现金领取选项[S7]"',
+            'assert not page.is_visible("text=现金领取"), "错误显示现金领取选项"',
+        ),
+        ("# 2. 使用TEST_账号登录（依据[S9]）", "# 2. 使用TEST_账号登录"),
+        ("# 7. 填写银行账户（依据[S8][S7]）", "# 7. 填写银行账户"),
+        (
+            "# 3. 进入小额理赔快速通道（依据[S1]，需先确保保单类型为个人意外险/医疗险[S3]）",
+            "# 3. 进入小额理赔快速通道（需先确保保单类型为个人意外险/医疗险）",
+        ),
+        (
+            "# 6. 处理短信验证（依据[S2]：固定验证码123456）",
+            "# 6. 处理短信验证（固定验证码123456）",
+        ),
+        (
+            "assert page.is_hidden('text=身份证复印件') is True  # [S8]中列出但[S1]豁免",
+            "assert page.is_hidden('text=身份证复印件') is True  # 中列出但豁免",
+        ),
+        # Round-4 Q1 lines not covered by the earlier fix.
+        (
+            "# 8. 验证提交成功页 & 支付方式说明 [S7]",
+            "# 8. 验证提交成功页 & 支付方式说明",
+        ),
+        # Every other supplied marker not glued to a name goes too.
+        ('page.fill("#otp", "[S2]")  # 输入验证码', 'page.fill("#otp", "")  # 输入验证码'),
+        ("value = data [S1]", "value = data"),
+        ('text = "备注 [S1]"', 'text = "备注"'),
+        ('text = "未闭合 [S1]', 'text = "未闭合'),
+        ('assert ok, "未显示银行转账支付方式[S7]"', 'assert ok, "未显示银行转账支付方式"'),
+        ("# pattern [S1]", "# pattern"),
+        ("# group [S1] captures the id", "# group captures the id"),
+        ("# - [S1] pending review", "# - pending review"),
+        ("# checklist: [S1] done, [S2] todo", "# checklist: done, todo"),
+        ("# steps: [S1][S2]", "# steps:"),
+        ("# 例如 [ S1 ]", "# 例如"),
+        ("x = 1  # 见 [S1]、[S2]", "x = 1"),
+        ("# 登录，参见 [S9]。", "# 登录。"),
+        ("x = 1  # [S1][S12]", "x = 1  # [S12]"),
+        ("# 值 [S8][S12][S7]", "# 值 [S12]"),
+        ("# 值 [S12][S7]", "# 值 [S12]"),
+        ("# 登录（依据（见[S1]））", "# 登录"),
+        ("// 提交 [R1] [I2]", "// 提交"),
+    ],
+)
+def test_every_supplied_marker_in_a_code_block_is_removed(line, expected) -> None:
+    """N8/N1-R3/N9: inside code a marker is never rendered as a citation, so
+    every supplied `[Sn]`/`[Rn]`/`[In]` goes -- in comments, strings or after
+    code -- unless it is glued to a name or call as an index (`items[S1]`).
+    A cue left with nothing to cite goes with it."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    labels = _ROUND4_LABELS | {"R1", "I2"}
+    block = "```python\n" + line + "\n```"
+
+    assert _without_bare_label_lists(block, labels, ()) == "```python\n" + expected + "\n```"
+
+
+def test_a_code_line_left_empty_by_marker_removal_is_dropped() -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    block = "```python\nstep()\n\n    # [S1]\n    # 依据 [S2]\nnext()\n```"
+
+    assert _without_bare_label_lists(block, _ROUND4_LABELS, ()) == (
+        "```python\nstep()\n\nnext()\n```"
+    )
+
+
+def test_a_trailing_source_legend_is_removed_with_its_lead_in() -> None:
+    """N10: the round-5 Q1-a answer closed with a legend whose lines start with
+    a marker; claim checks dropped all but its last line ("支持重置后稳定性。")."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    text = (
+        "再依据输出结果修正选择器。\n\n--- \n\n"
+        "所有检查点与步骤均严格引用所选资料中的业务规则：  \n"
+        "[S1] 定义通道适用条件与时效；  \n"
+        "[S2] 提供验证码固定值；  \n"
+        "- [S9]：规定自动化账号命名；  \n"
+        "[S6] 支持重置后稳定性。"
+    )
+
+    assert _without_bare_label_lists(text, _ROUND4_LABELS, ()) == (
+        "再依据输出结果修正选择器。\n\n--- \n"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A marker closing a claim on the line before is not a legend.
+        "审核时限为3个工作日。\n[S1]\n",
+        # A line that starts with an unsupplied label is ordinary text.
+        "[S12] 号缺陷已关闭。",
+        # Only a legend that closes the answer goes; a list or a wrapped line
+        # in the middle of the answer is kept.
+        "## 核心规则\n\n关键规则如下：\n- [S1] 金额低于 5000 元走快速通道。\n"
+        "- [S2] 需上传身份证。\n\n## 测试步骤\n1. 登录。",
+        "审核需3个工作日 [S1]。审核规则\n[S2] 另有说明，需人工复核。\n下一段。",
+        "步骤如下：\n1. [S1] 登录系统\n2. [S2] 提交申请\n\n完成后检查状态。",
+        "> [S1] 原文摘录",
+    ],
+)
+def test_text_that_is_not_a_source_legend_is_kept(text) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(text, _ROUND4_LABELS, ()) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("本次推荐的 Skill 是 [webapp-testing]。", "本次推荐的 Skill 是 webapp-testing。"),
+        (
+            "可选工具包括 Playwright 与 [webapp-testing]，后者更快。",
+            "可选工具包括 Playwright 与 webapp-testing，后者更快。",
+        ),
+        ("可以用 Skill [webapp-testing]。", "可以用 Skill webapp-testing。"),
+        ("安装 skill: [webapp-testing]", "安装 skill: webapp-testing"),
+        ("先完成侦察 [webapp-testing]，再执行。", "先完成侦察 webapp-testing，再执行。"),
+    ],
+)
+def test_a_skill_name_used_in_the_sentence_keeps_its_name(text, expected) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Exact round-5 Q1-b lines: a bracketed Skill name after the sentence,
+        # before its punctuation, is a pseudo-citation and goes entirely.
+        (
+            "> - 所有 `page.wait_for_load_state('networkidle')` 均遵循 Skill 要求，"
+            "确保JS渲染完成后再操作 [webapp-testing]；  ",
+            "> - 所有 `page.wait_for_load_state('networkidle')` 均遵循 Skill 要求，"
+            "确保JS渲染完成后再操作；  ",
+        ),
+        (
+            "实际实施前需先执行 `element_discovery.py` 进行DOM侦察 [webapp-testing]。",
+            "实际实施前需先执行 `element_discovery.py` 进行DOM侦察。",
+        ),
+        ("按指引完成侦察 [webapp-testing]", "按指引完成侦察"),
+        # Replayed Q1 forms: right after inline code or a closing parenthesis.
+        (
+            '可按需添加 `page.screenshot()` 或 `page.on("console", ...)` [webapp-testing]。',
+            '可按需添加 `page.screenshot()` 或 `page.on("console", ...)`。',
+        ),
+        (
+            "需配合脚本启动服务（例：`npm run dev`）[webapp-testing]。",
+            "需配合脚本启动服务（例：`npm run dev`）。",
+        ),
+    ],
+)
+def test_a_skill_name_cited_at_the_end_of_a_sentence_is_removed(text, expected) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == expected
