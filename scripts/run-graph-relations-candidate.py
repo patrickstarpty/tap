@@ -29,7 +29,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -392,6 +392,10 @@ def _flatten_http_citation(citation: Mapping[str, Any]) -> dict[str, Any]:
 def _real_answer_dict(
     question_id: str, group: str, answer: object | None, graph_version: str | None
 ) -> dict[str, Any]:
+    """One observation from an answer. `ConversationGroundingCheck.dry_run_answer`
+    already returns the HTTP `RetrievalAnswerResponse`; a domain `AnswerResponse`
+    is converted first."""
+    from tap.contracts.http import RetrievalAnswerResponse
     from tap.modules.knowledge.api import answer_response_to_http
 
     if answer is None:
@@ -403,7 +407,11 @@ def _real_answer_dict(
             "claims": [],
             "citations": [],
         }
-    http_answer = answer_response_to_http(cast(AnswerResponse, answer))
+    http_answer = (
+        answer_response_to_http(answer)
+        if isinstance(answer, AnswerResponse)
+        else cast(RetrievalAnswerResponse, answer)
+    )
     return {
         "questionId": question_id,
         "group": group,
@@ -418,6 +426,31 @@ def _real_answer_dict(
             for item in http_answer.citations
         ],
     }
+
+
+def _single_upstream_model(upstream_models: Sequence[str | None]) -> str | None:
+    """The one upstream model behind a run's chat calls, or `None` when there is
+    none or more than one (an ambiguous run must not claim a single model)."""
+    distinct = {model for model in upstream_models if model}
+    return distinct.pop() if len(distinct) == 1 else None
+
+
+async def _recorded_upstream_model(
+    sessions: Any, model_alias: str, since: str
+) -> str | None:
+    """`dry_run_answer` returns the HTTP answer, which carries no provenance; read the
+    upstream model from the `model_call` rows this run's chat calls recorded."""
+    from sqlalchemy import text
+
+    async with sessions() as session:
+        rows = await session.execute(
+            text(
+                "SELECT DISTINCT upstream_model FROM model_call "
+                "WHERE operation = 'chat' AND model_name = :alias AND created_at >= :since"
+            ),
+            {"alias": model_alias, "since": since.replace("T", " ").removesuffix("Z")},
+        )
+        return _single_upstream_model([row[0] for row in rows])
 
 
 def _assemble_real_observations(
@@ -532,7 +565,9 @@ async def run_real(
         actual_model = (
             getattr(provenance, "provider_model_id", None)
             if provenance is not None
-            else None
+            else await _recorded_upstream_model(
+                sessions, settings.default_chat_model, started_at
+            )
         )
 
         return _assemble_real_observations(
