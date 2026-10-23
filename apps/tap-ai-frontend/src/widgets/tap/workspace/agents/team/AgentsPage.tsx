@@ -6,6 +6,7 @@ import {
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 import { AgentProfileDrawer } from "./AgentProfileDrawer";
+import { MyAgentsTab } from "./MyAgentsTab";
 import { PeriodPicker, type PeriodSelection } from "./PeriodPicker";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { TeamTab } from "./TeamTab";
@@ -156,6 +157,13 @@ export function AgentsPage({
                 period={period}
                 onOpenMember={openMember}
                 onCreateAgent={() => select("config")}
+              />
+            ) : tab === "mine" ? (
+              <MyAgentsTab
+                projectId={projectId}
+                copy={copy}
+                period={period}
+                onOpenMember={openMember}
               />
             ) : (
               <TeamFreshness

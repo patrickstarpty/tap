@@ -458,6 +458,16 @@ export interface WorkspaceCopy {
         maintenance: string;
       };
     };
+    mine: {
+      ownedHeading: string;
+      servedHeading: string;
+      noFeedback: string;
+      noOwned: string;
+      noServed: string;
+      ratingUp: string;
+      ratingDown: string;
+      ratingNone: string;
+    };
     profile: {
       close: string;
       tabs: {
@@ -1124,6 +1134,16 @@ export const WORKSPACE_COPY = {
           maintenance: "Maintenance actions",
         },
       },
+      mine: {
+        ownedHeading: "Agents I own",
+        servedHeading: "Agents that serve me",
+        noFeedback: "No feedback waiting for you",
+        noOwned: "You do not own any Agents yet",
+        noServed: "No Agent has served you in this period",
+        ratingUp: "Helpful",
+        ratingDown: "Not helpful",
+        ratingNone: "Comment only",
+      },
       profile: {
         close: "Close",
         tabs: {
@@ -1777,6 +1797,16 @@ export const WORKSPACE_COPY = {
           calls: "调用次数",
           maintenance: "维护动作数",
         },
+      },
+      mine: {
+        ownedHeading: "我负责的 Agent",
+        servedHeading: "为我服务的 Agent",
+        noFeedback: "暂无待你处理的反馈",
+        noOwned: "你还没有负责的 Agent",
+        noServed: "所选周期内没有 Agent 为你服务",
+        ratingUp: "有帮助",
+        ratingDown: "没帮助",
+        ratingNone: "仅评论",
       },
       profile: {
         close: "关闭",
