@@ -53,20 +53,21 @@ flowchart LR
 | 子项目 3 可靠问答（能力 1） | 进行中（推荐问题部分见上一行；golden set 格式与回归命令已就绪，随子项目 7 PR 3 交付——`make quality-answers` CI 常驻假模型门禁、`make quality-answers-real` 真实模型对比 opt-in，真实基线待用户在 Task 1 提交 `d6e432de` 上运行；链路可靠性修复并入子项目 7 ②） |
 | 子项目 4 知识图谱脉络分析（能力 2、3） | 进行中（PR 1–PR 5 与验收修复已合并到 `develop`（a7869d9），独立验收有条件通过；真实 golden set 待人工标注、真实门禁待运行） |
 | 子项目 5 Skills/Agents（能力 4） | 工程完成，业务验证待办（[spec](../specs/2026-10-11-skills-agents-design.md)、[计划](2026-10-12-skills-agents.md)、[ADR-032](../../decisions/2026-10-12-adr-032-skill-packages-and-tool-registry.md)；MCP 不在 V1） |
-| 子项目 7 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 进行中（PR 1 图骨架已合并到 `develop`（2026-10-15）；PR 2（瞬时失败退避续跑、attempt 上限、worker loop 单次异常不退出）与 PR 4 围栏已合并到 `develop`（2026-10-17）；PR 3（ModelGateway 流式、正文内联引用 `[S<n>]`/`[R<n>]`、Redis 草稿流与唤醒流、SSE 阻塞读取取代数据库轮询、立即停止）已合并到 `develop`（2026-10-18）；PR 5（③ 角色与意图、④ 工具参数范围校验、⑤ `model ⇄ tools` 工具调用循环：工具注册表四项、`graph.relations`/`insights.query` 经工具调用、SSE `task.step`、`TapperPersona` 版本冻结、`CHAT_STATE_SCHEMA_VERSION` 升为 3）已合并到 `develop`（2026-10-22）；剩余 PR 7 长任务编排与意图真实门禁（用户运行）；[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；PR 1–4 先行，能力 4 在 PR 5 之前合入） |
+| 子项目 7 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 进行中（PR 1 图骨架已合并到 `develop`（2026-10-15）；PR 2（瞬时失败退避续跑、attempt 上限、worker loop 单次异常不退出）与 PR 4 围栏已合并到 `develop`（2026-10-17）；PR 3（ModelGateway 流式、正文内联引用 `[S<n>]`/`[R<n>]`、Redis 草稿流与唤醒流、SSE 阻塞读取取代数据库轮询、立即停止）已合并到 `develop`（2026-10-18）；PR 5（③ 角色与意图、④ 工具参数范围校验、⑤ `model ⇄ tools` 工具调用循环：工具注册表四项、`graph.relations`/`insights.query` 经工具调用、SSE `task.step`、`TapperPersona` 版本冻结、`CHAT_STATE_SCHEMA_VERSION` 升为 3）已合并到 `develop`（2026-10-22）；剩余意图真实门禁（用户运行）；PR 6 可信知识与 PR 7 长任务 2026-10-23 移入 V2；[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；PR 1–4 先行，能力 4 在 PR 5 之前合入） |
 
 ## V2：主动 Tapper（已设计）
 
-设计：[Agent 团队视图设计](../specs/2026-10-22-agent-team-view-design.md)（V2.1）、[Tapper 主动 Agent 设计](../specs/2026-09-30-tapper-proactive-agent-design.md)（V2.2–V2.4）。前置：V1 能力 4、能力 5 与 worker 可靠性修复完成。
+设计：[Agent 团队视图设计](../specs/2026-10-22-agent-team-view-design.md)（V2.1）、[Tapper 主动 Agent 设计](../specs/2026-09-30-tapper-proactive-agent-design.md)（V2.2–V2.4）、[Tapper LangGraph 编排设计](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节（LangGraph 收尾）。前置：V1 能力 4、能力 5 与 worker 可靠性修复完成。
 
 | 项 | 内容 | 状态 |
 | --- | --- | --- |
 | V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 已设计（[spec](../specs/2026-10-22-agent-team-view-design.md)；V2 第一个实施） |
+| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 长任务（`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片） | 已设计（[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；在 V2.1 之后，与 V2.2 的先后待定） |
 | V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.4 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
 
-退出标准：V2.1、V2.2、V2.3 工程完成；在真实项目中度量提议采纳率。
+退出标准：V2.1、LangGraph 收尾、V2.2、V2.3 工程完成；在真实项目中度量提议采纳率。
 
 ## V3：测试闭环（未设计）
 

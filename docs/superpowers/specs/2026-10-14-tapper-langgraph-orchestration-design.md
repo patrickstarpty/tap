@@ -260,7 +260,7 @@ golden set 新增“诱导胡编”子集：证据中没有答案、证据与常
 | 3 | ② 流式：`ModelGateway` 流式接口、内联引用格式、Redis 草稿流、SSE 改造、前端草稿与引用徽标、停止生成；切换前后 golden set 对比 | PR 1；能力 1 golden set 回归命令 |
 | 4 | ④ 围栏：预算、注入隔离与检测、脱敏、范围外拒答 | PR 1 |
 | 5 | ③ 角色 + ⑤ agent 循环：`TapperPersona`、Agent 入图、planner `intent`、工具注册表扩展、tool calling 循环、`task.step`、澄清回复、关系分析迁为工具 | PR 3、PR 4、能力 4 |
-| 6 | ⑥ 可信知识：依据支撑校验、诱导胡编子集 | PR 3 |
-| 7 | ⑤ 长任务：`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片 | PR 5 |
+| 6 | ⑥ 可信知识：依据支撑校验、诱导胡编子集（2026-10-23 移入 V2） | PR 3 |
+| 7 | ⑤ 长任务：`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片（2026-10-23 移入 V2） | PR 5 |
 
-PR 2、3、4 在 PR 1 合入后可并行。每个 PR 合入后更新 V1 总纲与产品路线图对应行；PR 1 同步更新 `docs/architecture.md` 与 AGENTS.md 中“固定三步流水线”的描述。
+PR 2、3、4 在 PR 1 合入后可并行。V1 交付 PR 1–5；PR 6、PR 7 于 2026-10-23 移入 V2，排在 Agent 团队视图之后，见[产品路线图](../plans/2026-10-01-product-roadmap.md)。每个 PR 合入后更新 V1 总纲与产品路线图对应行；PR 1 同步更新 `docs/architecture.md` 与 AGENTS.md 中“固定三步流水线”的描述。
