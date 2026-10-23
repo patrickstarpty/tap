@@ -196,3 +196,92 @@
   font-size: 0.85em;
   opacity: 0.8;
 }
+
+.tap-team-report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tap-team-report-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.tap-team-report-header h2 {
+  margin: 0 0 4px;
+}
+
+.tap-team-report-header p {
+  margin: 0;
+}
+
+.tap-team-report-section {
+  margin-top: 20px;
+}
+
+.tap-team-report-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tap-team-report-table th,
+.tap-team-report-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--tap-line-strong);
+  text-align: left;
+}
+
+.tap-team-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 16mm;
+}
+
+@media print {
+  .tap-product-shell {
+    display: block;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .tap-product-shell > *:not(main),
+  .tap-agents-page [role="tablist"],
+  .tap-team-report-controls {
+    display: none !important;
+  }
+
+  .tap-team-report-section,
+  .tap-team-report-header {
+    break-inside: avoid;
+  }
+
+  .tap-team-report .ant-table-container,
+  .tap-team-report .ant-table-content,
+  .tap-team-report .ant-table-body {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  .tap-team-report .ant-table-content > table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto;
+  }
+
+  .tap-team-report tr {
+    break-inside: avoid;
+  }
+}

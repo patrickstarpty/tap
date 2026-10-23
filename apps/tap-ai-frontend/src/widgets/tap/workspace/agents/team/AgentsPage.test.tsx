@@ -6,6 +6,7 @@ import {
   useTeamMembers,
   useOrgChart,
   useTeamPeople,
+  useTeamReport,
   useTeamSummary,
 } from "../../../../../features/knowledge/api/agentTeam";
 import { WORKSPACE_COPY } from "../../copy";
@@ -24,6 +25,7 @@ vi.mock(
       useTeamMembers: vi.fn(),
       useTeamPeople: vi.fn(),
       useOrgChart: vi.fn(),
+      useTeamReport: vi.fn(),
     };
   },
 );
@@ -36,6 +38,12 @@ function mockSummary(runtimeStatus: "ok" | "unavailable" = "ok") {
     period: { from: "2026-09-24", to: "2026-10-23" },
     granularity: "day",
   };
+  vi.mocked(useTeamReport).mockReturnValue({
+    isPending: true,
+    isError: false,
+    refetch: vi.fn(),
+    data: undefined,
+  } as never);
   vi.mocked(useTeamMembers).mockReturnValue({
     isPending: false,
     isError: false,

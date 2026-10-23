@@ -403,6 +403,20 @@ export interface WorkspaceCopy {
     loading: string;
     loadFailed: string;
     retry: string;
+    report: {
+      title: string;
+      project: string;
+      period: string;
+      summaryHeading: string;
+      comparisonHeading: string;
+      trendHeading: string;
+      current: string;
+      previous: string;
+      change: string;
+      metric: string;
+      failures: string;
+      noTrend: string;
+    };
     team: {
       viewLabel: string;
       viewCards: string;
@@ -1074,6 +1088,20 @@ export const WORKSPACE_COPY = {
       loading: "Loading team data...",
       loadFailed: "Team data could not be loaded.",
       retry: "Retry",
+      report: {
+        title: "Agent team report",
+        project: "Project",
+        period: "Period",
+        summaryHeading: "Summary",
+        comparisonHeading: "Compared with the previous period",
+        trendHeading: "Run trend",
+        current: "This period",
+        previous: "Previous period",
+        change: "Change",
+        metric: "Metric",
+        failures: "Failures",
+        noTrend: "No run trend in this period",
+      },
       team: {
         viewLabel: "Roster view",
         viewCards: "Cards",
@@ -1739,6 +1767,20 @@ export const WORKSPACE_COPY = {
       loading: "正在加载团队数据…",
       loadFailed: "无法加载团队数据。",
       retry: "重试",
+      report: {
+        title: "Agent 团队汇报",
+        project: "项目",
+        period: "周期",
+        summaryHeading: "汇总",
+        comparisonHeading: "与上一周期对比",
+        trendHeading: "运行趋势",
+        current: "本周期",
+        previous: "上一周期",
+        change: "变化",
+        metric: "指标",
+        failures: "失败",
+        noTrend: "本周期没有运行趋势",
+      },
       team: {
         viewLabel: "花名册视图",
         viewCards: "卡片",

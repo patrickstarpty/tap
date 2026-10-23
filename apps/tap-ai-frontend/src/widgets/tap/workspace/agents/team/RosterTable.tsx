@@ -28,6 +28,8 @@ export interface RosterTableProps {
   sorting: RosterSort;
   onSort: (next: RosterSort) => void;
   onOpenMember: (agentKey: string) => void;
+  /** Print layout: no horizontal scroll container, so every column prints. */
+  unscrolled?: boolean;
 }
 
 export function RosterTable({
@@ -37,6 +39,7 @@ export function RosterTable({
   sorting,
   onSort,
   onOpenMember,
+  unscrolled = false,
 }: RosterTableProps) {
   const labels = ctx.copy.agentTeam.team;
   const cols = labels.columns;
@@ -191,7 +194,7 @@ export function RosterTable({
       locale={{ emptyText: labels.noMatch }}
       dataSource={rows}
       columns={columns}
-      scroll={{ x: "max-content" }}
+      scroll={unscrolled ? undefined : { x: "max-content" }}
       showSorterTooltip={false}
       onChange={(_p, _f, sorter) => {
         const single = Array.isArray(sorter) ? sorter[0] : sorter;

@@ -1,14 +1,11 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import {
-  resolvePeriod,
-  useTeamSummary,
-} from "../../../../../features/knowledge/api/agentTeam";
+import { resolvePeriod } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 import { AgentProfileDrawer } from "./AgentProfileDrawer";
 import { MyAgentsTab } from "./MyAgentsTab";
 import { PeriodPicker, type PeriodSelection } from "./PeriodPicker";
-import { RuntimeBadge } from "./RuntimeBadge";
+import { ReportTab } from "./ReportTab";
 import { TeamTab } from "./TeamTab";
 import "./team.css";
 
@@ -143,6 +140,8 @@ export function AgentsPage({
           ) : (
             configTab
           )
+        ) : tab === "report" ? (
+          <ReportTab projectId={projectId} copy={copy} />
         ) : (
           <>
             <PeriodPicker
@@ -158,19 +157,12 @@ export function AgentsPage({
                 onOpenMember={openMember}
                 onCreateAgent={() => select("config")}
               />
-            ) : tab === "mine" ? (
+            ) : (
               <MyAgentsTab
                 projectId={projectId}
                 copy={copy}
                 period={period}
                 onOpenMember={openMember}
-              />
-            ) : (
-              <TeamFreshness
-                projectId={projectId}
-                copy={copy}
-                from={period.from}
-                to={period.to}
               />
             )}
           </>
@@ -187,40 +179,5 @@ export function AgentsPage({
         />
       )}
     </section>
-  );
-}
-
-function TeamFreshness({
-  projectId,
-  copy,
-  from,
-  to,
-}: {
-  projectId: string;
-  copy: WorkspaceCopy;
-  from: string;
-  to: string;
-}) {
-  const text = copy.agentTeam;
-  const period = useMemo(() => ({ from, to }), [from, to]);
-  const summary = useTeamSummary(projectId, period);
-  if (summary.isPending) return <p role="status">{text.loading}</p>;
-  if (summary.isError || summary.data === undefined)
-    return (
-      <div role="alert">
-        <p>{text.loadFailed}</p>
-        <button type="button" onClick={() => void summary.refetch()}>
-          {text.retry}
-        </button>
-      </div>
-    );
-  const view = summary.data;
-  return (
-    <RuntimeBadge
-      status={view.runtimeStatus}
-      computedAt={view.computedAt}
-      timezone={view.timezone}
-      copy={copy}
-    />
   );
 }
