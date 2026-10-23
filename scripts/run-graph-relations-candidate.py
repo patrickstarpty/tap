@@ -392,6 +392,10 @@ def _flatten_http_citation(citation: Mapping[str, Any]) -> dict[str, Any]:
 def _real_answer_dict(
     question_id: str, group: str, answer: object | None, graph_version: str | None
 ) -> dict[str, Any]:
+    """One observation from an answer. `ConversationGroundingCheck.dry_run_answer`
+    already returns the HTTP `RetrievalAnswerResponse`; a domain `AnswerResponse`
+    is converted first."""
+    from tap.contracts.http import RetrievalAnswerResponse
     from tap.modules.knowledge.api import answer_response_to_http
 
     if answer is None:
@@ -403,7 +407,11 @@ def _real_answer_dict(
             "claims": [],
             "citations": [],
         }
-    http_answer = answer_response_to_http(cast(AnswerResponse, answer))
+    http_answer = (
+        answer_response_to_http(answer)
+        if isinstance(answer, AnswerResponse)
+        else cast(RetrievalAnswerResponse, answer)
+    )
     return {
         "questionId": question_id,
         "group": group,

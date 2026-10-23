@@ -1396,3 +1396,28 @@ def test_real_mode_rejects_blank_model_actual(tmp_path, monkeypatch, capsys):
     # evaluator (no model.actual validation at all).
     assert "nonblank real model" in capsys.readouterr().err
     assert not report_path.exists()
+
+
+def test_real_answer_dict_reads_the_http_answer_dry_run_returns():
+    from tap.contracts.http import RetrievalAnswerResponse
+
+    answer = RetrievalAnswerResponse(
+        trace_id="trace-1",
+        query_plan_id="plan-1",
+        context_snapshot_id="context-1",
+        corpus_version="corpus-1",
+        retrieval_profile_id="quick-hybrid-v1",
+        degraded_mode=False,
+        answer="",
+        abstained=True,
+        claims=[],
+        citations=[],
+    )
+
+    observation = _runner()._real_answer_dict("q-01", "golden", answer, "53")
+
+    assert observation["questionId"] == "q-01"
+    assert observation["abstained"] is True
+    assert observation["graphContextStatus"] == "NOT_SELECTED"
+    assert observation["claims"] == []
+    assert observation["citations"] == []
