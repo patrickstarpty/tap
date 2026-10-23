@@ -322,11 +322,17 @@ _COMMENT_LABELS = re.compile(
     rf"|[ \t]*(?<![A-Za-z0-9_.\]])(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\])+)"
     # "（S2：固定值 123456）": only the label prefix goes.
     rf"|(?:(?<=（)|(?<![A-Za-z0-9_.]\()(?<=\())"
-    rf"[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
+    rf"[ \t]*(?:{_COMMENT_CUE})?(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
 )
 
 
 def _comment_start(line: str) -> int | None:
+    return _scan_line(line)[0]
+
+
+def _scan_line(line: str) -> tuple[int | None, bool]:
+    """The index where a `#`/`//` comment starts (or None), and whether a
+    string literal is still open at the end of the code before it."""
     quote = ""
     index = 0
     while index < len(line):
@@ -342,16 +348,29 @@ def _comment_start(line: str) -> int | None:
         elif (char == "#" or line.startswith("//", index)) and (
             index == 0 or line[index - 1] in " \t"
         ):
-            return index
+            return index, False
         index += 1
-    return None
+    return None, bool(quote)
+
+
+# A marker run after a closed string literal at the end of a code line
+# (`assert x != "" [S1][S8]`) is a citation, never code: indexing a literal
+# with a label-like name is meaningless; `data [S1]` is left alone.
+_TRAILING_MARKERS = re.compile(r"(?<=['\"])[ \t]+(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\])+)[ \t]*$")
 
 
 def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
     lines = code.split("\n")
     for number, line in enumerate(lines):
-        start = _comment_start(line)
+        start, open_string = _scan_line(line)
+        code_part = line if start is None else line[:start]
+        if not open_string:
+            code_part = _TRAILING_MARKERS.sub(
+                lambda match: ("" if set(_LABEL.findall(match["markers"])) <= labels else match[0]),
+                code_part,
+            )
         if start is None:
+            lines[number] = code_part
             continue
         comment = _COMMENT_LABELS.sub(
             lambda match: (
@@ -362,7 +381,7 @@ def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
             ),
             line[start:],
         )
-        lines[number] = line[:start] + comment
+        lines[number] = code_part + comment
     return "\n".join(lines)
 
 

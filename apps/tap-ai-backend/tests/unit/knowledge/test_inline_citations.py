@@ -1309,6 +1309,19 @@ _ROUND4_LABELS = frozenset(f"S{number}" for number in range(1, 10))
         ("// 提交前校验（对应 S1、S2）", "// 提交前校验"),
         ("# 上传材料（参考 S8）", "# 上传材料"),
         ("# 时效（符合 S1）", "# 时效"),
+        # In-process Q1 probe forms after the first fix.
+        (
+            "# （依据S1：无需邮寄纸质材料；故该页应无“身份证复印件”等必填控件）",
+            "# （无需邮寄纸质材料；故该页应无“身份证复印件”等必填控件）",
+        ),
+        (
+            'assert len(page.locator("input[required]").all()) == 0, "不应存在" [S1][S8]',
+            'assert len(page.locator("input[required]").all()) == 0, "不应存在"',
+        ),
+        (
+            'assert page.inner_text("text=审核将在3个工作日内完成").strip() != "" [S1]',
+            'assert page.inner_text("text=审核将在3个工作日内完成").strip() != ""',
+        ),
     ],
 )
 def test_bracketed_markers_and_cued_labels_in_code_comments_are_removed(line, expected) -> None:
@@ -1332,6 +1345,9 @@ def test_bracketed_markers_and_cued_labels_in_code_comments_are_removed(line, ex
         "# 未提供的标签 [S12]",
         "# 满足条件时提交（满足 S1 级要求）",
         "value = data[S1]  # 取值",
+        "value = data [S1]",
+        'text = "备注 [S1]"',
+        'text = "未闭合 [S1]',
     ],
 )
 def test_strings_indexes_and_unsupplied_markers_in_code_are_kept(line) -> None:
