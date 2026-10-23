@@ -972,16 +972,20 @@ export function AssistantResponse({
           citation,
         ]),
       );
-      let chunkCitationCount = 0;
       let edgeCitationCount = 0;
       for (const citationId of shownCitationIds) {
         const citation = citationsById.get(citationId);
         if (citation !== undefined && isEdgeCitation(citation)) {
           edgeCitationCount += 1;
-        } else {
-          chunkCitationCount += 1;
         }
       }
+      // "Searched N sources · M passages" reports what retrieval returned:
+      // every chunk citation in the response, not just the ones a claim
+      // cites -- an abstained Turn has no claims yet did retrieve passages
+      // (capability-4 validation round 3 showed "0 passages" for 10).
+      const chunkCitationCount = [...citationsById.values()].filter(
+        (citation) => !isEdgeCitation(citation),
+      ).length;
       const graphContext = turn.graphContext ?? null;
       const isTerminalTurn =
         turn.status !== undefined &&
