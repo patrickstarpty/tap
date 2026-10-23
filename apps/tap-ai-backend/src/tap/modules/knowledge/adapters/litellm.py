@@ -320,6 +320,9 @@ _COMMENT_LABELS = re.compile(
     # "# 固定验证码 [S2]", "[S7][S8]": inside code a marker is never rendered
     # as a citation; an index such as `items[S1]` is kept.
     rf"|[ \t]*(?<![A-Za-z0-9_.\]])(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\])+)"
+    # "（需替换 selector；S1, S3）": a run closing the parentheses after a
+    # semicolon (a comma could separate code arguments, so it does not count).
+    rf"|[ \t]*[；;][ \t]*(?P<tail>{_COMMENT_RUN})[ \t]*(?=[）)])"
     # "（S2：固定值 123456）": only the label prefix goes.
     rf"|(?:(?<=（)|(?<![A-Za-z0-9_.]\()(?<=\())"
     rf"[ \t]*(?:{_COMMENT_CUE})?(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
@@ -375,7 +378,11 @@ def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
         comment = _COMMENT_LABELS.sub(
             lambda match: (
                 ""
-                if set(_LABEL.findall(match["run"] or match["prefix"] or match["markers"]))
+                if set(
+                    _LABEL.findall(
+                        match["run"] or match["prefix"] or match["markers"] or match["tail"]
+                    )
+                )
                 <= labels
                 else match[0]
             ),

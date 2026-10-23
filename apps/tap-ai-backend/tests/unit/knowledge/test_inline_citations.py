@@ -1319,6 +1319,10 @@ _ROUND4_LABELS = frozenset(f"S{number}" for number in range(1, 10))
             'assert len(page.locator("input[required]").all()) == 0, "不应存在"',
         ),
         (
+            "# 2. 导航至小额理赔入口（需 recon 后替换 selector；S1, S3）",
+            "# 2. 导航至小额理赔入口（需 recon 后替换 selector）",
+        ),
+        (
             'assert page.inner_text("text=审核将在3个工作日内完成").strip() != "" [S1]',
             'assert page.inner_text("text=审核将在3个工作日内完成").strip() != ""',
         ),
@@ -1348,6 +1352,8 @@ def test_bracketed_markers_and_cued_labels_in_code_comments_are_removed(line, ex
         "value = data [S1]",
         'text = "备注 [S1]"',
         'text = "未闭合 [S1]',
+        "# 参数（mode，S1）",
+        "# 选项（A；S9 级）",
     ],
 )
 def test_strings_indexes_and_unsupplied_markers_in_code_are_kept(line) -> None:
