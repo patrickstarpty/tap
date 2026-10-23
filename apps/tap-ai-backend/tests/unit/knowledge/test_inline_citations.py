@@ -1280,3 +1280,63 @@ def test_a_comment_after_an_escaped_quote_still_loses_its_label() -> None:
     assert _without_bare_label_lists(code, _CODE_LABELS, ()) == (
         "```python\nx = 'it\\'s' # note\n```"
     )
+
+
+_ROUND4_LABELS = frozenset(f"S{number}" for number in range(1, 10))
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # Exact capability-4 round-4 Q1 comment lines.
+        (
+            'page.fill("#smsCode", "123456")  # 固定验证码 [S2]',
+            'page.fill("#smsCode", "123456")  # 固定验证码',
+        ),
+        (
+            'assert page.is_visible("text=审核时限为3个工作日")  # [S1]',
+            'assert page.is_visible("text=审核时限为3个工作日")  #',
+        ),
+        ("# 1. 使用 TEST_ 账号登录（满足 S9）", "# 1. 使用 TEST_ 账号登录"),
+        (
+            "# 6. 输入银行信息并提交（验证第三方账户被拦截）[S7][S8]",
+            "# 6. 输入银行信息并提交（验证第三方账户被拦截）",
+        ),
+        (
+            "# 2. 导航至小额理赔快速通道（隐含险种过滤：仅个人意外险/医疗险可见）[S1][S3]",
+            "# 2. 导航至小额理赔快速通道（隐含险种过滤：仅个人意外险/医疗险可见）",
+        ),
+        ("// 提交前校验（对应 S1、S2）", "// 提交前校验"),
+        ("# 上传材料（参考 S8）", "# 上传材料"),
+        ("# 时效（符合 S1）", "# 时效"),
+    ],
+)
+def test_bracketed_markers_and_cued_labels_in_code_comments_are_removed(line, expected) -> None:
+    """N1-R2: inside code a `[Sn]` marker is never rendered as a citation, so
+    the round-4 comments showed `[S2]`, `[S7][S8]` and `（满足 S9）` raw."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    block = "```python\n" + line + "\n```"
+
+    assert (
+        _without_bare_label_lists(block, _ROUND4_LABELS, ()) == "```python\n" + expected + "\n```"
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'page.fill("#otp", "[S2]")  # 输入验证码',
+        "# 读取 items[S1] 的值",
+        "# call check(S1) before submit",
+        "# 未提供的标签 [S12]",
+        "# 满足条件时提交（满足 S1 级要求）",
+        "value = data[S1]  # 取值",
+    ],
+)
+def test_strings_indexes_and_unsupplied_markers_in_code_are_kept(line) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    block = "```python\n" + line + "\n```"
+
+    assert _without_bare_label_lists(block, _ROUND4_LABELS, ()) == block

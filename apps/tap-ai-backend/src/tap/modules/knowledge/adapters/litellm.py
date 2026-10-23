@@ -312,8 +312,14 @@ _COMMENT_RUN = r"[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)
 # argument list, not a citation; a full-width "（" after text ("登录（S9）")
 # is still a citation.
 _COMMENT_OPEN = r"(?:（|(?<![A-Za-z0-9_.])\()"
+# In a comment, "（满足 S9）" / "（对应 S1）" / "（参考 S8）" / "（符合 S1）" also cite;
+# these words only count inside the parentheses right before a supplied run.
+_COMMENT_CUE = rf"(?:(?:满足|对应|参考|符合)[ \t]*[:：]?[ \t]*|{_CITATION_CUE})"
 _COMMENT_LABELS = re.compile(
-    rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_CITATION_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_COMMENT_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    # "# 固定验证码 [S2]", "[S7][S8]": inside code a marker is never rendered
+    # as a citation; an index such as `items[S1]` is kept.
+    rf"|[ \t]*(?<![A-Za-z0-9_.\]])(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\])+)"
     # "（S2：固定值 123456）": only the label prefix goes.
     rf"|(?:(?<=（)|(?<![A-Za-z0-9_.]\()(?<=\())"
     rf"[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
@@ -349,7 +355,10 @@ def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
             continue
         comment = _COMMENT_LABELS.sub(
             lambda match: (
-                "" if set(_LABEL.findall(match["run"] or match["prefix"])) <= labels else match[0]
+                ""
+                if set(_LABEL.findall(match["run"] or match["prefix"] or match["markers"]))
+                <= labels
+                else match[0]
             ),
             line[start:],
         )
