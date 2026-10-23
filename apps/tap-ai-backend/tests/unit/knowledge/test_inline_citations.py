@@ -891,7 +891,8 @@ def test_premise_and_unstated_value_rules_are_scoped() -> None:
         # the value (stated after it, b-001 kept writing a cited
         # "not mentioned" sentence instead of abstaining: 2 of 6 real runs).
         abstain = (
-            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            "Otherwise, if the query asks only for a specific fact or value (such as an address, "
+            "date, amount, duration or name) that no supplied evidence states, "
             f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         scoped = "When some selected documents state that value and another selected document"
@@ -945,7 +946,8 @@ def test_a_composed_request_is_answered_and_only_a_missing_lookup_abstains() -> 
             "abstain only when no supplied evidence is relevant to the request."
         )
         assert contract.index("A request to compose something") < contract.index(
-            "Otherwise, if the query looks up a fact or value that no supplied evidence states, "
+            "Otherwise, if the query asks only for a specific fact or value (such as an address, "
+            "date, amount, duration or name) that no supplied evidence states, "
             f"output exactly {INSUFFICIENT_EVIDENCE_SENTINEL}."
         )
         assert contract.count("A request to compose something") == 1
@@ -1127,3 +1129,13 @@ def test_markers_in_tilde_or_unclosed_fences_are_not_claims(code) -> None:
     assert [claim.evidence_labels for claim in claims] == [("S2",)]
     # The code is kept verbatim, not treated as a rejected cited span.
     assert answer == "期限最长6个月。\n\n" + code
+
+
+def test_the_value_lookup_abstention_is_scoped_to_a_specific_fact() -> None:
+    """N5: on the governed tool path the generic "looks up a fact or value"
+    abstention still beat the composed-request rule (Q3 7/10; without it 9/10;
+    scoped to a specific fact 10/10, b-001 still 6/6 abstained)."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert "looks up a fact or value" not in contract
