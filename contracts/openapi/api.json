@@ -313,6 +313,17 @@
             "title": "Agentkey",
             "type": "string"
           },
+          "callsPerRun": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callsperrun"
+          },
           "canceled": {
             "title": "Canceled",
             "type": "integer"
@@ -324,6 +335,17 @@
           "failures": {
             "title": "Failures",
             "type": "integer"
+          },
+          "generationCalls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generationcalls"
           },
           "jobTitle": {
             "anyOf": [
@@ -465,6 +487,17 @@
             ],
             "title": "Status"
           },
+          "toolCalls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toolcalls"
+          },
           "topServed": {
             "items": {
               "$ref": "#/components/schemas/AgentTeamServedActor"
@@ -503,7 +536,10 @@
           "lastMaintenanceAt",
           "pendingFeedback",
           "maintenance",
-          "trend"
+          "trend",
+          "generationCalls",
+          "toolCalls",
+          "callsPerRun"
         ],
         "title": "AgentTeamMemberRow",
         "type": "object"

@@ -67,6 +67,9 @@ _ROSTER_HEADER: tuple[str, ...] = (
     "last_maintenance_at",
     "pending_feedback",
     *(f"maintenance_{kind}" for kind in _MAINTENANCE_KINDS),
+    "generation_calls",
+    "tool_calls",
+    "calls_per_run",
 )
 
 _PEOPLE_HEADER: tuple[str, ...] = (
@@ -137,6 +140,13 @@ def _roster_row(row: MemberRow) -> list[str]:
         str(row.pending_feedback),
     ]
     cells.extend(_maintenance_cell(row.maintenance, kind) for kind in _MAINTENANCE_KINDS)
+    cells.extend(
+        [
+            _blank(row.generation_calls),
+            _blank(row.tool_calls),
+            _blank(row.calls_per_run),
+        ]
+    )
     return cells
 
 

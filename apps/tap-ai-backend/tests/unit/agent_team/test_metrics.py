@@ -21,7 +21,14 @@ from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY, Perso
 from tap.modules.agent_team.ports import AgentRuntimeStats, ServedActor
 
 
-def _stats(agent_key: str, runs: int, served: tuple[ServedActor, ...] = ()) -> AgentRuntimeStats:
+def _stats(
+    agent_key: str,
+    runs: int,
+    served: tuple[ServedActor, ...] = (),
+    *,
+    generation_calls: int = 0,
+    tool_calls: int = 0,
+) -> AgentRuntimeStats:
     return AgentRuntimeStats(
         agent_key=agent_key,
         runs=runs,
@@ -32,8 +39,30 @@ def _stats(agent_key: str, runs: int, served: tuple[ServedActor, ...] = ()) -> A
         latency_p50_ms=None,
         cost_usd=Decimal("1.00") * runs,
         served=served,
-        generation_calls=0,
-        tool_calls=0,
+        generation_calls=generation_calls,
+        tool_calls=tool_calls,
+    )
+
+
+def _build_row(*, stats, runtime_available: bool = True):
+    return build_member_row(
+        agent_key="agent-1",
+        name="Agent 1",
+        kind="custom",
+        job_title=None,
+        owner_actor_id="actor-1",
+        joined_at=None,
+        disabled=False,
+        trailing_30d_runs=0 if runtime_available else None,
+        stats=stats,
+        last_run_at=None,
+        up=0,
+        down=0,
+        last_maintenance_at=None,
+        pending_feedback=0,
+        maintenance={},
+        trend=(),
+        runtime_available=runtime_available,
     )
 
 
@@ -79,6 +108,36 @@ def test_status_ignores_selected_period():
     )
     assert summary.active == 1
     assert summary.idle == 1
+
+
+def test_calls_per_run_divides_call_volume_by_runs():
+    row = _build_row(stats=_stats("agent-1", runs=5, generation_calls=8, tool_calls=2))
+    assert row.generation_calls == 8
+    assert row.tool_calls == 2
+    assert row.calls_per_run == 2.0
+
+
+def test_calls_per_run_is_none_when_runs_is_zero():
+    row = _build_row(stats=_stats("agent-1", runs=0, generation_calls=0, tool_calls=0))
+    assert row.runs == 0
+    assert row.generation_calls == 0
+    assert row.tool_calls == 0
+    assert row.calls_per_run is None
+
+
+def test_calls_per_run_is_none_with_no_stats_and_runtime_available():
+    row = _build_row(stats=None)
+    assert row.runs == 0
+    assert row.generation_calls == 0
+    assert row.tool_calls == 0
+    assert row.calls_per_run is None
+
+
+def test_call_volume_fields_are_none_when_runtime_unavailable():
+    row = _build_row(stats=None, runtime_available=False)
+    assert row.generation_calls is None
+    assert row.tool_calls is None
+    assert row.calls_per_run is None
 
 
 def test_people_scope_is_owners_callers_and_maintainers():

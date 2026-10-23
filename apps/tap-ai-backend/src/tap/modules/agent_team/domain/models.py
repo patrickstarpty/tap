@@ -208,6 +208,15 @@ class MemberRow:
     pending_feedback: int
     maintenance: Mapping[MaintenanceKind, int]
     trend: tuple[TrendPoint, ...]
+    # Spec 2.2 secondary metrics: model/tool call volume and calls-per-run.
+    # `None` for all three when the runtime backend is unavailable (the
+    # outage makes them unknown, same reasoning as `status`); when available,
+    # `generation_calls`/`tool_calls` are real counts (0 for an Agent with no
+    # runs), and `calls_per_run` is additionally `None` when `runs == 0`
+    # (nothing to divide by).
+    generation_calls: int | None
+    tool_calls: int | None
+    calls_per_run: float | None
 
 
 @dataclass(frozen=True, slots=True)

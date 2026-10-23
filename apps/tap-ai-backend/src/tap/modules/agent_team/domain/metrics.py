@@ -100,16 +100,36 @@ def build_member_row(
     pending_feedback: int,
     maintenance: Mapping[MaintenanceKind, int],
     trend: tuple[TrendPoint, ...],
+    runtime_available: bool = True,
 ) -> MemberRow:
     """Assembles one roster row. `stats` is `None` when the runtime backend
     is unavailable or this Agent had no runs in the period -- every
     runtime-derived field then reports 0/`None` while the MySQL-derived
     fields (roster, owner, satisfaction, maintenance) are unaffected (spec
-    5.1)."""
+    5.1).
+
+    `generation_calls`/`tool_calls`/`calls_per_run` (spec 2.2 secondary
+    metrics) are the one exception to "0 when `stats` is missing": they
+    report `None` specifically when `runtime_available` is `False` (the
+    outage makes them unknown), not merely when this Agent had no runs --
+    the caller must pass `runtime_available` separately from `stats` for
+    that reason."""
     status = member_status(disabled=disabled, trailing_30d_runs=trailing_30d_runs)
     satisfaction_value, satisfaction_sample = satisfaction(up, down)
     # `AgentRuntimeStats.served` is already sorted by runs desc, actor_id asc.
     top_served: tuple[ServedActor, ...] = stats.served[:_TOP_SERVED_LIMIT] if stats else ()
+    runs = stats.runs if stats else 0
+    generation_calls: int | None
+    tool_calls: int | None
+    calls_per_run: float | None
+    if runtime_available:
+        generation_calls = stats.generation_calls if stats else 0
+        tool_calls = stats.tool_calls if stats else 0
+        calls_per_run = (generation_calls + tool_calls) / runs if runs else None
+    else:
+        generation_calls = None
+        tool_calls = None
+        calls_per_run = None
     return MemberRow(
         agent_key=agent_key,
         name=name,
@@ -119,7 +139,7 @@ def build_member_row(
         owner_actor_id=None if kind in ("built_in", "tapper_default") else owner_actor_id,
         joined_at=joined_at,
         status=status,
-        runs=stats.runs if stats else 0,
+        runs=runs,
         failures=stats.failures if stats else 0,
         abstained=stats.abstained if stats else 0,
         canceled=stats.canceled if stats else 0,
@@ -135,6 +155,9 @@ def build_member_row(
         pending_feedback=pending_feedback,
         maintenance=dict(maintenance),
         trend=trend,
+        generation_calls=generation_calls,
+        tool_calls=tool_calls,
+        calls_per_run=calls_per_run,
     )
 
 

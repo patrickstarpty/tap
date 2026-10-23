@@ -1915,6 +1915,9 @@ class AgentTeamMemberRow(ContractModel):
     pending_feedback: int
     maintenance: dict[str, int]
     trend: list[AgentTeamTrendPoint]
+    generation_calls: int | None
+    tool_calls: int | None
+    calls_per_run: float | None
 
 
 class AgentTeamSummary(ContractModel):

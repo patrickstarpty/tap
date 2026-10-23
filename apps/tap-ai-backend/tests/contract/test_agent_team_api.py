@@ -293,7 +293,12 @@ def test_get_member_returns_member_row() -> None:
     response = client.get(f"{BASE}/agent-team/members/agent-1?{PERIOD_QS}")
 
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["agentKey"] == "agent-1"
+    data = response.json()["data"]
+    assert data["agentKey"] == "agent-1"
+    # Spec 2.2 secondary metrics: present on every member row.
+    assert data["generationCalls"] == 0
+    assert data["toolCalls"] == 0
+    assert data["callsPerRun"] == 0.0
 
 
 def test_get_member_history_returns_page() -> None:

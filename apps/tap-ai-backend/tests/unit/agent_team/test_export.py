@@ -42,6 +42,9 @@ def _member(
     latency_p50_ms: int | None = 100,
     job_title: str | None = "QA 负责人",
     owner_actor_id: str | None = "owner-1",
+    generation_calls: int | None = 8,
+    tool_calls: int | None = 4,
+    calls_per_run: float | None = 2.4,
 ) -> MemberRow:
     return MemberRow(
         agent_key=agent_key,
@@ -70,6 +73,9 @@ def _member(
         pending_feedback=1,
         maintenance={"revised": 2},
         trend=(),
+        generation_calls=generation_calls,
+        tool_calls=tool_calls,
+        calls_per_run=calls_per_run,
     )
 
 
@@ -125,7 +131,14 @@ def test_trend_granularity_matches_ui_rule() -> None:
 
 
 def test_unavailable_runtime_leaves_columns_blank() -> None:
-    member = _member(status=None, satisfaction=None, latency_p50_ms=None)
+    member = _member(
+        status=None,
+        satisfaction=None,
+        latency_p50_ms=None,
+        generation_calls=None,
+        tool_calls=None,
+        calls_per_run=None,
+    )
     report = PeriodReport(summary=_summary(), members=(member,), people=(_person(),))
     content = build_export(report, [], period=_PERIOD, runtime_status="unavailable")
 
@@ -136,6 +149,9 @@ def test_unavailable_runtime_leaves_columns_blank() -> None:
         assert row[header.index("status")] == ""
         assert row[header.index("satisfaction")] == ""
         assert row[header.index("latency_p50_ms")] == ""
+        assert row[header.index("generation_calls")] == ""
+        assert row[header.index("tool_calls")] == ""
+        assert row[header.index("calls_per_run")] == ""
 
         trend_text = archive.read("trend.csv").decode("utf-8-sig")
         trend_lines = trend_text.splitlines()
@@ -168,6 +184,18 @@ def test_roster_row_covers_every_member_scalar_and_maintenance_kind() -> None:
         assert row[header.index("maintenance_revised")] == "2"
         assert row[header.index("maintenance_skill_upgraded")] == "0"
         assert row[header.index("joined_at")] == "2026-10-23T12:00:00Z"
+
+
+def test_roster_row_includes_call_volume_columns() -> None:
+    report = PeriodReport(summary=_summary(), members=(_member(),), people=(_person(),))
+    content = build_export(report, [], period=_PERIOD, runtime_status="ok")
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        _, rows = _read_csv(archive, "roster.csv")
+        header, row = rows[0], rows[1]
+        assert row[header.index("generation_calls")] == "8"
+        assert row[header.index("tool_calls")] == "4"
+        assert row[header.index("calls_per_run")] == "2.4"
 
 
 def test_people_row_covers_every_person_field() -> None:

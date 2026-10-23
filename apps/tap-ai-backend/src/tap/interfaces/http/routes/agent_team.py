@@ -140,6 +140,9 @@ def _member_dto(row: MemberRow) -> AgentTeamMemberRow:
         pending_feedback=row.pending_feedback,
         maintenance={str(kind): count for kind, count in row.maintenance.items()},
         trend=[_trend_dto(point) for point in row.trend],
+        generation_calls=row.generation_calls,
+        tool_calls=row.tool_calls,
+        calls_per_run=row.calls_per_run,
     )
 
 

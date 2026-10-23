@@ -349,6 +349,7 @@ class AgentTeamService:
                     pending_feedback=store_data.pending_count_by_key.get(key, 0),
                     maintenance=store_data.maintenance_by_agent.get(key, {}),
                     trend=tuple(runtime.trend_by_key.get(key, ())),
+                    runtime_available=runtime_available,
                 )
             )
         return rows

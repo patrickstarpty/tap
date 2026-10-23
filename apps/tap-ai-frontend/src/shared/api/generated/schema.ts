@@ -1850,12 +1850,16 @@ export interface components {
             abstained: number;
             /** Agentkey */
             agentKey: string;
+            /** Callsperrun */
+            callsPerRun: number | null;
             /** Canceled */
             canceled: number;
             /** Costusd */
             costUsd: string;
             /** Failures */
             failures: number;
+            /** Generationcalls */
+            generationCalls: number | null;
             /** Jobtitle */
             jobTitle: string | null;
             /** Joinedat */
@@ -1896,6 +1900,8 @@ export interface components {
             servedCount: number;
             /** Status */
             status: ("active" | "idle" | "disabled") | null;
+            /** Toolcalls */
+            toolCalls: number | null;
             /** Topserved */
             topServed: components["schemas"]["AgentTeamServedActor"][];
             /** Trend */
