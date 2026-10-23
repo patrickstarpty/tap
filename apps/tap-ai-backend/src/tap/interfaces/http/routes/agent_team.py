@@ -18,6 +18,7 @@ from tap.contracts.http import (
     AgentTeamFeedbackResolveRequest,
     AgentTeamHistoryEvent,
     AgentTeamHistoryPage,
+    AgentTeamMemberDetail,
     AgentTeamMemberRow,
     AgentTeamMembersView,
     AgentTeamMemberView,
@@ -43,7 +44,12 @@ from tap.interfaces.http.dependencies import agent_team_service
 from tap.interfaces.http.problems import problem_response_metadata, skill_problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.agent_team.application.export import build_export
-from tap.modules.agent_team.application.service import AgentTeamRejected, PersonDetail, TeamReport
+from tap.modules.agent_team.application.service import (
+    AgentTeamRejected,
+    MemberDetail,
+    PersonDetail,
+    TeamReport,
+)
 from tap.modules.agent_team.domain.models import (
     AgentKind,
     MaintenanceEvent,
@@ -143,6 +149,15 @@ def _member_dto(row: MemberRow) -> AgentTeamMemberRow:
         generation_calls=row.generation_calls,
         tool_calls=row.tool_calls,
         calls_per_run=row.calls_per_run,
+    )
+
+
+def _member_detail_dto(detail: MemberDetail) -> AgentTeamMemberDetail:
+    return AgentTeamMemberDetail(
+        row=_member_dto(detail.row),
+        current_revision_id=detail.current_revision_id,
+        served=[_served_dto(actor) for actor in detail.served],
+        pending_feedback=[_pending_feedback_dto(item) for item in detail.pending_feedback],
     )
 
 
@@ -315,7 +330,7 @@ async def get_member(
     request: Request, agent_key: str, period: Period = Depends(_period_query)
 ) -> AgentTeamMemberView:
     view = await agent_team_service(request).member(agent_key, period)
-    return AgentTeamMemberView(**_envelope_kwargs(view), data=_member_dto(view.data))
+    return AgentTeamMemberView(**_envelope_kwargs(view), data=_member_detail_dto(view.data))
 
 
 @router.get(
@@ -482,4 +497,4 @@ async def _member_row_for(request: Request, agent_id: str) -> MemberRow:
     view = await agent_team_service(request).member(
         agent_id, trailing_30_days(datetime.now(UTC).date())
     )
-    return view.data
+    return view.data.row

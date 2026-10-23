@@ -40,6 +40,7 @@ from tap.modules.agent_team.ports import (
     RatingCounts,
     ResolvedFeedback,
     RuntimeMetricsUnavailable,
+    ServedActor,
     TrendPoint,
 )
 
@@ -84,6 +85,19 @@ class AgentTeamRejected(Exception):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}")
+
+
+@dataclass(frozen=True, slots=True)
+class MemberDetail:
+    """`AgentTeamService.member`'s payload (spec 6.2): the roster row plus the
+    profile-only parts -- the Agent's current revision (None for
+    `tapper_default`), everyone it served in the period (empty when run data
+    is unavailable) and its pending feedback items."""
+
+    row: MemberRow
+    current_revision_id: str | None
+    served: tuple[ServedActor, ...]
+    pending_feedback: tuple[PendingFeedback, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,13 +461,27 @@ class AgentTeamService:
         sorted_rows = _sorted(rows, sort, order)
         return self._view(period, runtime.status, runtime.computed_at, tuple(sorted_rows))
 
-    async def member(self, agent_key: str, period: Period) -> TeamView[MemberRow]:
+    async def member(self, agent_key: str, period: Period) -> TeamView[MemberDetail]:
         runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
         rows = self._build_members(runtime, store_data)
         for row in rows:
             if row.agent_key == agent_key:
-                return self._view(period, runtime.status, runtime.computed_at, row)
+                record = await self._store.agent(agent_key)
+                stats = runtime.stats_by_key.get(agent_key)
+                served = (
+                    ()
+                    if stats is None or runtime.status == "unavailable"
+                    else tuple(sorted(stats.served, key=lambda item: (-item.runs, item.actor_id)))
+                )
+                pending = await self._store.pending_feedback(agent_key)
+                detail = MemberDetail(
+                    row=row,
+                    current_revision_id=None if record is None else record.current_revision_id,
+                    served=served,
+                    pending_feedback=tuple(pending),
+                )
+                return self._view(period, runtime.status, runtime.computed_at, detail)
         raise AgentTeamRejected("agent_not_found", f"no Agent {agent_key!r} in this Project")
 
     async def history(self, agent_id: str, cursor: str | None) -> HistoryPage:

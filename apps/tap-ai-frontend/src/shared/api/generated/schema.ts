@@ -1844,6 +1844,16 @@ export interface components {
             /** Nextcursor */
             nextCursor: string | null;
         };
+        /** AgentTeamMemberDetail */
+        AgentTeamMemberDetail: {
+            /** Currentrevisionid */
+            currentRevisionId: string | null;
+            /** Pendingfeedback */
+            pendingFeedback: components["schemas"]["AgentTeamPendingFeedbackItem"][];
+            row: components["schemas"]["AgentTeamMemberRow"];
+            /** Served */
+            served: components["schemas"]["AgentTeamServedActor"][];
+        };
         /** AgentTeamMemberRow */
         AgentTeamMemberRow: {
             /** Abstained */
@@ -1914,7 +1924,7 @@ export interface components {
              * Format: date-time
              */
             computedAt: string;
-            data: components["schemas"]["AgentTeamMemberRow"];
+            data: components["schemas"]["AgentTeamMemberDetail"];
             /**
              * Granularity
              * @enum {string}

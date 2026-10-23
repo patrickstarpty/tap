@@ -302,6 +302,47 @@
         "title": "AgentTeamHistoryPage",
         "type": "object"
       },
+      "AgentTeamMemberDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "currentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentrevisionid"
+          },
+          "pendingFeedback": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamPendingFeedbackItem"
+            },
+            "title": "Pendingfeedback",
+            "type": "array"
+          },
+          "row": {
+            "$ref": "#/components/schemas/AgentTeamMemberRow"
+          },
+          "served": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamServedActor"
+            },
+            "title": "Served",
+            "type": "array"
+          }
+        },
+        "required": [
+          "row",
+          "currentRevisionId",
+          "served",
+          "pendingFeedback"
+        ],
+        "title": "AgentTeamMemberDetail",
+        "type": "object"
+      },
       "AgentTeamMemberRow": {
         "additionalProperties": false,
         "properties": {
@@ -602,7 +643,7 @@
             "type": "string"
           },
           "data": {
-            "$ref": "#/components/schemas/AgentTeamMemberRow"
+            "$ref": "#/components/schemas/AgentTeamMemberDetail"
           },
           "granularity": {
             "enum": [

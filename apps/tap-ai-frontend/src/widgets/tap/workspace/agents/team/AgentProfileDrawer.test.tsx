@@ -116,24 +116,16 @@ function install(server: Server) {
           return json({ events: server.history.slice(1), nextCursor: null });
         return json({ events: server.history, nextCursor: null });
       }
-      if (url.includes("/agent-team/people/"))
+      if (url.includes("/agent-team/members/"))
         return json({
           ...envelope,
           data: {
-            person: { actorId: "alice" },
-            owned: [],
-            served: [],
+            row: server.row,
+            currentRevisionId:
+              server.row.kind === "tapper_default" ? null : "rev-2",
+            served: server.row.topServed,
             pendingFeedback: server.pending,
           },
-        });
-      if (url.includes("/agent-team/members/"))
-        return json({ ...envelope, data: server.row });
-      if (url.endsWith("/ai/agents"))
-        return json({
-          items: [
-            { agentId: "a1", revisionId: "rev-2", isLatest: true },
-            { agentId: "a1", revisionId: "rev-1", isLatest: false },
-          ],
         });
       return json({}, 404);
     }),
@@ -275,6 +267,27 @@ describe("AgentProfileDrawer", () => {
     await user.click(screen.getByRole("tab", { name: "履历" }));
     expect(await screen.findByText("暂无维护履历。")).toBeTruthy();
     expect(server.calls.some((c) => c.includes("/history"))).toBe(false);
+  });
+
+  it("resolves pending feedback of tapper_default", async () => {
+    const user = userEvent.setup();
+    const server = newServer({
+      row: member({
+        agentKey: "tapper_default",
+        kind: "tapper_default",
+        ownerActorId: null,
+      }),
+    });
+    server.pending[0].agentKey = "tapper_default";
+    renderDrawer(server, "tapper_default");
+    await user.click(await tab("待处理反馈"));
+    await user.click(await screen.findByRole("button", { name: "标记已处理" }));
+    await waitFor(() => expect(screen.queryByText("wrong answer")).toBeNull());
+    expect(
+      server.calls.some(
+        (c) => c.startsWith("POST") && c.includes("/feedback/f1/resolve"),
+      ),
+    ).toBe(true);
   });
 
   it("view configuration passes the current revision id", async () => {

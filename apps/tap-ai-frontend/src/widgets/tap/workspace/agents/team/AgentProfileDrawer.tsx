@@ -6,12 +6,11 @@ import {
   useTeamMember,
   useTransferOwner,
   useUpdateJobTitle,
-  usePerson,
   type AgentTeamHistoryEvent,
+  type AgentTeamMemberDetail,
   type AgentTeamMemberRow,
   type TeamPeriod,
 } from "../../../../../features/knowledge/api/agentTeam";
-import { useAgents } from "../../../../../features/knowledge/api/aiAssets";
 import { AccessibleDialog } from "../../AccessibleDialog";
 import type { WorkspaceCopy } from "../../copy";
 import { TrendChart } from "./charts";
@@ -81,7 +80,8 @@ export function AgentProfileDrawer({
   const memberQuery = useTeamMember(projectId, agentKey, period);
   const [tab, setTab] = useState<ProfileTab>("basic");
   const view = memberQuery.data;
-  const row = view?.data;
+  const detail = view?.data;
+  const row = detail?.row;
 
   const tabs: ProfileTab[] = ["basic", "workload", "history", "feedback"];
   if (row?.kind === "custom") tabs.push("settings");
@@ -102,7 +102,10 @@ export function AgentProfileDrawer({
       </header>
       {memberQuery.isPending ? (
         <p role="status">{text.loading}</p>
-      ) : memberQuery.isError || view === undefined || row === undefined ? (
+      ) : memberQuery.isError ||
+        view === undefined ||
+        detail === undefined ||
+        row === undefined ? (
         <div role="alert">
           <p>{text.loadFailed}</p>
           <button type="button" onClick={() => void memberQuery.refetch()}>
@@ -133,8 +136,7 @@ export function AgentProfileDrawer({
           <div role="tabpanel">
             {active === "basic" ? (
               <BasicPanel
-                projectId={projectId}
-                row={row}
+                detail={detail}
                 copy={copy}
                 timezone={view.timezone}
                 onViewConfig={onViewConfig}
@@ -164,8 +166,7 @@ export function AgentProfileDrawer({
             {active === "feedback" ? (
               <FeedbackPanel
                 projectId={projectId}
-                row={row}
-                period={period}
+                detail={detail}
                 copy={copy}
               />
             ) : null}
@@ -180,14 +181,12 @@ export function AgentProfileDrawer({
 }
 
 function BasicPanel({
-  projectId,
-  row,
+  detail,
   copy,
   timezone,
   onViewConfig,
 }: {
-  projectId: string;
-  row: AgentTeamMemberRow;
+  detail: AgentTeamMemberDetail;
   copy: WorkspaceCopy;
   timezone: string;
   onViewConfig: (revisionId: string) => void;
@@ -195,10 +194,8 @@ function BasicPanel({
   const text = copy.agentTeam;
   const labels = text.profile;
   const locale = teamLocale(copy);
-  const agents = useAgents(projectId);
-  const revisionId =
-    agents.data?.find((item) => item.agentId === row.agentKey && item.isLatest)
-      ?.revisionId ?? null;
+  const row = detail.row;
+  const revisionId = detail.currentRevisionId;
   return (
     <>
       <dl>
@@ -216,11 +213,11 @@ function BasicPanel({
         <dd>{revisionId ?? EMPTY}</dd>
         <dt>{labels.servedPeople}</dt>
         <dd>
-          {row.topServed.length === 0 ? (
+          {detail.served.length === 0 ? (
             labels.noServed
           ) : (
             <ul>
-              {row.topServed.map((person) => (
+              {detail.served.map((person) => (
                 <li key={person.actorId}>
                   {person.actorId} · {formatCount(person.runs, locale)}
                 </li>
@@ -432,26 +429,19 @@ function HistoryPanel({
 
 function FeedbackPanel({
   projectId,
-  row,
-  period,
+  detail,
   copy,
 }: {
   projectId: string;
-  row: AgentTeamMemberRow;
-  period: TeamPeriod;
+  detail: AgentTeamMemberDetail;
   copy: WorkspaceCopy;
 }) {
   const text = copy.agentTeam;
   const labels = text.profile;
-  // The member view only carries a count; the item list comes from the
-  // owner's person view, so ownerless Agents show the count alone.
-  const person = usePerson(projectId, row.ownerActorId, period);
   const resolve = useResolveFeedback(projectId);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const items = (person.data?.data.pendingFeedback ?? []).filter(
-    (item) => item.agentKey === row.agentKey,
-  );
+  const items = detail.pendingFeedback;
   const done = async (feedbackId: string) => {
     try {
       await resolve.mutateAsync({
@@ -469,13 +459,9 @@ function FeedbackPanel({
   };
   return (
     <>
-      <p>
-        {labels.feedbackCount.replace("{count}", String(row.pendingFeedback))}
-      </p>
+      <p>{labels.feedbackCount.replace("{count}", String(items.length))}</p>
       {items.length === 0 ? (
-        row.pendingFeedback === 0 ? (
-          <p>{labels.noFeedback}</p>
-        ) : null
+        <p>{labels.noFeedback}</p>
       ) : (
         <ul className="tap-team-feedback">
           {items.map((item) => {

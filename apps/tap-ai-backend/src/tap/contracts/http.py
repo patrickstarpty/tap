@@ -2038,8 +2038,15 @@ class AgentTeamMembersView(AgentTeamViewEnvelope):
     data: list[AgentTeamMemberRow]
 
 
+class AgentTeamMemberDetail(ContractModel):
+    row: AgentTeamMemberRow
+    current_revision_id: str | None
+    served: list[AgentTeamServedActor]
+    pending_feedback: list[AgentTeamPendingFeedbackItem]
+
+
 class AgentTeamMemberView(AgentTeamViewEnvelope):
-    data: AgentTeamMemberRow
+    data: AgentTeamMemberDetail
 
 
 class AgentTeamPeopleView(AgentTeamViewEnvelope):

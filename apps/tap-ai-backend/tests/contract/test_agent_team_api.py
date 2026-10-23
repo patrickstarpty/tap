@@ -293,7 +293,11 @@ def test_get_member_returns_member_row() -> None:
     response = client.get(f"{BASE}/agent-team/members/agent-1?{PERIOD_QS}")
 
     assert response.status_code == 200, response.text
-    data = response.json()["data"]
+    detail = response.json()["data"]
+    assert detail["currentRevisionId"] is not None
+    assert isinstance(detail["served"], list)
+    assert isinstance(detail["pendingFeedback"], list)
+    data = detail["row"]
     assert data["agentKey"] == "agent-1"
     # Spec 2.2 secondary metrics: present on every member row.
     assert data["generationCalls"] == 0
@@ -486,7 +490,7 @@ def test_langfuse_down_leaves_member_run_fields_null() -> None:
     response = client.get(f"{BASE}/agent-team/members/agent-1?{PERIOD_QS}")
 
     assert response.status_code == 200, response.text
-    data = response.json()["data"]
+    data = response.json()["data"]["row"]
     for key in (
         "runs",
         "failures",

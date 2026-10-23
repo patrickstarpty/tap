@@ -372,13 +372,13 @@ async def test_writes_bypass_runtime_cache():
     service = _service(store, metrics)
 
     before = await service.member("agent-1", _PERIOD)
-    assert before.data.pending_feedback == 1
+    assert before.data.row.pending_feedback == 1
     calls_after_first_read = metrics.agent_stats_calls
 
     await service.resolve_feedback("fb-1", "handled")
 
     after = await service.member("agent-1", _PERIOD)
-    assert after.data.pending_feedback == 0
+    assert after.data.row.pending_feedback == 0
     # The store (MySQL) is always re-queried live; the cached Langfuse
     # metrics backend is not hit again within its TTL.
     assert metrics.agent_stats_calls == calls_after_first_read
@@ -519,3 +519,54 @@ async def test_person_issues_one_round_of_store_queries():
     await service.person("owner-1", _PERIOD)
     assert store.pending_feedback_calls == 1
     assert store.maintenance_counts_calls == 1
+
+
+def _pending(feedback_id: str, agent_key: str) -> PendingFeedback:
+    return PendingFeedback(
+        feedback_id=feedback_id,
+        agent_key=agent_key,
+        turn_id="t",
+        conversation_id="c",
+        actor_id="bob",
+        rating="down",
+        comment=None,
+        updated_at=_NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_member_detail_for_custom_agent():
+    store = FakeStore(
+        agent_records={"agent-1": _agent("agent-1")},
+        pending=[_pending("fb-1", "agent-1")],
+    )
+    served = (ServedActor("bob", 2), ServedActor("carol", 5))
+    metrics = FakeMetrics(
+        stats_by_period={(_PERIOD.start, _PERIOD.end): [_stats("agent-1", 7, served)]}
+    )
+    view = await _service(store, metrics).member("agent-1", _PERIOD)
+
+    assert view.data.current_revision_id == "agent-1-rev-1"
+    assert [s.actor_id for s in view.data.served] == ["carol", "bob"]
+    assert [f.feedback_id for f in view.data.pending_feedback] == ["fb-1"]
+
+
+@pytest.mark.asyncio
+async def test_member_detail_tapper_default_has_no_revision_but_pending_feedback():
+    store = FakeStore(pending=[_pending("fb-9", "tapper_default")])
+    metrics = FakeMetrics(
+        stats_by_period={(_PERIOD.start, _PERIOD.end): [_stats("tapper_default", 1)]}
+    )
+    view = await _service(store, metrics).member("tapper_default", _PERIOD)
+
+    assert view.data.current_revision_id is None
+    assert [f.feedback_id for f in view.data.pending_feedback] == ["fb-9"]
+
+
+@pytest.mark.asyncio
+async def test_member_detail_served_empty_when_runtime_unavailable():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    view = await _service(store, FakeMetrics(unavailable=True)).member("agent-1", _PERIOD)
+
+    assert view.runtime_status == "unavailable"
+    assert view.data.served == ()
