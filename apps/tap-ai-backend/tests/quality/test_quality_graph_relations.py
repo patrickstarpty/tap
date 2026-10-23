@@ -1421,3 +1421,12 @@ def test_real_answer_dict_reads_the_http_answer_dry_run_returns():
     assert observation["graphContextStatus"] == "NOT_SELECTED"
     assert observation["claims"] == []
     assert observation["citations"] == []
+
+
+def test_single_upstream_model_requires_one_distinct_upstream():
+    single_upstream = _runner()._single_upstream_model
+
+    assert single_upstream(["dashscope/qwen-plus", "dashscope/qwen-plus"]) == "dashscope/qwen-plus"
+    assert single_upstream(["dashscope/qwen-plus", None, ""]) == "dashscope/qwen-plus"
+    assert single_upstream(["dashscope/qwen-plus", "dashscope/qwen-max"]) is None
+    assert single_upstream([]) is None
