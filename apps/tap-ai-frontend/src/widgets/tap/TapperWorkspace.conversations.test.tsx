@@ -495,6 +495,31 @@ it("counts the passages retrieved for an abstained turn, not only cited ones", a
   ).toBeInTheDocument();
 });
 
+it("counts every retrieved passage for a completed turn, cited or not", async () => {
+  completedConversation({
+    traceId: "trace-1",
+    answer: {
+      ...ANSWER,
+      claims: [
+        {
+          claimId: "claim-1",
+          text: "Verified identity is required.",
+          citationIds: ["S1"],
+        },
+      ],
+      citations: [
+        chunkCitation("S1"),
+        chunkCitation("S2"),
+        chunkCitation("S3"),
+      ],
+    },
+  });
+
+  expect(
+    await screen.findByText("Searched 1 source · 3 passages · 0 relations"),
+  ).toBeInTheDocument();
+});
+
 it("shows no summary line for a traced turn with zero sources, citations or relations", async () => {
   completedConversation({ traceId: "trace-1", resolvedResources: [] });
 

@@ -979,10 +979,11 @@ export function AssistantResponse({
           edgeCitationCount += 1;
         }
       }
-      // "Searched N sources · M passages" reports what retrieval returned:
-      // every chunk citation in the response, not just the ones a claim
-      // cites -- an abstained Turn has no claims yet did retrieve passages
-      // (capability-4 validation round 3 showed "0 passages" for 10).
+      // M in "Searched N sources · M passages" is the number of retrieved
+      // passages: every chunk citation in the response, cited by a claim or
+      // not -- not the cited count. An abstained Turn has no claims yet did
+      // retrieve passages (capability-4 validation round 3 showed
+      // "0 passages" for 10 retrieved).
       const chunkCitationCount = [...citationsById.values()].filter(
         (citation) => !isEdgeCitation(citation),
       ).length;

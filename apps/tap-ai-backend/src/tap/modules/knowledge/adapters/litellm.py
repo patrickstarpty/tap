@@ -308,18 +308,26 @@ def _without_bare_label_lists(text: str, labels: frozenset[str], protected: Sequ
 # in a `#` or `//` comment is removed ("# 登录（S9）", "// 账号 (S1, S8)");
 # code tokens, strings and any other parentheses are kept.
 _COMMENT_RUN = r"[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)*"
+# An ASCII "(" right after a name ("check(S1)", "obj.run(S1)") opens an
+# argument list, not a citation; a full-width "（" after text ("登录（S9）")
+# is still a citation.
+_COMMENT_OPEN = r"(?:（|(?<![A-Za-z0-9_.])\()"
 _COMMENT_LABELS = re.compile(
-    rf"[ \t]*[（(][ \t]*(?:{_CITATION_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_CITATION_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
     # "（S2：固定值 123456）": only the label prefix goes.
-    rf"|(?<=[（(])[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
+    rf"|(?:(?<=（)|(?<![A-Za-z0-9_.]\()(?<=\())"
+    rf"[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
 )
 
 
 def _comment_start(line: str) -> int | None:
     quote = ""
-    for index, char in enumerate(line):
+    index = 0
+    while index < len(line):
+        char = line[index]
         if quote:
             if char == "\\":
+                index += 2  # an escaped character never ends the string
                 continue
             if char == quote:
                 quote = ""
@@ -329,6 +337,7 @@ def _comment_start(line: str) -> int | None:
             index == 0 or line[index - 1] in " \t"
         ):
             return index
+        index += 1
     return None
 
 

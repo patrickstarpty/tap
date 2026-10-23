@@ -1253,3 +1253,30 @@ def test_a_sentence_about_methods_or_a_skill_carries_no_label() -> None:
             "Label only text that restates supplied evidence; a sentence about methods, tools or "
             "a Skill's guidance carries no label." in contract
         )
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        # An escaped quote does not end the string, so "#" is still inside it.
+        '```python\ns = "a\\"b # (S1)"\n```',
+        # A label right after a call name is an argument list, not a citation.
+        "```python\n# call check(S1) before submit\n```",
+        "```python\n# wraps validate(S1, S2)\n```",
+        "```js\n// see obj.run(S1)\n```",
+    ],
+)
+def test_escaped_quotes_and_call_arguments_in_code_are_kept(code) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == code
+
+
+def test_a_comment_after_an_escaped_quote_still_loses_its_label() -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    code = "```python\nx = 'it\\'s' # note (S1)\n```"
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == (
+        "```python\nx = 'it\\'s' # note\n```"
+    )
