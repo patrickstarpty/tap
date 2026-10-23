@@ -39,6 +39,11 @@ answer_feedback = Table(
     Column("comment", String(500), nullable=True),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("updated_at", DATETIME(fsp=6), nullable=False),
+    # Agent team view (spec 2.5/4): pending-feedback resolution. Schema only
+    # for now -- the resolve/clear-on-edit behavior lands in a later task.
+    Column("resolved_at", DATETIME(fsp=6), nullable=True),
+    Column("resolved_by", String(128), nullable=True),
+    Column("resolution_note", String(500), nullable=True),
 )
 augment_project_table(answer_feedback)
 answer_feedback.append_constraint(

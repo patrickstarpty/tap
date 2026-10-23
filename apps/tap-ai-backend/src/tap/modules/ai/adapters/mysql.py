@@ -66,6 +66,20 @@ def _asset_table(name: str, id_column: str) -> Table:
 
 
 ai_agent = _asset_table("ai_agent", "agent_id")
+# Agent team view (spec 1.3/2.1): a free-text role label, and the current
+# maintenance owner. Not shared by `skill`, so these are appended here rather
+# than folded into `_asset_table`.
+ai_agent.append_column(Column("job_title", String(64), nullable=True))
+ai_agent.append_column(Column("owner_actor_id", String(128), nullable=False))
+ai_agent.append_column(Column("owner_assigned_at", DATETIME(fsp=6), nullable=False))
+ai_agent.append_constraint(
+    ForeignKeyConstraint(
+        ["enterprise_id", "owner_actor_id"],
+        ["actor_principal.enterprise_id", "actor_principal.actor_id"],
+        name="fk_ai_agent_owner_actor",
+    )
+)
+
 skill = _asset_table("skill", "skill_id")
 
 ai_agent_revision = Table(
@@ -356,6 +370,8 @@ class MysqlAssetCatalog:
                     agent_id=revision.asset_id,
                     display_name=revision.display_name,
                     created_at=now,
+                    owner_actor_id=self._scope.actor_id,
+                    owner_assigned_at=now,
                     **scope_values(self._scope),
                 )
             )
@@ -933,6 +949,8 @@ class MysqlAssetCatalog:
                             agent_id=revision.asset_id,
                             display_name=revision.display_name,
                             created_at=now,
+                            owner_actor_id=self._scope.actor_id,
+                            owner_assigned_at=now,
                             **scope_values(self._scope),
                         )
                     )

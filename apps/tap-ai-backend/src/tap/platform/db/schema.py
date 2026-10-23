@@ -83,6 +83,7 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
     "knowledge_publication_cleanup": (
         ("publication_id", "knowledge_publication", "publication_id", None),
     ),
+    "agent_maintenance_event": (("agent_id", "ai_agent", "agent_id", None),),
 }
 
 
