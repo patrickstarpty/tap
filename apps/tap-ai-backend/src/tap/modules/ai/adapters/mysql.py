@@ -25,6 +25,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
+from tap.modules.agent_team.domain.models import MaintenanceEvent
 from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
 from tap.modules.ai.application.skill_authoring import SkillImportRecord
 from tap.modules.ai.domain.assets import (
@@ -922,11 +924,17 @@ class MysqlAssetCatalog:
         return revision
 
     async def insert_agent_revision(
-        self, revision: AiAgentRevision, *, base_revision_id: str | None
+        self,
+        revision: AiAgentRevision,
+        *,
+        base_revision_id: str | None,
+        event: MaintenanceEvent | None = None,
     ) -> AiAgentRevision:
         if not isinstance(revision, AiAgentRevision):
             raise AssetRevisionRejected()
         self._assert_scope(revision.scope)
+        if event is not None and not isinstance(event, MaintenanceEvent):
+            raise AssetRevisionRejected()
         try:
             async with self._sessions.begin() as session:
                 now = datetime.now(timezone.utc)
@@ -987,12 +995,30 @@ class MysqlAssetCatalog:
                         **scope_values(self._scope),
                     )
                 )
+                if event is not None:
+                    await session.execute(
+                        agent_maintenance_event.insert().values(
+                            event_id=event.event_id,
+                            agent_id=event.agent_id,
+                            kind=event.kind,
+                            revision_id=event.revision_id,
+                            feedback_id=event.feedback_id,
+                            note=event.note,
+                            occurred_at=event.occurred_at,
+                            **scope_values(self._scope),
+                        )
+                    )
         except IntegrityError as error:
             raise RevisionConflict() from error
         return revision
 
     async def set_asset_enabled(
-        self, kind: Literal["agent", "skill"], asset_id: str, enabled: bool
+        self,
+        kind: Literal["agent", "skill"],
+        asset_id: str,
+        enabled: bool,
+        *,
+        event: MaintenanceEvent | None = None,
     ) -> None:
         """Enable/disable is asset-level state (C-2): apply the target status
         to every revision of the asset, not just the latest. Otherwise an
@@ -1001,6 +1027,8 @@ class MysqlAssetCatalog:
         disabled asset could never be found again by a "disabled" filter
         that reads per-revision status from anything but the latest row."""
         if kind not in ("agent", "skill"):
+            raise AssetRevisionRejected()
+        if event is not None and not isinstance(event, MaintenanceEvent):
             raise AssetRevisionRejected()
         table, id_column = (
             (ai_agent_revision, "agent_id") if kind == "agent" else (skill_revision, "skill_id")
@@ -1015,6 +1043,19 @@ class MysqlAssetCatalog:
                 .where(*scope_predicates(table, self._scope), table.c[id_column] == asset_id)
                 .values(status=target.value)
             )
+            if result.rowcount >= 1 and event is not None:
+                await session.execute(
+                    agent_maintenance_event.insert().values(
+                        event_id=event.event_id,
+                        agent_id=event.agent_id,
+                        kind=event.kind,
+                        revision_id=event.revision_id,
+                        feedback_id=event.feedback_id,
+                        note=event.note,
+                        occurred_at=event.occurred_at,
+                        **scope_values(self._scope),
+                    )
+                )
         if result.rowcount < 1:
             raise AssetRevisionRejected()
 

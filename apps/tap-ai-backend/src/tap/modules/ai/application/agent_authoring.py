@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal, Protocol, cast
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.agent_team.domain.classify import classify_revision
+from tap.modules.agent_team.domain.models import MaintenanceEvent, new_event
 from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
@@ -82,11 +85,20 @@ class AgentAuthoringCatalog(SkillLookup, Protocol):
     """The narrow slice of the approved AI catalog this service depends on."""
 
     async def insert_agent_revision(
-        self, revision: AiAgentRevision, *, base_revision_id: str | None
+        self,
+        revision: AiAgentRevision,
+        *,
+        base_revision_id: str | None,
+        event: MaintenanceEvent | None = None,
     ) -> AiAgentRevision: ...
 
     async def set_asset_enabled(
-        self, kind: Literal["agent", "skill"], asset_id: str, enabled: bool
+        self,
+        kind: Literal["agent", "skill"],
+        asset_id: str,
+        enabled: bool,
+        *,
+        event: MaintenanceEvent | None = None,
     ) -> None: ...
 
     async def find_agent_by_name(
@@ -184,8 +196,15 @@ class AgentAuthoringService:
             # enabled, same as `create`.
             tolerate_disabled_ids=frozenset(latest.skill_revision_ids),
         )
+        skill_of = await self._skill_of(
+            scope, set(latest.skill_revision_ids) | set(revision.skill_revision_ids)
+        )
+        kind = classify_revision(latest, revision, skill_of)
+        event = new_event(
+            scope, agent_id, kind, revision_id=revision.revision_id, now=datetime.now(UTC)
+        )
         return await self._catalog.insert_agent_revision(
-            revision, base_revision_id=base_revision_id
+            revision, base_revision_id=base_revision_id, event=event
         )
 
     async def set_enabled(self, scope: ProjectScopeContext, agent_id: str, enabled: bool) -> None:
@@ -193,12 +212,30 @@ class AgentAuthoringService:
         history = await self._catalog.list_revisions("agent", agent_id)
         if not history:
             raise AssetRevisionRejected()
-        if history[-1].source_kind == "built_in":
+        latest = cast(AiAgentRevision, history[-1])
+        if latest.source_kind == "built_in":
             raise AgentAuthoringRejected(
                 "agent_built_in_immutable",
                 "built-in agents cannot be disabled or enabled",
             )
-        await self._catalog.set_asset_enabled("agent", agent_id, enabled)
+        target_status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
+        event: MaintenanceEvent | None = None
+        if latest.status != target_status:
+            kind = "enabled" if enabled else "disabled"
+            event = new_event(scope, agent_id, kind, now=datetime.now(UTC))
+        await self._catalog.set_asset_enabled("agent", agent_id, enabled, event=event)
+
+    async def _skill_of(
+        self, scope: ProjectScopeContext, skill_revision_ids: set[str]
+    ) -> dict[str, str]:
+        skill_of: dict[str, str] = {}
+        for revision_id in skill_revision_ids:
+            try:
+                skill = await self._catalog.resolve_historical_skill(scope, revision_id)
+            except AssetRevisionRejected:
+                continue
+            skill_of[revision_id] = skill.asset_id
+        return skill_of
 
     async def outdated_skill_ids(
         self, scope: ProjectScopeContext, revision: AiAgentRevision

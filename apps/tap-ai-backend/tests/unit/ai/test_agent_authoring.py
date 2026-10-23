@@ -32,24 +32,27 @@ class _FakeCatalog:
         self.scope = VALIDATION_SCOPE
         self._agents: dict[str, list] = {}
         self._skills: dict[str, list[SkillRevision]] = {}
+        self.received_events: list = []
 
     # -- agent write port -------------------------------------------------
 
-    async def insert_agent_revision(self, revision, *, base_revision_id):
+    async def insert_agent_revision(self, revision, *, base_revision_id, event=None):
         history = self._agents.setdefault(revision.asset_id, [])
         latest = history[-1].revision_id if history else None
         if latest != base_revision_id:
             raise RevisionConflict()
         history.append(revision)
+        self.received_events.append(event)
         return revision
 
-    async def set_asset_enabled(self, kind, asset_id, enabled):
+    async def set_asset_enabled(self, kind, asset_id, enabled, *, event=None):
         store = self._agents if kind == "agent" else self._skills
         history = store.get(asset_id)
         if not history:
             raise AssetRevisionRejected()
         status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
         store[asset_id] = [replace(revision, status=status) for revision in history]
+        self.received_events.append(event)
 
     async def list_revisions(self, kind, asset_id):
         store = self._agents if kind == "agent" else self._skills
@@ -315,6 +318,81 @@ async def test_built_in_agent_cannot_be_revised_but_can_be_copied() -> None:
     )
     assert copy.source_kind == "authored"
     assert copy.system_instruction == built_in.system_instruction
+
+
+# -- maintenance events ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_passes_no_event() -> None:
+    service, catalog = _service()
+
+    await service.create(VALIDATION_SCOPE, _draft())
+
+    assert catalog.received_events == [None]
+
+
+@pytest.mark.asyncio
+async def test_revise_passes_revised_event() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    revised = await service.revise(
+        VALIDATION_SCOPE, created.asset_id, created.revision_id, _draft(description="v2")
+    )
+
+    event = catalog.received_events[-1]
+    assert event is not None
+    assert event.kind == "revised"
+    assert event.agent_id == created.asset_id
+    assert event.revision_id == revised.revision_id
+
+
+@pytest.mark.asyncio
+async def test_revise_passes_skill_upgraded_event() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    created = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-2"))
+
+    revised = await service.revise(
+        VALIDATION_SCOPE,
+        created.asset_id,
+        created.revision_id,
+        _draft(skill_revision_ids=("skill-rev-2",)),
+    )
+
+    event = catalog.received_events[-1]
+    assert event is not None
+    assert event.kind == "skill_upgraded"
+    assert event.revision_id == revised.revision_id
+
+
+@pytest.mark.asyncio
+async def test_disable_and_enable_pass_events() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+    disable_event = catalog.received_events[-1]
+    assert disable_event is not None
+    assert disable_event.kind == "disabled"
+    assert disable_event.agent_id == created.asset_id
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+    enable_event = catalog.received_events[-1]
+    assert enable_event is not None
+    assert enable_event.kind == "enabled"
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_passes_no_event_when_already_in_target_state() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+
+    assert catalog.received_events[-1] is None
 
 
 # -- set_enabled ---------------------------------------------------------

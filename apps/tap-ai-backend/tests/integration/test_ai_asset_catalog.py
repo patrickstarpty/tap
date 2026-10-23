@@ -833,3 +833,135 @@ async def test_seed_v3_appends_latest_built_in_agent_revision(owned_project_mysq
         ]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revision_and_event_commit_together(owned_project_mysql) -> None:
+    # Task 2: the revision insert and its maintenance event must land in the
+    # same `self._sessions.begin()` block. Pre-insert a maintenance event
+    # row that collides on `event_id` with the one the second revise sends,
+    # so the event insert itself fails with a clean `IntegrityError` -- then
+    # assert the revision never landed either.
+    from datetime import datetime, timezone
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
+    from tap.modules.agent_team.domain.models import MaintenanceEvent
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import AiAgentRevision, RevisionConflict, text_digest
+    from tap.platform.db.project_scope import scope_values
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+
+        def _revision(revision_id: str, instruction: str) -> AiAgentRevision:
+            return AiAgentRevision(
+                revision_id=revision_id,
+                asset_id="event-atomic-agent",
+                display_name="Event atomic agent",
+                scope=VALIDATION_SCOPE,
+                content_digest=text_digest(revision_id),
+                system_instruction_digest=text_digest(instruction),
+                tool_allowlist=frozenset({"knowledge.search"}),
+                output_schema_digest=text_digest("schema"),
+                source_kind="authored",
+            )
+
+        v1 = _revision("event-atomic-agent-v1", "v1 instruction")
+        await catalog.insert_agent_revision(v1, base_revision_id=None)
+
+        now = datetime.now(timezone.utc)
+        async with sessions() as session:
+            await session.execute(
+                agent_maintenance_event.insert().values(
+                    event_id="dup-event",
+                    agent_id="event-atomic-agent",
+                    kind="revised",
+                    revision_id=None,
+                    feedback_id=None,
+                    note=None,
+                    occurred_at=now,
+                    **scope_values(VALIDATION_SCOPE),
+                )
+            )
+            await session.commit()
+
+        v2 = _revision("event-atomic-agent-v2", "v2 instruction")
+        colliding_event = MaintenanceEvent(
+            event_id="dup-event",
+            project_id=VALIDATION_SCOPE.project_id,
+            agent_id="event-atomic-agent",
+            actor_id=VALIDATION_SCOPE.actor_id,
+            kind="revised",
+            revision_id=v2.revision_id,
+            feedback_id=None,
+            note=None,
+            occurred_at=now,
+        )
+
+        with pytest.raises(RevisionConflict):
+            await catalog.insert_agent_revision(
+                v2, base_revision_id=v1.revision_id, event=colliding_event
+            )
+
+        revisions = await catalog.list_revisions("agent", "event-atomic-agent")
+        assert [item.revision_id for item in revisions] == [v1.revision_id]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_new_agent_owner_defaults_to_creator(owned_project_mysql) -> None:
+    # Task 1's ruling: the first `ai_agent` insert (inside
+    # `insert_agent_revision`, when no parent row exists yet) writes
+    # `owner_actor_id`/`owner_assigned_at` from the creating scope. Kept
+    # here as Task 2 coverage since authoring writes (this task's actual
+    # scope) run through this same path.
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog, ai_agent
+    from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+
+        v1 = AiAgentRevision(
+            revision_id="owner-default-agent-v1",
+            asset_id="owner-default-agent",
+            display_name="Owner default agent",
+            scope=VALIDATION_SCOPE,
+            content_digest=text_digest("owner-default-agent-v1"),
+            system_instruction_digest=text_digest("v1 instruction"),
+            tool_allowlist=frozenset({"knowledge.search"}),
+            output_schema_digest=text_digest("schema"),
+            source_kind="authored",
+        )
+        await catalog.insert_agent_revision(v1, base_revision_id=None)
+
+        async with sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(
+                            ai_agent.c.owner_actor_id,
+                            ai_agent.c.owner_assigned_at,
+                            ai_agent.c.created_at,
+                        ).where(ai_agent.c.agent_id == "owner-default-agent")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+
+        assert row["owner_actor_id"] == VALIDATION_SCOPE.actor_id
+        assert row["owner_assigned_at"] == row["created_at"]
+    finally:
+        await engine.dispose()

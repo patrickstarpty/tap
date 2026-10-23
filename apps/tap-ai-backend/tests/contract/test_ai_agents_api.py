@@ -71,7 +71,7 @@ class _FakeCatalog:
 
     # -- write: AgentAuthoringCatalog -------------------------------------
 
-    async def insert_agent_revision(self, revision, *, base_revision_id):
+    async def insert_agent_revision(self, revision, *, base_revision_id, event=None):
         from tap.modules.ai.domain.assets import RevisionConflict
 
         history = self._agents.setdefault(revision.asset_id, [])
@@ -81,7 +81,7 @@ class _FakeCatalog:
         history.append(revision)
         return revision
 
-    async def set_asset_enabled(self, kind, asset_id, enabled):
+    async def set_asset_enabled(self, kind, asset_id, enabled, *, event=None):
         store = self._agents if kind == "agent" else self._skills
         history = store.get(asset_id)
         if not history:
