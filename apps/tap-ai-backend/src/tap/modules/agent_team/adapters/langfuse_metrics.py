@@ -23,11 +23,12 @@ from different date sub-queries).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 import httpx
@@ -46,6 +47,10 @@ _TRACES_PATH = "/api/public/traces"
 _AGENT_PREFIX = "agent:"
 _OUTCOME_PREFIX = "outcome:"
 _PROJECT_PREFIX = "project:"
+# Malformed response bodies (bad numbers, bad timestamps, non-dict rows) are a
+# backend-contract break, not a programming error -- mapped to
+# `RuntimeMetricsUnavailable` same as a network failure.
+_PARSE_ERRORS = (InvalidOperation, ValueError, AttributeError, TypeError, KeyError)
 
 
 def _tag_value(tags: Sequence[str], prefix: str) -> str | None:
@@ -114,64 +119,92 @@ class LangfuseRuntimeMetrics:
         self._timeout_seconds = timeout_seconds
 
     async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
-        from_ts, to_ts = period.utc_bounds()
+        """Aggregated runtime stats per Agent over `period`.
+
+        `AgentRuntimeStats.latency_p50_ms` is a run-count-weighted mean of
+        each `outcome:`/date-segment group's own p50 (see module docstring),
+        not a statistically exact p50 over all runs -- Langfuse's Metrics API
+        never returns a single p50 spanning multiple `tags` rows or multiple
+        date-bisected sub-queries.
+
+        The whole call is bounded by `timeout_seconds` regardless of how many
+        underlying HTTP requests the row-limit bisection needs; raises
+        `RuntimeMetricsUnavailable` on timeout, transport failure, or a
+        malformed response body.
+        """
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._agent_stats(project_id, period)
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable() from error
+        except _PARSE_ERRORS as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    async def _agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
         base_filters = self._base_filters(project_id)
 
-        outcome_rows = await self._fetch_rows(
-            lambda p: self._metrics_query(
-                view="traces",
-                dimensions=["tags"],
-                metrics=[
-                    {"measure": "count", "aggregation": "count"},
-                    {"measure": "latency", "aggregation": "sum"},
-                    {"measure": "latency", "aggregation": "p50"},
-                    {"measure": "totalCost", "aggregation": "sum"},
-                ],
-                filters=base_filters,
-                period=p,
+        outcome_rows, served_rows, generation_rows, tool_rows = await asyncio.gather(
+            self._fetch_rows(
+                lambda p: self._metrics_query(
+                    view="traces",
+                    dimensions=["tags"],
+                    metrics=[
+                        {"measure": "count", "aggregation": "count"},
+                        {"measure": "latency", "aggregation": "sum"},
+                        {"measure": "latency", "aggregation": "p50"},
+                        {"measure": "totalCost", "aggregation": "sum"},
+                    ],
+                    filters=base_filters,
+                    period=p,
+                ),
+                period,
             ),
-            period,
-        )
-        served_rows = await self._fetch_rows(
-            lambda p: self._metrics_query(
-                view="traces",
-                dimensions=["tags", "userId"],
-                metrics=[{"measure": "count", "aggregation": "count"}],
-                filters=base_filters,
-                period=p,
+            self._fetch_rows(
+                lambda p: self._metrics_query(
+                    view="traces",
+                    dimensions=["tags", "userId"],
+                    metrics=[{"measure": "count", "aggregation": "count"}],
+                    filters=base_filters,
+                    period=p,
+                ),
+                period,
             ),
-            period,
-        )
-        generation_rows = await self._fetch_rows(
-            lambda p: self._metrics_query(
-                view="observations",
-                dimensions=["tags", "userId"],
-                metrics=[{"measure": "count", "aggregation": "count"}],
-                filters=[
-                    *base_filters,
-                    {"column": "type", "operator": "=", "value": "GENERATION", "type": "string"},
-                ],
-                period=p,
+            self._fetch_rows(
+                lambda p: self._metrics_query(
+                    view="observations",
+                    dimensions=["tags", "userId"],
+                    metrics=[{"measure": "count", "aggregation": "count"}],
+                    filters=[
+                        *base_filters,
+                        {
+                            "column": "type",
+                            "operator": "=",
+                            "value": "GENERATION",
+                            "type": "string",
+                        },
+                    ],
+                    period=p,
+                ),
+                period,
             ),
-            period,
-        )
-        tool_rows = await self._fetch_rows(
-            lambda p: self._metrics_query(
-                view="observations",
-                dimensions=["tags", "userId"],
-                metrics=[{"measure": "count", "aggregation": "count"}],
-                filters=[
-                    *base_filters,
-                    {
-                        "column": "name",
-                        "operator": "starts with",
-                        "value": "tool.",
-                        "type": "string",
-                    },
-                ],
-                period=p,
+            self._fetch_rows(
+                lambda p: self._metrics_query(
+                    view="observations",
+                    dimensions=["tags", "userId"],
+                    metrics=[{"measure": "count", "aggregation": "count"}],
+                    filters=[
+                        *base_filters,
+                        {
+                            "column": "name",
+                            "operator": "starts with",
+                            "value": "tool.",
+                            "type": "string",
+                        },
+                    ],
+                    period=p,
+                ),
+                period,
             ),
-            period,
         )
 
         accumulators = self._accumulate_outcomes(outcome_rows)
@@ -179,15 +212,11 @@ class LangfuseRuntimeMetrics:
         generation_calls = self._accumulate_counts(generation_rows)
         tool_calls = self._accumulate_counts(tool_rows)
 
-        agent_keys = (
-            set(accumulators) | set(served) | set(generation_calls) | set(tool_calls)
-        )
+        agent_keys = set(accumulators) | set(served) | set(generation_calls) | set(tool_calls)
         results: list[AgentRuntimeStats] = []
         for agent_key in sorted(agent_keys):
             acc = accumulators.get(agent_key, _StatsAccumulator())
-            p50 = (
-                _as_int(acc.latency_weighted_p50 / acc.runs) if acc.runs > 0 else None
-            )
+            p50 = _as_int(acc.latency_weighted_p50 / acc.runs) if acc.runs > 0 else None
             results.append(
                 AgentRuntimeStats(
                     agent_key=agent_key,
@@ -206,6 +235,25 @@ class LangfuseRuntimeMetrics:
         return results
 
     async def trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
+        """Per-Agent, per-bucket runtime trend. Langfuse labels week/month
+        buckets by the bucket's own start (the Monday of the week, or the
+        1st of the month) even when `fromTimestamp` falls mid-bucket -- so a
+        row-limit bisection that splits a period mid-bucket yields two
+        sub-queries that both report the same `time_dimension` label for
+        that bucket. Grouping by `(bucket_start, agent_key)` before summing
+        (rather than concatenating rows into one list of `TrendPoint`s)
+        merges those back into a single point instead of double-reporting
+        the bucket.
+        """
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._trend(project_id, period, granularity)
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable() from error
+        except _PARSE_ERRORS as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    async def _trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
         base_filters = self._base_filters(project_id)
         rows = await self._fetch_rows(
             lambda p: self._metrics_query(
@@ -258,42 +306,53 @@ class LangfuseRuntimeMetrics:
             for (bucket_start, agent_key), bucket in sorted(buckets.items())
         ]
 
-    async def last_runs(
-        self, project_id: str, agent_keys: Sequence[str]
-    ) -> dict[str, datetime]:
-        result: dict[str, datetime] = {}
-        for agent_key in agent_keys:
-            try:
-                response = await self._client.get(
-                    self._host + _TRACES_PATH,
-                    params={
-                        "tags": [f"{_PROJECT_PREFIX}{project_id}", f"{_AGENT_PREFIX}{agent_key}"],
-                        "orderBy": "timestamp.desc",
-                        "limit": "1",
-                    },
-                    auth=self._auth,
-                    timeout=self._timeout_seconds,
-                )
-                response.raise_for_status()
-                body = response.json()
-            except (httpx.HTTPError, ValueError) as error:
-                raise RuntimeMetricsUnavailable() from error
-            if not isinstance(body, dict):
-                raise RuntimeMetricsUnavailable()
-            data = body.get("data")
-            if not isinstance(data, list) or not data:
-                continue
-            first = data[0]
-            if not isinstance(first, dict):
-                raise RuntimeMetricsUnavailable()
-            timestamp = first.get("timestamp")
-            if not isinstance(timestamp, str):
-                raise RuntimeMetricsUnavailable()
-            try:
-                result[agent_key] = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            except ValueError as error:
-                raise RuntimeMetricsUnavailable() from error
-        return result
+    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._last_runs(project_id, agent_keys)
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable() from error
+        except _PARSE_ERRORS as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    async def _last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        pairs = await asyncio.gather(
+            *(self._fetch_last_run(project_id, agent_key) for agent_key in agent_keys)
+        )
+        return {agent_key: timestamp for agent_key, timestamp in pairs if timestamp is not None}
+
+    async def _fetch_last_run(self, project_id: str, agent_key: str) -> tuple[str, datetime | None]:
+        try:
+            response = await self._client.get(
+                self._host + _TRACES_PATH,
+                params={
+                    "tags": [f"{_PROJECT_PREFIX}{project_id}", f"{_AGENT_PREFIX}{agent_key}"],
+                    "orderBy": "timestamp.desc",
+                    "limit": "1",
+                    "environment": self._environment,
+                },
+                auth=self._auth,
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeMetricsUnavailable() from error
+        if not isinstance(body, dict):
+            raise RuntimeMetricsUnavailable()
+        data = body.get("data")
+        if not isinstance(data, list) or not data:
+            return agent_key, None
+        first = data[0]
+        if not isinstance(first, dict):
+            raise RuntimeMetricsUnavailable()
+        timestamp = first.get("timestamp")
+        if not isinstance(timestamp, str):
+            raise RuntimeMetricsUnavailable()
+        try:
+            return agent_key, datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise RuntimeMetricsUnavailable() from error
 
     def _base_filters(self, project_id: str) -> list[dict[str, Any]]:
         return [
@@ -345,8 +404,10 @@ class LangfuseRuntimeMetrics:
         if split is None:
             return rows
         first, second = split
-        first_rows = await self._fetch_rows(build_query, first)
-        second_rows = await self._fetch_rows(build_query, second)
+        first_rows, second_rows = await asyncio.gather(
+            self._fetch_rows(build_query, first),
+            self._fetch_rows(build_query, second),
+        )
         return [*first_rows, *second_rows]
 
     async def _request_metrics(self, query: dict[str, Any]) -> list[dict[str, Any]]:
@@ -368,9 +429,7 @@ class LangfuseRuntimeMetrics:
             raise RuntimeMetricsUnavailable()
         return cast(list[dict[str, Any]], data)
 
-    def _accumulate_outcomes(
-        self, rows: list[dict[str, Any]]
-    ) -> dict[str, _StatsAccumulator]:
+    def _accumulate_outcomes(self, rows: list[dict[str, Any]]) -> dict[str, _StatsAccumulator]:
         accumulators: dict[str, _StatsAccumulator] = {}
         for row in rows:
             tags = row.get("tags")
@@ -396,9 +455,7 @@ class LangfuseRuntimeMetrics:
             )
         return accumulators
 
-    def _accumulate_served(
-        self, rows: list[dict[str, Any]]
-    ) -> dict[str, tuple[ServedActor, ...]]:
+    def _accumulate_served(self, rows: list[dict[str, Any]]) -> dict[str, tuple[ServedActor, ...]]:
         per_agent: dict[str, dict[str, int]] = {}
         for row in rows:
             tags = row.get("tags")

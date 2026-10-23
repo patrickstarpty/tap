@@ -7,7 +7,9 @@ shapes these tests assert against.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -61,13 +63,14 @@ def _make_client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-def _adapter(client: httpx.AsyncClient) -> LangfuseRuntimeMetrics:
+def _adapter(client: httpx.AsyncClient, *, timeout_seconds: float = 10.0) -> LangfuseRuntimeMetrics:
     return LangfuseRuntimeMetrics(
         client,
         host=_HOST,
         public_key="pk",
         secret_key="sk",
         environment=_ENVIRONMENT,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -241,8 +244,24 @@ async def test_outcome_tags_split_failures_abstained_canceled() -> None:
 
 @pytest.mark.asyncio
 async def test_split_on_row_limit_merges_without_double_count() -> None:
+    """A query that hits the 1000-row cap is bisected by date; a half that
+    still hits the cap is itself bisected again (quarters), recursively. The
+    full-period response uses a distinct per-row count (7) from every
+    sub-query so a bug that accidentally kept the discarded full-period rows
+    instead of the bisected ones would change the total."""
     period = Period(date(2026, 1, 1), date(2026, 1, 4))
-    calls: list[Period] = []
+    calls: list[tuple[str, str]] = []
+
+    row_plan = {
+        # Full period: pretend the cap was hit; these rows must be discarded.
+        ("2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z"): (1000, 7),
+        # First half (days 1-2): below the cap, no further split.
+        ("2026-01-01T00:00:00.000Z", "2026-01-03T00:00:00.000Z"): (1, 500),
+        # Second half (days 3-4): hits the cap again -> bisected into quarters.
+        ("2026-01-03T00:00:00.000Z", "2026-01-05T00:00:00.000Z"): (1000, 1),
+        ("2026-01-03T00:00:00.000Z", "2026-01-04T00:00:00.000Z"): (1, 300),
+        ("2026-01-04T00:00:00.000Z", "2026-01-05T00:00:00.000Z"): (1, 400),
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         query = _query_of(request)
@@ -251,26 +270,23 @@ async def test_split_on_row_limit_merges_without_double_count() -> None:
         from_ts = query["fromTimestamp"]
         to_ts = query["toTimestamp"]
         calls.append((from_ts, to_ts))
-        if from_ts == "2026-01-01T00:00:00.000Z" and to_ts == "2026-01-05T00:00:00.000Z":
-            # Full period: pretend the cap was hit.
-            return _metrics_response(
-                [_row([f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"], count=1)] * 1000
-            )
-        if from_ts == "2026-01-01T00:00:00.000Z" and to_ts == "2026-01-03T00:00:00.000Z":
-            return _metrics_response(
-                [_row([f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"], count=400)]
-            )
-        if from_ts == "2026-01-03T00:00:00.000Z" and to_ts == "2026-01-05T00:00:00.000Z":
-            return _metrics_response(
-                [_row([f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"], count=600)]
-            )
-        raise AssertionError(f"unexpected sub-period {from_ts}..{to_ts}")
+        key = (from_ts, to_ts)
+        if key not in row_plan:
+            raise AssertionError(f"unexpected sub-period {from_ts}..{to_ts}")
+        num_rows, count = row_plan[key]
+        return _metrics_response(
+            [_row([f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"], count=count)]
+            * num_rows
+        )
 
     async with _make_client(handler) as client:
         stats = await _adapter(client).agent_stats(_PROJECT_ID, period)
 
-    assert len(calls) == 3
-    assert stats[0].runs == 1000
+    assert len(calls) == 5
+    # First half (500) + the two quarters that replaced the re-capped second
+    # half (300 + 400); the discarded full-period and second-half-capped
+    # responses must not contribute.
+    assert stats[0].runs == 500 + 300 + 400
 
 
 @pytest.mark.asyncio
@@ -415,6 +431,71 @@ async def test_gap_filled_empty_buckets_are_ignored() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trend_merges_rows_sharing_a_bucket_label_across_split_halves() -> None:
+    """Langfuse labels week/month buckets by the bucket's own start even when
+    `fromTimestamp` is mid-bucket, so a row-limit split that bisects mid-week
+    produces two sub-queries that both report the same `time_dimension`.
+    Merging must sum by `(bucket_start, agent_key)`, not just concatenate
+    rows into separate points."""
+    period = Period(date(2026, 1, 5), date(2026, 1, 8))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = _query_of(request)
+        if _classify(query) != "trend":
+            return _metrics_response([])
+        from_ts = query["fromTimestamp"]
+        to_ts = query["toTimestamp"]
+        if from_ts == "2026-01-05T00:00:00.000Z" and to_ts == "2026-01-09T00:00:00.000Z":
+            # Full period: pretend the cap was hit.
+            return _metrics_response(
+                [
+                    _row(
+                        [f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"],
+                        count=1,
+                        time_dimension="2026-01-05",
+                    )
+                ]
+                * 1000
+            )
+        if from_ts == "2026-01-05T00:00:00.000Z" and to_ts == "2026-01-07T00:00:00.000Z":
+            # First half: both halves' rows fall in the same (Monday-labeled) week bucket.
+            return _metrics_response(
+                [
+                    _row(
+                        [f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"],
+                        count=3,
+                        latency_sum=30,
+                        cost_sum=0.3,
+                        time_dimension="2026-01-05",
+                    )
+                ]
+            )
+        if from_ts == "2026-01-07T00:00:00.000Z" and to_ts == "2026-01-09T00:00:00.000Z":
+            return _metrics_response(
+                [
+                    _row(
+                        [f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"],
+                        count=5,
+                        latency_sum=50,
+                        cost_sum=0.5,
+                        time_dimension="2026-01-05",
+                    )
+                ]
+            )
+        raise AssertionError(f"unexpected sub-period {from_ts}..{to_ts}")
+
+    async with _make_client(handler) as client:
+        points = await _adapter(client).trend(_PROJECT_ID, period, "week")
+
+    assert len(points) == 1
+    assert points[0].bucket_start == date(2026, 1, 5)
+    assert points[0].agent_key == "a"
+    assert points[0].runs == 8
+    assert points[0].latency_total_ms == 80
+    assert points[0].cost_usd == Decimal("0.8")
+
+
+@pytest.mark.asyncio
 async def test_last_runs_queries_traces_api_per_agent() -> None:
     captured: list[httpx.Request] = []
 
@@ -424,9 +505,7 @@ async def test_last_runs_queries_traces_api_per_agent() -> None:
             (v for v in request.url.params.get_list("tags") if v.startswith("agent:")), None
         )
         if agent_tag == "agent:a":
-            return httpx.Response(
-                200, json={"data": [{"timestamp": "2026-10-23T05:57:24.024Z"}]}
-            )
+            return httpx.Response(200, json={"data": [{"timestamp": "2026-10-23T05:57:24.024Z"}]})
         return httpx.Response(200, json={"data": []})
 
     async with _make_client(handler) as client:
@@ -439,6 +518,52 @@ async def test_last_runs_queries_traces_api_per_agent() -> None:
         assert tags[1].startswith("agent:")
         assert request.url.params["orderBy"] == "timestamp.desc"
         assert request.url.params["limit"] == "1"
+        assert request.url.params["environment"] == _ENVIRONMENT
 
     assert result == {"a": datetime(2026, 10, 23, 5, 57, 24, 24000, tzinfo=UTC)}
     assert "b" not in result
+
+
+@pytest.mark.asyncio
+async def test_slow_backend_raises_unavailable_within_timeout_budget() -> None:
+    """Every public method is bounded by `timeout_seconds` end-to-end, no
+    matter how many HTTP calls the row-limit bisection or the per-agent
+    `last_runs` fan-out need -- a backend that just hangs must fail fast,
+    not after the sum of many sequential per-call waits."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return _metrics_response([])
+
+    started = time.monotonic()
+    async with _make_client(handler) as client:
+        with pytest.raises(RuntimeMetricsUnavailable):
+            await _adapter(client, timeout_seconds=0.1).agent_stats(
+                _PROJECT_ID, Period(date(2026, 1, 1), date(2026, 1, 1))
+            )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+
+
+@pytest.mark.asyncio
+async def test_malformed_metric_value_raises_unavailable() -> None:
+    """A non-numeric metric value (a Langfuse response-shape break, not a
+    network failure) must still surface as `RuntimeMetricsUnavailable`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = _query_of(request)
+        if _classify(query) == "stats":
+            row = _row(
+                [f"project:{_PROJECT_ID}", "agent:a", "outcome:completed"],
+                count=1,
+            )
+            row["sum_totalCost"] = "not-a-number"
+            return _metrics_response([row])
+        return _metrics_response([])
+
+    async with _make_client(handler) as client:
+        with pytest.raises(RuntimeMetricsUnavailable):
+            await _adapter(client).agent_stats(
+                _PROJECT_ID, Period(date(2026, 1, 1), date(2026, 1, 1))
+            )

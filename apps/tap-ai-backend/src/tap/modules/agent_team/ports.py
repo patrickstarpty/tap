@@ -29,6 +29,9 @@ class AgentRuntimeStats:
     abstained: int
     canceled: int
     latency_total_ms: int
+    # A run-count-weighted mean of each underlying group's p50 (Langfuse never
+    # returns one p50 over the whole period -- see `LangfuseRuntimeMetrics.agent_stats`
+    # for why), not a statistically exact p50 over all of `runs`.
     latency_p50_ms: int | None
     cost_usd: Decimal
     # Sorted by `runs` descending, then `actor_id` ascending.
@@ -57,9 +60,7 @@ class AgentRuntimeMetrics(Protocol):
         self, project_id: str, period: Period, granularity: str
     ) -> list[TrendPoint]: ...
 
-    async def last_runs(
-        self, project_id: str, agent_keys: Sequence[str]
-    ) -> dict[str, datetime]:
+    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
         """The timestamp of the most recent trace for each Agent, regardless of
         period. Agent keys with no trace are absent from the result."""
         ...
