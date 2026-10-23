@@ -1,7 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import {
-  resolvePeriod,
   useOrgChart,
   useTeamMembers,
   useTeamPeople,
@@ -23,6 +22,7 @@ import { PeopleTable } from "./PeopleTable";
 import { RosterCards } from "./RosterCards";
 import { RosterTable, type RosterSort } from "./RosterTable";
 import { RuntimeBadge, RuntimeMark } from "./RuntimeBadge";
+import { useSparklines } from "./useSparklines";
 
 export interface TeamTabProps {
   projectId: string;
@@ -31,8 +31,6 @@ export interface TeamTabProps {
   onOpenMember: (agentKey: string) => void;
   onCreateAgent: () => void;
 }
-
-const NO_FILTERS: MemberFilters = {};
 
 type RosterView = "cards" | "table";
 type StatusFilter = NonNullable<MemberFilters["status"]>;
@@ -68,12 +66,8 @@ export function TeamTab({
   const people = useTeamPeople(projectId, period);
   const orgChart = useOrgChart(projectId, period);
   // Cards always show the last 30 days, whatever period is selected.
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const sparkPeriod = useMemo(
-    () => resolvePeriod("last30", new Date(`${todayKey}T00:00:00Z`)),
-    [todayKey],
-  );
-  const spark = useTeamMembers(projectId, sparkPeriod, NO_FILTERS);
+  const { query: spark, byAgentKey: sparklineByAgentKey } =
+    useSparklines(projectId);
 
   const rows = members.data?.data;
   const owners = [
@@ -94,15 +88,6 @@ export function TeamTab({
       ),
     [spark.data, rows],
   );
-  const sparklineByAgentKey = useMemo(() => {
-    const map = new Map<string, number[]>();
-    for (const row of spark.data?.data ?? [])
-      map.set(
-        row.agentKey,
-        row.trend.map((point) => point.runs),
-      );
-    return map;
-  }, [spark.data]);
   const refreshing = members.isPlaceholderData || summary.isPlaceholderData;
 
   if (

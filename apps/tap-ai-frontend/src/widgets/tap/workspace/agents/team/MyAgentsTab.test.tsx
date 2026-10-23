@@ -126,4 +126,61 @@ describe("MyAgentsTab", () => {
     expect(screen.getByText("你还没有负责的 Agent")).toBeTruthy();
     expect(screen.getByText("所选周期内没有 Agent 为你服务")).toBeTruthy();
   });
+
+  it("shows English empty states", () => {
+    setup({});
+    render(
+      <MyAgentsTab
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        period={period}
+        onOpenMember={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("No feedback waiting for you")).toBeTruthy();
+    expect(screen.getByText("You do not own any Agents yet")).toBeTruthy();
+    expect(
+      screen.getByText("No Agent has served you in this period"),
+    ).toBeTruthy();
+  });
+
+  it("labels comment-only feedback and omits a missing comment", () => {
+    setup({
+      owned: [row("a1", "Reviewer")],
+      pendingFeedback: [
+        {
+          feedbackId: "f1",
+          agentKey: "a1",
+          actorId: "u1",
+          rating: null,
+          comment: "Please fix",
+          conversationId: "c",
+          turnId: "t",
+          updatedAt: "2026-10-22T10:30:00Z",
+        },
+        {
+          feedbackId: "f2",
+          agentKey: "a1",
+          actorId: "u1",
+          rating: "up",
+          comment: null,
+          conversationId: "c",
+          turnId: "t2",
+          updatedAt: "2026-10-22T11:30:00Z",
+        },
+      ],
+    });
+    render(
+      <MyAgentsTab
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        period={period}
+        onOpenMember={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Comment only/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Helpful/ })).toBeTruthy();
+    expect(screen.getByText("Please fix")).toBeTruthy();
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThanOrEqual(2);
+  });
 });

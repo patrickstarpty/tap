@@ -28,7 +28,7 @@ export function MyAgentsTab({
   const text = copy.agentTeam;
   const labels = text.mine;
   const person = usePerson(projectId, "me", period);
-  const sparklines = useSparklines(projectId);
+  const { byAgentKey: sparklines } = useSparklines(projectId);
 
   if (person.isPending) return <p role="status">{text.loading}</p>;
   if (person.isError || person.data === undefined)
