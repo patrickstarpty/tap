@@ -312,15 +312,27 @@ _COMMENT_RUN = r"[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)
 # argument list, not a citation; a full-width "（" after text ("登录（S9）")
 # is still a citation.
 _COMMENT_OPEN = r"(?:（|(?<![A-Za-z0-9_.])\()"
+# In a comment, "（满足 S9）" / "（对应 S1）" / "（参考 S8）" / "（符合 S1）" also cite;
+# these words only count inside the parentheses right before a supplied run.
+_COMMENT_CUE = rf"(?:(?:满足|对应|参考|符合)[ \t]*[:：]?[ \t]*|{_CITATION_CUE})"
 _COMMENT_LABELS = re.compile(
-    rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_CITATION_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_COMMENT_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    # "（需替换 selector；S1, S3）": a run closing the parentheses after a
+    # semicolon (a comma could separate code arguments, so it does not count).
+    rf"|[ \t]*[；;][ \t]*(?P<tail>{_COMMENT_RUN})[ \t]*(?=[）)])"
     # "（S2：固定值 123456）": only the label prefix goes.
     rf"|(?:(?<=（)|(?<![A-Za-z0-9_.]\()(?<=\())"
-    rf"[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
+    rf"[ \t]*(?:{_COMMENT_CUE})?(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
 )
 
 
 def _comment_start(line: str) -> int | None:
+    return _scan_line(line)[0]
+
+
+def _scan_line(line: str) -> tuple[int | None, bool]:
+    """The index where a `#`/`//` comment starts (or None), and whether a
+    string literal is still open at the end of the code before it."""
     quote = ""
     index = 0
     while index < len(line):
@@ -336,24 +348,80 @@ def _comment_start(line: str) -> int | None:
         elif (char == "#" or line.startswith("//", index)) and (
             index == 0 or line[index - 1] in " \t"
         ):
-            return index
+            return index, False
         index += 1
-    return None
+    return None, bool(quote)
+
+
+# "# 固定验证码 [S2]", "# 6. …[S7][S8]": inside code a marker is never rendered
+# as a citation. It is removed only as the final content of a comment (before
+# optional closing punctuation) that has its own text before it; a marker in
+# the middle of a comment, after a ":" or "e.g." lead-in, after a bare list
+# bullet or an ASCII word, alone in the comment, or as an index (`items[S1]`)
+# is kept.
+_COMMENT_END_MARKERS = re.compile(
+    r"(?<![A-Za-z0-9_.\]])[ \t]*(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\])+)"
+    r"[ \t]*(?P<close>[。.;；]?[）)]?)[ \t]*$"
+)
+_COMMENT_TOKEN = re.compile(r"^(?:#+|//+)[ \t]*")
+_MARKER_LEAD_IN = re.compile(
+    r"(?:[:：]|\be\.g\.|\bi\.e\.|例如|比如|如下|^(?:[-*+]|\d+[.)、]|\[[ xX]?\]))$",
+    re.IGNORECASE,
+)
+
+
+def _without_end_markers(comment: str, labels: frozenset[str], *, after_code: bool) -> str:
+    match = _COMMENT_END_MARKERS.search(comment)
+    if match is None or not set(_LABEL.findall(match["markers"])) <= labels:
+        return comment
+    before = comment[: match.start()].rstrip()
+    text = _COMMENT_TOKEN.sub("", before).strip()
+    if not text and after_code and not match["close"]:
+        # `assert …  # [S1]`: a trailing comment that is only a marker run
+        # cites the code line; the whole comment goes. A whole-line "# [S1]"
+        # is kept.
+        return ""
+    # The text must end in CJK prose ("固定验证码", "…可见）"): an ASCII word
+    # right before the marker ("# pattern [S1]") may be naming the bracket
+    # syntax itself, so it is kept.
+    if not text or _MARKER_LEAD_IN.search(text) or text[-1].isascii():
+        return comment
+    return before + match["close"]
+
+
+# A marker run after a closed string literal or call, separated by
+# whitespace at the end of a code line (`assert x != "" [S1][S8]`,
+# `….is_visible() [S7]`), is a citation: indexing a literal or a call result
+# with a label-like name after a space is not real code; `data [S1]` and
+# `fetch()[S1]` are left alone.
+_TRAILING_MARKERS = re.compile(
+    r"(?<=['\")])[ \t]+(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\])+)[ \t]*$"
+)
 
 
 def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
     lines = code.split("\n")
     for number, line in enumerate(lines):
-        start = _comment_start(line)
+        start, open_string = _scan_line(line)
+        code_part = line if start is None else line[:start]
+        if not open_string:
+            code_part = _TRAILING_MARKERS.sub(
+                lambda match: ("" if set(_LABEL.findall(match["markers"])) <= labels else match[0]),
+                code_part,
+            )
         if start is None:
+            lines[number] = code_part
             continue
         comment = _COMMENT_LABELS.sub(
             lambda match: (
-                "" if set(_LABEL.findall(match["run"] or match["prefix"])) <= labels else match[0]
+                ""
+                if set(_LABEL.findall(match["run"] or match["prefix"] or match["tail"])) <= labels
+                else match[0]
             ),
             line[start:],
         )
-        lines[number] = line[:start] + comment
+        comment = _without_end_markers(comment, labels, after_code=bool(code_part.strip()))
+        lines[number] = code_part.rstrip() if not comment else code_part + comment
     return "\n".join(lines)
 
 
