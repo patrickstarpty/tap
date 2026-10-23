@@ -3291,17 +3291,20 @@ export function TapperWorkspace() {
                 initialTab={
                   pendingAgentRevisionId !== null ? "config" : undefined
                 }
-                configTab={
+                configTab={(request) => (
                   <AgentsWorkspace
                     projectId={projectId}
                     copy={copy}
                     onUse={(revisionId) => useCatalogItem("agent", revisionId)}
-                    initialDetailRevisionId={pendingAgentRevisionId}
-                    onInitialDetailConsumed={() =>
-                      setPendingAgentRevisionId(null)
+                    initialDetailRevisionId={
+                      request.initialDetailRevisionId ?? pendingAgentRevisionId
                     }
+                    onInitialDetailConsumed={() => {
+                      request.onInitialDetailConsumed();
+                      setPendingAgentRevisionId(null);
+                    }}
                   />
-                }
+                )}
               />
             </>
           ) : (

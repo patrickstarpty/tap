@@ -458,6 +458,59 @@ export interface WorkspaceCopy {
         maintenance: string;
       };
     };
+    profile: {
+      close: string;
+      tabs: {
+        basic: string;
+        workload: string;
+        history: string;
+        feedback: string;
+        settings: string;
+      };
+      tablistLabel: string;
+      noOwner: string;
+      servedPeople: string;
+      noServed: string;
+      currentRevision: string;
+      joinedAt: string;
+      secondaryMetrics: string;
+      generationCalls: string;
+      toolCalls: string;
+      callsPerRun: string;
+      abstained: string;
+      canceled: string;
+      trendRuns: string;
+      trendFailures: string;
+      runsUnit: string;
+      noHistory: string;
+      loadMore: string;
+      openRevision: string;
+      maintenanceKinds: {
+        revised: string;
+        skill_upgraded: string;
+        disabled: string;
+        enabled: string;
+        feedback_resolved: string;
+        owner_transferred: string;
+      };
+      noFeedback: string;
+      feedbackCount: string;
+      resolutionNote: string;
+      noteTooLong: string;
+      jobTitleLabel: string;
+      jobTitleTooLong: string;
+      save: string;
+      newOwnerLabel: string;
+      transferFailed: string;
+      errors: {
+        actor_not_found: string;
+        agent_read_only: string;
+        job_title_too_long: string;
+        note_too_long: string;
+        feedback_not_found: string;
+        generic: string;
+      };
+    };
   };
   migrationBanner: {
     heading: string;
@@ -1071,6 +1124,59 @@ export const WORKSPACE_COPY = {
           maintenance: "Maintenance actions",
         },
       },
+      profile: {
+        close: "Close",
+        tabs: {
+          basic: "Basics",
+          workload: "Workload",
+          history: "History",
+          feedback: "Pending feedback",
+          settings: "Settings",
+        },
+        tablistLabel: "Agent profile sections",
+        noOwner: "No owner",
+        servedPeople: "People served",
+        noServed: "No one served in this period",
+        currentRevision: "Current revision",
+        joinedAt: "Joined",
+        secondaryMetrics: "Call volume",
+        generationCalls: "Model calls",
+        toolCalls: "Tool calls",
+        callsPerRun: "Calls per run",
+        abstained: "Abstained",
+        canceled: "Canceled",
+        trendRuns: "Runs",
+        trendFailures: "Failures",
+        runsUnit: "runs",
+        noHistory: "No maintenance history yet.",
+        loadMore: "Load more",
+        openRevision: "Open revision",
+        maintenanceKinds: {
+          revised: "Revised",
+          skill_upgraded: "Skill upgraded",
+          disabled: "Disabled",
+          enabled: "Enabled",
+          feedback_resolved: "Feedback resolved",
+          owner_transferred: "Owner transferred",
+        },
+        noFeedback: "No pending feedback.",
+        feedbackCount: "Pending feedback: {count}",
+        resolutionNote: "Resolution note (optional, up to 500 characters)",
+        noteTooLong: "The note is over 500 characters.",
+        jobTitleLabel: "Job title",
+        jobTitleTooLong: "The job title is over 64 characters.",
+        save: "Save",
+        newOwnerLabel: "New owner (actor ID)",
+        transferFailed: "The owner could not be transferred.",
+        errors: {
+          actor_not_found: "That person was not found in this Project.",
+          agent_read_only: "This Agent is read-only.",
+          job_title_too_long: "The job title is over 64 characters.",
+          note_too_long: "The note is over 500 characters.",
+          feedback_not_found: "That feedback no longer exists.",
+          generic: "The change could not be saved.",
+        },
+      },
     },
     migrationBanner: {
       heading: "Local drafts found",
@@ -1670,6 +1776,59 @@ export const WORKSPACE_COPY = {
           servedByAgents: "被服务 Agent 数",
           calls: "调用次数",
           maintenance: "维护动作数",
+        },
+      },
+      profile: {
+        close: "关闭",
+        tabs: {
+          basic: "基本信息",
+          workload: "工作量",
+          history: "履历",
+          feedback: "待处理反馈",
+          settings: "设置",
+        },
+        tablistLabel: "Agent 档案分页",
+        noOwner: "无负责人",
+        servedPeople: "服务对象",
+        noServed: "本周期无服务对象",
+        currentRevision: "当前修订",
+        joinedAt: "入职日期",
+        secondaryMetrics: "调用量",
+        generationCalls: "模型调用",
+        toolCalls: "工具调用",
+        callsPerRun: "平均每次运行调用数",
+        abstained: "弃答",
+        canceled: "已取消",
+        trendRuns: "运行次数",
+        trendFailures: "失败",
+        runsUnit: "次",
+        noHistory: "暂无维护履历。",
+        loadMore: "加载更多",
+        openRevision: "打开修订",
+        maintenanceKinds: {
+          revised: "修订",
+          skill_upgraded: "Skill 升级",
+          disabled: "停用",
+          enabled: "启用",
+          feedback_resolved: "处理差评",
+          owner_transferred: "转交负责人",
+        },
+        noFeedback: "没有待处理反馈。",
+        feedbackCount: "待处理反馈：{count}",
+        resolutionNote: "处理说明（可选，最多 500 字）",
+        noteTooLong: "说明超过 500 字。",
+        jobTitleLabel: "岗位",
+        jobTitleTooLong: "岗位超过 64 个字符。",
+        save: "保存",
+        newOwnerLabel: "新负责人（actorId）",
+        transferFailed: "无法转交负责人。",
+        errors: {
+          actor_not_found: "在本项目中找不到该人员。",
+          agent_read_only: "该 Agent 为只读。",
+          job_title_too_long: "岗位超过 64 个字符。",
+          note_too_long: "说明超过 500 字。",
+          feedback_not_found: "该反馈已不存在。",
+          generic: "无法保存更改。",
         },
       },
     },

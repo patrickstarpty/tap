@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   resolvePeriod,
   useTeamSummary,
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
+import { AgentProfileDrawer } from "./AgentProfileDrawer";
 import { PeriodPicker, type PeriodSelection } from "./PeriodPicker";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { TeamTab } from "./TeamTab";
@@ -15,10 +16,17 @@ export type AgentsTab = "mine" | "team" | "report" | "config";
 const TAB_ORDER: AgentsTab[] = ["mine", "team", "report", "config"];
 const TAB_PARAM = "agentsTab";
 
+export interface ConfigOpenRequest {
+  initialDetailRevisionId: string | null;
+  onInitialDetailConsumed: () => void;
+}
+
 export interface AgentsPageProps {
   projectId: string;
   copy: WorkspaceCopy;
-  configTab: ReactNode;
+  /** Either the node, or a render function that receives the revision the
+   * profile drawer asked to open ("View configuration"). */
+  configTab: ReactNode | ((open: ConfigOpenRequest) => ReactNode);
   initialTab?: AgentsTab;
   onOpenMember?: (agentKey: string) => void;
 }
@@ -62,6 +70,13 @@ export function AgentsPage({
     [selection],
   );
 
+  const [profileKey, setProfileKey] = useState<string | null>(null);
+  const [configRequest, setConfigRequest] = useState<{
+    revisionId: string;
+    nonce: number;
+    consumed: boolean;
+  } | null>(null);
+
   const rangeInvalid =
     selection.preset === "custom" &&
     selection.custom.from > selection.custom.to;
@@ -72,6 +87,20 @@ export function AgentsPage({
   const select = (next: AgentsTab) => {
     setTab(next);
     writeUrlTab(next);
+  };
+
+  const openMember = (agentKey: string) => {
+    setProfileKey(agentKey);
+    onOpenMember(agentKey);
+  };
+  const viewConfig = (revisionId: string) => {
+    setProfileKey(null);
+    setConfigRequest((prev) => ({
+      revisionId,
+      nonce: (prev?.nonce ?? 0) + 1,
+      consumed: false,
+    }));
+    select("config");
   };
 
   return (
@@ -97,7 +126,22 @@ export function AgentsPage({
         aria-labelledby={`agents-tab-${tab}`}
       >
         {tab === "config" ? (
-          configTab
+          typeof configTab === "function" ? (
+            <Fragment key={configRequest?.nonce ?? 0}>
+              {configTab({
+                initialDetailRevisionId:
+                  configRequest === null || configRequest.consumed
+                    ? null
+                    : configRequest.revisionId,
+                onInitialDetailConsumed: () =>
+                  setConfigRequest((prev) =>
+                    prev === null ? prev : { ...prev, consumed: true },
+                  ),
+              })}
+            </Fragment>
+          ) : (
+            configTab
+          )
         ) : (
           <>
             <PeriodPicker
@@ -110,7 +154,7 @@ export function AgentsPage({
                 projectId={projectId}
                 copy={copy}
                 period={period}
-                onOpenMember={onOpenMember}
+                onOpenMember={openMember}
                 onCreateAgent={() => select("config")}
               />
             ) : (
@@ -124,6 +168,16 @@ export function AgentsPage({
           </>
         )}
       </div>
+      {profileKey === null ? null : (
+        <AgentProfileDrawer
+          projectId={projectId}
+          agentKey={profileKey}
+          period={period}
+          copy={copy}
+          onClose={() => setProfileKey(null)}
+          onViewConfig={viewConfig}
+        />
+      )}
     </section>
   );
 }
