@@ -23,6 +23,7 @@ export interface RosterSort {
 
 export interface RosterTableProps {
   rows: AgentTeamMemberRow[];
+  loading?: boolean;
   ctx: CellContext;
   sorting: RosterSort;
   onSort: (next: RosterSort) => void;
@@ -31,6 +32,7 @@ export interface RosterTableProps {
 
 export function RosterTable({
   rows,
+  loading = false,
   ctx,
   sorting,
   onSort,
@@ -185,6 +187,8 @@ export function RosterTable({
       size="small"
       rowKey="agentKey"
       pagination={false}
+      loading={loading}
+      locale={{ emptyText: labels.noMatch }}
       dataSource={rows}
       columns={columns}
       scroll={{ x: "max-content" }}

@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
+  resolvePeriod,
   useTeamMembers,
   useTeamPeople,
   useTeamSummary,
@@ -8,7 +9,6 @@ import {
   type TeamPeriod,
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
-import { TrendChart } from "./charts";
 import {
   EMPTY,
   formatCost,
@@ -29,6 +29,8 @@ export interface TeamTabProps {
   onOpenMember: (agentKey: string) => void;
   onCreateAgent: () => void;
 }
+
+const NO_FILTERS: MemberFilters = {};
 
 type RosterView = "cards" | "table";
 type StatusFilter = NonNullable<MemberFilters["status"]>;
@@ -62,35 +64,36 @@ export function TeamTab({
   const summary = useTeamSummary(projectId, period);
   const members = useTeamMembers(projectId, period, filters);
   const people = useTeamPeople(projectId, period);
-  // Owner options accumulate so a filtered roster still offers every owner.
-  const knownOwners = useRef(new Set<string>());
+  // Cards always show the last 30 days, whatever period is selected.
+  const sparkPeriod = useMemo(() => resolvePeriod("last30", new Date()), []);
+  const spark = useTeamMembers(projectId, sparkPeriod, NO_FILTERS);
 
   const rows = members.data?.data;
-  for (const row of rows ?? [])
-    if (row.ownerActorId !== null) knownOwners.current.add(row.ownerActorId);
-  const owners = [...knownOwners.current].sort();
+  const owners = [
+    ...new Set(
+      (people.data?.data ?? [])
+        .filter((person) => person.ownedAgents > 0)
+        .map((person) => person.actorId),
+    ),
+  ].sort();
+  const sparklineByAgentKey = useMemo(() => {
+    const map = new Map<string, number[]>();
+    for (const row of spark.data?.data ?? [])
+      map.set(
+        row.agentKey,
+        row.trend.map((point) => point.runs),
+      );
+    return map;
+  }, [spark.data]);
+  const refreshing = members.isPlaceholderData || summary.isPlaceholderData;
 
-  const trendSeries = useMemo(() => {
-    const byBucket = new Map<string, number>();
-    for (const row of rows ?? [])
-      for (const point of row.trend)
-        byBucket.set(
-          point.bucketStart,
-          (byBucket.get(point.bucketStart) ?? 0) + point.runs,
-        );
-    return [...byBucket.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([bucket, value]) => ({ bucket, value }));
-  }, [rows]);
-
-  if (summary.isPending || members.isPending)
-    return <p role="status">{text.loading}</p>;
   if (
-    summary.isError ||
-    summary.data === undefined ||
-    members.isError ||
-    members.data === undefined
+    (summary.data === undefined || members.data === undefined) &&
+    !summary.isError &&
+    !members.isError
   )
+    return <p role="status">{text.loading}</p>;
+  if (summary.data === undefined || members.data === undefined)
     return (
       <div role="alert">
         <p>{text.loadFailed}</p>
@@ -180,15 +183,6 @@ export function TeamTab({
           </div>
         ))}
       </dl>
-      {trendSeries.length > 1 ? (
-        <section>
-          <h3>{labels.trendHeading}</h3>
-          <TrendChart
-            unit={text.metrics.runs}
-            series={[{ label: text.metrics.runs, points: trendSeries }]}
-          />
-        </section>
-      ) : null}
       <section>
         <h3>{labels.rosterHeading}</h3>
         {empty ? (
@@ -263,11 +257,13 @@ export function TeamTab({
             {view === "cards" ? (
               <RosterCards
                 rows={rows ?? []}
+                sparklineByAgentKey={sparklineByAgentKey}
                 ctx={ctx}
                 onOpenMember={onOpenMember}
               />
             ) : (
               <RosterTable
+                loading={refreshing}
                 rows={rows ?? []}
                 ctx={ctx}
                 sorting={sorting}

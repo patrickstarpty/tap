@@ -426,6 +426,7 @@ export interface WorkspaceCopy {
       lastMaintenance: string;
       pendingFeedback: string;
       noPeople: string;
+      noMatch: string;
       columns: {
         name: string;
         jobTitle: string;
@@ -1024,13 +1025,14 @@ export const WORKSPACE_COPY = {
         trendHeading: "Run trend",
         noJobTitle: "No job title",
         ownerLabel: "Owner",
-        runsTrend: "Runs in period",
+        runsTrend: "Runs, last 30 days",
         topServed: "Top served",
         noServed: "No one yet",
         lastRun: "Last run",
         lastMaintenance: "Last maintenance",
         pendingFeedback: "Pending feedback",
         noPeople: "No people in this period",
+        noMatch: "No matching Agents",
         columns: {
           name: "Name",
           jobTitle: "Job title",
@@ -1618,13 +1620,14 @@ export const WORKSPACE_COPY = {
         trendHeading: "运行趋势",
         noJobTitle: "未设岗位",
         ownerLabel: "负责人",
-        runsTrend: "周期内运行",
+        runsTrend: "近 30 天运行",
         topServed: "主要服务对象",
         noServed: "暂无",
         lastRun: "最近运行",
         lastMaintenance: "最近维护",
         pendingFeedback: "待处理反馈",
         noPeople: "该周期内没有人员",
+        noMatch: "没有符合条件的 Agent",
         columns: {
           name: "名称",
           jobTitle: "岗位",

@@ -12,12 +12,20 @@ import {
 export interface RosterCardsProps {
   rows: AgentTeamMemberRow[];
   ctx: CellContext;
+  sparklineByAgentKey: Map<string, number[]>;
   onOpenMember: (agentKey: string) => void;
 }
 
-export function RosterCards({ rows, ctx, onOpenMember }: RosterCardsProps) {
+export function RosterCards({
+  rows,
+  ctx,
+  sparklineByAgentKey,
+  onOpenMember,
+}: RosterCardsProps) {
   const text = ctx.copy.agentTeam;
   const labels = text.team;
+  if (rows.length === 0)
+    return <p className="tap-team-empty">{labels.noMatch}</p>;
   return (
     <ul className="tap-team-cards">
       {rows.map((row) => {
@@ -62,7 +70,7 @@ export function RosterCards({ rows, ctx, onOpenMember }: RosterCardsProps) {
                     <>
                       {formatCount(row.runs, ctx.locale)}
                       <Sparkline
-                        points={row.trend.map((point) => point.runs)}
+                        points={sparklineByAgentKey.get(row.agentKey) ?? []}
                         label={`${row.name} ${labels.runsTrend}`}
                       />
                     </>

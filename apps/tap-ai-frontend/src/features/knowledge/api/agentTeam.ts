@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -132,6 +133,7 @@ const STALE_MS = 30_000;
 export function useTeamSummary(projectId: string, period: TeamPeriod) {
   return useQuery({
     queryKey: agentTeamKeys.summary(projectId, period),
+    placeholderData: keepPreviousData,
     queryFn: () =>
       requestJson<AgentTeamSummaryView>(
         projectAiPath(
@@ -150,6 +152,7 @@ export function useTeamMembers(
 ) {
   return useQuery({
     queryKey: agentTeamKeys.members(projectId, period, filters),
+    placeholderData: keepPreviousData,
     queryFn: () =>
       requestJson<AgentTeamMembersView>(
         projectAiPath(
@@ -207,6 +210,7 @@ export function useMemberHistory(projectId: string, agentId: string | null) {
 export function useTeamPeople(projectId: string, period: TeamPeriod) {
   return useQuery({
     queryKey: agentTeamKeys.people(projectId, period),
+    placeholderData: keepPreviousData,
     queryFn: () =>
       requestJson<AgentTeamPeopleView>(
         projectAiPath(
@@ -240,6 +244,7 @@ export function usePerson(
 export function useOrgChart(projectId: string, period: TeamPeriod) {
   return useQuery({
     queryKey: agentTeamKeys.orgChart(projectId, period),
+    placeholderData: keepPreviousData,
     queryFn: () =>
       requestJson<AgentTeamOrgChartView>(
         projectAiPath(
@@ -254,6 +259,7 @@ export function useOrgChart(projectId: string, period: TeamPeriod) {
 export function useTeamReport(projectId: string, period: TeamPeriod) {
   return useQuery({
     queryKey: agentTeamKeys.report(projectId, period),
+    placeholderData: keepPreviousData,
     queryFn: () =>
       requestJson<AgentTeamReportView>(
         projectAiPath(

@@ -20,7 +20,7 @@ describe("TrendChart", () => {
   it("shows the hovered bucket value", () => {
     render(
       <TrendChart
-        unit="runs"
+        unit="times"
         series={[
           {
             label: "Runs",
@@ -33,11 +33,13 @@ describe("TrendChart", () => {
       />,
     );
     fireEvent.mouseEnter(screen.getAllByTestId("trend-hit")[1]);
-    expect(screen.getByText("2026-10-02 · Runs: 7 runs")).toBeInTheDocument();
+    expect(
+      screen.getByText("2026-10-02 · Runs: 7 (times)"),
+    ).toBeInTheDocument();
   });
 
   it("does not throw without data", () => {
-    render(<TrendChart unit="runs" series={[]} />);
+    render(<TrendChart unit="times" series={[]} />);
     expect(screen.queryAllByTestId("trend-hit")).toHaveLength(0);
   });
 });

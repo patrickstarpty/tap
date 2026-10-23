@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { formatCount } from "./format";
+
 const WIDTH = 120;
 const HEIGHT = 28;
 
@@ -69,9 +71,11 @@ const PAD = 12;
 export function TrendChart({
   series,
   unit,
+  locale = "en",
 }: {
   series: TrendSeries[];
   unit: string;
+  locale?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const length = Math.max(0, ...series.map((s) => s.points.length));
@@ -148,7 +152,7 @@ export function TrendChart({
       <div className="tap-team-trend-readout" aria-live="polite">
         {readout.map((r) => (
           <span key={r.label}>
-            {r.bucket} · {r.label}: {r.value} {unit}
+            {r.bucket} · {r.label}: {formatCount(r.value, locale)} ({unit})
           </span>
         ))}
       </div>

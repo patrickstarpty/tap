@@ -91,6 +91,24 @@ function ready(data: unknown) {
   return { isPending: false, isError: false, refetch: vi.fn(), data };
 }
 
+// The cards' sparkline comes from a separate last-30-days query.
+function sparkRows(members: unknown[]) {
+  return members.map((m) => ({
+    ...(m as Record<string, unknown>),
+    trend: [1, 5, 2].map((runs, i) => ({
+      agentKey: (m as { agentKey: string }).agentKey,
+      bucketStart: `2026-10-0${i + 1}`,
+      runs,
+    })),
+  }));
+}
+
+function periodCalls() {
+  return vi
+    .mocked(useTeamMembers)
+    .mock.calls.filter((call) => call[1] === period);
+}
+
 function setup(
   members: unknown[],
   runtimeStatus: "ok" | "unavailable" = "ok",
@@ -114,9 +132,11 @@ function setup(
       },
     }) as never,
   );
-  vi.mocked(useTeamMembers).mockReturnValue(
-    ready({ ...b, data: members }) as never,
-  );
+  vi.mocked(useTeamMembers).mockImplementation(((_id: string, per: unknown) =>
+    ready({
+      ...b,
+      data: per === period ? members : sparkRows(members),
+    })) as never);
   vi.mocked(useTeamPeople).mockReturnValue(
     ready({
       ...b,
@@ -220,7 +240,7 @@ describe("TeamTab", () => {
     await userEvent.selectOptions(screen.getByLabelText("负责人"), "bob");
     await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
     await userEvent.selectOptions(screen.getByLabelText("类型"), "built_in");
-    const last = vi.mocked(useTeamMembers).mock.calls.at(-1)!;
+    const last = periodCalls().at(-1)!;
     expect(last[2]).toMatchObject({
       owner: "bob",
       status: "idle",
@@ -235,12 +255,12 @@ describe("TeamTab", () => {
       screen.getAllByText("Runs", { selector: ".ant-table-column-title" })[0];
     await userEvent.click(screen.getByRole("button", { name: "Table" }));
     await userEvent.click(runsHeader());
-    expect(vi.mocked(useTeamMembers).mock.calls.at(-1)![2]).toMatchObject({
+    expect(periodCalls().at(-1)![2]).toMatchObject({
       sort: "runs",
       order: "asc",
     });
     await userEvent.click(runsHeader());
-    expect(vi.mocked(useTeamMembers).mock.calls.at(-1)![2]).toMatchObject({
+    expect(periodCalls().at(-1)![2]).toMatchObject({
       sort: "runs",
       order: "desc",
     });
@@ -249,7 +269,7 @@ describe("TeamTab", () => {
         selector: ".ant-table-column-title",
       })[0],
     );
-    expect(vi.mocked(useTeamMembers).mock.calls.at(-1)![2]).toMatchObject({
+    expect(periodCalls().at(-1)![2]).toMatchObject({
       sort: "latency_total_ms",
     });
   });
@@ -304,7 +324,55 @@ describe("TeamTab", () => {
     expect(
       screen.queryByText("0", { selector: ".tap-team-card *" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("运行次数").nextSibling).toHaveTextContent("—");
+    for (const label of ["运行次数", "活跃", "闲置", "总耗时", "成本"])
+      expect(
+        screen.getByText(label, { selector: "dt" }).nextSibling,
+      ).toHaveTextContent("—");
+  });
+
+  it("keeps the filter focused while the filtered query is pending", async () => {
+    setup([row({})]);
+    renderTab();
+    const select = screen.getByLabelText("负责人");
+    const placeholder = vi.mocked(useTeamMembers).getMockImplementation()!;
+    vi.mocked(useTeamMembers).mockImplementation(((...args: unknown[]) => {
+      const result = (placeholder as (...a: unknown[]) => object)(...args);
+      return args[1] === period
+        ? { ...result, isPlaceholderData: true, isPending: false }
+        : result;
+    }) as never);
+    select.focus();
+    await userEvent.selectOptions(select, "alice");
+    expect(screen.getByLabelText("负责人")).toBe(select);
+    expect(select).toHaveFocus();
+    expect(screen.queryByText("正在加载团队数据…")).not.toBeInTheDocument();
+  });
+
+  it("draws the card sparkline from the last-30-days query", () => {
+    setup([row({})]);
+    renderTab();
+    const calls = vi.mocked(useTeamMembers).mock.calls;
+    expect(calls.some((call) => call[1] !== period)).toBe(true);
+    const spark = calls.find((call) => call[1] !== period)!;
+    expect(spark[2]).toEqual({});
+    const polyline = screen
+      .getByRole("img", { name: /Reviewer/ })
+      .querySelector("polyline")!;
+    expect(polyline.getAttribute("points")!.split(" ")).toHaveLength(3);
+  });
+
+  it("says so when filters match no Agent", async () => {
+    setup([row({})]);
+    renderTab();
+    const original = vi.mocked(useTeamMembers).getMockImplementation()!;
+    vi.mocked(useTeamMembers).mockImplementation(((...args: unknown[]) => {
+      const filters = args[2] as { status?: string | null };
+      return filters.status
+        ? ready({ ...base, data: [] })
+        : (original as (...a: unknown[]) => unknown)(...args);
+    }) as never);
+    await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
+    expect(screen.getByText("没有符合条件的 Agent")).toBeVisible();
   });
 
   it("guides to creating an Agent when the roster is empty", async () => {
