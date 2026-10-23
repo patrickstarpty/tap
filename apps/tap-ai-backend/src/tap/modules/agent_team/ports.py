@@ -62,5 +62,6 @@ class AgentRuntimeMetrics(Protocol):
 
     async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
         """The timestamp of the most recent trace for each Agent, regardless of
-        period. Agent keys with no trace are absent from the result."""
+        period. Agent keys with no trace are absent from the result. Returned
+        datetimes are timezone-aware UTC."""
         ...

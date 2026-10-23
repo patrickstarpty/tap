@@ -80,7 +80,17 @@ class CachedRuntimeMetrics:
         self._entries[key] = _CacheEntry(
             value=value, computed_at=self._now(), expires_at=self._clock() + self._ttl_seconds
         )
+        self._evict_expired()
         return value
+
+    def _evict_expired(self) -> None:
+        """Drop every entry whose TTL has already elapsed, so a long-lived
+        process does not accumulate one stale entry per distinct
+        `(project_id, period, kind)` ever queried."""
+        now = self._clock()
+        expired = [key for key, entry in self._entries.items() if now >= entry.expires_at]
+        for key in expired:
+            del self._entries[key]
 
     async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
         key: _CacheKey = (project_id, _period_key(period), "stats")

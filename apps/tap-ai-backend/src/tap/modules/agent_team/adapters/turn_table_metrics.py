@@ -19,7 +19,11 @@ is excluded from `agent_stats`/`trend`, matching Langfuse (which never tags an
 unfinished trace with `outcome:`).
 
 `last_runs` has no such restriction -- per the brief, it is "each agent_key's
-last Turn's creation time", regardless of whether that Turn has finished.
+last Turn's creation time", regardless of whether that Turn has finished. Its
+return value is UTC-aware (`chat_turn.created_at` is a naive UTC column; this
+adapter attaches `UTC` before returning it) to agree with
+`LangfuseRuntimeMetrics.last_runs`, which returns aware UTC datetimes parsed
+from Langfuse's ISO-8601 timestamps -- same port, same contract.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ import statistics
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -296,7 +300,7 @@ class TurnTableRuntimeMetrics:
             agent_key = agent_keys_by_turn[row["turn_id"]]
             if agent_key not in requested:
                 continue
-            created_at = row["created_at"]
+            created_at = row["created_at"].replace(tzinfo=UTC)
             if agent_key not in last_seen or created_at > last_seen[agent_key]:
                 last_seen[agent_key] = created_at
         return last_seen
