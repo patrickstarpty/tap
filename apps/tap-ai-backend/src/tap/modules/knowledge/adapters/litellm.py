@@ -294,6 +294,84 @@ def _without_bare_label_lists(text: str, labels: frozenset[str], protected: Sequ
         if end <= position:
             continue
         parts.append(prose(text[position:start]))
+        block = text[start:end]
+        is_inline = block.startswith("`") and not block.startswith("```")
+        parts.append(block if is_inline else _without_comment_labels(block, labels))
+        position = end
+    parts.append(prose(text[position:]))
+    return "".join(parts)
+
+
+# N1-R: inside a code block only a parenthesized supplied label or label list
+# in a `#` or `//` comment is removed ("# 登录（S9）", "// 账号 (S1, S8)");
+# code tokens, strings and any other parentheses are kept.
+_COMMENT_LABELS = re.compile(
+    r"[ \t]*[（(][ \t]*(?P<run>[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)*)"
+    r"[ \t]*[）)]"
+)
+
+
+def _comment_start(line: str) -> int | None:
+    quote = ""
+    for index, char in enumerate(line):
+        if quote:
+            if char == "\\":
+                continue
+            if char == quote:
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif (char == "#" or line.startswith("//", index)) and (
+            index == 0 or line[index - 1] in " \t"
+        ):
+            return index
+    return None
+
+
+def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
+    lines = code.split("\n")
+    for number, line in enumerate(lines):
+        start = _comment_start(line)
+        if start is None:
+            continue
+        comment = _COMMENT_LABELS.sub(
+            lambda match: ("" if set(_LABEL.findall(match["run"])) <= labels else match[0]),
+            line[start:],
+        )
+        lines[number] = line[:start] + comment
+    return "\n".join(lines)
+
+
+def _without_skill_pseudo_citations(text: str, names: Sequence[str]) -> str:
+    """N1-R: "[webapp-testing]" (a Skill name in brackets) reads like a citation
+    but is not one. Outside code, only its brackets are removed -- the name
+    stays as plain text -- and a Markdown link (`[name](url)`) is kept."""
+    if not names:
+        return text
+    pattern = re.compile(
+        r"\[[ \t]*(?P<name>(?:"
+        + "|".join(re.escape(name) for name in names)
+        + r")(?:[ \t]+[Ss]kill)?)[ \t]*\](?!\()"
+    )
+
+    def prose(segment: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            before = segment[match.start() - 1 : match.start()]
+            return (" " if before and not before.isspace() else "") + match["name"]
+
+        return pattern.sub(replace, segment)
+
+    code = sorted(
+        [*(item.span() for item in CODE_SPAN.finditer(text))]
+        + [item.span() for item in _INDENTED_CODE.finditer(text)]
+    )
+    parts: list[str] = []
+    position = 0
+    for start, end in code:
+        start = max(start, position)
+        if end <= position:
+            continue
+        parts.append(prose(text[position:start]))
         parts.append(text[start:end])
         position = end
     parts.append(prose(text[position:]))
@@ -793,7 +871,10 @@ class KnowledgeModelGateway:
             try:
                 answer, claims = parse_inline_answer(
                     _without_bare_label_lists(
-                        _without_stray_sentinel(raw_text),
+                        _without_skill_pseudo_citations(
+                            _without_stray_sentinel(raw_text),
+                            () if governance is None else governance.skill_names,
+                        ),
                         frozenset(item.evidence_label for item in evidence) | extra_labels,
                         (query, *(item.content for item in evidence)),
                     ),

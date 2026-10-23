@@ -1139,3 +1139,98 @@ def test_the_value_lookup_abstention_is_scoped_to_a_specific_fact() -> None:
 
     for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
         assert "looks up a fact or value" not in contract
+
+
+_CODE_LABELS = frozenset({"S1", "S2", "S8", "S9"})
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            "```python\n# 1. 使用 TEST_ 账号登录（S9）\n"
+            "page.fill('#username', 'TEST_01')  # 测试账号（S1, S8）\n```",
+            "```python\n# 1. 使用 TEST_ 账号登录\n"
+            "page.fill('#username', 'TEST_01')  # 测试账号\n```",
+        ),
+        ("```js\n// 登录 (S1/S2)\nlogin();\n```", "```js\n// 登录\nlogin();\n```"),
+        ("~~~\n# 验证码固定（S2）\n~~~", "~~~\n# 验证码固定\n~~~"),
+        ("说明。\n\n    # 重置数据（S9）\n    reset()", "说明。\n\n    # 重置数据\n    reset()"),
+    ],
+)
+def test_a_parenthesized_label_in_a_code_comment_is_removed(code, expected) -> None:
+    """N1-R: the model kept writing "（S9）" and "（S1, S8）" into code comments."""
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == expected
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "```python\nS1 = load('S1')\nresult = run(S1)  # 运行 S1 档位\n```",
+        "```python\nvalue = check(S1, S2)\n```",
+        "```python\npage.fill('#otp（S1）', '123456')\n```",
+        "```js\nfetch('http://host/a(S1)')  // 请求\n```",
+        "```python\n# 档位（S5）\n```",
+        "```python\n# 档位（S1 级）\n```",
+        "运行 `step（S1）` 即可。",
+    ],
+)
+def test_code_label_tokens_outside_a_comment_label_are_kept(code) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
+
+    assert _without_bare_label_lists(code, _CODE_LABELS, ()) == code
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("按 Skill 指引执行[webapp-testing]。", "按 Skill 指引执行 webapp-testing。"),
+        ("参考 [webapp-testing skill] 的做法。", "参考 webapp-testing skill 的做法。"),
+        ("见 [ webapp-testing ]。", "见 webapp-testing。"),
+    ],
+)
+def test_a_bracketed_skill_name_becomes_plain_text(text, expected) -> None:
+    """N1-R: "[webapp-testing]" reads like a citation; it is not one. Only the
+    brackets go (the conservative option), so no content is lost."""
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "参见 [webapp-testing](https://example.test/skill) 文档。",
+        "勾选 [x] 后提交。",
+        "其他 [other-skill] 标记保留。",
+        "```python\nitems = ['webapp-testing']\nx = d[webapp-testing]\n```",
+    ],
+)
+def test_other_brackets_are_not_skill_pseudo_citations(text) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == text
+
+
+@pytest.mark.asyncio
+async def test_a_governed_answer_drops_comment_labels_and_skill_brackets() -> None:
+    reply = (
+        "期限最长6个月[S2]。按 Skill 指引执行[Test steps]。\n\n"
+        "```python\n# 登录测试环境（S1）\npage.goto(url)\n```"
+    )
+
+    class Gateway:
+        async def chat_stream(self, request) -> AsyncIterator[ModelStreamEvent]:
+            yield ModelTextDelta(reply)
+            yield _result(reply)
+
+    generation = await _answer_gateway(Gateway()).answer(
+        "问题", _steps_pool(), "quick-hybrid-v1", governance=_governance()
+    )
+
+    assert generation.text == (
+        "期限最长6个月。按 Skill 指引执行 Test steps。\n\n"
+        "```python\n# 登录测试环境\npage.goto(url)\n```"
+    )
