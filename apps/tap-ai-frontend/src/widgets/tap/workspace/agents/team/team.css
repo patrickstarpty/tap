@@ -1,0 +1,38 @@
+.tap-agents-page [role="tablist"] {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.tap-agents-page [role="tab"] {
+  padding: 6px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tap-agents-page [role="tab"][aria-selected="true"] {
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.tap-team-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tap-team-period label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tap-team-freshness {
+  opacity: 0.7;
+  font-size: 0.85em;
+}

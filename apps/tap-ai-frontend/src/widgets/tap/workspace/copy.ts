@@ -357,6 +357,52 @@ export interface WorkspaceCopy {
       saveFailed: string;
     };
   };
+  agentTeam: {
+    heading: string;
+    tablistLabel: string;
+    tabs: { mine: string; team: string; report: string; config: string };
+    period: {
+      label: string;
+      last7: string;
+      last30: string;
+      thisMonth: string;
+      lastMonth: string;
+      custom: string;
+      from: string;
+      to: string;
+    };
+    metrics: {
+      runs: string;
+      active: string;
+      idle: string;
+      agentTotal: string;
+      failures: string;
+      satisfaction: string;
+      latency: string;
+      cost: string;
+      maintenance: string;
+      servedAvg: string;
+      ownersAvg: string;
+    };
+    status: { active: string; idle: string; disabled: string };
+    builtIn: string;
+    insufficientSample: string;
+    runtimeUnavailable: string;
+    runtimeSyncing: string;
+    runtimeLag: string;
+    updatedAt: string;
+    pendingFeedbackMine: string;
+    markResolved: string;
+    transferOwner: string;
+    viewConfig: string;
+    exportPdf: string;
+    exportCsv: string;
+    emptyState: string;
+    createAgent: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+  };
   migrationBanner: {
     heading: string;
     descriptionAgent: string;
@@ -858,6 +904,57 @@ export const WORKSPACE_COPY = {
         saveFailed: "This agent could not be saved.",
       },
     },
+    agentTeam: {
+      heading: "Agent team",
+      tablistLabel: "Agents views",
+      tabs: {
+        mine: "My Agents",
+        team: "Team",
+        report: "Report",
+        config: "Configuration",
+      },
+      period: {
+        label: "Period",
+        last7: "Last 7 days",
+        last30: "Last 30 days",
+        thisMonth: "This month",
+        lastMonth: "Last month",
+        custom: "Custom",
+        from: "From",
+        to: "To",
+      },
+      metrics: {
+        runs: "Runs",
+        active: "Active",
+        idle: "Idle",
+        agentTotal: "Agents",
+        failures: "Failures",
+        satisfaction: "Satisfaction",
+        latency: "Total latency",
+        cost: "Cost",
+        maintenance: "Maintenance actions",
+        servedAvg: "Avg. people served",
+        ownersAvg: "Avg. Agents per owner",
+      },
+      status: { active: "Active", idle: "Idle", disabled: "Disabled" },
+      builtIn: "Built into Tapper",
+      insufficientSample: "Not enough ratings",
+      runtimeUnavailable: "Run data is temporarily unavailable",
+      runtimeSyncing: "Run data is syncing",
+      runtimeLag: "Run data can trail conversations by one sync cycle",
+      updatedAt: "Data updated at {time} ({timezone})",
+      pendingFeedbackMine: "Feedback waiting for me",
+      markResolved: "Mark as resolved",
+      transferOwner: "Transfer owner",
+      viewConfig: "View configuration",
+      exportPdf: "Export PDF",
+      exportCsv: "Export CSV",
+      emptyState: "No Agents yet. Create one",
+      createAgent: "Create Agent",
+      loading: "Loading team data...",
+      loadFailed: "Team data could not be loaded.",
+      retry: "Retry",
+    },
     migrationBanner: {
       heading: "Local drafts found",
       descriptionAgent:
@@ -1347,6 +1444,57 @@ export const WORKSPACE_COPY = {
         revisionConflict: "内容已被他人更新，请刷新。",
         saveFailed: "无法保存该 Agent。",
       },
+    },
+    agentTeam: {
+      heading: "Agent 团队",
+      tablistLabel: "Agent 视图",
+      tabs: {
+        mine: "我的 Agent",
+        team: "团队",
+        report: "汇报",
+        config: "配置",
+      },
+      period: {
+        label: "周期",
+        last7: "近 7 天",
+        last30: "近 30 天",
+        thisMonth: "本月",
+        lastMonth: "上月",
+        custom: "自定义",
+        from: "开始",
+        to: "结束",
+      },
+      metrics: {
+        runs: "运行次数",
+        active: "活跃",
+        idle: "闲置",
+        agentTotal: "Agent 数",
+        failures: "失败",
+        satisfaction: "满意度",
+        latency: "总耗时",
+        cost: "成本",
+        maintenance: "维护动作",
+        servedAvg: "人均服务对象",
+        ownersAvg: "人均负责 Agent",
+      },
+      status: { active: "活跃", idle: "闲置", disabled: "已停用" },
+      builtIn: "Tapper 内置",
+      insufficientSample: "样本不足",
+      runtimeUnavailable: "运行数据暂不可用",
+      runtimeSyncing: "运行数据同步中",
+      runtimeLag: "运行数据可能比对话晚一个同步周期",
+      updatedAt: "数据更新于 {time}（{timezone}）",
+      pendingFeedbackMine: "待我处理的反馈",
+      markResolved: "标记已处理",
+      transferOwner: "转交负责人",
+      viewConfig: "查看配置",
+      exportPdf: "导出 PDF",
+      exportCsv: "导出 CSV",
+      emptyState: "还没有 Agent，新建一个",
+      createAgent: "新建 Agent",
+      loading: "正在加载团队数据…",
+      loadFailed: "无法加载团队数据。",
+      retry: "重试",
     },
     migrationBanner: {
       heading: "发现本地草稿",

@@ -616,6 +616,7 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
   const user = userEvent.setup();
 
   await user.click(screen.getByRole("button", { name: "Agents" }));
+  await user.click(screen.getByRole("tab", { name: "Configuration" }));
   expect(
     await screen.findByText("Searches sources and answers questions."),
   ).toBeVisible();
@@ -3275,6 +3276,7 @@ describe("Tap product workspace interactions", () => {
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
+    await user.click(screen.getByRole("tab", { name: "Configuration" }));
     expect(screen.getByRole("heading", { name: "Agents" })).toBeVisible();
 
     const builtInAgent = screen.getByRole("listitem", {

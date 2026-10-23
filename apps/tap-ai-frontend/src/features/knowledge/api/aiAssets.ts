@@ -150,17 +150,20 @@ async function toProblem(response: Response): Promise<AiAssetProblem> {
   };
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+export async function requestJson<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) throw new AiAssetError(await toProblem(response));
   return (await response.json()) as T;
 }
 
-function projectAiPath(projectId: string, suffix: string): string {
+export function projectAiPath(projectId: string, suffix: string): string {
   return `/api/v1/projects/${encodeURIComponent(projectId)}/ai${suffix}`;
 }
 
-function jsonInit(method: string, body: unknown): RequestInit {
+export function jsonInit(method: string, body: unknown): RequestInit {
   return {
     method,
     headers: { "Content-Type": "application/json" },
