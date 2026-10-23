@@ -208,4 +208,11 @@ def test_downloaded_zip_round_trips_chinese_agent_name() -> None:
         assert row[header.index("job_title")] == "QA 负责人"
 
         trend_text = archive.read("trend.csv").decode("utf-8-sig")
-        assert trend_text.splitlines()[0] == "# granularity=day"
+        trend_lines = trend_text.splitlines()
+        assert trend_lines[0] == "# granularity=day"
+        # The trend point `FakeMetrics.trend` returns for `agent-1` must
+        # actually reach `trend.csv`'s data rows, not just its header.
+        trend_rows = list(csv.reader(trend_lines[1:]))
+        trend_header, trend_data = trend_rows[0], trend_rows[1:]
+        assert [row[trend_header.index("agent_key")] for row in trend_data] == ["agent-1"]
+        assert trend_data[0][trend_header.index("runs")] == "5"

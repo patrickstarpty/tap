@@ -1,6 +1,9 @@
 """Unit tests for `build_export` (Task 9, spec section 5): the CSV zip the
 `/ai/agent-team/export` route returns. No HTTP or service wiring here --
-`report`/`trend` are built by hand."""
+`report`/`trend` are built by hand, but the "runtime unavailable" row goes
+through the real domain builders (`build_member_row`/`build_person_row`) so
+the blank-cell behavior is proven at the domain level, not merely asserted
+on a hand-constructed `MemberRow`/`PersonRow` (Task 9 review, fix round 1)."""
 
 from __future__ import annotations
 
@@ -12,8 +15,9 @@ from decimal import Decimal
 
 from tap.modules.agent_team.application.export import build_export
 from tap.modules.agent_team.application.service import PeriodReport
+from tap.modules.agent_team.domain.metrics import build_member_row, build_person_row
 from tap.modules.agent_team.domain.models import MemberRow, Period, PersonRow, TeamSummary
-from tap.modules.agent_team.ports import ServedActor, TrendPoint
+from tap.modules.agent_team.ports import AgentRuntimeStats, ServedActor, TrendPoint
 
 _NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 _PERIOD = Period(date(2026, 10, 1), date(2026, 10, 23))
@@ -101,10 +105,78 @@ def _trend_point(agent_key: str = "agent-1") -> TrendPoint:
     )
 
 
+def _unavailable_member(agent_key: str = "agent-1") -> MemberRow:
+    """Built through the real domain path (`build_member_row`) with
+    `runtime_available=False` but real, nonzero `stats`/`trend` -- proves
+    the outage forces every run-derived field to blank at the domain
+    level, not merely that a hand-built `None` happens to render blank."""
+    stats = AgentRuntimeStats(
+        agent_key=agent_key,
+        runs=5,
+        failures=1,
+        abstained=1,
+        canceled=1,
+        latency_total_ms=500,
+        latency_p50_ms=100,
+        cost_usd=Decimal("5.00"),
+        served=(ServedActor(actor_id="actor-1", runs=3),),
+        generation_calls=8,
+        tool_calls=4,
+    )
+    return build_member_row(
+        agent_key=agent_key,
+        name="客服小助手",
+        kind="custom",
+        job_title="QA 负责人",
+        owner_actor_id="owner-1",
+        joined_at=_NOW,
+        disabled=False,
+        trailing_30d_runs=None,
+        stats=stats,
+        last_run_at=_NOW,
+        up=0,
+        down=0,
+        last_maintenance_at=_NOW,
+        pending_feedback=1,
+        maintenance={"revised": 2},
+        trend=(_trend_point(agent_key),),
+        runtime_available=False,
+    )
+
+
+def _unavailable_person(actor_id: str = "owner-1") -> PersonRow:
+    """Same real-domain-path proof as `_unavailable_member`, for `PersonRow`."""
+    return build_person_row(
+        actor_id=actor_id,
+        owned_agent_keys=["agent-1"],
+        stats_by_key={
+            "agent-1": AgentRuntimeStats(
+                agent_key="agent-1",
+                runs=5,
+                failures=0,
+                abstained=0,
+                canceled=0,
+                latency_total_ms=50,
+                latency_p50_ms=50,
+                cost_usd=Decimal("1.00"),
+                served=(ServedActor(actor_id=actor_id, runs=5),),
+                generation_calls=1,
+                tool_calls=1,
+            )
+        },
+        maintenance_count=2,
+        runtime_available=False,
+    )
+
+
 def _read_csv(archive: zipfile.ZipFile, name: str) -> tuple[bytes, list[list[str]]]:
+    """Decodes a CSV entry and parses it, skipping any leading `#` comment
+    lines so data-row assertions don't depend on how many comment lines a
+    given file carries."""
     raw = archive.read(name)
     text = raw.decode("utf-8-sig")
-    rows = list(csv.reader(io.StringIO(text)))
+    data_lines = [line for line in text.splitlines() if not line.startswith("#")]
+    rows = list(csv.reader(data_lines))
     return raw, rows
 
 
@@ -130,28 +202,54 @@ def test_trend_granularity_matches_ui_rule() -> None:
         assert _PERIOD.granularity == "day"
 
 
+def test_trend_granularity_is_week_for_a_long_period() -> None:
+    long_period = Period(date(2026, 1, 1), date(2026, 6, 1))  # > 92 days
+    assert long_period.granularity == "week"
+    report = PeriodReport(summary=_summary(), members=(_member(),), people=(_person(),))
+    content = build_export(report, [_trend_point()], period=long_period, runtime_status="ok")
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        text = archive.read("trend.csv").decode("utf-8-sig")
+        assert text.splitlines()[0] == "# granularity=week"
+
+
 def test_unavailable_runtime_leaves_columns_blank() -> None:
-    member = _member(
-        status=None,
-        satisfaction=None,
-        latency_p50_ms=None,
-        generation_calls=None,
-        tool_calls=None,
-        calls_per_run=None,
-    )
-    report = PeriodReport(summary=_summary(), members=(member,), people=(_person(),))
+    member = _unavailable_member()
+    person = _unavailable_person()
+    report = PeriodReport(summary=_summary(), members=(member,), people=(person,))
     content = build_export(report, [], period=_PERIOD, runtime_status="unavailable")
 
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        roster_text = archive.read("roster.csv").decode("utf-8-sig")
-        roster_rows = list(csv.reader(io.StringIO(roster_text)))
+        roster_raw, roster_rows = _read_csv(archive, "roster.csv")
+        assert roster_raw.decode("utf-8-sig").splitlines()[0] == "# runtime=unavailable"
         header, row = roster_rows[0], roster_rows[1]
-        assert row[header.index("status")] == ""
-        assert row[header.index("satisfaction")] == ""
-        assert row[header.index("latency_p50_ms")] == ""
-        assert row[header.index("generation_calls")] == ""
-        assert row[header.index("tool_calls")] == ""
-        assert row[header.index("calls_per_run")] == ""
+        for column in (
+            "status",
+            "runs",
+            "failures",
+            "abstained",
+            "canceled",
+            "latency_total_ms",
+            "latency_p50_ms",
+            "cost_usd",
+            "served_count",
+            "last_run_at",
+            "satisfaction",
+            "generation_calls",
+            "tool_calls",
+            "calls_per_run",
+        ):
+            assert row[header.index(column)] == "", column
+        assert row[header.index("top_served")] == ""
+
+        people_raw, people_rows = _read_csv(archive, "people.csv")
+        assert people_raw.decode("utf-8-sig").splitlines()[0] == "# runtime=unavailable"
+        p_header, p_row = people_rows[0], people_rows[1]
+        for column in ("owned_runs", "served_by_agents", "runs"):
+            assert p_row[p_header.index(column)] == "", column
+        # `owned_agents`/`maintenance` are MySQL facts, unaffected by the outage.
+        assert p_row[p_header.index("owned_agents")] == "1"
+        assert p_row[p_header.index("maintenance")] == "2"
 
         trend_text = archive.read("trend.csv").decode("utf-8-sig")
         trend_lines = trend_text.splitlines()
@@ -195,7 +293,9 @@ def test_roster_row_includes_call_volume_columns() -> None:
         header, row = rows[0], rows[1]
         assert row[header.index("generation_calls")] == "8"
         assert row[header.index("tool_calls")] == "4"
-        assert row[header.index("calls_per_run")] == "2.4"
+        # Rounded to 2 decimals; `cost_usd` keeps its full `Decimal` string.
+        assert row[header.index("calls_per_run")] == "2.40"
+        assert row[header.index("cost_usd")] == "5.00"
 
 
 def test_people_row_covers_every_person_field() -> None:

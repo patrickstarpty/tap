@@ -1847,17 +1847,17 @@ export interface components {
         /** AgentTeamMemberRow */
         AgentTeamMemberRow: {
             /** Abstained */
-            abstained: number;
+            abstained: number | null;
             /** Agentkey */
             agentKey: string;
             /** Callsperrun */
             callsPerRun: number | null;
             /** Canceled */
-            canceled: number;
+            canceled: number | null;
             /** Costusd */
-            costUsd: string;
+            costUsd: string | null;
             /** Failures */
-            failures: number;
+            failures: number | null;
             /** Generationcalls */
             generationCalls: number | null;
             /** Jobtitle */
@@ -1876,7 +1876,7 @@ export interface components {
             /** Latencyp50Ms */
             latencyP50Ms: number | null;
             /** Latencytotalms */
-            latencyTotalMs: number;
+            latencyTotalMs: number | null;
             /** Maintenance */
             maintenance: {
                 [key: string]: number;
@@ -1888,7 +1888,7 @@ export interface components {
             /** Pendingfeedback */
             pendingFeedback: number;
             /** Runs */
-            runs: number;
+            runs: number | null;
             /** Satisfaction */
             satisfaction: number | null;
             /**
@@ -1897,7 +1897,7 @@ export interface components {
              */
             satisfactionSample: "ok" | "insufficient";
             /** Servedcount */
-            servedCount: number;
+            servedCount: number | null;
             /** Status */
             status: ("active" | "idle" | "disabled") | null;
             /** Toolcalls */
@@ -2080,11 +2080,11 @@ export interface components {
             /** Ownedagents */
             ownedAgents: number;
             /** Ownedruns */
-            ownedRuns: number;
+            ownedRuns: number | null;
             /** Runs */
-            runs: number;
+            runs: number | null;
             /** Servedbyagents */
-            servedByAgents: number;
+            servedByAgents: number | null;
         };
         /** AgentTeamPersonView */
         AgentTeamPersonView: {
@@ -2180,17 +2180,17 @@ export interface components {
             /** Agenttotal */
             agentTotal: number;
             /** Costusd */
-            costUsd: string;
+            costUsd: string | null;
             /** Idle */
             idle: number | null;
             /** Latencytotalms */
-            latencyTotalMs: number;
+            latencyTotalMs: number | null;
             /** Maintenancetotal */
             maintenanceTotal: number;
             /** Ownersavg */
             ownersAvg: number;
             /** Runs */
-            runs: number;
+            runs: number | null;
             /** Servedavg */
             servedAvg: number;
         };

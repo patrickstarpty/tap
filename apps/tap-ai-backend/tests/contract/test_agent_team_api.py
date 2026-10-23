@@ -469,4 +469,38 @@ def test_langfuse_down_returns_200_unavailable() -> None:
     response = client.get(f"{BASE}/agent-team/summary?{PERIOD_QS}")
 
     assert response.status_code == 200, response.text
-    assert response.json()["runtimeStatus"] == "unavailable"
+    body = response.json()
+    assert body["runtimeStatus"] == "unavailable"
+    # Controller ruling (Task 9 review, fix round 1): run-derived summary
+    # fields are `null` -- never `0` -- over the wire during an outage.
+    assert body["data"]["active"] is None
+    assert body["data"]["idle"] is None
+    assert body["data"]["runs"] is None
+    assert body["data"]["latencyTotalMs"] is None
+    assert body["data"]["costUsd"] is None
+
+
+def test_langfuse_down_leaves_member_run_fields_null() -> None:
+    client, _store, _metrics = _app(store=_seeded_store(), metrics=FakeMetrics(unavailable=True))
+
+    response = client.get(f"{BASE}/agent-team/members/agent-1?{PERIOD_QS}")
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    for key in (
+        "runs",
+        "failures",
+        "abstained",
+        "canceled",
+        "latencyTotalMs",
+        "latencyP50Ms",
+        "costUsd",
+        "servedCount",
+        "lastRunAt",
+        "generationCalls",
+        "toolCalls",
+        "callsPerRun",
+    ):
+        assert data[key] is None, key
+    assert data["topServed"] == []
+    assert data["trend"] == []

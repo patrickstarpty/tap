@@ -239,7 +239,19 @@ async def test_unavailable_runtime_keeps_roster_and_satisfaction():
     rows_by_key = {row.agent_key: row for row in view.data}
     assert set(rows_by_key) == {"agent-1", "agent-2", "tapper_default"}
     agent_row = rows_by_key["agent-1"]
-    assert agent_row.runs == 0
+    # Controller ruling (Task 9 review, fix round 1): every run-derived field
+    # is `None` -- never `0` -- during an outage; it is unknown, not zero.
+    assert agent_row.runs is None
+    assert agent_row.failures is None
+    assert agent_row.abstained is None
+    assert agent_row.canceled is None
+    assert agent_row.latency_total_ms is None
+    assert agent_row.latency_p50_ms is None
+    assert agent_row.cost_usd is None
+    assert agent_row.served_count is None
+    assert agent_row.top_served == ()
+    assert agent_row.last_run_at is None
+    assert agent_row.trend == ()
     assert agent_row.satisfaction == 0.8
     assert agent_row.owner_actor_id == "owner-1"
     # Never claim "idle" during an outage: a non-disabled Agent's status is
@@ -255,6 +267,17 @@ async def test_unavailable_runtime_keeps_roster_and_satisfaction():
     assert summary_view.data.agent_total == 1  # known from MySQL's `enabled`, outage or not
     assert summary_view.data.active is None
     assert summary_view.data.idle is None
+    assert summary_view.data.runs is None
+    assert summary_view.data.latency_total_ms is None
+    assert summary_view.data.cost_usd is None
+
+    people_view = await service.people(_PERIOD)
+    people_by_id = {row.actor_id: row for row in people_view.data}
+    owner_row = people_by_id["owner-1"]
+    assert owner_row.owned_agents == 2  # a MySQL fact, unaffected by the outage
+    assert owner_row.owned_runs is None
+    assert owner_row.served_by_agents is None
+    assert owner_row.runs is None
 
 
 @pytest.mark.asyncio

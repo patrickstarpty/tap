@@ -2,12 +2,15 @@
 
 Builds the three-file CSV export (`roster.csv`, `people.csv`, `trend.csv`)
 `/ai/agent-team/export` returns. Each CSV starts with a UTF-8 BOM so Excel
-opens Chinese Agent/Person names without mangling them. `trend.csv` carries a
-leading `# granularity=<day|week|month>` comment line recording the same
-granularity the UI's trend view uses (`period.granularity`); when the
-runtime backend is unavailable, run-derived columns are already blank on
-each row (service layer leaves `MemberRow.status`/etc. `None`, spec 5.1),
-and `trend.csv` additionally gets a `# runtime=unavailable` comment line.
+opens Chinese Agent/Person names without mangling them, and each carries a
+leading `# runtime=unavailable` comment line when the runtime backend could
+not be queried (`trend.csv` additionally starts with a
+`# granularity=<day|week|month>` comment line recording `period.granularity`,
+the same rule the UI's trend view uses; `# runtime=unavailable`, if present,
+follows it). Domain-level rows already carry `None` -- never `0` -- on every
+run-derived field when the runtime backend is unavailable (controller ruling,
+Task 9 review fix round 1: see `domain/models.py`'s `MemberRow`/`PersonRow`/
+`TeamSummary` docstrings); this module renders `None` as an empty cell.
 """
 
 from __future__ import annotations
@@ -17,19 +20,16 @@ import io
 import zipfile
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
 
 from tap.modules.agent_team.application.service import PeriodReport
 from tap.modules.agent_team.domain.models import (
     MaintenanceKind,
     MemberRow,
+    Period,
     PersonRow,
     RuntimeStatus,
 )
 from tap.modules.agent_team.ports import ServedActor, TrendPoint
-
-if TYPE_CHECKING:
-    from tap.modules.agent_team.domain.models import Period
 
 _UTF8_BOM = "﻿"
 
@@ -115,6 +115,12 @@ def _maintenance_cell(maintenance: Mapping[MaintenanceKind, int], kind: Maintena
     return str(maintenance.get(kind, 0))
 
 
+def _calls_per_run_cell(value: float | None) -> str:
+    """Rounded to 2 decimals for readability; `cost_usd` keeps its full
+    `Decimal` string instead (money, not a derived ratio)."""
+    return "" if value is None else f"{value:.2f}"
+
+
 def _roster_row(row: MemberRow) -> list[str]:
     cells = [
         row.agent_key,
@@ -124,14 +130,14 @@ def _roster_row(row: MemberRow) -> list[str]:
         _blank(row.owner_actor_id),
         _iso_datetime(row.joined_at),
         _blank(row.status),
-        str(row.runs),
-        str(row.failures),
-        str(row.abstained),
-        str(row.canceled),
-        str(row.latency_total_ms),
+        _blank(row.runs),
+        _blank(row.failures),
+        _blank(row.abstained),
+        _blank(row.canceled),
+        _blank(row.latency_total_ms),
         _blank(row.latency_p50_ms),
-        str(row.cost_usd),
-        str(row.served_count),
+        _blank(row.cost_usd),
+        _blank(row.served_count),
         _top_served_cell(row.top_served),
         _iso_datetime(row.last_run_at),
         _blank(row.satisfaction),
@@ -144,7 +150,7 @@ def _roster_row(row: MemberRow) -> list[str]:
         [
             _blank(row.generation_calls),
             _blank(row.tool_calls),
-            _blank(row.calls_per_run),
+            _calls_per_run_cell(row.calls_per_run),
         ]
     )
     return cells
@@ -154,9 +160,9 @@ def _people_row(row: PersonRow) -> list[str]:
     return [
         row.actor_id,
         str(row.owned_agents),
-        str(row.owned_runs),
-        str(row.served_by_agents),
-        str(row.runs),
+        _blank(row.owned_runs),
+        _blank(row.served_by_agents),
+        _blank(row.runs),
         str(row.maintenance),
     ]
 
@@ -190,19 +196,29 @@ def build_export(
     report: PeriodReport,
     trend: list[TrendPoint],
     *,
-    period: "Period",
+    period: Period,
     runtime_status: RuntimeStatus,
 ) -> bytes:
     """The export zip's bytes: `roster.csv`, `people.csv`, `trend.csv`, each
-    UTF-8-BOM-prefixed. `trend.csv` records `period.granularity` (the same
-    rule the UI's trend view uses) and, when `runtime_status` is
-    `"unavailable"`, that the run-derived columns are blank because the
-    runtime backend could not be queried."""
-    roster_csv = _csv_bytes(_ROSTER_HEADER, (_roster_row(row) for row in report.members))
-    people_csv = _csv_bytes(_PEOPLE_HEADER, (_people_row(row) for row in report.people))
-    trend_comments = [f"# granularity={period.granularity}"]
-    if runtime_status == "unavailable":
-        trend_comments.append("# runtime=unavailable")
+    UTF-8-BOM-prefixed. `trend.csv` additionally starts with a
+    `# granularity=<day|week|month>` comment line recording
+    `period.granularity` (the same rule the UI's trend view uses). When
+    `runtime_status` is `"unavailable"`, every file gets a leading
+    `# runtime=unavailable` comment line (after `# granularity=` in
+    `trend.csv`) -- the run-derived cells are blank because the domain rows
+    already carry `None` there, not because the column was dropped."""
+    unavailable_comment = ["# runtime=unavailable"] if runtime_status == "unavailable" else []
+    roster_csv = _csv_bytes(
+        _ROSTER_HEADER,
+        (_roster_row(row) for row in report.members),
+        comment_lines=unavailable_comment,
+    )
+    people_csv = _csv_bytes(
+        _PEOPLE_HEADER,
+        (_people_row(row) for row in report.people),
+        comment_lines=unavailable_comment,
+    )
+    trend_comments = [f"# granularity={period.granularity}", *unavailable_comment]
     trend_csv = _csv_bytes(
         _TREND_HEADER, (_trend_row(point) for point in trend), comment_lines=trend_comments
     )

@@ -306,8 +306,15 @@
         "additionalProperties": false,
         "properties": {
           "abstained": {
-            "title": "Abstained",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstained"
           },
           "agentKey": {
             "title": "Agentkey",
@@ -325,16 +332,37 @@
             "title": "Callsperrun"
           },
           "canceled": {
-            "title": "Canceled",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canceled"
           },
           "costUsd": {
-            "title": "Costusd",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
           },
           "failures": {
-            "title": "Failures",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failures"
           },
           "generationCalls": {
             "anyOf": [
@@ -415,8 +443,15 @@
             "title": "Latencyp50Ms"
           },
           "latencyTotalMs": {
-            "title": "Latencytotalms",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencytotalms"
           },
           "maintenance": {
             "additionalProperties": {
@@ -445,8 +480,15 @@
             "type": "integer"
           },
           "runs": {
-            "title": "Runs",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
           },
           "satisfaction": {
             "anyOf": [
@@ -468,8 +510,15 @@
             "type": "string"
           },
           "servedCount": {
-            "title": "Servedcount",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servedcount"
           },
           "status": {
             "anyOf": [
@@ -972,16 +1021,37 @@
             "type": "integer"
           },
           "ownedRuns": {
-            "title": "Ownedruns",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownedruns"
           },
           "runs": {
-            "title": "Runs",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
           },
           "servedByAgents": {
-            "title": "Servedbyagents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servedbyagents"
           }
         },
         "required": [
@@ -1233,8 +1303,15 @@
             "type": "integer"
           },
           "costUsd": {
-            "title": "Costusd",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
           },
           "idle": {
             "anyOf": [
@@ -1248,8 +1325,15 @@
             "title": "Idle"
           },
           "latencyTotalMs": {
-            "title": "Latencytotalms",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencytotalms"
           },
           "maintenanceTotal": {
             "title": "Maintenancetotal",
@@ -1260,8 +1344,15 @@
             "type": "number"
           },
           "runs": {
-            "title": "Runs",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
           },
           "servedAvg": {
             "title": "Servedavg",

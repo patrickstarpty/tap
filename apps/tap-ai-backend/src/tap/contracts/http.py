@@ -1899,14 +1899,14 @@ class AgentTeamMemberRow(ContractModel):
     owner_actor_id: str | None
     joined_at: datetime | None
     status: Literal["active", "idle", "disabled"] | None
-    runs: int
-    failures: int
-    abstained: int
-    canceled: int
-    latency_total_ms: int
+    runs: int | None
+    failures: int | None
+    abstained: int | None
+    canceled: int | None
+    latency_total_ms: int | None
     latency_p50_ms: int | None
-    cost_usd: Decimal
-    served_count: int
+    cost_usd: Decimal | None
+    served_count: int | None
     top_served: list[AgentTeamServedActor]
     last_run_at: datetime | None
     satisfaction: float | None
@@ -1926,18 +1926,18 @@ class AgentTeamSummary(ContractModel):
     idle: int | None
     owners_avg: float
     served_avg: float
-    runs: int
-    latency_total_ms: int
-    cost_usd: Decimal
+    runs: int | None
+    latency_total_ms: int | None
+    cost_usd: Decimal | None
     maintenance_total: int
 
 
 class AgentTeamPersonRow(ContractModel):
     actor_id: str
     owned_agents: int
-    owned_runs: int
-    served_by_agents: int
-    runs: int
+    owned_runs: int | None
+    served_by_agents: int | None
+    runs: int | None
     maintenance: int
 
 

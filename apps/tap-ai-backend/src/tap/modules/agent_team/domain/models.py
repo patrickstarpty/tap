@@ -183,7 +183,16 @@ class MemberRow:
     unavailable (spec 5.1 controller ruling): a disabled Agent's status is
     always `"disabled"` (known from MySQL regardless of Langfuse), but
     "active"/"idle" require the trailing-30-day run count, which an outage
-    makes unknown -- reporting "idle" in that case would be a false claim."""
+    makes unknown -- reporting "idle" in that case would be a false claim.
+
+    Controller ruling (Task 9 review, fix round 1): every run-derived field
+    is `None` -- never `0` -- when the runtime backend is unavailable:
+    `runs`, `failures`, `abstained`, `canceled`, `latency_total_ms`,
+    `latency_p50_ms`, `cost_usd`, `served_count` (`top_served` becomes an
+    empty tuple, `last_run_at` `None`, `trend` empty). Reporting `0` during
+    an outage would claim "no runs happened", which is not knowable; `None`
+    means "unknown". Satisfaction, pending feedback and maintenance stay
+    populated -- they come from MySQL, not the runtime backend."""
 
     agent_key: str
     name: str
@@ -192,14 +201,14 @@ class MemberRow:
     owner_actor_id: str | None
     joined_at: datetime | None
     status: MemberStatus | None
-    runs: int
-    failures: int
-    abstained: int
-    canceled: int
-    latency_total_ms: int
+    runs: int | None
+    failures: int | None
+    abstained: int | None
+    canceled: int | None
+    latency_total_ms: int | None
     latency_p50_ms: int | None
-    cost_usd: Decimal
-    served_count: int
+    cost_usd: Decimal | None
+    served_count: int | None
     top_served: tuple[ServedActor, ...]
     last_run_at: datetime | None
     satisfaction: float | None
@@ -229,29 +238,36 @@ class TeamSummary:
     `active`/`idle` are `None` when the runtime backend is unavailable --
     both require knowing run counts, which an outage makes unknown
     (`agent_total` stays a real number: it only depends on MySQL's
-    `enabled` flag)."""
+    `enabled` flag). Per the same ruling, `runs`/`latency_total_ms`/
+    `cost_usd` are also `None` (not `0`) during an outage."""
 
     agent_total: int
     active: int | None
     idle: int | None
     owners_avg: float
     served_avg: float
-    runs: int
-    latency_total_ms: int
-    cost_usd: Decimal
+    runs: int | None
+    latency_total_ms: int | None
+    cost_usd: Decimal | None
     maintenance_total: int
 
 
 @dataclass(frozen=True, slots=True)
 class PersonRow:
     """Spec 2.5's per-person row. `runs` is this actor's own run count across
-    every Agent that served them in the period."""
+    every Agent that served them in the period.
+
+    `owned_runs`/`runs`/`served_by_agents` are `None` (not `0`) when the
+    runtime backend is unavailable -- they all depend on run counts an
+    outage makes unknown. `owned_agents`/`maintenance` stay populated:
+    owning an Agent and making a maintenance change are both MySQL facts,
+    independent of the runtime backend."""
 
     actor_id: str
     owned_agents: int
-    owned_runs: int
-    served_by_agents: int
-    runs: int
+    owned_runs: int | None
+    served_by_agents: int | None
+    runs: int | None
     maintenance: int
 
 

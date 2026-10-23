@@ -379,6 +379,7 @@ class AgentTeamService:
                 ],
                 stats_by_key=stats_by_key,
                 maintenance_count=store_data.maintenance_by_actor.get(actor_id, 0),
+                runtime_available=runtime.status != "unavailable",
             )
             for actor_id in sorted(scope_ids)
         ]
@@ -478,14 +479,15 @@ class AgentTeamService:
         store_data = await self._load_store_data(period)
         members = self._build_members(runtime, store_data)
         people = self._people_rows(members, runtime, store_data)
+        runtime_available = runtime.status != "unavailable"
         person_row = next(
             (row for row in people if row.actor_id == resolved),
             PersonRow(
                 actor_id=resolved,
                 owned_agents=0,
-                owned_runs=0,
-                served_by_agents=0,
-                runs=0,
+                owned_runs=0 if runtime_available else None,
+                served_by_agents=0 if runtime_available else None,
+                runs=0 if runtime_available else None,
                 maintenance=0,
             ),
         )
