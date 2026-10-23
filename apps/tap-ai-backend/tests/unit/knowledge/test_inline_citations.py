@@ -1426,6 +1426,9 @@ def test_indexes_unsupplied_markers_and_label_like_text_in_code_are_kept(line) -
         ("x = 1  # 见 [S1]、[S2]", "x = 1"),
         ("# 登录，参见 [S9]。", "# 登录。"),
         ("x = 1  # [S1][S12]", "x = 1  # [S12]"),
+        ("# 值 [S8][S12][S7]", "# 值 [S12]"),
+        ("# 值 [S12][S7]", "# 值 [S12]"),
+        ("# 登录（依据（见[S1]））", "# 登录"),
         ("// 提交 [R1] [I2]", "// 提交"),
     ],
 )
@@ -1478,12 +1481,38 @@ def test_a_trailing_source_legend_is_removed_with_its_lead_in() -> None:
         "审核时限为3个工作日。\n[S1]\n",
         # A line that starts with an unsupplied label is ordinary text.
         "[S12] 号缺陷已关闭。",
+        # Only a legend that closes the answer goes; a list or a wrapped line
+        # in the middle of the answer is kept.
+        "## 核心规则\n\n关键规则如下：\n- [S1] 金额低于 5000 元走快速通道。\n"
+        "- [S2] 需上传身份证。\n\n## 测试步骤\n1. 登录。",
+        "审核需3个工作日 [S1]。审核规则\n[S2] 另有说明，需人工复核。\n下一段。",
+        "步骤如下：\n1. [S1] 登录系统\n2. [S2] 提交申请\n\n完成后检查状态。",
+        "> [S1] 原文摘录",
     ],
 )
 def test_text_that_is_not_a_source_legend_is_kept(text) -> None:
     from tap.modules.knowledge.adapters.litellm import _without_bare_label_lists
 
     assert _without_bare_label_lists(text, _ROUND4_LABELS, ()) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("本次推荐的 Skill 是 [webapp-testing]。", "本次推荐的 Skill 是 webapp-testing。"),
+        (
+            "可选工具包括 Playwright 与 [webapp-testing]，后者更快。",
+            "可选工具包括 Playwright 与 webapp-testing，后者更快。",
+        ),
+        ("可以用 Skill [webapp-testing]。", "可以用 Skill webapp-testing。"),
+        ("安装 skill: [webapp-testing]", "安装 skill: webapp-testing"),
+        ("先完成侦察 [webapp-testing]，再执行。", "先完成侦察 webapp-testing，再执行。"),
+    ],
+)
+def test_a_skill_name_used_in_the_sentence_keeps_its_name(text, expected) -> None:
+    from tap.modules.knowledge.adapters.litellm import _without_skill_pseudo_citations
+
+    assert _without_skill_pseudo_citations(text, ("webapp-testing",)) == expected
 
 
 @pytest.mark.parametrize(

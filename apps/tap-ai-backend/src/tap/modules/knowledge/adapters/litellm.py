@@ -243,13 +243,16 @@ _LABEL = re.compile(r"[SRI]\d+")
 
 # N10: a closing source legend ("[S1] 定义通道适用条件与时效；") puts each
 # marker before the text it describes, so claim checks keep only fragments of
-# it. Outside code, consecutive lines that start with supplied markers and go
-# on with text are removed, with a lead-in line ending in a colon right before
-# them.
+# it. Outside code, the consecutive lines that end the answer (before any
+# trailing rule) and start with supplied markers followed by text are removed,
+# with a lead-in line ending in a colon right before them.
 _LEGEND_LINE = re.compile(
     r"[ \t]*(?:[-*+][ \t]+|\d+[.)、][ \t]*)?(?P<markers>(?:\[[ \t]*[SRI]\d+[ \t]*\][ \t]*)+)"
     r"[:：\-–—]?[ \t]*\S.*"
 )
+
+
+_RULE_LINE = re.compile(r"[ \t]*(?:[-*_][ \t]*){3,}")
 
 
 def _without_source_legend(text: str, labels: frozenset[str]) -> str:
@@ -270,26 +273,26 @@ def _without_source_legend(text: str, labels: frozenset[str]) -> str:
         match = _LEGEND_LINE.fullmatch(lines[number])
         return match is not None and set(_LABEL.findall(match["markers"])) <= labels
 
-    dropped: set[int] = set()
-    number = 0
-    while number < len(lines):
-        if not is_legend(number):
-            number += 1
-            continue
-        first = number
-        while number < len(lines) and is_legend(number):
-            dropped.add(number)
-            number += 1
-        lead_in = first - 1
-        if (
-            lead_in >= 0
-            and lines[lead_in].rstrip()[-1:] in (":", "：")
-            and not _CODE_MARKER.search(lines[lead_in])
-            and not any(start <= offsets[lead_in] < end for start, end in blocks)
-        ):
-            dropped.add(lead_in)
-    if not dropped:
+    # Only the legend that closes the answer goes: a marker-led list or a
+    # wrapped line in the middle of the answer is ordinary content.
+    last = len(lines) - 1
+    while last >= 0 and (not lines[last].strip() or _RULE_LINE.fullmatch(lines[last])):
+        last -= 1
+    first = last
+    while first >= 0 and is_legend(first):
+        first -= 1
+    first += 1
+    if first > last:
         return text
+    dropped = set(range(first, last + 1))
+    lead_in = first - 1
+    if (
+        lead_in >= 0
+        and lines[lead_in].rstrip()[-1:] in (":", "：")
+        and not _CODE_MARKER.search(lines[lead_in])
+        and not any(start <= offsets[lead_in] < end for start, end in blocks)
+    ):
+        dropped.add(lead_in)
     return "\n".join(line for index, line in enumerate(lines) if index not in dropped)
 
 
@@ -413,9 +416,11 @@ def _scan_line(line: str) -> tuple[int | None, bool]:
 # nothing to cite goes with it ("（依据[S9]）", "（依据[S2]：…）",
 # "（…；[S1]）"), and a line left empty by the removal is dropped.
 _CODE_MARKER = re.compile(r"(?<![A-Za-z0-9_)\]])\[[ \t]*(?P<label>[SRI]\d+)[ \t]*\]")
+_SINGLE_MARKER = re.compile(r"\[[ \t]*(?P<label>[SRI]\d+)[ \t]*\]")
+_CODE_MARKER_RUN = re.compile(r"(?<![A-Za-z0-9_)\]])(?:\[[ \t]*[SRI]\d+[ \t]*\])+")
 _GONE = "\x00"
 _COMMENT_TOKEN = re.compile(r"^(?:#+|//+)[ \t]*")
-_GONE_RUN = rf"{_GONE}(?:[ \t]*(?:[/、,，][ \t]*)?{_GONE})*"
+_GONE_RUN = rf"{_GONE}(?:[ \t]*+(?:[/、,，][ \t]*+)?+{_GONE})*+"
 _GONE_SHELLS = (
     # "（依据[S9]）", "（[S1][S3]）": nothing left inside the parentheses.
     re.compile(rf"[ \t]*{_COMMENT_OPEN}[ \t]*(?:{_COMMENT_CUE})?{_GONE_RUN}[ \t]*[）)]"),
@@ -437,22 +442,23 @@ _GONE_SHELLS = (
 
 def _without_code_markers(line: str, labels: frozenset[str]) -> str:
     def gone(match: re.Match[str]) -> str:
-        return _GONE if match["label"] in labels else match[0]
-
-    marked = _CODE_MARKER.sub(gone, line)
-    while True:
-        # A marker right after a removed one ("[S8][S7]") is still a citation.
-        following = re.sub(
-            rf"(?<={_GONE})\[[ \t]*(?P<label>[SRI]\d+)[ \t]*\]",
-            gone,
-            marked,
+        # Within a run ("[S8][S12][S7]") each supplied marker goes on its own.
+        return _SINGLE_MARKER.sub(
+            lambda marker: _GONE if marker["label"] in labels else marker[0], match[0]
         )
-        if following == marked:
-            break
-        marked = following
+
+    marked = _CODE_MARKER_RUN.sub(gone, line)
     if _GONE not in marked:
         return line
-    for pattern in _GONE_SHELLS:
+    empty, *others = _GONE_SHELLS
+    while True:
+        # Nested shells ("（依据（见[S1]））") empty out from the inside: an
+        # emptied shell counts as removed for the one around it.
+        emptied = empty.sub(_GONE, marked)
+        if emptied == marked:
+            break
+        marked = emptied
+    for pattern in others:
         marked = pattern.sub(lambda match: match.groupdict().get("open") or "", marked)
     return marked
 
@@ -485,7 +491,12 @@ def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
     return "\n".join(lines)
 
 
-_SKILL_NAME_CUE = re.compile(rf"(?:{_CITATION_CUE}|参考|按|使用|执行|调用|用)[ \t]*$")
+# A Skill name after a cue, a copula, a conjunction, a colon or the word
+# "Skill" is part of the sentence ("推荐的 Skill 是 [webapp-testing]。").
+_SKILL_NAME_CUE = re.compile(
+    rf"(?:{_CITATION_CUE}|参考|按|使用|执行|调用|用|是|为|与|和|及|或|、|[:：]"
+    r"|(?i:skill)|技能)[ \t]*$"
+)
 
 
 def _without_skill_pseudo_citations(text: str, names: Sequence[str]) -> str:
@@ -501,7 +512,7 @@ def _without_skill_pseudo_citations(text: str, names: Sequence[str]) -> str:
         r"(?P<lead>[ \t]*)\[[ \t]*(?P<name>(?:"
         + "|".join(re.escape(name) for name in names)
         + r")(?:[ \t]+[Ss]kill)?)[ \t]*\](?!\()"
-        + r"(?P<cites>(?=[ \t]*(?:[。．.；;，,！!？?]|$)))?",
+        + r"(?P<cites>(?=[ \t]*(?:[。．.；;！!？?]|\r?$)))?",
         re.MULTILINE,
     )
 
