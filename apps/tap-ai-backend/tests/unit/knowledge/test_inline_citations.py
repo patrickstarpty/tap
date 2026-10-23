@@ -1155,6 +1155,13 @@ _CODE_LABELS = frozenset({"S1", "S2", "S8", "S9"})
         ),
         ("```js\n// 登录 (S1/S2)\nlogin();\n```", "```js\n// 登录\nlogin();\n```"),
         ("~~~\n# 验证码固定（S2）\n~~~", "~~~\n# 验证码固定\n~~~"),
+        # Real round-3 probe forms: a cue inside the parentheses, and a label
+        # prefixing a description (only the label goes).
+        ("```python\n# 2. 进入快速通道（依据 S1, S8）\n```", "```python\n# 2. 进入快速通道\n```"),
+        (
+            "```python\n# 4. 处理验证码（S2：固定值 123456）\n```",
+            "```python\n# 4. 处理验证码（固定值 123456）\n```",
+        ),
         ("说明。\n\n    # 重置数据（S9）\n    reset()", "说明。\n\n    # 重置数据\n    reset()"),
     ],
 )

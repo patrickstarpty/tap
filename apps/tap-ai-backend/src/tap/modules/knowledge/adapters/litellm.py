@@ -307,9 +307,11 @@ def _without_bare_label_lists(text: str, labels: frozenset[str], protected: Sequ
 # N1-R: inside a code block only a parenthesized supplied label or label list
 # in a `#` or `//` comment is removed ("# 登录（S9）", "// 账号 (S1, S8)");
 # code tokens, strings and any other parentheses are kept.
+_COMMENT_RUN = r"[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)*"
 _COMMENT_LABELS = re.compile(
-    r"[ \t]*[（(][ \t]*(?P<run>[SRI]\d+(?:[ \t]*(?:/|、|,|，|–|—|-|~|～)[ \t]*[SRI]\d+)*)"
-    r"[ \t]*[）)]"
+    rf"[ \t]*[（(][ \t]*(?:{_CITATION_CUE})?(?P<run>{_COMMENT_RUN})[ \t]*[）)]"
+    # "（S2：固定值 123456）": only the label prefix goes.
+    rf"|(?<=[（(])[ \t]*(?P<prefix>{_COMMENT_RUN})[ \t]*[:：][ \t]*"
 )
 
 
@@ -337,7 +339,9 @@ def _without_comment_labels(code: str, labels: frozenset[str]) -> str:
         if start is None:
             continue
         comment = _COMMENT_LABELS.sub(
-            lambda match: ("" if set(_LABEL.findall(match["run"])) <= labels else match[0]),
+            lambda match: (
+                "" if set(_LABEL.findall(match["run"] or match["prefix"])) <= labels else match[0]
+            ),
             line[start:],
         )
         lines[number] = line[:start] + comment
