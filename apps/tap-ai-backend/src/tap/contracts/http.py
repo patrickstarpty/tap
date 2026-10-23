@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Self
@@ -1867,3 +1867,206 @@ class PromptSuggestionItem(ContractModel):
 
 class PromptSuggestionPage(ContractModel):
     items: list[PromptSuggestionItem]
+
+
+# -- Agent team view (spec 2026-10-22-agent-team-view-design.md, section 5) -
+
+
+class AgentTeamPeriod(ContractModel):
+    from_: date = Field(alias="from")
+    to: date
+
+
+class AgentTeamServedActor(ContractModel):
+    actor_id: str
+    runs: int
+
+
+class AgentTeamTrendPoint(ContractModel):
+    bucket_start: date
+    agent_key: str
+    runs: int
+    failures: int
+    latency_total_ms: int
+    cost_usd: Decimal
+
+
+class AgentTeamMemberRow(ContractModel):
+    agent_key: str
+    name: str
+    kind: Literal["custom", "built_in", "tapper_default"]
+    job_title: str | None
+    owner_actor_id: str | None
+    joined_at: datetime | None
+    status: Literal["active", "idle", "disabled"] | None
+    runs: int
+    failures: int
+    abstained: int
+    canceled: int
+    latency_total_ms: int
+    latency_p50_ms: int | None
+    cost_usd: Decimal
+    served_count: int
+    top_served: list[AgentTeamServedActor]
+    last_run_at: datetime | None
+    satisfaction: float | None
+    satisfaction_sample: Literal["ok", "insufficient"]
+    last_maintenance_at: datetime | None
+    pending_feedback: int
+    maintenance: dict[str, int]
+    trend: list[AgentTeamTrendPoint]
+
+
+class AgentTeamSummary(ContractModel):
+    agent_total: int
+    active: int | None
+    idle: int | None
+    owners_avg: float
+    served_avg: float
+    runs: int
+    latency_total_ms: int
+    cost_usd: Decimal
+    maintenance_total: int
+
+
+class AgentTeamPersonRow(ContractModel):
+    actor_id: str
+    owned_agents: int
+    owned_runs: int
+    served_by_agents: int
+    runs: int
+    maintenance: int
+
+
+class AgentTeamOrgChartEdge(ContractModel):
+    from_: str = Field(alias="from")
+    to: str
+    kind: Literal["owns", "serves"]
+
+
+class AgentTeamOrgChart(ContractModel):
+    people: list[str]
+    agents: list[str]
+    edges: list[AgentTeamOrgChartEdge]
+
+
+class AgentTeamPendingFeedbackItem(ContractModel):
+    feedback_id: str
+    agent_key: str
+    turn_id: str
+    conversation_id: str
+    actor_id: str
+    rating: str | None
+    comment: str | None
+    updated_at: datetime
+
+
+class AgentTeamResolvedFeedback(ContractModel):
+    feedback_id: str
+    agent_key: str
+    turn_id: str
+    conversation_id: str
+    actor_id: str
+    rating: str | None
+    comment: str | None
+    updated_at: datetime
+    resolved_at: datetime
+    resolved_by: str
+    resolution_note: str | None
+
+
+class AgentTeamPersonDetail(ContractModel):
+    person: AgentTeamPersonRow
+    owned: list[AgentTeamMemberRow]
+    served: list[AgentTeamMemberRow]
+    pending_feedback: list[AgentTeamPendingFeedbackItem]
+
+
+class AgentTeamHistoryEvent(ContractModel):
+    event_id: str
+    agent_id: str
+    actor_id: str
+    kind: Literal[
+        "revised",
+        "skill_upgraded",
+        "disabled",
+        "enabled",
+        "feedback_resolved",
+        "owner_transferred",
+    ]
+    revision_id: str | None
+    feedback_id: str | None
+    note: str | None
+    occurred_at: datetime
+
+
+class AgentTeamHistoryPage(ContractModel):
+    events: list[AgentTeamHistoryEvent]
+    next_cursor: str | None
+
+
+class AgentTeamPeriodReport(ContractModel):
+    summary: AgentTeamSummary
+    members: list[AgentTeamMemberRow]
+    people: list[AgentTeamPersonRow]
+
+
+class AgentTeamReport(ContractModel):
+    current: AgentTeamPeriodReport
+    previous: AgentTeamPeriodReport
+
+
+class AgentTeamViewEnvelope(ContractModel):
+    """Shared read envelope (spec 5): `runtimeStatus`/`computedAt` (5.1),
+    the echoed period/timezone/granularity (2.1)."""
+
+    runtime_status: Literal["ok", "syncing", "unavailable"]
+    computed_at: datetime
+    timezone: str
+    period: AgentTeamPeriod
+    granularity: Literal["day", "week", "month"]
+
+
+class AgentTeamSummaryView(AgentTeamViewEnvelope):
+    data: AgentTeamSummary
+
+
+class AgentTeamMembersView(AgentTeamViewEnvelope):
+    data: list[AgentTeamMemberRow]
+
+
+class AgentTeamMemberView(AgentTeamViewEnvelope):
+    data: AgentTeamMemberRow
+
+
+class AgentTeamPeopleView(AgentTeamViewEnvelope):
+    data: list[AgentTeamPersonRow]
+
+
+class AgentTeamPersonView(AgentTeamViewEnvelope):
+    data: AgentTeamPersonDetail
+
+
+class AgentTeamOrgChartView(AgentTeamViewEnvelope):
+    data: AgentTeamOrgChart
+
+
+class AgentTeamReportView(AgentTeamViewEnvelope):
+    data: AgentTeamReport
+
+
+class AgentProfileUpdateRequest(ContractModel):
+    job_title: str | None = None
+
+
+class AgentOwnerTransferRequest(ContractModel):
+    # Not named `actor_id`/`actorId`: the request-scope guard
+    # (`interfaces/http/scope.py::_has_authority`) rejects any request body
+    # carrying a key that normalizes to an identity field (including
+    # `actorId`) as caller-asserted identity, regardless of route -- this
+    # body names the *new owner*, not the caller, so it needs a distinct key.
+    new_owner_actor_id: str
+
+
+class AgentTeamFeedbackResolveRequest(ContractModel):
+    note: str | None = None
