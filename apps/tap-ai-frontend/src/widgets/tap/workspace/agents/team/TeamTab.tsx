@@ -65,16 +65,21 @@ export function TeamTab({
   const members = useTeamMembers(projectId, period, filters);
   const people = useTeamPeople(projectId, period);
   // Cards always show the last 30 days, whatever period is selected.
-  const sparkPeriod = useMemo(() => resolvePeriod("last30", new Date()), []);
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const sparkPeriod = useMemo(
+    () => resolvePeriod("last30", new Date(`${todayKey}T00:00:00Z`)),
+    [todayKey],
+  );
   const spark = useTeamMembers(projectId, sparkPeriod, NO_FILTERS);
 
   const rows = members.data?.data;
   const owners = [
-    ...new Set(
-      (people.data?.data ?? [])
+    ...new Set([
+      ...(owner === "" ? [] : [owner]),
+      ...(people.data?.data ?? [])
         .filter((person) => person.ownedAgents > 0)
         .map((person) => person.actorId),
-    ),
+    ]),
   ].sort();
   const sparklineByAgentKey = useMemo(() => {
     const map = new Map<string, number[]>();

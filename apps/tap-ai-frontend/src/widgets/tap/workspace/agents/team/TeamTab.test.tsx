@@ -355,8 +355,12 @@ describe("TeamTab", () => {
     expect(calls.some((call) => call[1] !== period)).toBe(true);
     const spark = calls.find((call) => call[1] !== period)!;
     expect(spark[2]).toEqual({});
+    expect(screen.getByText("周期内运行", { selector: "dt" })).toBeVisible();
+    expect(
+      screen.getByText("12", { selector: ".tap-team-card dd" }),
+    ).toBeVisible();
     const polyline = screen
-      .getByRole("img", { name: /Reviewer/ })
+      .getByRole("img", { name: /Reviewer.*近 30 天/ })
       .querySelector("polyline")!;
     expect(polyline.getAttribute("points")!.split(" ")).toHaveLength(3);
   });

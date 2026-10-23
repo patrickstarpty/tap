@@ -419,6 +419,7 @@ export interface WorkspaceCopy {
       trendHeading: string;
       noJobTitle: string;
       ownerLabel: string;
+      runsInPeriod: string;
       runsTrend: string;
       topServed: string;
       noServed: string;
@@ -1025,7 +1026,8 @@ export const WORKSPACE_COPY = {
         trendHeading: "Run trend",
         noJobTitle: "No job title",
         ownerLabel: "Owner",
-        runsTrend: "Runs, last 30 days",
+        runsInPeriod: "Runs in period",
+        runsTrend: "Runs trend, last 30 days",
         topServed: "Top served",
         noServed: "No one yet",
         lastRun: "Last run",
@@ -1620,7 +1622,8 @@ export const WORKSPACE_COPY = {
         trendHeading: "运行趋势",
         noJobTitle: "未设岗位",
         ownerLabel: "负责人",
-        runsTrend: "近 30 天运行",
+        runsInPeriod: "周期内运行",
+        runsTrend: "近 30 天运行趋势",
         topServed: "主要服务对象",
         noServed: "暂无",
         lastRun: "最近运行",

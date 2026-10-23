@@ -62,7 +62,7 @@ export function RosterCards({
                 </dd>
               </div>
               <div>
-                <dt>{labels.runsTrend}</dt>
+                <dt>{labels.runsInPeriod}</dt>
                 <dd>
                   {row.runs === null ? (
                     <RunValue value={null} ctx={ctx} />
