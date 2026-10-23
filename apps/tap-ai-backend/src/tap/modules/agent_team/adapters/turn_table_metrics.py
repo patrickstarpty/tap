@@ -39,13 +39,9 @@ from sqlalchemy import select
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from tap.modules.agent_team.domain.models import (
-    TAPPER_DEFAULT_AGENT_KEY,
-    UNKNOWN_AGENT_KEY,
-    Period,
-)
+from tap.modules.agent_team.adapters.agent_keys import resolve_agent_keys
+from tap.modules.agent_team.domain.models import Period
 from tap.modules.agent_team.ports import AgentRuntimeStats, ServedActor, TrendPoint
-from tap.modules.ai.adapters.mysql import ai_agent_revision
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
 from tap.modules.chat.adapters.mysql_conversations import turn_input_snapshot
 
@@ -135,31 +131,8 @@ class TurnTableRuntimeMetrics:
     async def _resolve_agent_keys(
         self, session: AsyncSession, project_id: str, rows: Sequence[RowMapping]
     ) -> dict[str, str]:
-        revision_ids = {
-            row["snapshot"].get("agent_revision_id")
-            for row in rows
-            if row["snapshot"] and row["snapshot"].get("agent_revision_id")
-        }
-        agent_by_revision: dict[str, str] = {}
-        if revision_ids:
-            found = (
-                await session.execute(
-                    select(ai_agent_revision.c.revision_id, ai_agent_revision.c.agent_id).where(
-                        ai_agent_revision.c.project_id == project_id,
-                        ai_agent_revision.c.revision_id.in_(revision_ids),
-                    )
-                )
-            ).all()
-            agent_by_revision = {r.revision_id: r.agent_id for r in found}
-        result: dict[str, str] = {}
-        for row in rows:
-            snapshot = row["snapshot"]
-            revision_id = snapshot.get("agent_revision_id") if snapshot else None
-            if not revision_id:
-                result[row["turn_id"]] = TAPPER_DEFAULT_AGENT_KEY
-            else:
-                result[row["turn_id"]] = agent_by_revision.get(revision_id, UNKNOWN_AGENT_KEY)
-        return result
+        snapshots = {row["turn_id"]: row["snapshot"] for row in rows}
+        return await resolve_agent_keys(session, project_id, snapshots)
 
     async def _completion_times(
         self, session: AsyncSession, turn_ids: Sequence[str]
