@@ -74,38 +74,58 @@
 
 动作由系统在对应写操作中自动记录，不需要人工填写。
 
+能力 4 没有"Skill 出新版本后自动生成 Agent 修订"的路径，修订都由人发起。修订时若与上一修订相比只有绑定的 Skill 修订变化，且每处变化都是同一 Skill 的新修订，记 `skill_upgraded`；其余记 `revised`。创建 Agent 不记维护动作。
+
+### 1.4 状态
+
+- 已停用：Agent 处于停用状态，优先于其他状态。
+- 活跃：截至今天的近 30 天至少运行 1 次。
+- 闲置：启用中且截至今天的近 30 天无运行。
+
+状态与所选周期无关；汇总中的"活跃数"按所选周期计算（见 2.6）。
+
 ## 2. 指标口径
 
 ### 2.1 周期与粒度
 
 - 周期：近 7 天、近 30 天、本月、上月、自定义；不限跨度。
-- 按项目时区切分自然日，未配置时用 UTC，界面显示所用时区。
-- 趋势粒度随跨度自动调整：≤ 92 天按天，≤ 2 年按周，更长按月。汇总数字始终是整个周期的准确合计。
+- 按项目时区切分自然日，未配置时用 UTC，界面显示所用时区。当前没有项目时区设置，V2.1 恒为 UTC。
+- 趋势粒度随跨度自动调整：≤ 92 天按天，≤ 731 天按周，更长按月。周从周一开始，月为自然月；首尾不完整的桶按周期截断，标注实际起止日期。汇总数字始终是整个周期的准确合计。
 
 ### 2.2 产出侧（取自 Langfuse）
 
 | 指标 | 口径 | 层级 |
 | --- | --- | --- |
 | 运行次数 | 带 `agent:` 标签的 Turn trace 数；一次提问即一次运行 | 主指标 |
-| 失败次数 | 其中根 observation 为 `ERROR` 的数量 | 主指标 |
+| 失败次数 | 其中 `outcome:failed` 的数量 | 主指标 |
 | 运行时长 | trace 延迟合计与 p50 | 主指标 |
 | 模型成本 | `totalCost` 合计（USD） | 主指标 |
 | 服务人数、服务对象 | 不同 `userId` 数与按次数排序的名单 | 主指标 |
-| 最近运行 | 周期内最后一个 trace 的时间 | 主指标 |
+| 最近运行 | 最后一个 Turn trace 的时间，不限周期 | 主指标 |
 | 模型调用次数 | 类型为 generation 的 observation 数 | 次要，档案与 CSV |
-| 工具调用次数 | 工具 span 数；LangGraph PR 5（工具循环）合入前恒为 0 | 次要，档案与 CSV |
+| 工具调用次数 | `tool.` 前缀的 span 数，每次执行的工具调用一个 | 次要，档案与 CSV |
+| 拒答、取消次数 | `outcome:abstained`、`outcome:canceled` 的数量 | 次要，档案与 CSV |
 | 平均每次运行调用数 | （模型调用 + 工具调用）÷ 运行次数 | 次要，档案与 CSV |
 
 汇总、排序与报告只用主指标。调用次数随 ReAct 步数、重试与实现变化，不同 Agent 之间不可比，只用于观察复杂度与成本来源。
 
+运行的认定：
+
+- Turn trace 指根 span 为 `turn.request` 的 trace。同一 Turn 的 worker 重试（`attempt` 递增）在同一 trace 内，算一次运行；"重新生成"创建新 Turn，算新的一次运行。
+- 根 span 不是 `turn.request` 的 trace 不打 `agent:` 标签，不计入。2026-10-23 本地 Langfuse 中有 28 个根为 `turn.execute` 的 trace，对应的 Turn 已不在 MySQL（会话已删除）；若计入会重复计数。
+- 失败按 Turn 终态判定，不用 observation 的 `level`：本地实测失败的 Turn 在 Langfuse 中根 span 仍为 `DEFAULT`，worker 侧失败没有传到根 span。拒答与取消计入运行次数，不计为失败。
+
 ### 2.3 满意度（取自 MySQL）
 
-赞数 ÷（赞数 + 踩数），按 Turn 冻结的 Agent 归属。有反馈的轮次少于 10 时显示"样本不足"。
+赞数 ÷（赞数 + 踩数），按 Turn 冻结的 Agent 归属，按 Turn 创建时间落入周期（反馈晚于周期结束也计入原周期）。有评分的轮次少于 10 时显示"样本不足"。
+
+Turn 冻结的 Agent 归属：`turn_input_snapshot` 的 `agent_revision_id` 经 `ai_agent_revision` 映射到 Agent；为空时为 `tapper_default`；找不到修订时归为未知，不进入任何 Agent 的统计。
 
 ### 2.4 投入侧（取自 MySQL）
 
 - 周期内维护动作次数，按 `kind` 分列。
-- 待处理差评数。
+- 待处理反馈数。待处理反馈 = 踩或带评论（含带评论的赞），且未标记已处理。撤回的反馈（评分与评论都为空）不算。
+- 已处理的反馈被用户改了评分或评论，重新变为待处理；原 `feedback_resolved` 动作保留在履历中。
 
 ### 2.5 按人
 
@@ -119,9 +139,11 @@
 
 每列均可排序，个人数据对团队视图可见。
 
+人员范围：所有 Agent 的当前负责人，加上周期内调用过 Agent 或做过维护动作的人。V4 接入身份前没有显示名，界面显示 `actor_id`。
+
 ### 2.6 团队汇总
 
-- Agent 总数（启用中的自定义与内置 Agent，不含 Tapper 默认）、活跃数（周期内至少运行 1 次）、闲置数（启用中但近 30 天无运行）。
+- Agent 总数（启用中的自定义与内置 Agent，不含 Tapper 默认）、活跃数（周期内至少运行 1 次）、闲置数（状态为闲置，见 1.4）。
 - 人均负责 Agent 数、人均被服务 Agent 数。
 - 总运行次数、总运行时长、总成本、维护动作合计。
 
@@ -138,10 +160,12 @@ flowchart LR
   AT --> EX[报告页 / CSV]
 ```
 
-- 运行数据只从 Langfuse Metrics API v1 查询（自托管 3.x 只提供 v1）。已在本地 3.225.11 实测：按 `tags`、`userId`、`name` 分组，`timeDimension` 按天，`count`、`sum_totalCost`、`p50_latency`，observations 视图按 `level` 计 `ERROR`，metadata 与 tags 过滤均可用。metadata 只能过滤不能分组，因此 Agent 标识写入标签。
+- 运行数据只从 Langfuse 查询：统计用 Metrics API v1（自托管 3.x 只提供 v1）；"最近运行"用 Traces 列表 API（`tags` 过滤、`orderBy=timestamp.desc`、`limit=1`），因为 Metrics API v1 没有时间戳度量。已在本地 3.225.11 实测：按 `tags`、`userId`、`name` 分组，`timeDimension` 按天或周，`count`、`sum_totalCost`、`p50_latency`（毫秒），observations 视图可按 `tags`（即 trace 标签）分组，按 `type`、`name` 前缀、`parentObservationId` 为空过滤，metadata 与 tags 过滤均可用。metadata 只能过滤不能分组，因此 Agent 标识与 Turn 终态写入标签。`tags` 维度返回整组标签而非逐个展开，`timeDimension` 会补齐空桶，空桶也计入行数上限。
+- 查询按 `environment`（`TAP_LANGFUSE_ENVIRONMENT`）过滤，本地与 e2e 数据不混算。
 - 满意度、维护动作与人事字段来自 MySQL，由 `agent_team` 模块合并。
 - 新增后端模块 `agent_team`，通过端口 `AgentRuntimeMetrics` 访问 Langfuse；生产适配器调用 Metrics API，测试适配器返回 mock 数据。
-- 查询结果按（项目、周期、查询类型）缓存 5 分钟；界面显示"数据更新于"，并说明运行数据比对话最多晚一个同步周期。
+- 只缓存 Langfuse 运行数据，按（项目、周期、查询类型）缓存 5 分钟；人事字段、维护动作、满意度与反馈每次实时查询，写操作后立即可见。界面显示"数据更新于"，并说明运行数据比对话最多晚一个同步周期。
+- "运行数据同步中"：trace 同步游标落后最新 span 记录时间超过 5 分钟时显示。
 - 单次查询超过 1 000 行时按日期分段查询后合并。
 - `make demo-up` 默认启动 Langfuse 与 ClickHouse（原为可选的 `make langfuse-up`）；`make demo-check` 增加 Langfuse 检查。
 
@@ -161,7 +185,10 @@ flowchart LR
 
 - `answer_feedback` 增加 `resolved_at`、`resolved_by`、`resolution_note`。
 - 维护事件与对应写操作（修订、停用、启用、转交、处理反馈）在同一事务内写入。
-- Langfuse 同步：Turn 的 trace 增加标签 `agent:<agent_id>`，未选 Agent 时为 `agent:tapper_default`。上线时重置同步游标重推历史，使旧 trace 补上标签。
+- Langfuse 同步：Turn trace（根 span 为 `turn.request`）增加标签 `agent:<agent_id>`（未选 Agent 时为 `agent:tapper_default`）与 `outcome:<state>`（Turn 当前状态：`completed`、`abstained`、`failed`、`canceled`；未终结时不加）。Turn 终结后其后续 span 会触发该 trace 重新同步，标签随之更新。
+- 工具循环中每次执行的工具调用记一个 `tool.<tool_id>` span（被拒绝的调用不记），命名沿用 `tool.insights.query`；此前每轮只有一个 `graph.node.tools` span，数不出调用次数。
+- 上线时重置 trace 同步游标重推历史，使旧 trace 补上标签。本地约 6 000 条 trace，worker 按现有批次推送，期间显示"运行数据同步中"。MySQL 中已删除的会话无法重推，其 trace 保持无 `agent:` 标签，不计入团队视图。
+- 用户修改已处理反馈的评分或评论时，同一 upsert 语句清空 `resolved_at`、`resolved_by`、`resolution_note`。
 
 ## 5. API 与契约
 
@@ -174,10 +201,10 @@ flowchart LR
 | `GET agent-team/members/{agentKey}` | Agent 档案：人事字段、工作量、服务对象、趋势 |
 | `GET agent-team/members/{agentKey}/history` | 履历，游标分页 |
 | `GET agent-team/people` | 人员表 |
-| `GET agent-team/people/{actorId}` | 个人视图，"我的 Agent"传本人 |
+| `GET agent-team/people/{actorId}` | 个人视图，"我的 Agent"传 `me`（解析为当前身份） |
 | `GET agent-team/org-chart` | 组织架构图节点与边（`owns`、`serves`） |
 | `GET agent-team/report` | 报告页数据，附上一周期对比 |
-| `GET agent-team/export` | CSV zip：花名册、人员、趋势明细三个文件，UTF-8 BOM；跨度超过一年时明细按月并在文件中注明 |
+| `GET agent-team/export` | CSV zip：花名册、人员、趋势明细三个文件，UTF-8 BOM；明细粒度与界面趋势相同（2.1），在文件首行注明 |
 | `PUT agents/{agentId}/profile` | 修改岗位 |
 | `POST agents/{agentId}/owner` | 转交负责人 |
 | `POST feedback/{feedbackId}/resolve` | 标记反馈已处理，可带说明；重复提交返回原结果 |
@@ -192,8 +219,10 @@ flowchart LR
 | Langfuse 不可达或 10 秒超时 | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；花名册、负责人、履历、满意度照常显示；不返回 500 |
 | 同步积压 | 显示"数据更新于"并提示可能滞后 |
 | `from` 晚于 `to` | 400 `period_invalid` |
-| 转交给不存在的成员 | 400 `actor_not_found` |
-| 修改内置 Agent 的人事字段 | 403 `agent_read_only` |
+| 转交给不存在的成员（同企业、启用中的身份才算存在） | 400 `actor_not_found` |
+| 修改内置 Agent 或 Tapper 默认的人事字段 | 403 `agent_read_only` |
+| Agent 或反馈不存在、不属于本项目 | 404 `agent_not_found`、`feedback_not_found` |
+| 转交给当前负责人 | 200，原样返回，不记维护动作 |
 
 ## 6. 前端
 
@@ -216,11 +245,12 @@ Agents 页顶部四个标签：**我的 Agent**、**团队**（默认）、**汇
 
 ### 6.3 我的 Agent
 
-两块：我负责的 Agent、为我服务的 Agent。指标同团队页，"待我处理的差评"置顶。
+两块：我负责的 Agent、为我服务的 Agent。指标同团队页，"待我处理的反馈"置顶，即我负责的 Agent 的待处理反馈。内置 Agent 与 Tapper 默认没有负责人，它们的待处理反馈只在团队页与档案中显示，拥有 `ai.agents.write` 的人都可以处理。
 
 ### 6.4 汇报
 
 - 可打印的报告页：选择周期（默认上月），固定版式展示汇总、趋势、花名册、人员表与上一周期对比。
+- 上一周期：上月对比再上一个自然月；本月（1 日至今天）对比上月 1 日至同一天（上月没有该日时取月末）；近 7 天、近 30 天与自定义对比紧邻其前的等长区间。上一周期为 0 时变化显示"—"。
 - 导出 PDF 使用浏览器打印，提供打印样式；导出 CSV 调用 `agent-team/export`。
 
 ### 6.5 通用
