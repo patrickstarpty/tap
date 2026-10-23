@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  useOrgChart,
   useTeamMembers,
   useTeamPeople,
   useTeamSummary,
@@ -22,6 +23,7 @@ vi.mock(
       useTeamSummary: vi.fn(),
       useTeamMembers: vi.fn(),
       useTeamPeople: vi.fn(),
+      useOrgChart: vi.fn(),
     };
   },
 );
@@ -137,6 +139,12 @@ function setup(
       ...b,
       data: per === period ? members : sparkRows(members),
     })) as never);
+  vi.mocked(useOrgChart).mockReturnValue(
+    ready({
+      ...b,
+      data: { people: [], agents: [], edges: [] },
+    }) as never,
+  );
   vi.mocked(useTeamPeople).mockReturnValue(
     ready({
       ...b,

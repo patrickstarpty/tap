@@ -164,3 +164,35 @@
   border-radius: 8px;
   text-align: center;
 }
+
+.tap-org-chart {
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.tap-org-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 480px;
+}
+
+.tap-org-chart [role="button"] {
+  cursor: pointer;
+  outline: none;
+}
+
+.tap-org-chart [role="button"]:focus-visible rect {
+  stroke: var(--tap-brand);
+  stroke-width: 2;
+}
+
+.tap-org-chart [data-dimmed="true"] {
+  opacity: 0.2;
+}
+
+.tap-org-chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 0.85em;
+  opacity: 0.8;
+}

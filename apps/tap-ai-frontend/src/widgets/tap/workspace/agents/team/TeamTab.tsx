@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import {
   resolvePeriod,
+  useOrgChart,
   useTeamMembers,
   useTeamPeople,
   useTeamSummary,
@@ -17,6 +18,7 @@ import {
   teamLocale,
 } from "./format";
 import type { CellContext } from "./memberCells";
+import { OrgChart } from "./OrgChart";
 import { PeopleTable } from "./PeopleTable";
 import { RosterCards } from "./RosterCards";
 import { RosterTable, type RosterSort } from "./RosterTable";
@@ -64,6 +66,7 @@ export function TeamTab({
   const summary = useTeamSummary(projectId, period);
   const members = useTeamMembers(projectId, period, filters);
   const people = useTeamPeople(projectId, period);
+  const orgChart = useOrgChart(projectId, period);
   // Cards always show the last 30 days, whatever period is selected.
   const todayKey = new Date().toISOString().slice(0, 10);
   const sparkPeriod = useMemo(
@@ -81,6 +84,10 @@ export function TeamTab({
         .map((person) => person.actorId),
     ]),
   ].sort();
+  const agentNames = useMemo(
+    () => Object.fromEntries((rows ?? []).map((r) => [r.agentKey, r.name])),
+    [rows],
+  );
   const sparklineByAgentKey = useMemo(() => {
     const map = new Map<string, number[]>();
     for (const row of spark.data?.data ?? [])
@@ -296,6 +303,26 @@ export function TeamTab({
             copy={copy}
             locale={locale}
             runtimeStatus={people.data.runtimeStatus}
+          />
+        )}
+      </section>
+      <section>
+        <h3>{labels.orgChartHeading}</h3>
+        {orgChart.isPending ? (
+          <p role="status">{text.loading}</p>
+        ) : orgChart.isError || orgChart.data === undefined ? (
+          <div role="alert">
+            <p>{text.loadFailed}</p>
+            <button type="button" onClick={() => void orgChart.refetch()}>
+              {text.retry}
+            </button>
+          </div>
+        ) : (
+          <OrgChart
+            chart={orgChart.data.data}
+            agentNames={agentNames}
+            copy={copy}
+            onOpenMember={onOpenMember}
           />
         )}
       </section>

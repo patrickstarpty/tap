@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   useTeamMembers,
+  useOrgChart,
   useTeamPeople,
   useTeamSummary,
 } from "../../../../../features/knowledge/api/agentTeam";
@@ -22,6 +23,7 @@ vi.mock(
       useTeamSummary: vi.fn(),
       useTeamMembers: vi.fn(),
       useTeamPeople: vi.fn(),
+      useOrgChart: vi.fn(),
     };
   },
 );
@@ -39,6 +41,12 @@ function mockSummary(runtimeStatus: "ok" | "unavailable" = "ok") {
     isError: false,
     refetch: vi.fn(),
     data: { ...base, data: [] },
+  } as never);
+  vi.mocked(useOrgChart).mockReturnValue({
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    data: { ...base, data: { people: [], agents: [], edges: [] } },
   } as never);
   vi.mocked(useTeamPeople).mockReturnValue({
     isPending: false,

@@ -416,6 +416,11 @@ export interface WorkspaceCopy {
       kinds: { custom: string; built_in: string; tapper_default: string };
       rosterHeading: string;
       peopleHeading: string;
+      orgChartHeading: string;
+      orgChartLabel: string;
+      orgChartEmpty: string;
+      orgChartOwns: string;
+      orgChartServes: string;
       trendHeading: string;
       noJobTitle: string;
       ownerLabel: string;
@@ -1023,6 +1028,12 @@ export const WORKSPACE_COPY = {
         },
         rosterHeading: "Roster",
         peopleHeading: "People",
+        orgChartHeading: "Org chart",
+        orgChartLabel:
+          "Org chart of people and the agents they own or are served by",
+        orgChartEmpty: "No ownership or usage relations in this period.",
+        orgChartOwns: "Owns",
+        orgChartServes: "Served by",
         trendHeading: "Run trend",
         noJobTitle: "No job title",
         ownerLabel: "Owner",
@@ -1619,6 +1630,11 @@ export const WORKSPACE_COPY = {
         },
         rosterHeading: "花名册",
         peopleHeading: "人员",
+        orgChartHeading: "组织架构图",
+        orgChartLabel: "人员与其负责、使用的 Agent 的组织架构图",
+        orgChartEmpty: "本周期内没有负责或使用关系。",
+        orgChartOwns: "负责",
+        orgChartServes: "使用",
         trendHeading: "运行趋势",
         noJobTitle: "未设岗位",
         ownerLabel: "负责人",
