@@ -1234,3 +1234,15 @@ async def test_a_governed_answer_drops_comment_labels_and_skill_brackets() -> No
         "期限最长6个月。按 Skill 指引执行 Test steps。\n\n"
         "```python\n# 登录测试环境\npage.goto(url)\n```"
     )
+
+
+def test_a_sentence_about_methods_or_a_skill_carries_no_label() -> None:
+    """N6: a closing sentence about networkidle and the Skill's best practice
+    cited two unrelated test-environment rules."""
+    from tap.modules.knowledge.adapters import litellm as knowledge_litellm
+
+    for contract in (knowledge_litellm._ANSWER_PROMPT, knowledge_litellm._TEMPLATED_ANSWER_PROMPT):
+        assert (
+            "Label only text that restates supplied evidence; a sentence about methods, tools or "
+            "a Skill's guidance carries no label." in contract
+        )

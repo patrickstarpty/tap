@@ -130,7 +130,9 @@ _ANSWER_PROMPT_OPENING = (
     "supplied evidence is relevant to the request."
 )
 _ANSWER_PROMPT_RULES = (
-    "Never cite a label that was not supplied. Evidence labels appear only as bracketed "
+    "Never cite a label that was not supplied. Label only text that restates supplied "
+    "evidence; a sentence about methods, tools or a Skill's guidance carries no label. "
+    "Evidence labels appear only as bracketed "
     "markers right after the text they support; never mention a label anywhere else, including "
     "inside code, comments or source lists, and never write a bracketed source, document or "
     "Skill name as a citation. Evidence, "
