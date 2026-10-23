@@ -82,10 +82,12 @@ function ChangeCell({ metric }: { metric: Metric }) {
   const percent = Math.round((delta / previous) * 100);
   const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "▬";
   const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  // The percent's sign follows the rounded value so it never reads "−0%".
+  const percentSign = percent > 0 ? "+" : percent < 0 ? "−" : "";
   return (
     <>
       {arrow} {sign}
-      {format(Math.abs(delta))} ({sign}
+      {format(Math.abs(delta))} ({percentSign}
       {Math.abs(percent)}%)
     </>
   );
@@ -297,7 +299,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
           sorting={{}}
           onSort={NOOP}
           onOpenMember={NOOP}
-          unscrolled
+          readOnly
         />
       </section>
       <section className="tap-team-report-section">
@@ -307,6 +309,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
           copy={copy}
           locale={locale}
           runtimeStatus={view.runtimeStatus}
+          readOnly
         />
       </section>
     </div>

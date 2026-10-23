@@ -250,21 +250,33 @@
   margin: 16mm;
 }
 
+/* Applies to every printed page; only the report page is meant to be printed
+   from this app, and the rules below are scoped to it. */
 @media print {
-  .tap-product-shell {
+  .tap-product-shell:has(.tap-team-report) {
     display: block;
     min-height: 0;
     overflow: visible;
   }
 
-  .tap-product-shell > *:not(main),
-  .tap-agents-page [role="tablist"],
-  .tap-team-report-controls {
+  .tap-product-shell:has(.tap-team-report) > *:not(.tap-product-main),
+  .tap-product-shell:has(.tap-team-report) .tap-agents-page [role="tablist"],
+  .tap-product-shell:has(.tap-team-report) .tap-team-report-controls {
     display: none !important;
   }
 
-  .tap-team-report-section,
-  .tap-team-report-header {
+  .tap-product-shell:has(.tap-team-report) .tap-product-main {
+    display: block;
+    grid-column: auto;
+    grid-row: auto;
+    overflow: visible;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .tap-team-report-header,
+  .tap-team-report-table {
     break-inside: avoid;
   }
 

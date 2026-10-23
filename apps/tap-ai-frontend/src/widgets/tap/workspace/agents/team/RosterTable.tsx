@@ -28,8 +28,9 @@ export interface RosterTableProps {
   sorting: RosterSort;
   onSort: (next: RosterSort) => void;
   onOpenMember: (agentKey: string) => void;
-  /** Print layout: no horizontal scroll container, so every column prints. */
-  unscrolled?: boolean;
+  /** Report layout: plain names, no sorting, and no scroll container so every
+   * column prints. */
+  readOnly?: boolean;
 }
 
 export function RosterTable({
@@ -39,13 +40,14 @@ export function RosterTable({
   sorting,
   onSort,
   onOpenMember,
-  unscrolled = false,
+  readOnly = false,
 }: RosterTableProps) {
   const labels = ctx.copy.agentTeam.team;
   const cols = labels.columns;
   const n = (value: number | null) =>
     value === null ? null : formatCount(value, ctx.locale);
-  const sortable = (key: string) => ({
+  const sortable = (key: string) => (readOnly ? { key } : sortableColumn(key));
+  const sortableColumn = (key: string) => ({
     sorter: true as const,
     sortOrder:
       sorting.sort === key
@@ -59,15 +61,18 @@ export function RosterTable({
     {
       title: cols.name,
       ...sortable("name"),
-      render: (_: unknown, row) => (
-        <button
-          type="button"
-          className="tap-team-card-name"
-          onClick={() => onOpenMember(row.agentKey)}
-        >
-          {row.name}
-        </button>
-      ),
+      render: (_: unknown, row) =>
+        readOnly ? (
+          row.name
+        ) : (
+          <button
+            type="button"
+            className="tap-team-card-name"
+            onClick={() => onOpenMember(row.agentKey)}
+          >
+            {row.name}
+          </button>
+        ),
     },
     {
       title: cols.jobTitle,
@@ -194,7 +199,7 @@ export function RosterTable({
       locale={{ emptyText: labels.noMatch }}
       dataSource={rows}
       columns={columns}
-      scroll={unscrolled ? undefined : { x: "max-content" }}
+      scroll={readOnly ? undefined : { x: "max-content" }}
       showSorterTooltip={false}
       onChange={(_p, _f, sorter) => {
         const single = Array.isArray(sorter) ? sorter[0] : sorter;

@@ -143,6 +143,39 @@ describe("ReportTab", () => {
     expect(screen.getAllByText(/对比：2026-08-01 – 2026-08-31/).length).toBe(2);
   });
 
+  it("shows a negative change and a dash for a null previous value", () => {
+    mockReport({ runs: 90, cost: null }, { runs: 100, latencyTotalMs: null });
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
+    expect(screen.getByRole("row", { name: /^Runs/ })).toHaveTextContent(
+      "▼ −10 (−10%)",
+    );
+    const latency = screen.getByRole("row", { name: /^Total latency/ });
+    expect(within(latency).getAllByRole("cell").at(-1)).toHaveTextContent("—");
+  });
+
+  it("never renders a minus-zero percent", () => {
+    mockReport({ runs: 1001 }, { runs: 1000 });
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
+    const text = screen.getByRole("row", { name: /^Runs/ }).textContent ?? "";
+    expect(text).toContain("(0%)");
+    expect(text).not.toContain("−0%");
+  });
+
+  it("keeps the class contract the print styles depend on", () => {
+    mockReport();
+    const { container } = render(
+      <ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />,
+    );
+    const root = container.querySelector(".tap-team-report");
+    expect(root).not.toBeNull();
+    expect(root?.querySelector(".tap-team-report-controls")).not.toBeNull();
+    expect(root?.querySelector(".tap-team-report-header")).not.toBeNull();
+    expect(root?.querySelector(".tap-team-report-table")).not.toBeNull();
+    // Read-only roster: names are plain text, no sort controls.
+    expect(root?.querySelector(".tap-team-card-name")).toBeNull();
+    expect(root?.querySelector(".ant-table-column-has-sorters")).toBeNull();
+  });
+
   it("prints through window.print", async () => {
     mockReport();
     const print = vi.fn();

@@ -10,6 +10,8 @@ export interface PeopleTableProps {
   copy: WorkspaceCopy;
   locale: string;
   runtimeStatus: RuntimeStatus;
+  /** Report layout: no sort affordances. */
+  readOnly?: boolean;
 }
 
 // Nulls (run data unavailable) sort before any number.
@@ -22,6 +24,7 @@ export function PeopleTable({
   copy,
   locale,
   runtimeStatus,
+  readOnly = false,
 }: PeopleTableProps) {
   const cols = copy.agentTeam.team.columns;
   const run = (value: number | null) =>
@@ -33,7 +36,7 @@ export function PeopleTable({
     ) : (
       formatCount(value, locale)
     );
-  const columns: TableProps<AgentTeamPersonRow>["columns"] = [
+  const columnDefs: TableProps<AgentTeamPersonRow>["columns"] = [
     {
       title: cols.actor,
       dataIndex: "actorId",
@@ -71,6 +74,9 @@ export function PeopleTable({
       render: (_: unknown, row) => formatCount(row.maintenance, locale),
     },
   ];
+  const columns = readOnly
+    ? columnDefs?.map((column) => ({ ...column, sorter: undefined }))
+    : columnDefs;
   return (
     <Table<AgentTeamPersonRow>
       size="small"
