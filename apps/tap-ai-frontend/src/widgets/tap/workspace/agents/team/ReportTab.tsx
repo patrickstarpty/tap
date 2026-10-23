@@ -213,6 +213,9 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
   ];
   const show = (metric: Metric, value: number | null): ReactNode =>
     value === null || Number.isNaN(value) ? EMPTY : metric.format(value);
+  const comparedWith = labels.comparedWith
+    .replace("{from}", view.data.previousPeriod.from)
+    .replace("{to}", view.data.previousPeriod.to);
   const trend = teamTrend(current.members, {
     runs: text.metrics.runs,
     failures: labels.failures,
@@ -238,6 +241,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
             )
             .replace("{timezone}", view.timezone)}
         </p>
+        <p>{comparedWith}</p>
         {view.runtimeStatus === "ok" ? null : (
           <RuntimeBadge
             status={view.runtimeStatus}
@@ -248,7 +252,9 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
         )}
       </header>
       <section className="tap-team-report-section">
-        <h3>{labels.summaryHeading}</h3>
+        <h3>
+          {labels.summaryHeading} · {comparedWith}
+        </h3>
         <table className="tap-team-report-table">
           <caption className="tap-team-sr-only">
             {labels.comparisonHeading}

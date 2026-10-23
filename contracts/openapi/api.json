@@ -1162,11 +1162,15 @@
           },
           "previous": {
             "$ref": "#/components/schemas/AgentTeamPeriodReport"
+          },
+          "previousPeriod": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
           }
         },
         "required": [
           "current",
-          "previous"
+          "previous",
+          "previousPeriod"
         ],
         "title": "AgentTeamReport",
         "type": "object"

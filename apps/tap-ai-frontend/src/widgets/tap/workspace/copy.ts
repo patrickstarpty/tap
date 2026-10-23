@@ -409,6 +409,7 @@ export interface WorkspaceCopy {
       period: string;
       summaryHeading: string;
       comparisonHeading: string;
+      comparedWith: string;
       trendHeading: string;
       current: string;
       previous: string;
@@ -1094,6 +1095,7 @@ export const WORKSPACE_COPY = {
         period: "Period",
         summaryHeading: "Summary",
         comparisonHeading: "Compared with the previous period",
+        comparedWith: "Compared with {from} – {to}",
         trendHeading: "Run trend",
         current: "This period",
         previous: "Previous period",
@@ -1773,6 +1775,7 @@ export const WORKSPACE_COPY = {
         period: "周期",
         summaryHeading: "汇总",
         comparisonHeading: "与上一周期对比",
+        comparedWith: "对比：{from} – {to}",
         trendHeading: "运行趋势",
         current: "本周期",
         previous: "上一周期",

@@ -2017,6 +2017,7 @@ class AgentTeamPeriodReport(ContractModel):
 class AgentTeamReport(ContractModel):
     current: AgentTeamPeriodReport
     previous: AgentTeamPeriodReport
+    previous_period: AgentTeamPeriod
 
 
 class AgentTeamViewEnvelope(ContractModel):

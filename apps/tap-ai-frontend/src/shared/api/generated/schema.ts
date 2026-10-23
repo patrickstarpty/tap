@@ -2122,6 +2122,7 @@ export interface components {
         AgentTeamReport: {
             current: components["schemas"]["AgentTeamPeriodReport"];
             previous: components["schemas"]["AgentTeamPeriodReport"];
+            previousPeriod: components["schemas"]["AgentTeamPeriod"];
         };
         /** AgentTeamReportView */
         AgentTeamReportView: {

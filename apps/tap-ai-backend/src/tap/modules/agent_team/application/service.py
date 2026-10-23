@@ -126,6 +126,7 @@ class TeamReport:
 
     current: PeriodReport
     previous: PeriodReport
+    previous_period: Period
 
 
 @dataclass(frozen=True, slots=True)
@@ -555,7 +556,7 @@ class AgentTeamService:
         previous, previous_status, previous_computed_at = await self._period_report(previous_period)
         status = _combine_status(current_status, previous_status)
         computed_at = min(current_computed_at, previous_computed_at)
-        data = TeamReport(current=current, previous=previous)
+        data = TeamReport(current=current, previous=previous, previous_period=previous_period)
         return self._view(period, status, computed_at, data)
 
     async def export_data(self, period: Period) -> TeamView[ExportBundle]:

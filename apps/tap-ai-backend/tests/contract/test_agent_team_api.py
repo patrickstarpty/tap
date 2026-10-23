@@ -357,6 +357,8 @@ def test_get_report_returns_current_and_previous() -> None:
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert "current" in data and "previous" in data
+    # 2026-10-01..2026-10-23 is month-start to a non-month-end: same span of last month.
+    assert data["previousPeriod"] == {"from": "2026-09-01", "to": "2026-09-23"}
 
 
 def test_export_returns_a_csv_zip() -> None:

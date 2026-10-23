@@ -88,6 +88,7 @@ function mockReport(
           members: [member("a1", [["2026-09-01", 3]])],
           people: [],
         },
+        previousPeriod: { from: "2026-08-01", to: "2026-08-31" },
         previous: {
           summary: summary(previous),
           members: [],
@@ -134,6 +135,12 @@ describe("ReportTab", () => {
     const cells = within(maintenance).getAllByRole("cell");
     expect(cells[1]).toHaveTextContent(/^0$/);
     expect(cells.at(-1)).toHaveTextContent("—");
+  });
+
+  it("names the previous period it compares against", () => {
+    mockReport();
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    expect(screen.getAllByText(/对比：2026-08-01 – 2026-08-31/).length).toBe(2);
   });
 
   it("prints through window.print", async () => {

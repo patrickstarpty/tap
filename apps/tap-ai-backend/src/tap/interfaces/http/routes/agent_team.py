@@ -260,6 +260,7 @@ def _team_report_dto(report: TeamReport) -> AgentTeamReport:
     return AgentTeamReport(
         current=_period_report_dto(report.current),
         previous=_period_report_dto(report.previous),
+        previous_period=_period_dto(report.previous_period),
     )
 
 
