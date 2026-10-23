@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   resolvePeriod,
@@ -35,6 +35,19 @@ function writeUrlTab(tab: AgentsTab) {
   window.history.replaceState(window.history.state, "", url);
 }
 
+function formatTime(value: string, timeZone: string, locale: string): string {
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
 function todayUtc(): Date {
   return new Date();
 }
@@ -57,6 +70,13 @@ export function AgentsPage({
     () => resolvePeriod(selection.preset, todayUtc(), selection.custom),
     [selection],
   );
+
+  const rangeInvalid =
+    selection.preset === "custom" &&
+    selection.custom.from > selection.custom.to;
+  useEffect(() => {
+    if (initialTab !== undefined) writeUrlTab(initialTab);
+  }, [initialTab]);
 
   const select = (next: AgentsTab) => {
     setTab(next);
@@ -94,12 +114,14 @@ export function AgentsPage({
               value={selection}
               onChange={setSelection}
             />
-            <TeamFreshness
-              projectId={projectId}
-              copy={copy}
-              from={period.from}
-              to={period.to}
-            />
+            {rangeInvalid ? null : (
+              <TeamFreshness
+                projectId={projectId}
+                copy={copy}
+                from={period.from}
+                to={period.to}
+              />
+            )}
           </>
         )}
       </div>
@@ -119,6 +141,7 @@ function TeamFreshness({
   to: string;
 }) {
   const text = copy.agentTeam;
+  const locale = text.heading === "Agent team" ? "en" : "zh-CN";
   const period = useMemo(() => ({ from, to }), [from, to]);
   const summary = useTeamSummary(projectId, period);
   if (summary.isPending) return <p role="status">{text.loading}</p>;
@@ -143,7 +166,7 @@ function TeamFreshness({
       )}
       <p>
         {text.updatedAt
-          .replace("{time}", new Date(view.computedAt).toLocaleTimeString())
+          .replace("{time}", formatTime(view.computedAt, view.timezone, locale))
           .replace("{timezone}", view.timezone)}
       </p>
     </div>

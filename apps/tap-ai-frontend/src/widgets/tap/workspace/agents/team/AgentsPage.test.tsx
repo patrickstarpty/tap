@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -106,5 +106,62 @@ describe("AgentsPage", () => {
     );
     expect(screen.getByRole("tab", { name: "配置" })).toBeInTheDocument();
     expect(screen.getByText("运行数据暂不可用")).toBeInTheDocument();
+  });
+
+  it("shows the update time in the server timezone, not the browser's", () => {
+    mockSummary();
+    const original = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      render(
+        <AgentsPage
+          projectId="p1"
+          copy={WORKSPACE_COPY.en}
+          configTab={<p>config content</p>}
+        />,
+      );
+      expect(screen.getByText("Data updated at 08:00 (UTC)")).toBeVisible();
+    } finally {
+      process.env.TZ = original;
+    }
+  });
+
+  it("selects the config tab and records it when forced by a deep link", () => {
+    mockSummary();
+    window.history.replaceState(null, "", "/?agentsTab=team");
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        initialTab="config"
+        configTab={<p>config content</p>}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Configuration" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("config content")).toBeVisible();
+    expect(window.location.search).toContain("agentsTab=config");
+  });
+
+  it("flags an inverted custom range and skips the query", async () => {
+    mockSummary();
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        configTab={<p>config content</p>}
+      />,
+    );
+    await userEvent.selectOptions(screen.getByLabelText("Period"), "custom");
+    vi.mocked(useTeamSummary).mockClear();
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: "2099-01-01" },
+    });
+    expect(
+      screen.getByText("Start date must be on or before end date"),
+    ).toBeVisible();
+    expect(useTeamSummary).not.toHaveBeenCalled();
   });
 });

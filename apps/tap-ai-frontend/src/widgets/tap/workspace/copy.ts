@@ -370,6 +370,7 @@ export interface WorkspaceCopy {
       custom: string;
       from: string;
       to: string;
+      invalidRange: string;
     };
     metrics: {
       runs: string;
@@ -922,6 +923,7 @@ export const WORKSPACE_COPY = {
         custom: "Custom",
         from: "From",
         to: "To",
+        invalidRange: "Start date must be on or before end date",
       },
       metrics: {
         runs: "Runs",
@@ -1463,6 +1465,7 @@ export const WORKSPACE_COPY = {
         custom: "自定义",
         from: "开始",
         to: "结束",
+        invalidRange: "开始日期不能晚于结束日期",
       },
       metrics: {
         runs: "运行次数",

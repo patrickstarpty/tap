@@ -49,7 +49,6 @@ export function PeriodPicker({ copy, value, onChange }: PeriodPickerProps) {
             <input
               type="date"
               value={value.custom.from}
-              max={value.custom.to}
               onChange={(event) =>
                 event.target.value !== "" &&
                 onChange({
@@ -64,7 +63,6 @@ export function PeriodPicker({ copy, value, onChange }: PeriodPickerProps) {
             <input
               type="date"
               value={value.custom.to}
-              min={value.custom.from}
               onChange={(event) =>
                 event.target.value !== "" &&
                 onChange({
@@ -75,6 +73,9 @@ export function PeriodPicker({ copy, value, onChange }: PeriodPickerProps) {
             />
           </label>
         </>
+      ) : null}
+      {value.preset === "custom" && value.custom.from > value.custom.to ? (
+        <p role="alert">{text.invalidRange}</p>
       ) : null}
     </div>
   );
