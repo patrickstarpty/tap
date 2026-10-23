@@ -1987,6 +1987,57 @@ async def test_insights_tool_failure_is_soft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_executed_insights_query_gets_a_tool_span(span_recorder) -> None:
+    """Fix round 1: an executed `insights.query` call runs through
+    `query_metrics`, not `run_conversation_tool` -- it must still get its
+    own `tool.insights.query` span (carrying `tap.tool.step_id`), separate
+    from the unrelated `tool.insights.query` span `insights_explanation.py`
+    opens on its own `explain` path."""
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-insights-span", insights_report_refs=("report-1",)
+    )
+    conversations = _Conversations(turn)
+    steps = _ToolLoopSteps()
+    insights = _QueryMetricsInsights(records=())
+    nodes = _tool_loop_nodes(
+        turn=turn, steps=steps, conversations=conversations, insights_explanation=insights
+    )
+
+    state = {
+        "tools": ["knowledge.search", "insights.query"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": "call-1",
+                    "name": "insights_query",
+                    "argumentsJson": json.dumps(
+                        {
+                            "metricIds": ["first_pass_rate"],
+                            "filters": {},
+                            "from": "2026-01-01",
+                            "to": "2026-01-02",
+                            "timezone": "UTC",
+                            "asOf": "2026-01-02T00:00:00Z",
+                        }
+                    ),
+                }
+            ],
+        },
+    }
+
+    await nodes.tools(state)
+
+    tool_spans = [s for s in span_recorder.get_finished_spans() if s.name == "tool.insights.query"]
+    assert len(tool_spans) == 1
+    assert tool_spans[0].attributes["tap.tool.step_id"] == "turn-insights-span:r1:c0"
+
+
+@pytest.mark.asyncio
 async def test_running_task_step_summary_redacts_before_truncating() -> None:
     """Final review M-2: the `running` summary's query is cut to 60 chars
     only after the v2 chat-egress redaction (the production

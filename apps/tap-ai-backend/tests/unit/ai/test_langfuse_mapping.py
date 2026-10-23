@@ -216,33 +216,50 @@ def test_reasoning_text_is_redacted_into_metadata():
 
 
 def test_turn_trace_gets_agent_tag():
-    t = to_langfuse_trace(bundle(agent_key="agent-42"), ExportRedactor(), environment="local")
-    assert "agent:agent-42" in t.tags
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", agent_key="agent-42", turn_outcome="completed"),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == ("project:proj-1", "agent:agent-42", "outcome:completed")
 
 
 def test_default_turn_gets_tapper_default_tag():
-    t = to_langfuse_trace(bundle(agent_key="tapper_default"), ExportRedactor(), environment="local")
-    assert "agent:tapper_default" in t.tags
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", agent_key="tapper_default"),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == ("project:proj-1", "agent:tapper_default")
 
 
 def test_job_trace_has_no_agent_tag():
     t = to_langfuse_trace(
-        bundle(turn_id=None, conversation_id=None, agent_key=None, turn_outcome=None),
+        bundle(
+            project_id="proj-1",
+            turn_id=None,
+            conversation_id=None,
+            agent_key=None,
+            turn_outcome=None,
+        ),
         ExportRedactor(),
         environment="local",
     )
-    assert not any(tag.startswith("agent:") for tag in t.tags)
-    assert not any(tag.startswith("outcome:") for tag in t.tags)
+    assert t.tags == ("project:proj-1",)
 
 
 def test_terminal_turn_gets_outcome_tag():
-    t = to_langfuse_trace(bundle(turn_outcome="completed"), ExportRedactor(), environment="local")
-    assert "outcome:completed" in t.tags
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", turn_outcome="completed"), ExportRedactor(), environment="local"
+    )
+    assert t.tags == ("project:proj-1", "outcome:completed")
 
 
 def test_running_turn_has_no_outcome_tag():
-    t = to_langfuse_trace(bundle(turn_outcome=None), ExportRedactor(), environment="local")
-    assert not any(tag.startswith("outcome:") for tag in t.tags)
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", turn_outcome=None), ExportRedactor(), environment="local"
+    )
+    assert t.tags == ("project:proj-1",)
 
 
 def test_feedback_score_id_is_deterministic_and_scoped_to_turn_and_actor():

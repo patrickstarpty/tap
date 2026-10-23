@@ -761,7 +761,8 @@ def test_load_trace_resolves_agent_id_from_snapshot(owned_project_mysql: Isolate
             # "completed" -- a terminal state, so `turn_outcome` is set too.
             assert bundle.turn_outcome == "completed"
 
-            # No `turn_input_snapshot` row at all -> falls back to the
+            # A `turn_input_snapshot` row whose `agent_revision_id` is empty
+            # (no Agent was selected for this Turn) -> falls back to the
             # Tapper default agent.
             default_trace_id = uuid4().hex
             default_turn_id = f"turn-{uuid4().hex[:8]}"

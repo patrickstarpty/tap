@@ -901,11 +901,12 @@ class ChatTurnNodes:
                     )
                     continue
                 try:
-                    records = await self._insights_explanation.query_metrics(
-                        self._conversations.scope,
-                        tuple(getattr(value, "insights_report_refs", ())),
-                        call.arguments,
-                    )
+                    with span("tool.insights.query", {"tap.tool.step_id": this_step_id}):
+                        records = await self._insights_explanation.query_metrics(
+                            self._conversations.scope,
+                            tuple(getattr(value, "insights_report_refs", ())),
+                            call.arguments,
+                        )
                 except InsightsAuthorizationChanged:
                     duration_ms = int((time.monotonic() - started_at) * 1000)
                     summary = await self._redact_summary("insights.query → 查询授权已变更")
