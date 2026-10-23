@@ -229,3 +229,96 @@ def test_unknown_agent_key_is_dropped_from_roster():
         tapper_default_runs_trailing_30d=0,
     )
     assert keys == {"agent-1"}
+
+
+def test_roster_always_includes_tapper_default_when_runtime_unavailable():
+    # Whether tapper_default ran cannot be known during an outage, so it is
+    # always included rather than silently dropped (controller ruling).
+    keys = roster_agent_keys(
+        store_agent_keys=["agent-1"],
+        tapper_default_runs_in_period=0,
+        tapper_default_runs_trailing_30d=0,
+        runtime_available=False,
+    )
+    assert keys == {"agent-1", TAPPER_DEFAULT_AGENT_KEY}
+
+
+def test_owners_avg_and_served_avg_divide_by_full_people_scope():
+    # Review fix round 1, finding 1: divide by the whole spec-2.5 people
+    # scope (`len(person_rows)`), not only people with a nonzero count.
+    # 2 people owning [2, 0] -> average 1.0, not 2.0.
+    person_rows = [
+        PersonRow(
+            actor_id="owner-1",
+            owned_agents=2,
+            owned_runs=0,
+            served_by_agents=0,
+            runs=0,
+            maintenance=0,
+        ),
+        PersonRow(
+            actor_id="caller-1",
+            owned_agents=0,
+            owned_runs=0,
+            served_by_agents=0,
+            runs=0,
+            maintenance=0,
+        ),
+    ]
+    summary = team_summary(
+        stats_by_key={},
+        kinds_by_key={},
+        statuses_by_key={},
+        person_rows=person_rows,
+        maintenance_total=0,
+    )
+    assert summary.owners_avg == 1.0
+
+
+def test_owners_avg_is_zero_for_empty_people_scope():
+    summary = team_summary(
+        stats_by_key={},
+        kinds_by_key={},
+        statuses_by_key={},
+        person_rows=[],
+        maintenance_total=0,
+    )
+    assert summary.owners_avg == 0.0
+    assert summary.served_avg == 0.0
+
+
+def test_summary_active_and_idle_are_none_when_runtime_unavailable():
+    # Review fix round 1, finding 3: never claim "idle" during an outage.
+    summary = team_summary(
+        stats_by_key={},
+        kinds_by_key={"agent-1": "custom"},
+        statuses_by_key={"agent-1": None},
+        person_rows=[],
+        maintenance_total=0,
+        runtime_available=False,
+    )
+    assert summary.agent_total == 1
+    assert summary.active is None
+    assert summary.idle is None
+
+
+def test_member_status_is_none_when_trailing_runs_unknown():
+    assert member_status(disabled=False, trailing_30d_runs=None) is None
+    # A disabled Agent's status is known regardless of the outage.
+    assert member_status(disabled=True, trailing_30d_runs=None) == "disabled"
+
+
+def test_build_person_row_ignores_stats_outside_the_given_roster():
+    # Review fix round 1, finding 4: callers must restrict `stats_by_key` to
+    # the roster (dropping `unknown`) before calling this -- it has no way
+    # to know a key is out of scope on its own, so this test documents the
+    # contract by only ever passing roster-restricted input.
+    stats_by_key = {"agent-1": _stats("agent-1", runs=3, served=(ServedActor("actor-x", 3),))}
+    row = build_person_row(
+        actor_id="actor-x",
+        owned_agent_keys=[],
+        stats_by_key=stats_by_key,
+        maintenance_count=0,
+    )
+    assert row.served_by_agents == 1
+    assert row.runs == 3

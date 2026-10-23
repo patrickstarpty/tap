@@ -14,7 +14,12 @@ import pytest
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
 from tap.modules.agent_team.application.service import AgentTeamRejected, AgentTeamService
-from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, Period
+from tap.modules.agent_team.domain.models import (
+    MaintenanceEvent,
+    MaintenanceKind,
+    Period,
+    trailing_30_days,
+)
 from tap.modules.agent_team.ports import (
     AgentRecord,
     AgentRuntimeStats,
@@ -119,6 +124,8 @@ class FakeStore:
     lag: timedelta | None = None
     resolved: dict[str, ResolvedFeedback] = field(default_factory=dict)
     events: list[MaintenanceEvent] = field(default_factory=list)
+    pending_feedback_calls: int = 0
+    maintenance_counts_calls: int = 0
 
     async def agents(self) -> list[AgentRecord]:
         return list(self.agent_records.values())
@@ -130,6 +137,7 @@ class FakeStore:
         return list(self.ratings_by_key.values())
 
     async def pending_feedback(self, agent_key: str | None = None) -> list[PendingFeedback]:
+        self.pending_feedback_calls += 1
         if agent_key is None:
             return list(self.pending)
         return [item for item in self.pending if item.agent_key == agent_key]
@@ -137,6 +145,7 @@ class FakeStore:
     async def maintenance_counts(
         self, period: Period
     ) -> list[tuple[str, str, MaintenanceKind, int]]:
+        self.maintenance_counts_calls += 1
         return list(self.maintenance_rows)
 
     async def history(self, agent_id: str, cursor: str | None, limit: int = 50) -> HistoryPage:
@@ -215,18 +224,37 @@ def _service(
 @pytest.mark.asyncio
 async def test_unavailable_runtime_keeps_roster_and_satisfaction():
     store = FakeStore(
-        agent_records={"agent-1": _agent("agent-1")},
+        agent_records={
+            "agent-1": _agent("agent-1", owner_actor_id="owner-1"),
+            "agent-2": _agent("agent-2", owner_actor_id="owner-1", enabled=False),
+        },
         ratings_by_key={"agent-1": RatingCounts(agent_key="agent-1", up=8, down=2)},
     )
     metrics = FakeMetrics(unavailable=True)
     service = _service(store, metrics)
     view = await service.members(_PERIOD)
     assert view.runtime_status == "unavailable"
-    assert len(view.data) == 1
-    row = view.data[0]
-    assert row.runs == 0
-    assert row.satisfaction == 0.8
-    assert row.owner_actor_id == "owner-1"
+    # tapper_default is always included during an outage -- whether it ran
+    # is unknown, so it must not be silently dropped (controller ruling).
+    rows_by_key = {row.agent_key: row for row in view.data}
+    assert set(rows_by_key) == {"agent-1", "agent-2", "tapper_default"}
+    agent_row = rows_by_key["agent-1"]
+    assert agent_row.runs == 0
+    assert agent_row.satisfaction == 0.8
+    assert agent_row.owner_actor_id == "owner-1"
+    # Never claim "idle" during an outage: a non-disabled Agent's status is
+    # unknown (`None`), not a false "idle".
+    assert agent_row.status is None
+    assert rows_by_key["tapper_default"].status is None
+    # A disabled Agent's status is known from MySQL regardless of the
+    # outage -- it stays "disabled", never `None`.
+    assert rows_by_key["agent-2"].status == "disabled"
+
+    summary_view = await service.summary(_PERIOD)
+    assert summary_view.runtime_status == "unavailable"
+    assert summary_view.data.agent_total == 1  # known from MySQL's `enabled`, outage or not
+    assert summary_view.data.active is None
+    assert summary_view.data.idle is None
 
 
 @pytest.mark.asyncio
@@ -355,3 +383,116 @@ async def test_builtin_pending_feedback_not_in_anyones_queue():
     service = _service(store, FakeMetrics())
     view = await service.person("owner-1", _PERIOD)
     assert view.data.pending_feedback == ()
+
+
+@pytest.mark.asyncio
+async def test_person_served_count_ignores_non_roster_stats():
+    # Review fix round 1, finding 4: `served_by_agents` must come from the
+    # same roster-restricted stats as `person()`'s own `served` list, so a
+    # stray "unknown"-keyed stats entry (never a roster member) does not
+    # inflate the count.
+    store = FakeStore(
+        agent_records={"agent-1": _agent("agent-1", owner_actor_id="owner-1")},
+        active_actor_set={"caller-1"},
+    )
+    trailing = trailing_30_days(_NOW.date())
+    stats = [
+        _stats("agent-1", runs=2, served=(ServedActor("caller-1", 2),)),
+        _stats("unknown", runs=5, served=(ServedActor("caller-1", 5),)),
+    ]
+    metrics = FakeMetrics(
+        stats_by_period={
+            (_PERIOD.start, _PERIOD.end): stats,
+            (trailing.start, trailing.end): stats,
+        }
+    )
+    service = _service(store, metrics)
+    view = await service.person("caller-1", _PERIOD)
+    assert [row.agent_key for row in view.data.served] == ["agent-1"]
+    assert view.data.person.served_by_agents == 1
+    assert view.data.person.runs == 2
+
+
+@pytest.mark.asyncio
+async def test_report_runtime_status_is_worst_of_current_and_previous():
+    # Review fix round 1, finding 2: only the previous period's fetch is
+    # unavailable -> the combined report is still "unavailable".
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    previous_period = _PERIOD.previous()
+    previous_key = (previous_period.start, previous_period.end)
+
+    @dataclass
+    class _PreviousPeriodUnavailable(FakeMetrics):
+        async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+            if (period.start, period.end) == previous_key:
+                raise RuntimeMetricsUnavailable("boom")
+            return await super().agent_stats(project_id, period)
+
+    metrics = _PreviousPeriodUnavailable()
+    service = _service(store, metrics)
+    view = await service.report(_PERIOD)
+    assert view.runtime_status == "unavailable"
+    assert view.data.current.summary is not None
+    assert view.data.previous.summary.active is None
+
+
+@pytest.mark.asyncio
+async def test_members_invalid_sort_field_rejected():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    service = _service(store, FakeMetrics())
+    with pytest.raises(AgentTeamRejected) as exc_info:
+        await service.members(_PERIOD, sort="owner_actor_id")
+    assert exc_info.value.code == "sort_invalid"
+
+
+@pytest.mark.asyncio
+async def test_members_invalid_order_rejected():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    service = _service(store, FakeMetrics())
+    with pytest.raises(AgentTeamRejected) as exc_info:
+        await service.members(_PERIOD, order="sideways")
+    assert exc_info.value.code == "sort_invalid"
+
+
+@pytest.mark.asyncio
+async def test_people_invalid_sort_field_rejected():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    service = _service(store, FakeMetrics())
+    with pytest.raises(AgentTeamRejected) as exc_info:
+        await service.people(_PERIOD, sort="agent_key")
+    assert exc_info.value.code == "sort_invalid"
+
+
+@pytest.mark.asyncio
+async def test_resolve_feedback_note_over_500_chars_rejected():
+    store = FakeStore(
+        agent_records={"agent-1": _agent("agent-1")},
+        pending=[
+            PendingFeedback(
+                feedback_id="fb-1",
+                agent_key="agent-1",
+                turn_id="turn-1",
+                conversation_id="conv-1",
+                actor_id="caller-1",
+                rating="down",
+                comment=None,
+                updated_at=_NOW,
+            )
+        ],
+    )
+    service = _service(store, FakeMetrics())
+    with pytest.raises(AgentTeamRejected) as exc_info:
+        await service.resolve_feedback("fb-1", "x" * 501)
+    assert exc_info.value.code == "note_too_long"
+
+
+@pytest.mark.asyncio
+async def test_person_issues_one_round_of_store_queries():
+    # Review fix round 1, finding 6: `pending_feedback`/`maintenance_counts`
+    # must be queried once per view, not once in member assembly and again
+    # in person-detail assembly.
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1", owner_actor_id="owner-1")})
+    service = _service(store, FakeMetrics())
+    await service.person("owner-1", _PERIOD)
+    assert store.pending_feedback_calls == 1
+    assert store.maintenance_counts_calls == 1

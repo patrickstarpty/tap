@@ -30,12 +30,20 @@ _MIN_RATED_TURNS_FOR_SATISFACTION = 10
 _TOP_SERVED_LIMIT = 3
 
 
-def member_status(*, disabled: bool, trailing_30d_runs: int) -> MemberStatus:
+def member_status(*, disabled: bool, trailing_30d_runs: int | None) -> MemberStatus | None:
     """Spec 1.4: disabled takes precedence over active/idle; active means at
     least 1 run in the trailing 30 days ending today, independent of the
-    selected period."""
+    selected period.
+
+    `trailing_30d_runs=None` means the run count is unknown (runtime backend
+    unavailable) -- the caller must not substitute 0, because that would
+    report "idle" when the truth might be "active" (controller ruling: never
+    claim idle during an outage). `disabled` always wins regardless, since
+    it comes from MySQL, not the runtime backend."""
     if disabled:
         return "disabled"
+    if trailing_30d_runs is None:
+        return None
     if trailing_30d_runs >= 1:
         return "active"
     return "idle"
@@ -55,12 +63,21 @@ def roster_agent_keys(
     store_agent_keys: Iterable[str],
     tapper_default_runs_in_period: int,
     tapper_default_runs_trailing_30d: int,
+    runtime_available: bool = True,
 ) -> frozenset[str]:
     """Spec 1.1: members are `store.agents()` plus `tapper_default` when it
     ran in the selected period or the trailing 30 days; `unknown` never names
-    a roster member and is always dropped."""
+    a roster member and is always dropped.
+
+    When the runtime backend is unavailable (`runtime_available=False`),
+    whether `tapper_default` ran cannot be known, so it is always included
+    rather than silently dropped (controller ruling)."""
     keys = {key for key in store_agent_keys if key != UNKNOWN_AGENT_KEY}
-    if tapper_default_runs_in_period >= 1 or tapper_default_runs_trailing_30d >= 1:
+    if (
+        not runtime_available
+        or tapper_default_runs_in_period >= 1
+        or tapper_default_runs_trailing_30d >= 1
+    ):
         keys.add(TAPPER_DEFAULT_AGENT_KEY)
     return frozenset(keys)
 
@@ -74,7 +91,7 @@ def build_member_row(
     owner_actor_id: str | None,
     joined_at: datetime | None,
     disabled: bool,
-    trailing_30d_runs: int,
+    trailing_30d_runs: int | None,
     stats: AgentRuntimeStats | None,
     last_run_at: datetime | None,
     up: int,
@@ -125,31 +142,53 @@ def team_summary(
     *,
     stats_by_key: Mapping[str, AgentRuntimeStats],
     kinds_by_key: Mapping[str, AgentKind],
-    statuses_by_key: Mapping[str, MemberStatus],
+    statuses_by_key: Mapping[str, MemberStatus | None],
     person_rows: Sequence[PersonRow],
     maintenance_total: int,
+    runtime_available: bool = True,
 ) -> TeamSummary:
     """Spec 2.6. `stats_by_key` must already be restricted to this period's
     roster (never `tapper_default`/`unknown` keys bleeding in). Global
     constraints: `agent_total`/`active`/`idle` only ever count *enabled*
-    custom and built-in Agents -- a disabled Agent counts toward neither."""
+    custom and built-in Agents -- a disabled Agent counts toward neither.
+
+    `active`/`idle` are `None` when `runtime_available` is `False`: both
+    need run counts the outage makes unknown. `agent_total` is unaffected --
+    it only depends on MySQL's `enabled` flag, and a disabled Agent's status
+    is always `"disabled"` (never `None`) regardless of the outage, so the
+    `!= "disabled"` filter below still excludes it correctly.
+
+    `owners_avg`/`served_avg` divide by the full spec-2.5 people scope
+    (`len(person_rows)`, `0.0` when empty), not merely the people with a
+    nonzero count -- someone who owns/serves nothing still counts in the
+    denominator."""
     countable = [
         key
         for key, kind in kinds_by_key.items()
         if kind in ("custom", "built_in") and statuses_by_key.get(key) != "disabled"
     ]
     agent_total = len(countable)
-    active = sum(
-        1 for key in countable if stats_by_key.get(key) is not None and stats_by_key[key].runs >= 1
-    )
-    idle = sum(1 for key in countable if statuses_by_key.get(key) == "idle")
+    active: int | None
+    idle: int | None
+    if runtime_available:
+        active = sum(
+            1
+            for key in countable
+            if stats_by_key.get(key) is not None and stats_by_key[key].runs >= 1
+        )
+        idle = sum(1 for key in countable if statuses_by_key.get(key) == "idle")
+    else:
+        active = None
+        idle = None
     runs = sum(stats.runs for stats in stats_by_key.values())
     latency_total_ms = sum(stats.latency_total_ms for stats in stats_by_key.values())
     cost_usd = sum((stats.cost_usd for stats in stats_by_key.values()), Decimal("0"))
-    owned_counts = [row.owned_agents for row in person_rows if row.owned_agents > 0]
-    served_counts = [row.served_by_agents for row in person_rows if row.served_by_agents > 0]
-    owners_avg = sum(owned_counts) / len(owned_counts) if owned_counts else 0.0
-    served_avg = sum(served_counts) / len(served_counts) if served_counts else 0.0
+    owners_avg = (
+        sum(row.owned_agents for row in person_rows) / len(person_rows) if person_rows else 0.0
+    )
+    served_avg = (
+        sum(row.served_by_agents for row in person_rows) / len(person_rows) if person_rows else 0.0
+    )
     return TeamSummary(
         agent_total=agent_total,
         active=active,
@@ -178,10 +217,13 @@ def build_person_row(
     maintenance_count: int,
 ) -> PersonRow:
     """Spec 2.5's per-person row. `owned_agent_keys` is this actor's
-    currently-owned Agents; `stats_by_key` is the full period's runtime
-    stats keyed by `agent_key`, used both for `owned_runs` (agents they own)
-    and `served_by_agents`/`runs` (agents that served them, found by
-    scanning each Agent's `served` list for this actor)."""
+    currently-owned Agents; `stats_by_key` must already be restricted to
+    this period's roster (never `unknown`/dropped keys bleeding in, the
+    same restriction `team_summary` requires) -- used both for `owned_runs`
+    (agents they own) and `served_by_agents`/`runs` (agents that served
+    them, found by scanning each Agent's `served` list for this actor), so
+    that `served_by_agents` agrees with `AgentTeamService.person`'s own
+    `served` list, which is built from the same roster."""
     owned_keys = list(owned_agent_keys)
     owned_runs = sum(stats_by_key[key].runs for key in owned_keys if key in stats_by_key)
     served_by_agents = 0

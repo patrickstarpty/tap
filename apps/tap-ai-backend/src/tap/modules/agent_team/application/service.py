@@ -9,13 +9,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, TypeVar
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
 from tap.modules.agent_team.domain import metrics as pure
 from tap.modules.agent_team.domain.models import (
     TAPPER_DEFAULT_AGENT_KEY,
+    AgentKind,
     MaintenanceKind,
     MemberRow,
     MemberStatus,
@@ -36,13 +37,43 @@ from tap.modules.agent_team.ports import (
     HistoryCursorInvalid,
     HistoryPage,
     PendingFeedback,
+    RatingCounts,
     ResolvedFeedback,
     RuntimeMetricsUnavailable,
     TrendPoint,
 )
 
 _MAX_JOB_TITLE_LENGTH = 64
+_MAX_NOTE_LENGTH = 500
 _SYNC_LAG_THRESHOLD = timedelta(minutes=5)
+
+# Global constraints: closed, explicit allowlists of scalar fields each view
+# can be sorted by -- never an open `getattr` on arbitrary client input.
+_MEMBER_SORT_FIELDS = frozenset(
+    {
+        "name",
+        "runs",
+        "failures",
+        "latency_total_ms",
+        "latency_p50_ms",
+        "cost_usd",
+        "served_count",
+        "last_run_at",
+        "satisfaction",
+        "last_maintenance_at",
+        "pending_feedback",
+        "joined_at",
+    }
+)
+_PEOPLE_SORT_FIELDS = frozenset(
+    {"actor_id", "owned_agents", "owned_runs", "served_by_agents", "runs", "maintenance"}
+)
+_SORT_ORDERS = frozenset({"asc", "desc"})
+
+# Spec 5.1: Langfuse unavailable/stale ranks worse than merely behind, which
+# ranks worse than caught up -- `report()` combines two periods' statuses by
+# taking the worse of the two.
+_STATUS_RANK: dict[RuntimeStatus, int] = {"unavailable": 0, "syncing": 1, "ok": 2}
 
 
 class AgentTeamRejected(Exception):
@@ -93,6 +124,22 @@ class _RuntimeData:
     computed_at: datetime
 
 
+@dataclass(slots=True)
+class _StoreData:
+    """Every MySQL-sourced value one view needs, fetched exactly once per
+    top-level `AgentTeamService` call (never once inside `_build_members`
+    and again inside `_people_rows`/`person`)."""
+
+    records: list[AgentRecord]
+    ratings_by_key: dict[str, RatingCounts]
+    pending: list[PendingFeedback]
+    pending_count_by_key: dict[str, int]
+    maintenance_by_agent: dict[str, dict[MaintenanceKind, int]]
+    maintenance_by_actor: dict[str, int]
+    last_maintenance: dict[str, datetime]
+    active_actors: set[str]
+
+
 def _unavailable(now: datetime) -> _RuntimeData:
     return _RuntimeData(
         status="unavailable",
@@ -102,6 +149,24 @@ def _unavailable(now: datetime) -> _RuntimeData:
         last_run_by_key={},
         computed_at=now,
     )
+
+
+def _runs_or_zero(stats: AgentRuntimeStats | None) -> int:
+    return stats.runs if stats is not None else 0
+
+
+def _combine_status(a: RuntimeStatus, b: RuntimeStatus) -> RuntimeStatus:
+    return a if _STATUS_RANK[a] <= _STATUS_RANK[b] else b
+
+
+def _validate_sort(sort: str, order: str, allowed: frozenset[str]) -> None:
+    if order not in _SORT_ORDERS:
+        raise AgentTeamRejected("sort_invalid", f"invalid order {order!r}")
+    if sort not in allowed:
+        raise AgentTeamRejected("sort_invalid", f"cannot sort by {sort!r}")
+
+
+_T = TypeVar("_T")
 
 
 class AgentTeamService:
@@ -176,47 +241,62 @@ class AgentTeamService:
             computed_at=computed_at,
         )
 
-    # ------------------------------------------------------------------
-    # Roster / member assembly
-    # ------------------------------------------------------------------
-
-    async def _roster_keys(
-        self, records: Sequence[AgentRecord], runtime: _RuntimeData
-    ) -> list[str]:
-        default_stats = runtime.stats_by_key.get(TAPPER_DEFAULT_AGENT_KEY)
-        default_trailing = runtime.trailing_stats_by_key.get(TAPPER_DEFAULT_AGENT_KEY)
-        keys = pure.roster_agent_keys(
-            store_agent_keys=[record.agent_id for record in records],
-            tapper_default_runs_in_period=default_stats.runs if default_stats else 0,
-            tapper_default_runs_trailing_30d=default_trailing.runs if default_trailing else 0,
-        )
-        return sorted(keys)
-
-    async def _build_members(self, period: Period, runtime: _RuntimeData) -> list[MemberRow]:
+    async def _load_store_data(self, period: Period) -> _StoreData:
+        """Every MySQL query a view needs, issued exactly once."""
         records = await self._store.agents()
-        records_by_id = {record.agent_id: record for record in records}
-        keys = await self._roster_keys(records, runtime)
-
         ratings_by_key = {rating.agent_key: rating for rating in await self._store.ratings(period)}
 
-        pending_count: dict[str, int] = {}
-        for item in await self._store.pending_feedback():
-            pending_count[item.agent_key] = pending_count.get(item.agent_key, 0) + 1
+        pending = await self._store.pending_feedback()
+        pending_count_by_key: dict[str, int] = {}
+        for item in pending:
+            pending_count_by_key[item.agent_key] = pending_count_by_key.get(item.agent_key, 0) + 1
 
         maintenance_by_agent: dict[str, dict[MaintenanceKind, int]] = {}
-        for agent_id, _actor_id, maintenance_kind, count in await self._store.maintenance_counts(
-            period
-        ):
+        maintenance_by_actor: dict[str, int] = {}
+        for agent_id, actor_id, kind, count in await self._store.maintenance_counts(period):
             bucket = maintenance_by_agent.setdefault(agent_id, {})
-            bucket[maintenance_kind] = bucket.get(maintenance_kind, 0) + count
+            bucket[kind] = bucket.get(kind, 0) + count
+            maintenance_by_actor[actor_id] = maintenance_by_actor.get(actor_id, 0) + count
 
         last_maintenance = await self._store.last_maintenance()
+        active_actors = await self._store.active_actors(period)
+
+        return _StoreData(
+            records=records,
+            ratings_by_key=ratings_by_key,
+            pending=pending,
+            pending_count_by_key=pending_count_by_key,
+            maintenance_by_agent=maintenance_by_agent,
+            maintenance_by_actor=maintenance_by_actor,
+            last_maintenance=last_maintenance,
+            active_actors=active_actors,
+        )
+
+    # ------------------------------------------------------------------
+    # Roster / member assembly (pure dict/list work -- no I/O, so these are
+    # plain sync methods over data `_load_runtime`/`_load_store_data` already
+    # fetched).
+    # ------------------------------------------------------------------
+
+    def _build_members(self, runtime: _RuntimeData, store_data: _StoreData) -> list[MemberRow]:
+        records_by_id = {record.agent_id: record for record in store_data.records}
+        runtime_available = runtime.status != "unavailable"
+        keys = pure.roster_agent_keys(
+            store_agent_keys=[record.agent_id for record in store_data.records],
+            tapper_default_runs_in_period=_runs_or_zero(
+                runtime.stats_by_key.get(TAPPER_DEFAULT_AGENT_KEY)
+            ),
+            tapper_default_runs_trailing_30d=_runs_or_zero(
+                runtime.trailing_stats_by_key.get(TAPPER_DEFAULT_AGENT_KEY)
+            ),
+            runtime_available=runtime_available,
+        )
 
         rows: list[MemberRow] = []
-        for key in keys:
+        for key in sorted(keys):
             record = records_by_id.get(key)
             if record is None:
-                kind: Literal["custom", "built_in", "tapper_default"] = "tapper_default"
+                kind: AgentKind = "tapper_default"
                 name = "Tapper 默认"
                 job_title: str | None = None
                 owner_actor_id: str | None = None
@@ -231,7 +311,13 @@ class AgentTeamService:
                 disabled = not record.enabled
             stats = runtime.stats_by_key.get(key)
             trailing_stats = runtime.trailing_stats_by_key.get(key)
-            rating = ratings_by_key.get(key)
+            # `None` (unknown) only when the outage itself makes the
+            # trailing count unknown; a legitimate zero (runtime available,
+            # no runs) is still `0`, which correctly yields "idle".
+            trailing_runs = (
+                trailing_stats.runs if trailing_stats else (0 if runtime_available else None)
+            )
+            rating = store_data.ratings_by_key.get(key)
             up, down = (rating.up, rating.down) if rating else (0, 0)
             rows.append(
                 pure.build_member_row(
@@ -242,48 +328,54 @@ class AgentTeamService:
                     owner_actor_id=owner_actor_id,
                     joined_at=joined_at,
                     disabled=disabled,
-                    trailing_30d_runs=trailing_stats.runs if trailing_stats else 0,
+                    trailing_30d_runs=trailing_runs,
                     stats=stats,
                     last_run_at=runtime.last_run_by_key.get(key),
                     up=up,
                     down=down,
-                    last_maintenance_at=last_maintenance.get(key),
-                    pending_feedback=pending_count.get(key, 0),
-                    maintenance=maintenance_by_agent.get(key, {}),
+                    last_maintenance_at=store_data.last_maintenance.get(key),
+                    pending_feedback=store_data.pending_count_by_key.get(key, 0),
+                    maintenance=store_data.maintenance_by_agent.get(key, {}),
                     trend=tuple(runtime.trend_by_key.get(key, ())),
                 )
             )
         return rows
 
-    async def _people_rows(
-        self, period: Period, members: Sequence[MemberRow], runtime: _RuntimeData
+    @staticmethod
+    def _member_stats(
+        members: Sequence[MemberRow], runtime: _RuntimeData
+    ) -> dict[str, AgentRuntimeStats]:
+        """Runtime stats restricted to this view's roster -- never an
+        `unknown`/dropped key bleeding into summary totals or per-person
+        counts (spec 2.6; this is also why `person()`'s `served` list and
+        `build_person_row`'s `served_by_agents` always agree)."""
+        member_keys = {row.agent_key for row in members}
+        return {key: value for key, value in runtime.stats_by_key.items() if key in member_keys}
+
+    def _people_rows(
+        self, members: Sequence[MemberRow], runtime: _RuntimeData, store_data: _StoreData
     ) -> list[PersonRow]:
         owners = {row.owner_actor_id for row in members if row.owner_actor_id is not None}
-        active_actors = await self._store.active_actors(period)
-        scope_ids = pure.people_scope(owners=owners, active_actors=active_actors)
-
-        maintenance_by_actor: dict[str, int] = {}
-        for _agent_id, actor_id, _kind, count in await self._store.maintenance_counts(period):
-            maintenance_by_actor[actor_id] = maintenance_by_actor.get(actor_id, 0) + count
-
+        scope_ids = pure.people_scope(owners=owners, active_actors=store_data.active_actors)
+        stats_by_key = self._member_stats(members, runtime)
         return [
             pure.build_person_row(
                 actor_id=actor_id,
                 owned_agent_keys=[
                     row.agent_key for row in members if row.owner_actor_id == actor_id
                 ],
-                stats_by_key=runtime.stats_by_key,
-                maintenance_count=maintenance_by_actor.get(actor_id, 0),
+                stats_by_key=stats_by_key,
+                maintenance_count=store_data.maintenance_by_actor.get(actor_id, 0),
             )
             for actor_id in sorted(scope_ids)
         ]
 
     async def _period_report(self, period: Period) -> tuple[PeriodReport, RuntimeStatus, datetime]:
         runtime = await self._load_runtime(period)
-        members = await self._build_members(period, runtime)
-        people = await self._people_rows(period, members, runtime)
-        member_keys = {row.agent_key for row in members}
-        stats_by_key = {k: v for k, v in runtime.stats_by_key.items() if k in member_keys}
+        store_data = await self._load_store_data(period)
+        members = self._build_members(runtime, store_data)
+        people = self._people_rows(members, runtime, store_data)
+        stats_by_key = self._member_stats(members, runtime)
         kinds_by_key = {row.agent_key: row.kind for row in members}
         statuses_by_key = {row.agent_key: row.status for row in members}
         maintenance_total = sum(sum(row.maintenance.values()) for row in members)
@@ -293,11 +385,14 @@ class AgentTeamService:
             statuses_by_key=statuses_by_key,
             person_rows=people,
             maintenance_total=maintenance_total,
+            runtime_available=runtime.status != "unavailable",
         )
         report = PeriodReport(summary=summary, members=tuple(members), people=tuple(people))
         return report, runtime.status, runtime.computed_at
 
-    def _view(self, period: Period, status: RuntimeStatus, computed_at: datetime, data):
+    def _view(
+        self, period: Period, status: RuntimeStatus, computed_at: datetime, data: _T
+    ) -> TeamView[_T]:
         return TeamView(
             runtime_status=status,
             computed_at=computed_at,
@@ -323,22 +418,25 @@ class AgentTeamService:
         status: MemberStatus | None = None,
         kind: Literal["custom", "built_in", "tapper_default"] | None = None,
         sort: str = "runs",
-        order: Literal["asc", "desc"] = "desc",
+        order: str = "desc",
     ) -> TeamView[tuple[MemberRow, ...]]:
+        _validate_sort(sort, order, _MEMBER_SORT_FIELDS)
         runtime = await self._load_runtime(period)
-        rows = await self._build_members(period, runtime)
+        store_data = await self._load_store_data(period)
+        rows = self._build_members(runtime, store_data)
         if owner is not None:
             rows = [row for row in rows if row.owner_actor_id == owner]
         if status is not None:
             rows = [row for row in rows if row.status == status]
         if kind is not None:
             rows = [row for row in rows if row.kind == kind]
-        rows = _sorted(rows, sort, order)
-        return self._view(period, runtime.status, runtime.computed_at, tuple(rows))
+        sorted_rows = _sorted(rows, sort, order)
+        return self._view(period, runtime.status, runtime.computed_at, tuple(sorted_rows))
 
     async def member(self, agent_key: str, period: Period) -> TeamView[MemberRow]:
         runtime = await self._load_runtime(period)
-        rows = await self._build_members(period, runtime)
+        store_data = await self._load_store_data(period)
+        rows = self._build_members(runtime, store_data)
         for row in rows:
             if row.agent_key == agent_key:
                 return self._view(period, runtime.status, runtime.computed_at, row)
@@ -354,8 +452,9 @@ class AgentTeamService:
             raise AgentTeamRejected("cursor_invalid", str(exc)) from exc
 
     async def people(
-        self, period: Period, sort: str = "runs", order: Literal["asc", "desc"] = "desc"
+        self, period: Period, sort: str = "runs", order: str = "desc"
     ) -> TeamView[tuple[PersonRow, ...]]:
+        _validate_sort(sort, order, _PEOPLE_SORT_FIELDS)
         report, status, computed_at = await self._period_report(period)
         rows = _sorted(list(report.people), sort, order)
         return self._view(period, status, computed_at, tuple(rows))
@@ -363,8 +462,9 @@ class AgentTeamService:
     async def person(self, actor_id: str, period: Period) -> TeamView[PersonDetail]:
         resolved = self._scope.actor_id if actor_id == "me" else actor_id
         runtime = await self._load_runtime(period)
-        members = await self._build_members(period, runtime)
-        people = await self._people_rows(period, members, runtime)
+        store_data = await self._load_store_data(period)
+        members = self._build_members(runtime, store_data)
+        people = self._people_rows(members, runtime, store_data)
         person_row = next(
             (row for row in people if row.actor_id == resolved),
             PersonRow(
@@ -383,8 +483,9 @@ class AgentTeamService:
             if _actor_served(runtime.stats_by_key.get(row.agent_key), resolved)
         )
         owned_keys = {row.agent_key for row in owned}
-        all_pending = await self._store.pending_feedback()
-        pending_feedback = tuple(item for item in all_pending if item.agent_key in owned_keys)
+        pending_feedback = tuple(
+            item for item in store_data.pending if item.agent_key in owned_keys
+        )
         data = PersonDetail(
             person=person_row, owned=owned, served=served, pending_feedback=pending_feedback
         )
@@ -392,7 +493,8 @@ class AgentTeamService:
 
     async def org_chart(self, period: Period) -> TeamView[OrgChart]:
         runtime = await self._load_runtime(period)
-        members = await self._build_members(period, runtime)
+        store_data = await self._load_store_data(period)
+        members = self._build_members(runtime, store_data)
         served_by_key = {
             row.agent_key: (
                 runtime.stats_by_key[row.agent_key].served
@@ -405,11 +507,11 @@ class AgentTeamService:
         return self._view(period, runtime.status, runtime.computed_at, data)
 
     async def report(self, period: Period) -> TeamView[TeamReport]:
-        current, status, computed_at = await self._period_report(period)
+        current, current_status, current_computed_at = await self._period_report(period)
         previous_period = period.previous()
-        previous, _previous_status, _previous_computed_at = await self._period_report(
-            previous_period
-        )
+        previous, previous_status, previous_computed_at = await self._period_report(previous_period)
+        status = _combine_status(current_status, previous_status)
+        computed_at = min(current_computed_at, previous_computed_at)
         data = TeamReport(current=current, previous=previous)
         return self._view(period, status, computed_at, data)
 
@@ -443,6 +545,9 @@ class AgentTeamService:
         return await self._store.transfer_owner(agent_id, new_owner, event)
 
     async def resolve_feedback(self, feedback_id: str, note: str | None) -> ResolvedFeedback:
+        if note is not None and len(note) > _MAX_NOTE_LENGTH:
+            raise AgentTeamRejected("note_too_long", "note must be <= 500 characters")
+
         def event_factory(agent_id: str):
             return new_event(
                 self._scope,
@@ -467,10 +572,12 @@ def _actor_served(stats: AgentRuntimeStats | None, actor_id: str) -> bool:
     return any(served.actor_id == actor_id and served.runs > 0 for served in stats.served)
 
 
-def _sorted(rows: list, sort: str, order: Literal["asc", "desc"]) -> list:
+def _sorted(rows: list, sort: str, order: str) -> list:
     """Sorts by the `sort` attribute, descending unless `order == "asc"`.
     Rows whose sort attribute is `None` (e.g. `last_run_at`) always sort
-    last, regardless of direction."""
+    last, regardless of direction. Callers must validate `sort`/`order`
+    against a closed allowlist first (`_validate_sort`) -- this helper
+    trusts its inputs."""
     reverse = order != "asc"
     with_value = [row for row in rows if getattr(row, sort) is not None]
     without_value = [row for row in rows if getattr(row, sort) is None]

@@ -177,7 +177,13 @@ class MemberRow:
 
     `owner_actor_id` is always `None` for `kind in ("built_in",
     "tapper_default")` -- the frontend shows "Tapper 内置" instead (spec 1.1).
-    `top_served` holds at most the top 3 served actors by run count."""
+    `top_served` holds at most the top 3 served actors by run count.
+
+    `status` is `None` for a non-disabled Agent when the runtime backend is
+    unavailable (spec 5.1 controller ruling): a disabled Agent's status is
+    always `"disabled"` (known from MySQL regardless of Langfuse), but
+    "active"/"idle" require the trailing-30-day run count, which an outage
+    makes unknown -- reporting "idle" in that case would be a false claim."""
 
     agent_key: str
     name: str
@@ -185,7 +191,7 @@ class MemberRow:
     job_title: str | None
     owner_actor_id: str | None
     joined_at: datetime | None
-    status: MemberStatus
+    status: MemberStatus | None
     runs: int
     failures: int
     abstained: int
@@ -209,11 +215,16 @@ class TeamSummary:
     """Spec 2.6's team-wide summary. `agent_total`/`active`/`idle` cover only
     enabled custom and built-in Agents (never `tapper_default`); totals are
     computed directly from the period's `agent_stats`, never by summing
-    trend points (spec 2.1 clips trend buckets at the period's edges)."""
+    trend points (spec 2.1 clips trend buckets at the period's edges).
+
+    `active`/`idle` are `None` when the runtime backend is unavailable --
+    both require knowing run counts, which an outage makes unknown
+    (`agent_total` stays a real number: it only depends on MySQL's
+    `enabled` flag)."""
 
     agent_total: int
-    active: int
-    idle: int
+    active: int | None
+    idle: int | None
     owners_avg: float
     served_avg: float
     runs: int
