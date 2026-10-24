@@ -24,6 +24,7 @@ from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore, agent_mai
 from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY, Period, new_event
 from tap.modules.agent_team.ports import FeedbackNotFound, HistoryCursorInvalid
 from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision
+from tap.modules.ai.domain.langfuse_sync import SyncKind
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import conversation, turn_input_snapshot
 from tap.modules.chat.adapters.mysql_feedback import MysqlFeedbackRepository, answer_feedback
@@ -32,6 +33,7 @@ from tap.platform.db.session import create_engine_and_session_factory
 from tap.platform.telemetry.schema import langfuse_sync_cursor, trace_span
 from tests.owned_mysql import owned_project_database_url
 
+_TRACE_CURSOR: SyncKind = "trace"  # the production sync store's real cursor name
 _T0 = datetime(2026, 10, 1, 0, 0, 0)
 
 OTHER_SCOPE = ProjectScopeContext(
@@ -778,7 +780,9 @@ def test_sync_lag(owned_project_mysql: IsolatedMysql) -> None:
                     )
                 )
                 await connection.execute(
-                    sa.insert(langfuse_sync_cursor).values(name="traces", position=cursor_position)
+                    sa.insert(langfuse_sync_cursor).values(
+                        name=_TRACE_CURSOR, position=cursor_position
+                    )
                 )
 
             store = _store(sessions)

@@ -43,6 +43,7 @@ from tap.modules.agent_team.ports import (
     ResolvedFeedback,
 )
 from tap.modules.ai.domain.assets import AssetRevisionStatus
+from tap.modules.ai.domain.langfuse_sync import SyncKind
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import turn_input_snapshot
 from tap.modules.chat.adapters.mysql_feedback import answer_feedback
@@ -112,6 +113,8 @@ def _decode_history_cursor(cursor: str) -> tuple[datetime, str]:
 # reject such an insert, so `resolve_feedback` skips writing an event (and
 # does not call `event_factory`) for these.
 _UNRESOLVABLE_AGENT_KEYS = frozenset({TAPPER_DEFAULT_AGENT_KEY, UNKNOWN_AGENT_KEY})
+# The cursor row the ai-module Langfuse sync store writes for traces.
+_TRACE_CURSOR: SyncKind = "trace"
 
 
 def _to_event(row) -> MaintenanceEvent:
@@ -434,7 +437,7 @@ class MysqlAgentTeamStore:
                 return None
             cursor_position = await session.scalar(
                 select(langfuse_sync_cursor.c.position).where(
-                    langfuse_sync_cursor.c.name == "traces"
+                    langfuse_sync_cursor.c.name == _TRACE_CURSOR
                 )
             )
         if cursor_position is None:

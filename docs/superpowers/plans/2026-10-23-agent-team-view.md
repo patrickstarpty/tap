@@ -24,7 +24,7 @@
 - 运行与失败（spec 2.2）：只有根 span 为 `turn.request` 的 trace 打 `agent:` 与 `outcome:<state>` 标签；`failures` = `outcome:failed`；`abstained`、`canceled` 计入运行、单列次要指标。
 - 上一周期（spec 6.4）：按形状判定——完整自然月 → 再上一个自然月；同月 1 日至非月末 → 上月 1 日至同日（无该日取月末）；其他 → 紧邻等长区间。
 - 人员范围（spec 2.5）：全部当前负责人 ∪ 周期内调用过 Agent 的人 ∪ 周期内做过维护的人；显示 `actor_id`。
-- 只缓存 Langfuse 运行数据；MySQL 部分每次实时查询。`runtimeStatus`：`ok`、`syncing`（`langfuse_sync_cursor` 中 `traces` 落后 `max(trace_span.recorded_at)` 超过 5 分钟）、`unavailable`。
+- 只缓存 Langfuse 运行数据；MySQL 部分每次实时查询。`runtimeStatus`：`ok`、`syncing`（`langfuse_sync_cursor` 中 `trace` 落后 `max(trace_span.recorded_at)` 超过 5 分钟）、`unavailable`。
 - Langfuse 查询按 `environment = TAP_LANGFUSE_ENVIRONMENT` 过滤。
 - 汇总 Agent 总数只计启用中的自定义与内置 Agent，不含 `tapper_default`。
 - 待处理反馈：`(rating = 'down' OR comment IS NOT NULL) AND resolved_at IS NULL`；用户改评分或评论时清空 `resolved_*`，重新变为待处理。
@@ -117,8 +117,8 @@ def test_utc_bounds_are_half_open_days():
 
 - [ ] **Step 2:** `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/agent_team/test_models.py -v`，预期 ImportError 失败。
 - [ ] **Step 3:** 实现 `domain/models.py`。
-- [ ] **Step 4:** 写集成测试 `test_agent_team_migration.py`（`owned_project_mysql`）：升级到 head 后 `ai_agent` 有 `job_title`（VARCHAR 64，可空）、`owner_actor_id`（非空）、`owner_assigned_at`（非空），且迁移前已存在的行 `owner_actor_id == actor_id`、`owner_assigned_at == created_at`；`answer_feedback` 有 `resolved_at`、`resolved_by`、`resolution_note`（VARCHAR 500）；`agent_maintenance_event` 存在；`langfuse_sync_cursor` 中 `name='traces'` 行被删除而 `name='feedback'` 行保留。
-- [ ] **Step 5:** 写迁移：加列（`owner_actor_id` 先可空、`UPDATE ai_agent SET owner_actor_id = actor_id, owner_assigned_at = created_at`、再改非空），建事件表，`DELETE FROM langfuse_sync_cursor WHERE name = 'traces'`（让同步 worker 重推历史 trace 补标签）。同步更新两个 SQLAlchemy `Table` 定义。`downgrade` 反向删除（游标不恢复）。
+- [ ] **Step 4:** 写集成测试 `test_agent_team_migration.py`（`owned_project_mysql`）：升级到 head 后 `ai_agent` 有 `job_title`（VARCHAR 64，可空）、`owner_actor_id`（非空）、`owner_assigned_at`（非空），且迁移前已存在的行 `owner_actor_id == actor_id`、`owner_assigned_at == created_at`；`answer_feedback` 有 `resolved_at`、`resolved_by`、`resolution_note`（VARCHAR 500）；`agent_maintenance_event` 存在；`langfuse_sync_cursor` 中 `name='trace'` 行被删除而 `name='feedback'` 行保留。
+- [ ] **Step 5:** 写迁移：加列（`owner_actor_id` 先可空、`UPDATE ai_agent SET owner_actor_id = actor_id, owner_assigned_at = created_at`、再改非空），建事件表，`DELETE FROM langfuse_sync_cursor WHERE name = 'trace'`（让同步 worker 重推历史 trace 补标签）。同步更新两个 SQLAlchemy `Table` 定义。`downgrade` 反向删除（游标不恢复）。
 - [ ] **Step 6:** `TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_agent_team_migration.py -v` 与 Step 1 单测均 PASS；另跑 `BT/integration/test_ai_asset_catalog.py` 确认能力 4 不回归。
 - [ ] **Step 7:** 提交 `feat: add agent team schema and domain models`
 
@@ -264,7 +264,7 @@ async def test_last_runs_queries_traces_api_per_agent(): ...    # 断言 tags �
     - `async def history(self, agent_id: str, cursor: str | None, limit: int = 50) -> HistoryPage`（按 `occurred_at` 降序、`event_id` 次序；游标为不透明 base64）
     - `async def last_maintenance(self) -> dict[str, datetime]`（每个 `agent_id` 最近一条维护事件时间）
     - `async def active_actors(self, period: Period) -> set[str]`（周期内有 Turn 或维护事件的 actor，用于人员范围）
-    - `async def sync_lag(self) -> timedelta | None`（`max(trace_span.recorded_at) - langfuse_sync_cursor['traces']`；无游标行时视为无限落后）
+    - `async def sync_lag(self) -> timedelta | None`（`max(trace_span.recorded_at) - langfuse_sync_cursor['trace']`；无游标行时视为无限落后）
     - `async def actor_exists(self, actor_id: str) -> bool`（`actor_principal` 中同企业且启用）
     - `async def set_job_title(self, agent_id: str, job_title: str | None) -> AgentRecord`
     - `async def transfer_owner(self, agent_id: str, new_owner: str, event: MaintenanceEvent) -> AgentRecord`

@@ -181,9 +181,9 @@ class AgentTeamStore(Protocol):
         ...
 
     async def sync_lag(self) -> timedelta | None:
-        """`max(trace_span.recorded_at) - langfuse_sync_cursor['traces']`.
+        """`max(trace_span.recorded_at) - langfuse_sync_cursor['trace']`.
         `None` when there is no `trace_span` row yet to measure against; when
-        a row exists but no `traces` cursor row does, lag is unbounded, so
+        a row exists but no `trace` cursor row does, lag is unbounded, so
         this returns `timedelta.max`."""
         ...
 
