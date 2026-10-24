@@ -188,3 +188,19 @@ async def test_expired_entries_are_evicted_on_next_store() -> None:
     assert len(cached._entries) == 1
     assert cached.computed_at("proj1", period_a, "stats") is None
     assert cached.computed_at("proj1", period_b, "stats") is not None
+
+
+@pytest.mark.asyncio
+async def test_exhausted_deadline_neither_fetches_nor_negative_caches() -> None:
+    inner = _CountingInner()
+    clock = _FakeClock()
+    cached = CachedRuntimeMetrics(inner, ttl_seconds=300, failure_ttl_seconds=30, clock=clock)
+
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period(), timeout_seconds=0.0)
+    assert inner.agent_stats_calls == 0
+
+    # No failure entry was written: the next call with budget really fetches.
+    result = await cached.agent_stats("proj1", _period(), timeout_seconds=5.0)
+    assert inner.agent_stats_calls == 1
+    assert result[0].runs == 1

@@ -291,7 +291,9 @@
 
 .tap-team-trend-readout {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
+  margin: 6px 0 4px;
   min-height: 1.4em;
   color: var(--tap-muted);
   font-size: 0.85em;
@@ -558,12 +560,6 @@
   margin-top: 4px;
 }
 
-.tap-team-trend-readout {
-  flex-wrap: wrap;
-  margin-top: 6px;
-  min-height: 1.4em;
-}
-
 /* Profile drawer: two-column fact and metric grids. */
 .tap-team-profile-facts,
 .tap-team-profile-metrics {
@@ -641,8 +637,4 @@
 .tap-catalog-dialog [role="tabpanel"] .tap-team-profile-facts {
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 10px 20px;
-}
-
-.tap-team-trend-readout {
-  margin-bottom: 4px;
 }

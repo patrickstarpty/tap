@@ -728,16 +728,28 @@ async def test_member_sort_ties_break_by_name_and_status_kind_use_domain_rank():
             "agent-c",
             "agent-d",
         ]
-    status = await service.members(_PERIOD, sort="status", order="asc")
-    keys = [r.agent_key for r in status.data]
-    # idle (a, b, d: no runs) before disabled (c); ties by name.
-    assert keys[-1] == "agent-c"
-    kind = await service.members(_PERIOD, sort="kind", order="asc")
-    kinds = [r.kind for r in kind.data]
-    assert kinds == sorted(kinds, key={"custom": 0, "built_in": 1, "tapper_default": 2}.get)
-    kind_desc = await service.members(_PERIOD, sort="kind", order="desc")
-    assert [r.kind for r in kind_desc.data][0] == "built_in"
-    assert [r.kind for r in kind_desc.data][-1] == "custom"
+    # Status: idle (a, b, d have no runs) < disabled (c); names break ties.
+    asc = await service.members(_PERIOD, sort="status", order="asc")
+    assert [r.agent_key for r in asc.data if r.status == "idle"] == [
+        "agent-a",
+        "agent-b",
+        "agent-d",
+    ]
+    assert asc.data[-1].agent_key == "agent-c"
+    desc = await service.members(_PERIOD, sort="status", order="desc")
+    assert desc.data[0].agent_key == "agent-c"
+    assert [r.agent_key for r in desc.data if r.status == "idle"] == [
+        "agent-a",
+        "agent-b",
+        "agent-d",
+    ]
+    # Kind: custom (a, c, d) < built_in (b); names break ties either way.
+    for order, expected in (
+        ("asc", ["agent-a", "agent-c", "agent-d", "agent-b"]),
+        ("desc", ["agent-b", "agent-a", "agent-c", "agent-d"]),
+    ):
+        by_kind = await service.members(_PERIOD, sort="kind", order=order)
+        assert [r.agent_key for r in by_kind.data] == expected
 
 
 def test_naive_converts_to_utc_before_stripping_tzinfo():

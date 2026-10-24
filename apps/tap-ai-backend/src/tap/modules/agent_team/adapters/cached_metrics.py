@@ -97,6 +97,10 @@ class CachedRuntimeMetrics:
             if self._clock() < failure[0]:
                 raise failure[1]
             del self._failures[key]
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            # The caller's view deadline is already spent: this key was never
+            # tried, so it is neither fetched nor negative-cached.
+            raise RuntimeMetricsUnavailable("view deadline exhausted")
         try:
             # Bounded here by min(per-fetch cap, the caller's remaining view
             # deadline): if the service's own timeout fired first it would
