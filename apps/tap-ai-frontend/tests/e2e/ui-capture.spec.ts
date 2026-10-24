@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { captureAgentTeamResponse } from "./agentTeamCaptureFixture";
 import {
   CAPTURE_GRAPH_HIGHLIGHT,
   CAPTURE_GRAPH_NODE,
@@ -122,6 +123,8 @@ test.beforeEach(async ({ page }) => {
       body = { items: CAPTURE_PROMPT_SUGGESTIONS };
     } else if (await fulfillGraphRoutes(route, path)) {
       return;
+    } else if (captureAgentTeamResponse(path) !== undefined) {
+      body = captureAgentTeamResponse(path);
     } else if (/\/(ai\/(agents|skills)|conversations)$/u.test(path)) {
       body = { items: [], nextCursor: null };
     } else {
@@ -359,6 +362,7 @@ test("captures the fresh Tapper conversation and model selector", async ({
 
 test("captures AI Agent and Skill catalogs", async ({ page }) => {
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
@@ -523,6 +527,16 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
       await route.fulfill({ json: { items: [], nextCursor: null } });
       return;
     }
+    if (path.endsWith("/ai/tools") && method === "GET") {
+      // The Agent form lists checkable tools.
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
+    const team = captureAgentTeamResponse(path);
+    if (team !== undefined && method === "GET") {
+      await route.fulfill({ json: team });
+      return;
+    }
     throw new Error(`Unexpected capture API request: ${method} ${path}`);
   });
 
@@ -570,6 +584,7 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
@@ -1053,4 +1068,72 @@ test("captures a restored Insights explanation before and after refresh", async 
     page.getByText("Request timed out before retry passed.", { exact: true }),
   ).toHaveCount(0);
   await capture(page, "09-insights-withdrawn");
+});
+
+async function openAgentTeam(page: Page, tab: string) {
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: tab, exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: tab, selected: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Loading team data...")).toHaveCount(0);
+}
+
+test("captures the Agent team cards", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  const roster = page
+    .getByRole("list")
+    .filter({ hasText: "Claims intake reviewer" });
+  await expect(
+    roster.getByText("Life Underwriting Analyst", { exact: true }),
+  ).toBeVisible();
+  await expect(roster.getByText("Disabled", { exact: true })).toBeVisible();
+  await expect(roster.getByText("Idle", { exact: true })).toBeVisible();
+  await expect(roster.getByText("Tapper", { exact: true })).toBeVisible();
+  expect(await capture(page, "05-agent-team-cards")).toMatch(/^[0-9a-f]{64}$/u);
+});
+
+test("captures the Agent team org chart", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  const chart = page.getByRole("group", {
+    name: /Org chart of people and the agents/u,
+  });
+  await chart.scrollIntoViewIfNeeded();
+  await expect(chart).toBeVisible();
+  await page
+    .getByRole("button", { name: "actor-capture", exact: true })
+    .click();
+  expect(await capture(page, "06-agent-team-org-chart")).toMatch(
+    /^[0-9a-f]{64}$/u,
+  );
+});
+
+test("captures an Agent profile", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  await page
+    .locator(".tap-team-card-name", { hasText: "Claims intake reviewer" })
+    .click();
+  const profile = page.getByRole("dialog", { name: "Claims intake reviewer" });
+  await expect(profile).toBeVisible();
+  await profile.getByRole("tab", { name: "Workload", exact: true }).click();
+  await expect(profile.getByText("Call volume")).toBeVisible();
+  expect(await capture(page, "07-agent-profile")).toMatch(/^[0-9a-f]{64}$/u);
+});
+
+test("captures My Agents", async ({ page }) => {
+  await openAgentTeam(page, "My Agents");
+  await expect(page.getByText("Agents I own")).toBeVisible();
+  await expect(page.getByText("Feedback waiting for me")).toBeVisible();
+  expect(await capture(page, "08-my-agents")).toMatch(/^[0-9a-f]{64}$/u);
+});
+
+test("captures the Agent team report", async ({ page }) => {
+  await openAgentTeam(page, "Report");
+  await expect(
+    page.getByRole("link", { name: "Export CSV", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Loading team data...")).toHaveCount(0);
+  expect(await capture(page, "09-agent-team-report")).toMatch(
+    /^[0-9a-f]{64}$/u,
+  );
 });
