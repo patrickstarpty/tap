@@ -567,3 +567,27 @@ async def test_malformed_metric_value_raises_unavailable() -> None:
             await _adapter(client).agent_stats(
                 _PROJECT_ID, Period(date(2026, 1, 1), date(2026, 1, 1))
             )
+
+
+@pytest.mark.asyncio
+async def test_gather_cancels_siblings_and_reraises_the_bare_failure() -> None:
+    from tap.modules.agent_team.adapters.langfuse_metrics import _gather
+    from tap.modules.agent_team.ports import RuntimeMetricsUnavailable
+
+    cancelled = asyncio.Event()
+
+    async def slow() -> int:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return 1
+
+    async def boom() -> int:
+        await asyncio.sleep(0)
+        raise RuntimeMetricsUnavailable()
+
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await _gather(slow(), boom())
+    assert cancelled.is_set()

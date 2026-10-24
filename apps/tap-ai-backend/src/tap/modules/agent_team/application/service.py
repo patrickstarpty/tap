@@ -65,6 +65,10 @@ _MEMBER_SORT_FIELDS = frozenset(
         "last_maintenance_at",
         "pending_feedback",
         "joined_at",
+        "job_title",
+        "owner_actor_id",
+        "status",
+        "kind",
     }
 )
 _PEOPLE_SORT_FIELDS = frozenset(
@@ -264,9 +268,7 @@ class AgentTeamService:
 
         status: RuntimeStatus = "ok"
         if self._check_sync_lag:
-            lag = await self._store.oldest_unsynced_age(
-                now=self._clock(), settle=self._sync_settle
-            )
+            lag = await self._store.oldest_unsynced_age(now=self._clock(), settle=self._sync_settle)
             if lag is not None and lag > _SYNC_LAG_THRESHOLD:
                 status = "syncing"
 
@@ -504,6 +506,12 @@ class AgentTeamService:
                 )
                 return self._view(period, runtime.status, runtime.computed_at, detail)
         raise AgentTeamRejected("agent_not_found", f"no Agent {agent_key!r} in this Project")
+
+    async def member_row(self, agent_id: str) -> MemberRow:
+        """The Agent's roster row over the trailing 30 days ending today by
+        this service's clock -- what the personnel writes return."""
+        view = await self.member(agent_id, trailing_30_days(self._clock().date()))
+        return view.data.row
 
     async def history(self, agent_id: str, cursor: str | None) -> HistoryPage:
         record = await self._store.agent(agent_id)

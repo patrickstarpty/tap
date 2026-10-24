@@ -147,6 +147,7 @@ _SKILL_PROBLEM_STATUS: dict[str, int] = {
     "cursor_invalid": 400,
     "job_title_too_long": 400,
     "sort_invalid": 400,
+    "filter_invalid": 400,
     "note_too_long": 400,
     "agent_read_only": 403,
     "agent_not_found": 404,

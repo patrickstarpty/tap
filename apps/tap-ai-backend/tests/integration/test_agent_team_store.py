@@ -790,9 +790,7 @@ def test_oldest_unsynced_age(owned_project_mysql: IsolatedMysql) -> None:
 
             # A span older than the settle window and no cursor row: unsynced.
             await add_span(now - timedelta(minutes=12))
-            assert await store.oldest_unsynced_age(now=now, settle=settle) == timedelta(
-                minutes=12
-            )
+            assert await store.oldest_unsynced_age(now=now, settle=settle) == timedelta(minutes=12)
 
             # The cursor has caught up with it: nothing is behind.
             async with engine.begin() as connection:
@@ -809,9 +807,7 @@ def test_oldest_unsynced_age(owned_project_mysql: IsolatedMysql) -> None:
 
             # ...but a settled span past the cursor is, aged from its own time.
             await add_span(now - timedelta(minutes=7))
-            assert await store.oldest_unsynced_age(now=now, settle=settle) == timedelta(
-                minutes=7
-            )
+            assert await store.oldest_unsynced_age(now=now, settle=settle) == timedelta(minutes=7)
         finally:
             await engine.dispose()
 

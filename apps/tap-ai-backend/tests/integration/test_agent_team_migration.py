@@ -112,3 +112,25 @@ def test_0036_downgrade_removes_added_columns_and_event_table(owned_project_mysq
         assert "resolution_note" not in answer_feedback_columns
     finally:
         sync_engine.dispose()
+
+
+def test_0037_renames_the_agent_fk_to_the_metadata_name_and_back(owned_project_mysql):
+    """Not run locally (needs isolated MySQL)."""
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        owned_project_mysql.upgrade("head")
+
+        def fk_names() -> set[str]:
+            return {
+                fk["name"]
+                for fk in inspect(sync_engine).get_foreign_keys("agent_maintenance_event")
+            }
+
+        assert "fk_agent_maintenance_event_project_parent_0" in fk_names()
+        assert "fk_agent_maintenance_event_agent" not in fk_names()
+
+        owned_project_mysql.downgrade("0036_agent_team")
+        assert "fk_agent_maintenance_event_agent" in fk_names()
+        assert "fk_agent_maintenance_event_project_parent_0" not in fk_names()
+    finally:
+        sync_engine.dispose()

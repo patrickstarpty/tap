@@ -135,9 +135,7 @@ class FakeStore:
         del period
         return set()
 
-    async def oldest_unsynced_age(
-        self, *, now: datetime, settle: timedelta
-    ) -> timedelta | None:
+    async def oldest_unsynced_age(self, *, now: datetime, settle: timedelta) -> timedelta | None:
         del now, settle
         return None
 

@@ -166,9 +166,7 @@ class FakeStore:
     async def active_actors(self, period: Period) -> set[str]:
         return set(self.active_actor_set)
 
-    async def oldest_unsynced_age(
-        self, *, now: datetime, settle: timedelta
-    ) -> timedelta | None:
+    async def oldest_unsynced_age(self, *, now: datetime, settle: timedelta) -> timedelta | None:
         self.lag_queries.append((now, settle))
         return self.lag
 
@@ -492,7 +490,7 @@ async def test_members_invalid_sort_field_rejected():
     store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
     service = _service(store, FakeMetrics())
     with pytest.raises(AgentTeamRejected) as exc_info:
-        await service.members(_PERIOD, sort="owner_actor_id")
+        await service.members(_PERIOD, sort="agent_key")
     assert exc_info.value.code == "sort_invalid"
 
 
@@ -503,6 +501,31 @@ async def test_members_invalid_order_rejected():
     with pytest.raises(AgentTeamRejected) as exc_info:
         await service.members(_PERIOD, order="sideways")
     assert exc_info.value.code == "sort_invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field_name", ["job_title", "owner_actor_id", "status", "kind"])
+async def test_members_sort_by_personnel_columns_is_deterministic(field_name):
+    store = FakeStore(
+        agent_records={
+            "agent-b": _agent("agent-b", owner_actor_id="owner-2", job_title="QA"),
+            "agent-a": _agent("agent-a", owner_actor_id="owner-1", job_title="Dev"),
+            "agent-c": _agent("agent-c", owner_actor_id="owner-1", enabled=False),
+        }
+    )
+    service = _service(store, FakeMetrics())
+    asc = await service.members(_PERIOD, sort=field_name, order="asc")
+    desc = await service.members(_PERIOD, sort=field_name, order="desc")
+    keys = [row.agent_key for row in asc.data]
+    assert sorted(keys) == ["agent-a", "agent-b", "agent-c"]
+    assert keys == [
+        row.agent_key for row in (await service.members(_PERIOD, sort=field_name, order="asc")).data
+    ]
+    if field_name == "job_title":
+        assert keys[:2] == ["agent-a", "agent-b"]  # Dev < QA; missing last
+        assert [row.agent_key for row in desc.data][-1] == "agent-c"
+    if field_name == "owner_actor_id":
+        assert keys == ["agent-a", "agent-c", "agent-b"]
 
 
 @pytest.mark.asyncio

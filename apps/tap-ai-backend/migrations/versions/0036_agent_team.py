@@ -52,16 +52,12 @@ def upgrade() -> None:
     # Nullable first so the backfill below can populate every pre-existing
     # row before the column is tightened to NOT NULL.
     op.add_column("ai_agent", sa.Column("owner_actor_id", sa.String(128), nullable=True))
-    op.add_column(
-        "ai_agent", sa.Column("owner_assigned_at", DATETIME(fsp=6), nullable=True)
-    )
+    op.add_column("ai_agent", sa.Column("owner_assigned_at", DATETIME(fsp=6), nullable=True))
     op.execute(
         sa.text("UPDATE ai_agent SET owner_actor_id = actor_id, owner_assigned_at = created_at")
     )
     op.alter_column("ai_agent", "owner_actor_id", existing_type=sa.String(128), nullable=False)
-    op.alter_column(
-        "ai_agent", "owner_assigned_at", existing_type=DATETIME(fsp=6), nullable=False
-    )
+    op.alter_column("ai_agent", "owner_assigned_at", existing_type=DATETIME(fsp=6), nullable=False)
     op.create_foreign_key(
         "fk_ai_agent_owner_actor",
         "ai_agent",
@@ -72,9 +68,7 @@ def upgrade() -> None:
 
     op.add_column("answer_feedback", sa.Column("resolved_at", DATETIME(fsp=6), nullable=True))
     op.add_column("answer_feedback", sa.Column("resolved_by", sa.String(128), nullable=True))
-    op.add_column(
-        "answer_feedback", sa.Column("resolution_note", sa.String(500), nullable=True)
-    )
+    op.add_column("answer_feedback", sa.Column("resolution_note", sa.String(500), nullable=True))
 
     op.create_table(
         "agent_maintenance_event",
@@ -86,9 +80,7 @@ def upgrade() -> None:
         sa.Column("note", sa.String(500), nullable=True),
         sa.Column("occurred_at", DATETIME(fsp=6), nullable=False),
         *_scope_columns(),
-        sa.UniqueConstraint(
-            "project_id", "event_id", name="uq_agent_maintenance_event_project_pk"
-        ),
+        sa.UniqueConstraint("project_id", "event_id", name="uq_agent_maintenance_event_project_pk"),
         sa.ForeignKeyConstraint(
             ["project_id", "agent_id"],
             ["ai_agent.project_id", "ai_agent.agent_id"],

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -98,6 +98,19 @@ class _StatsAccumulator:
     cost_usd: Decimal = Decimal(0)
 
 
+async def _gather[T](*awaitables: Awaitable[T]) -> list[T]:
+    """`asyncio.gather` with structured cancellation: the first failure
+    cancels the sibling requests (a bare `gather` leaves them running), and
+    the failure is re-raised bare so callers' `except RuntimeMetricsUnavailable`
+    still matches instead of seeing an `ExceptionGroup`."""
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(awaitable) for awaitable in awaitables]
+    except ExceptionGroup as group_error:
+        raise group_error.exceptions[0] from None
+    return [task.result() for task in tasks]
+
+
 class LangfuseRuntimeMetrics:
     """Queries a single Langfuse project's traces/observations for Agent runtime
     metrics. `client` is owned by the caller; this adapter never closes it."""
@@ -143,7 +156,7 @@ class LangfuseRuntimeMetrics:
     async def _agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
         base_filters = self._base_filters(project_id)
 
-        outcome_rows, served_rows, generation_rows, tool_rows = await asyncio.gather(
+        outcome_rows, served_rows, generation_rows, tool_rows = await _gather(
             self._fetch_rows(
                 lambda p: self._metrics_query(
                     view="traces",
@@ -316,7 +329,7 @@ class LangfuseRuntimeMetrics:
             raise RuntimeMetricsUnavailable() from error
 
     async def _last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
-        pairs = await asyncio.gather(
+        pairs = await _gather(
             *(self._fetch_last_run(project_id, agent_key) for agent_key in agent_keys)
         )
         return {agent_key: timestamp for agent_key, timestamp in pairs if timestamp is not None}
@@ -404,7 +417,7 @@ class LangfuseRuntimeMetrics:
         if split is None:
             return rows
         first, second = split
-        first_rows, second_rows = await asyncio.gather(
+        first_rows, second_rows = await _gather(
             self._fetch_rows(build_query, first),
             self._fetch_rows(build_query, second),
         )
