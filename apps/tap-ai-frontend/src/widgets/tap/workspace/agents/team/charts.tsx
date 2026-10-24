@@ -55,7 +55,8 @@ export function Sparkline({
 
 export interface TrendSeries {
   label: string;
-  points: { bucket: string; value: number }[];
+  /** `bucket` is the shared key; `label` (default: the key) is what the readout shows. */
+  points: { bucket: string; label?: string; value: number }[];
 }
 
 const SERIES_COLORS = [
@@ -78,7 +79,12 @@ export function TrendChart({
   locale?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const length = Math.max(0, ...series.map((s) => s.points.length));
+  // Series share one x-axis keyed by bucket, not by array position.
+  const keys = [
+    ...new Set(series.flatMap((s) => s.points.map((p) => p.bucket))),
+  ].sort();
+  const indexOf = new Map(keys.map((key, index) => [key, index]));
+  const length = keys.length;
   const all = series.flatMap((s) => s.points.map((p) => p.value));
   const max = Math.max(...all, 0);
   const span = max || 1;
@@ -89,16 +95,19 @@ export function TrendChart({
   const y = (value: number) =>
     CHART_H - PAD - (value / span) * (CHART_H - PAD * 2);
   const slot = length > 0 ? (CHART_W - PAD * 2) / Math.max(length - 1, 1) : 0;
-  const readout =
-    hover === null
+  const hoverKey = hover === null ? undefined : keys[hover];
+  const readout = series.flatMap((s) => {
+    const point = s.points.find((p) => p.bucket === hoverKey);
+    return point === undefined
       ? []
-      : series
-          .filter((s) => s.points[hover] !== undefined)
-          .map((s) => ({
+      : [
+          {
             label: s.label,
-            bucket: s.points[hover].bucket,
-            value: s.points[hover].value,
-          }));
+            bucket: point.label ?? point.bucket,
+            value: point.value,
+          },
+        ];
+  });
   return (
     <div className="tap-team-trend">
       <svg
@@ -123,7 +132,9 @@ export function TrendChart({
               stroke={SERIES_COLORS[si % SERIES_COLORS.length]}
               strokeWidth={2}
               strokeLinejoin="round"
-              points={s.points.map((p, i) => `${x(i)},${y(p.value)}`).join(" ")}
+              points={s.points
+                .map((p) => `${x(indexOf.get(p.bucket) ?? 0)},${y(p.value)}`)
+                .join(" ")}
             />
           ),
         )}

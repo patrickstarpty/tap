@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useTeamReport } from "../../../../../features/knowledge/api/agentTeam";
 import { WORKSPACE_COPY } from "../../copy";
+import { bucketAxis } from "./buckets";
 import { ReportTab, teamTrend } from "./ReportTab";
 
 vi.mock(
@@ -215,20 +216,36 @@ describe("ReportTab", () => {
     expect(within(runs).getAllByRole("cell").at(-1)).toHaveTextContent("—");
   });
 
-  it("sums member trends per bucket", () => {
+  it("sums member trends per bucket on a full time axis with zero fill", () => {
     const series = teamTrend(
       [
         member("a", [
-          ["d1", 1],
-          ["d2", 2],
+          ["2026-10-01", 1],
+          ["2026-10-03", 2],
         ]),
-        member("b", [["d1", 4]]),
+        member("b", [["2026-10-01", 4]]),
       ] as never,
       { runs: "Runs", failures: "Failures" },
+      bucketAxis({ from: "2026-10-01", to: "2026-10-04" }, "day"),
     );
-    expect(series[0].points).toEqual([
-      { bucket: "d1", value: 5 },
-      { bucket: "d2", value: 2 },
+    expect(series[0].points.map((p) => [p.bucket, p.value])).toEqual([
+      ["2026-10-01", 5],
+      ["2026-10-02", 0],
+      ["2026-10-03", 2],
+      ["2026-10-04", 0],
     ]);
+  });
+
+  it("shows only the current value for point-in-time agent counts", () => {
+    mockReport({ agentTotal: 7, idle: 3 }, { agentTotal: 5, idle: 1 });
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
+    for (const name of [/^Agents/, /^Idle/]) {
+      const cells = within(screen.getByRole("row", { name })).getAllByRole(
+        "cell",
+      );
+      expect(cells[0]).not.toHaveTextContent("—");
+      expect(cells[1]).toHaveTextContent("—");
+      expect(cells.at(-1)).toHaveTextContent("—");
+    }
   });
 });

@@ -8,6 +8,7 @@ import {
   type AgentTeamReportView,
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
+import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
 import { TrendChart, type TrendSeries } from "./charts";
 import {
   EMPTY,
@@ -41,6 +42,7 @@ function lastMonthSelection(): PeriodSelection {
 export function teamTrend(
   members: AgentTeamMemberRow[],
   labels: { runs: string; failures: string },
+  axis: Bucket[],
 ): TrendSeries[] {
   const runs = new Map<string, number>();
   const failures = new Map<string, number>();
@@ -55,14 +57,13 @@ export function teamTrend(
         (failures.get(point.bucketStart) ?? 0) + point.failures,
       );
     }
-  const buckets = [...runs.keys()].sort();
-  if (buckets.length === 0) return [];
+  if (axis.length === 0 || runs.size === 0) return [];
   const series = (label: string, source: Map<string, number>) => ({
     label,
-    points: buckets.map((bucket) => ({
-      bucket,
-      value: source.get(bucket) ?? 0,
-    })),
+    points: fillBuckets(
+      axis,
+      [...source].map(([bucketStart, value]) => ({ bucketStart, value })),
+    ),
   });
   return [series(labels.runs, runs), series(labels.failures, failures)];
 }
@@ -72,10 +73,14 @@ interface Metric {
   current: number | null;
   previous: number | null;
   format: (value: number) => string;
+  /** False for point-in-time counts (roster size, idle) that are not
+   * period-comparable: only the current value is shown. */
+  comparable?: false;
 }
 
 function ChangeCell({ metric }: { metric: Metric }) {
   const { current, previous, format } = metric;
+  if (metric.comparable === false) return <>{EMPTY}</>;
   if (current === null || previous === null || previous === 0)
     return <>{EMPTY}</>;
   const delta = current - previous;
@@ -163,6 +168,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       current: cs.agentTotal,
       previous: ps.agentTotal,
       format: count,
+      comparable: false,
     },
     {
       label: text.metrics.active,
@@ -175,6 +181,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       current: cs.idle,
       previous: ps.idle,
       format: count,
+      comparable: false,
     },
     {
       label: text.metrics.runs,
@@ -218,10 +225,11 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
   const comparedWith = labels.comparedWith
     .replace("{from}", view.data.previousPeriod.from)
     .replace("{to}", view.data.previousPeriod.to);
-  const trend = teamTrend(current.members, {
-    runs: text.metrics.runs,
-    failures: labels.failures,
-  });
+  const trend = teamTrend(
+    current.members,
+    { runs: text.metrics.runs, failures: labels.failures },
+    bucketAxis(view.period, view.granularity),
+  );
 
   return (
     <div className="tap-team-report">
@@ -274,7 +282,12 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
               <tr key={metric.label}>
                 <th scope="row">{metric.label}</th>
                 <td>{show(metric, metric.current)}</td>
-                <td>{show(metric, metric.previous)}</td>
+                <td>
+                  {show(
+                    metric,
+                    metric.comparable === false ? null : metric.previous,
+                  )}
+                </td>
                 <td>
                   <ChangeCell metric={metric} />
                 </td>

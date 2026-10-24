@@ -86,12 +86,18 @@ export function RosterCards({
               <div>
                 <dt>{labels.topServed}</dt>
                 <dd>
-                  {row.topServed.length === 0
-                    ? labels.noServed
-                    : row.topServed
-                        .slice(0, 3)
-                        .map((served) => served.actorId)
-                        .join(", ")}
+                  {row.topServed.length === 0 ? (
+                    ctx.runtimeStatus === "unavailable" ? (
+                      <RunValue value={null} ctx={ctx} />
+                    ) : (
+                      labels.noServed
+                    )
+                  ) : (
+                    row.topServed
+                      .slice(0, 3)
+                      .map((served) => served.actorId)
+                      .join(", ")
+                  )}
                 </dd>
               </div>
               <div>

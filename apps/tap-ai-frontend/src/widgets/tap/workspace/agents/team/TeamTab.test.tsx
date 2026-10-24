@@ -347,6 +347,7 @@ describe("TeamTab", () => {
       [
         row({
           runs: null,
+          topServed: [],
           status: null,
           failures: null,
           trend: [],
@@ -373,6 +374,11 @@ describe("TeamTab", () => {
       expect(
         screen.getByText(label, { selector: "dt" }).nextSibling,
       ).toHaveTextContent("—");
+    // Top served is unknown, not "none yet", during an outage.
+    expect(
+      screen.getByText("主要服务对象", { selector: ".tap-team-card dt" })
+        .nextSibling,
+    ).toHaveTextContent("—");
   });
 
   it("keeps the filter focused while the filtered query is pending", async () => {
@@ -407,7 +413,8 @@ describe("TeamTab", () => {
     const polyline = screen
       .getByRole("img", { name: /Reviewer.*近 30 天/ })
       .querySelector("polyline")!;
-    expect(polyline.getAttribute("points")!.split(" ")).toHaveLength(3);
+    // One value per day of the 30-day window, empty days as zero.
+    expect(polyline.getAttribute("points")!.split(" ")).toHaveLength(30);
   });
 
   it("says so when filters match no Agent", async () => {

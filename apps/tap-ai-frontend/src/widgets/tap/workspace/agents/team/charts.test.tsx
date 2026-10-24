@@ -38,6 +38,32 @@ describe("TrendChart", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads each series by bucket key, not array position", () => {
+    render(
+      <TrendChart
+        unit="times"
+        series={[
+          {
+            label: "Runs",
+            points: [
+              { bucket: "2026-10-01", value: 2 },
+              { bucket: "2026-10-02", value: 7 },
+            ],
+          },
+          { label: "Failures", points: [{ bucket: "2026-10-02", value: 1 }] },
+        ]}
+      />,
+    );
+    const hits = screen.getAllByTestId("trend-hit");
+    expect(hits).toHaveLength(2);
+    fireEvent.mouseEnter(hits[1]);
+    expect(
+      screen.getByText("2026-10-02 · Failures: 1 (times)"),
+    ).toBeInTheDocument();
+    fireEvent.mouseEnter(hits[0]);
+    expect(screen.queryByText(/Failures/)).toBeNull();
+  });
+
   it("does not throw without data", () => {
     render(<TrendChart unit="times" series={[]} />);
     expect(screen.queryAllByTestId("trend-hit")).toHaveLength(0);

@@ -210,6 +210,14 @@ describe("AgentProfileDrawer", () => {
     expect(server.calls.some((c) => c.includes("cursor=c2"))).toBe(true);
   });
 
+  it("labels a pending rating with the localized text", async () => {
+    const user = userEvent.setup();
+    renderDrawer(newServer());
+    await user.click(await tab("待处理反馈"));
+    expect(await screen.findByText(/没帮助/)).toBeTruthy();
+    expect(screen.queryByText(/ · down/)).toBeNull();
+  });
+
   it("resolves feedback and shows the new history entry", async () => {
     const user = userEvent.setup();
     renderDrawer(newServer({ history: [event("h1", "revised")] }));

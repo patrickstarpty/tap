@@ -13,6 +13,7 @@ import {
 } from "../../../../../features/knowledge/api/agentTeam";
 import { AccessibleDialog } from "../../AccessibleDialog";
 import type { WorkspaceCopy } from "../../copy";
+import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
 import { TrendChart } from "./charts";
 import {
   EMPTY,
@@ -146,6 +147,7 @@ export function AgentProfileDrawer({
               <WorkloadPanel
                 row={row}
                 copy={copy}
+                axis={bucketAxis(view.period, view.granularity)}
                 ctx={{
                   copy,
                   locale: teamLocale(copy),
@@ -238,10 +240,12 @@ function BasicPanel({
 function WorkloadPanel({
   row,
   copy,
+  axis,
   ctx,
 }: {
   row: AgentTeamMemberRow;
   copy: WorkspaceCopy;
+  axis: Bucket[];
   ctx: CellContext;
 }) {
   const text = copy.agentTeam;
@@ -321,14 +325,20 @@ function WorkloadPanel({
   const series = [
     {
       label: labels.trendRuns,
-      points: row.trend.map((p) => ({ bucket: p.bucketStart, value: p.runs })),
+      points: fillBuckets(
+        axis,
+        row.trend.map((p) => ({ bucketStart: p.bucketStart, value: p.runs })),
+      ),
     },
     {
       label: labels.trendFailures,
-      points: row.trend.map((p) => ({
-        bucket: p.bucketStart,
-        value: p.failures,
-      })),
+      points: fillBuckets(
+        axis,
+        row.trend.map((p) => ({
+          bucketStart: p.bucketStart,
+          value: p.failures,
+        })),
+      ),
     },
   ];
   return (
@@ -471,7 +481,13 @@ function FeedbackPanel({
               <li key={item.feedbackId}>
                 <p>
                   {item.actorId}
-                  {item.rating ? ` · ${item.rating}` : ""}
+                  {` · ${
+                    item.rating === "up"
+                      ? text.mine.ratingUp
+                      : item.rating === "down"
+                        ? text.mine.ratingDown
+                        : text.mine.ratingNone
+                  }`}
                 </p>
                 {item.comment ? <p>{item.comment}</p> : null}
                 <label>
