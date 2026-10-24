@@ -187,6 +187,11 @@ export const aiAssetKeys = {
     ["ai-assets", projectId, "tools", locale] as const,
 };
 
+/** Root key of every agent-team query for a project; the single source of
+ * truth shared with `agentTeamKeys` (agentTeam.ts imports this module). */
+export const agentTeamRootKey = (projectId: string) =>
+  ["agent-team", projectId] as const;
+
 function invalidateAiAssets(queryClient: QueryClient, projectId: string) {
   // The composer still reads the Agent/Skill catalog through the older
   // `useAiAssetCatalog` hook above (its own query keys, kept separate so a
@@ -201,6 +206,10 @@ function invalidateAiAssets(queryClient: QueryClient, projectId: string) {
       queryKey: ["ai-agent-catalog", projectId],
     }),
     queryClient.invalidateQueries({ queryKey: ["skill-catalog", projectId] }),
+    // Agent/Skill writes change the team roster (new/disabled members,
+    // skill updates); the Team tab keeps its queries cached while the
+    // Configuration tab is open, so refresh them here.
+    queryClient.invalidateQueries({ queryKey: agentTeamRootKey(projectId) }),
   ]);
 }
 

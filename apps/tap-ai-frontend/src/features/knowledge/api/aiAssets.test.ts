@@ -528,6 +528,78 @@ describe("Agent write hooks", () => {
   });
 });
 
+describe("agent-team refresh after writes", () => {
+  async function expectTeamInvalidated(
+    run: (
+      queryClient: ReturnType<typeof createTestQueryClient>,
+    ) => Promise<void>,
+  ) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({ revisionId: "rev_1", agentId: "agent_1" }),
+    );
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["agent-team", "project-1", "members"], {});
+    await run(queryClient);
+    expect(
+      queryClient.getQueryState(["agent-team", "project-1", "members"])
+        ?.isInvalidated,
+    ).toBe(true);
+  }
+
+  it("invalidates the team roster after create, revise and enable", async () => {
+    await expectTeamInvalidated(async (queryClient) => {
+      const { result } = renderHook(() => useCreateAgent("project-1"), {
+        wrapper: wrapperFor(queryClient),
+      });
+      await act(async () => {
+        await result.current.mutateAsync({
+          name: "A",
+          description: "d",
+          systemInstruction: "s",
+        });
+      });
+    });
+    await expectTeamInvalidated(async (queryClient) => {
+      const { result } = renderHook(() => useReviseAgent("project-1"), {
+        wrapper: wrapperFor(queryClient),
+      });
+      await act(async () => {
+        await result.current.mutateAsync({
+          agentId: "agent_1",
+          request: {
+            baseRevisionId: "rev_1",
+            name: "A",
+            description: "d",
+            systemInstruction: "s",
+          },
+        });
+      });
+    });
+    await expectTeamInvalidated(async (queryClient) => {
+      const { result } = renderHook(() => useSetAgentEnabled("project-1"), {
+        wrapper: wrapperFor(queryClient),
+      });
+      await act(async () => {
+        await result.current.mutateAsync({
+          agentId: "agent_1",
+          enabled: false,
+        });
+      });
+    });
+    await expectTeamInvalidated(async (queryClient) => {
+      const { result } = renderHook(() => useSetSkillEnabled("project-1"), {
+        wrapper: wrapperFor(queryClient),
+      });
+      await act(async () => {
+        await result.current.mutateAsync({
+          skillId: "skill_1",
+          enabled: false,
+        });
+      });
+    });
+  });
+});
+
 describe("useTools", () => {
   it("requests the Tool catalog without a locale by default", async () => {
     const fetcher = vi
