@@ -733,7 +733,7 @@ case " $* " in
 import json, os
 names=['persistence.spec.ts']
 if os.environ['TAPPER_E2E_PHASE']=='journey':
-    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-review.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts','skills-agents.spec.ts']
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-review.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts','skills-agents.spec.ts','agent-team.spec.ts']
 print(json.dumps({
     'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
     'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{
