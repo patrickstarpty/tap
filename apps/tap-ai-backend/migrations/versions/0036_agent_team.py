@@ -4,7 +4,7 @@ original creator/`created_at` before being tightened to NOT NULL);
 `answer_feedback` gains a resolution trio (`resolved_at`/`resolved_by`/
 `resolution_note`); a new `agent_maintenance_event` table records agent
 maintenance actions (spec 1.3/2.1/4). Also deletes the `langfuse_sync_cursor`
-row named `traces` so the sync worker re-walks history and backfills
+row named `trace` so the sync worker re-walks history and backfills
 `agent:`/`outcome:` tags onto existing traces; the `feedback` cursor row is
 untouched."""
 
@@ -111,7 +111,7 @@ def upgrade() -> None:
     # deleting the cursor row (rather than rewinding it) makes it re-walk
     # every historical trace and attach the new `agent:`/`outcome:` tags.
     # The `feedback` cursor is unrelated and stays put.
-    op.execute(sa.text("DELETE FROM langfuse_sync_cursor WHERE name = 'traces'"))
+    op.execute(sa.text("DELETE FROM langfuse_sync_cursor WHERE name = 'trace'"))
 
 
 def downgrade() -> None:
@@ -129,5 +129,5 @@ def downgrade() -> None:
     op.drop_column("ai_agent", "owner_actor_id")
     op.drop_column("ai_agent", "job_title")
 
-    # The deleted `traces` cursor row is never recreated here: a downgrade
+    # The deleted `trace` cursor row is never recreated here: a downgrade
     # does not restore sync worker progress, only the schema it depended on.

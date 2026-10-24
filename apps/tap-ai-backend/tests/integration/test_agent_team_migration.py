@@ -1,6 +1,6 @@
 """`0036_agent_team` migration: `ai_agent` owner backfill, `answer_feedback`
 resolution columns, the new `agent_maintenance_event` table, and the
-`langfuse_sync_cursor` reset for `traces` (Task 1, 2026-10-23 agent team
+`langfuse_sync_cursor` reset for `trace` (Task 1, 2026-10-23 agent team
 view)."""
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def test_0036_backfills_agent_owner_and_adds_feedback_resolution_and_event_table
                 scope | {"created_at": LEGACY_TIME},
             )
             connection.execute(
-                text("INSERT INTO langfuse_sync_cursor (name, position) VALUES ('traces', :t)"),
+                text("INSERT INTO langfuse_sync_cursor (name, position) VALUES ('trace', :t)"),
                 {"t": LEGACY_TIME},
             )
             connection.execute(
