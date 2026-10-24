@@ -1,60 +1,22 @@
+import type { components } from "../../src/shared/api/generated/schema";
+
 // Isolated, route-mocked fixture data for the Agent team `ui:capture`
 // screenshots (team cards, org chart, Agent profile, My Agents, report).
 // Pure data, no network or React imports. Response shapes follow the
 // `AgentTeam*` schemas in `src/shared/api/generated/schema.ts`. Generic
 // insurance-domain names only; actor ids are synthetic.
 
-type Kind = "custom" | "built_in" | "tapper_default";
-type Status = "active" | "idle" | "disabled";
-
-interface Served {
-  actorId: string;
-  runs: number;
-}
-
-interface Trend {
-  agentKey: string;
-  bucketStart: string;
-  costUsd: string;
-  failures: number;
-  latencyTotalMs: number;
-  runs: number;
-}
-
-interface Row {
-  abstained: number | null;
-  agentKey: string;
-  callsPerRun: number | null;
-  canceled: number | null;
-  costUsd: string | null;
-  failures: number | null;
-  generationCalls: number | null;
-  jobTitle: string | null;
-  joinedAt: string | null;
-  kind: Kind;
-  lastMaintenanceAt: string | null;
-  lastRunAt: string | null;
-  latencyP50Ms: number | null;
-  latencyTotalMs: number | null;
-  maintenance: Record<string, number>;
-  name: string;
-  ownerActorId: string | null;
-  pendingFeedback: number;
-  runs: number | null;
-  satisfaction: number | null;
-  satisfactionSample: "ok" | "insufficient";
-  servedCount: number | null;
-  status: Status | null;
-  toolCalls: number | null;
-  topServed: Served[];
-  trend: Trend[];
-}
+type Schemas = components["schemas"];
+type Row = Schemas["AgentTeamMemberRow"];
+type Trend = Schemas["AgentTeamTrendPoint"];
+type Summary = Schemas["AgentTeamSummary"];
+type Period = Schemas["AgentTeamPeriod"];
 
 export const CAPTURE_TEAM_ME = "actor-capture";
 const COMPUTED_AT = "2026-10-24T08:30:00Z";
 const PERIOD = { from: "2026-09-25", to: "2026-10-24" };
 
-function envelope<T>(data: T, period = PERIOD) {
+function envelope<T>(data: T, period: Period = PERIOD) {
   return {
     runtimeStatus: "ok" as const,
     computedAt: COMPUTED_AT,
@@ -221,7 +183,7 @@ export const CAPTURE_TEAM_ROWS: Row[] = [
   DEFAULT,
 ];
 
-const PEOPLE = [
+const PEOPLE: Schemas["AgentTeamPersonRow"][] = [
   {
     actorId: CAPTURE_TEAM_ME,
     maintenance: 6,
@@ -248,8 +210,8 @@ const PEOPLE = [
   },
 ];
 
-const SUMMARY = {
-  active: 5,
+const SUMMARY: Summary = {
+  active: 4,
   agentTotal: 5,
   costUsd: "14.88",
   idle: 1,
@@ -260,8 +222,8 @@ const SUMMARY = {
   servedAvg: 2.6,
 };
 
-const PREVIOUS_SUMMARY = {
-  active: 4,
+const PREVIOUS_SUMMARY: Summary = {
+  active: 3,
   agentTotal: 5,
   costUsd: "11.20",
   idle: 2,
@@ -272,7 +234,7 @@ const PREVIOUS_SUMMARY = {
   servedAvg: 2.2,
 };
 
-const ORG_CHART = {
+const ORG_CHART: Schemas["AgentTeamOrgChart"] = {
   people: [CAPTURE_TEAM_ME, "actor-lin", "actor-maya"],
   agents: [
     CLAIMS.agentKey,
@@ -297,7 +259,7 @@ const ORG_CHART = {
   ],
 };
 
-const PENDING_FEEDBACK = [
+const PENDING_FEEDBACK: Schemas["AgentTeamPendingFeedbackItem"][] = [
   {
     actorId: "actor-lin",
     agentKey: CLAIMS.agentKey,
@@ -310,7 +272,7 @@ const PENDING_FEEDBACK = [
   },
 ];
 
-const HISTORY = {
+const HISTORY: Schemas["AgentTeamHistoryPage"] = {
   events: [
     {
       actorId: CAPTURE_TEAM_ME,
@@ -346,7 +308,7 @@ const HISTORY = {
   nextCursor: null,
 };
 
-function memberDetail(member: Row) {
+function memberDetail(member: Row): Schemas["AgentTeamMemberDetail"] {
   return {
     row: member,
     currentRevisionId:
@@ -361,13 +323,9 @@ function memberDetail(member: Row) {
 }
 
 function periodReport(
-  summary: typeof SUMMARY,
+  summary: Summary,
   scale: number,
-): {
-  members: Row[];
-  people: typeof PEOPLE;
-  summary: typeof SUMMARY;
-} {
+): Schemas["AgentTeamPeriodReport"] {
   return {
     members: CAPTURE_TEAM_ROWS.map((member) => ({
       ...member,
@@ -375,7 +333,7 @@ function periodReport(
     })),
     people: PEOPLE.map((person) => ({
       ...person,
-      runs: Math.round(person.runs * scale),
+      runs: person.runs === null ? null : Math.round(person.runs * scale),
     })),
     summary,
   };
@@ -390,10 +348,16 @@ export function captureAgentTeamResponse(path: string): unknown {
   const match = /\/ai\/agent-team\/(.+)$/u.exec(path);
   if (match === null) return undefined;
   const rest = match[1]!;
-  if (rest === "summary") return envelope(SUMMARY);
-  if (rest === "members") return envelope(CAPTURE_TEAM_ROWS);
-  if (rest === "people") return envelope(PEOPLE);
-  if (rest === "org-chart") return envelope(ORG_CHART);
+  if (rest === "summary")
+    return envelope(SUMMARY) satisfies Schemas["AgentTeamSummaryView"];
+  if (rest === "members")
+    return envelope(
+      CAPTURE_TEAM_ROWS,
+    ) satisfies Schemas["AgentTeamMembersView"];
+  if (rest === "people")
+    return envelope(PEOPLE) satisfies Schemas["AgentTeamPeopleView"];
+  if (rest === "org-chart")
+    return envelope(ORG_CHART) satisfies Schemas["AgentTeamOrgChartView"];
   if (rest === "people/me") {
     const owned = CAPTURE_TEAM_ROWS.filter(
       (member) => member.ownerActorId === CAPTURE_TEAM_ME,
@@ -408,7 +372,7 @@ export function captureAgentTeamResponse(path: string): unknown {
       pendingFeedback: PENDING_FEEDBACK.filter((item) =>
         owned.some((member) => member.agentKey === item.agentKey),
       ),
-    });
+    }) satisfies Schemas["AgentTeamPersonView"];
   }
   if (rest === "report") {
     return envelope(
@@ -418,7 +382,7 @@ export function captureAgentTeamResponse(path: string): unknown {
         previousPeriod: { from: "2026-08-01", to: "2026-08-31" },
       },
       { from: "2026-09-01", to: "2026-09-30" },
-    );
+    ) satisfies Schemas["AgentTeamReportView"];
   }
   const history = /^members\/([^/]+)\/history$/u.exec(rest);
   if (history !== null) return HISTORY;
@@ -426,7 +390,10 @@ export function captureAgentTeamResponse(path: string): unknown {
   if (member !== null) {
     const key = decodeURIComponent(member[1]!);
     const found = CAPTURE_TEAM_ROWS.find((item) => item.agentKey === key);
-    if (found !== undefined) return envelope(memberDetail(found));
+    if (found !== undefined)
+      return envelope(
+        memberDetail(found),
+      ) satisfies Schemas["AgentTeamMemberView"];
   }
   return undefined;
 }

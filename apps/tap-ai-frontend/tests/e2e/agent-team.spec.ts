@@ -18,7 +18,8 @@ const created: {
   sourceId: string | null;
 } = { agentId: null, conversationIds: [], sourceId: null };
 
-test.afterEach(async ({ request }) => {
+test.afterEach(async ({ page }) => {
+  const request = page.request;
   const runtime = (await (
     await request.get("/api/v1/runtime-mode")
   ).json()) as { projectId: string };
@@ -27,38 +28,56 @@ test.afterEach(async ({ request }) => {
     Origin: ORIGIN,
     "Idempotency-Key": `cleanup-agent-team-${key}`,
   });
-  for (const conversationId of created.conversationIds) {
-    const deleted = await request.delete(
-      `${root}/conversations/${conversationId}`,
-      { headers: headers(conversationId) },
-    );
-    expect(deleted.ok()).toBe(true);
-  }
+  // Each step runs independently; failures are collected and thrown at the
+  // end so one broken step never leaks the Agent or the source.
+  const errors: string[] = [];
+  const step = async (name: string, run: () => Promise<void>) => {
+    try {
+      await run();
+    } catch (error) {
+      errors.push(`${name}: ${String(error)}`);
+    }
+  };
+  const sourceId = created.sourceId;
+  const agentId = created.agentId;
+  const conversationIds = created.conversationIds;
+  created.sourceId = null;
+  created.agentId = null;
   created.conversationIds = [];
-  if (created.agentId !== null) {
-    const disabled = await request.post(
-      `${root}/ai/agents/${created.agentId}/disable`,
-      { headers: headers(created.agentId) },
-    );
-    expect(disabled.ok()).toBe(true);
-    created.agentId = null;
-  }
-  if (created.sourceId !== null) {
-    const sourceId = created.sourceId;
-    const deleted = await request.delete(
-      `${root}/knowledge/sources/${sourceId}`,
-      { headers: headers(sourceId) },
-    );
-    expect(deleted.status()).toBe(204);
-    await expect
-      .poll(
-        async () =>
-          (await request.get(`${root}/knowledge/sources/${sourceId}`)).status(),
-        { timeout: 45_000 },
-      )
-      .toBe(404);
-    created.sourceId = null;
-  }
+  if (sourceId !== null)
+    await step("source", async () => {
+      const deleted = await request.delete(
+        `${root}/knowledge/sources/${sourceId}`,
+        { headers: headers(sourceId) },
+      );
+      expect(deleted.status()).toBe(204);
+      await expect
+        .poll(
+          async () =>
+            (
+              await request.get(`${root}/knowledge/sources/${sourceId}`)
+            ).status(),
+          { timeout: 45_000 },
+        )
+        .toBe(404);
+    });
+  for (const conversationId of conversationIds)
+    await step(`conversation ${conversationId}`, async () => {
+      const deleted = await request.delete(
+        `${root}/conversations/${conversationId}`,
+        { headers: headers(conversationId) },
+      );
+      expect(deleted.ok()).toBe(true);
+    });
+  if (agentId !== null)
+    await step("agent", async () => {
+      const disabled = await request.post(
+        `${root}/ai/agents/${agentId}/disable`,
+        { headers: headers(agentId) },
+      );
+      expect(disabled.ok()).toBe(true);
+    });
+  if (errors.length > 0) throw new Error(errors.join("\n"));
 });
 
 /**
@@ -324,4 +343,5 @@ test("an Agent joins the team, serves two turns, gets a thumbs-down that its own
   ]);
   for (const content of entries.values())
     expect(content.length).toBeGreaterThan(0);
+  expect(entries.get("roster.csv")!.toString("utf8")).toContain(agentName);
 });
