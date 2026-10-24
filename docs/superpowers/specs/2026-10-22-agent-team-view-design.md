@@ -198,7 +198,7 @@ flowchart LR
 | --- | --- |
 | `GET agent-team/summary` | 团队汇总 |
 | `GET agent-team/members` | 花名册，支持按负责人、状态、类型筛选与按列排序 |
-| `GET agent-team/members/{agentKey}` | Agent 档案，返回 `{row, currentRevisionId, served（完整名单）, pendingFeedback}`：人事字段、工作量、服务对象、趋势 |
+| `GET agent-team/members/{agentKey}` | Agent 档案，读取信封的 `data` 为 `{row, currentRevisionId, served（完整名单）, pendingFeedback}`：人事字段、工作量、服务对象、趋势 |
 | `GET agent-team/members/{agentKey}/history` | 履历，游标分页，返回 `{events, nextCursor}`，不带读取信封（`runtimeStatus`、`computedAt`） |
 | `GET agent-team/people` | 人员表 |
 | `GET agent-team/people/{actorId}` | 个人视图，"我的 Agent"传 `me`（解析为当前身份） |
@@ -222,7 +222,7 @@ flowchart LR
 | 履历游标无效 | 400 `cursor_invalid` |
 | 岗位超过 64 字符 | 400 `job_title_too_long` |
 | 排序字段不在允许范围 | 400 `sort_invalid` |
-| 转交或处理反馈的说明超过 500 字符 | 400 `note_too_long` |
+| 处理反馈的说明超过 500 字符 | 400 `note_too_long` |
 | 转交给不存在的成员（同企业、启用中的身份才算存在） | 400 `actor_not_found` |
 | 修改内置 Agent 或 Tapper 默认的人事字段 | 403 `agent_read_only` |
 | Agent 或反馈不存在、不属于本项目 | 404 `agent_not_found`、`feedback_not_found` |
