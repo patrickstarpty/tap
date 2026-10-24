@@ -304,7 +304,12 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
         {trend.length === 0 ? (
           <p>{labels.noTrend}</p>
         ) : (
-          <TrendChart series={trend} unit={text.metrics.runs} locale={locale} />
+          <TrendChart
+            series={trend}
+            unit={text.metrics.runs}
+            locale={locale}
+            hint={text.team.chartHint}
+          />
         )}
       </section>
       <section className="tap-team-report-section">

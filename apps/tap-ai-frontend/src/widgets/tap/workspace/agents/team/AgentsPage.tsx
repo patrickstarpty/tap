@@ -111,6 +111,8 @@ export function AgentsPage({
 
   const openMember = (agentKey: string) => {
     setProfileOpener(lastControl.current);
+    // Consumed: a later open from a non-click path must not reuse it.
+    lastControl.current = null;
     setProfileKey(agentKey);
     onOpenMember(agentKey);
   };

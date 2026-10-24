@@ -73,10 +73,13 @@ export function TrendChart({
   series,
   unit,
   locale = "en",
+  hint,
 }: {
   series: TrendSeries[];
   unit: string;
   locale?: string;
+  /** Localized keyboard instructions, announced with the chart. */
+  hint?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   // Series share one x-axis keyed by bucket, not by array position.
@@ -129,8 +132,15 @@ export function TrendChart({
   });
   return (
     <div className="tap-team-trend">
+      {length === 0 ? null : (
+        <div className="tap-team-trend-ymax" aria-hidden="true">
+          {formatCount(max, locale)} {unit}
+        </div>
+      )}
       <svg
-        role="img"
+        role="group"
+        aria-roledescription="chart"
+        aria-description={hint}
         tabIndex={0}
         aria-label={series.map((s) => s.label).join(", ") + ` (${unit})`}
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
@@ -193,10 +203,22 @@ export function TrendChart({
       {length === 0 ? null : (
         <div className="tap-team-trend-axis" aria-hidden="true">
           <span>{labelOf(keys[0])}</span>
-          <span>{formatCount(max, locale)}</span>
           <span>{labelOf(keys[length - 1])}</span>
         </div>
       )}
+      {series.length > 1 ? (
+        <ul className="tap-team-trend-legend" aria-hidden="true">
+          {series.map((s, si) => (
+            <li key={s.label}>
+              <span
+                className="tap-team-trend-swatch"
+                style={{ background: SERIES_COLORS[si % SERIES_COLORS.length] }}
+              />
+              {s.label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="tap-team-trend-readout" aria-live="polite">
         {readout.map((r) => (
           <span key={r.label}>

@@ -184,11 +184,11 @@ class AgentTeamStore(Protocol):
         """How far past its settle deadline (`now - settle - recorded_at`) the
         oldest `trace_span` is that the Langfuse sync worker has not yet
         synced, counting only spans already older than `settle` (the worker's
-        own settle window, so a span still inside it is not "behind" yet). Unsynced means `recorded_at`
-        after the `trace` cursor position, or every span when no cursor row
-        exists. `None` when no span qualifies -- including when there is no
-        `trace_span` row at all -- so a quiet period after a healthy sync
-        never reads as lag."""
+        own settle window, so a span still inside it is not "behind" yet).
+        Unsynced means `recorded_at` after the `trace` cursor position, or
+        every span when no cursor row exists. `None` when no span qualifies --
+        including when there is no `trace_span` row at all -- so a quiet
+        period after a healthy sync never reads as lag."""
         ...
 
     async def actor_exists(self, actor_id: str) -> bool:

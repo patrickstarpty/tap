@@ -391,6 +391,12 @@
   line-height: 1.6;
 }
 
+.tap-team-report .tap-team-table-scroll,
+.tap-team-report .ant-table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .tap-team-report-section > h3 {
   margin: 0 0 10px;
   color: var(--tap-ink);
@@ -493,4 +499,150 @@
   .tap-team-report tr {
     break-inside: avoid;
   }
+
+  /* Fit every roster column on the page: fixed layout, small type, wrapped
+     headers and long values. */
+  .tap-team-report .ant-table-wrapper {
+    overflow: visible;
+  }
+
+  .tap-team-report .ant-table-content > table {
+    table-layout: fixed !important;
+    font-size: 7px;
+  }
+
+  .tap-team-report .ant-table th,
+  .tap-team-report .ant-table td {
+    padding: 2px 3px !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal !important;
+  }
+
+  .tap-team-report .tap-team-table-scroll {
+    overflow: visible;
+  }
+}
+
+/* Trend chart: y-axis max on top, date labels below, readout on its own line. */
+.tap-team-trend-ymax {
+  margin-bottom: 2px;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-team-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+.tap-team-trend-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tap-team-trend-swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.tap-team-trend-axis {
+  margin-top: 4px;
+}
+
+.tap-team-trend-readout {
+  flex-wrap: wrap;
+  margin-top: 6px;
+  min-height: 1.4em;
+}
+
+/* Profile drawer: two-column fact and metric grids. */
+.tap-team-profile-facts,
+.tap-team-profile-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 24px;
+  margin: 16px 0 0;
+}
+
+.tap-team-profile-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.tap-team-profile-facts dt {
+  color: var(--tap-muted);
+}
+
+.tap-team-profile-facts dd {
+  margin: 0;
+}
+
+.tap-team-profile-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tap-team-profile-metrics dt {
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-team-profile-metrics dd {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.tap-team-profile-subheading {
+  margin: 24px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--tap-line);
+  color: var(--tap-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* The catalog dialog styles every tabpanel ul/dl as a card or label grid;
+   restore the chart legend and the profile grids inside it. */
+.tap-catalog-dialog [role="tabpanel"] .tap-team-trend-legend {
+  display: flex;
+  gap: 14px;
+  margin: 6px 0 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+  margin-top: 18px;
+}
+
+.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-metrics dt {
+  font-weight: 400;
+}
+
+.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-metrics dd {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px 20px;
+}
+
+.tap-team-trend-readout {
+  margin-bottom: 4px;
 }

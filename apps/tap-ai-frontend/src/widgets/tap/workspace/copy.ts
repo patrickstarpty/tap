@@ -438,6 +438,7 @@ export interface WorkspaceCopy {
       orgChartOwns: string;
       orgChartServes: string;
       orgChartDimmed: string;
+      chartHint: string;
       trendHeading: string;
       noJobTitle: string;
       ownerLabel: string;
@@ -1136,6 +1137,7 @@ export const WORKSPACE_COPY = {
         orgChartOwns: "Owns",
         orgChartServes: "Served by",
         orgChartDimmed: "Not related to the selected person",
+        chartHint: "Use the left and right arrow keys to read each point.",
         trendHeading: "Run trend",
         noJobTitle: "No job title",
         ownerLabel: "Owner",
@@ -1821,6 +1823,7 @@ export const WORKSPACE_COPY = {
         orgChartOwns: "负责",
         orgChartServes: "使用",
         orgChartDimmed: "与所选成员无关",
+        chartHint: "用左右方向键逐点查看数值。",
         trendHeading: "运行趋势",
         noJobTitle: "未设岗位",
         ownerLabel: "负责人",

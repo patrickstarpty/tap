@@ -62,7 +62,7 @@ describe("TrendChart", () => {
       screen.getByText("2026-10-02 · Failures: 1 (times)"),
     ).toBeInTheDocument();
     fireEvent.mouseEnter(hits[0]);
-    expect(screen.queryByText(/Failures/)).toBeNull();
+    expect(screen.queryByText(/Failures:/)).toBeNull();
   });
 
   it("moves the readout with the arrow keys", async () => {
@@ -81,7 +81,7 @@ describe("TrendChart", () => {
         ]}
       />,
     );
-    const chart = screen.getByRole("img", { name: /Runs/ });
+    const chart = screen.getByRole("group", { name: /Runs/ });
     expect(chart).toHaveAttribute("tabindex", "0");
     await userEvent.tab();
     expect(chart).toHaveFocus();
@@ -103,6 +103,44 @@ describe("TrendChart", () => {
     ).toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByText(/Runs: /)).toBeNull();
+  });
+
+  it("labels the y-axis maximum with the unit and legends several series", () => {
+    render(
+      <TrendChart
+        unit="times"
+        series={[
+          {
+            label: "Runs",
+            points: [
+              { bucket: "2026-10-01", value: 2 },
+              { bucket: "2026-10-02", value: 59 },
+            ],
+          },
+          { label: "Failures", points: [{ bucket: "2026-10-02", value: 1 }] },
+        ]}
+        hint="Use arrows"
+      />,
+    );
+    expect(screen.getByText("59 times")).toBeInTheDocument();
+    const chart = screen.getByRole("group", { name: /Runs/ });
+    expect(chart).toHaveAttribute("aria-roledescription", "chart");
+    expect(chart).toHaveAttribute("aria-description", "Use arrows");
+    const legend = screen.getByRole("list", { hidden: true });
+    expect(legend).toHaveTextContent("Runs");
+    expect(legend).toHaveTextContent("Failures");
+  });
+
+  it("shows no legend for a single series", () => {
+    render(
+      <TrendChart
+        unit="times"
+        series={[
+          { label: "Runs", points: [{ bucket: "2026-10-01", value: 2 }] },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("list", { hidden: true })).toBeNull();
   });
 
   it("does not throw without data", () => {

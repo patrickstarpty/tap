@@ -340,6 +340,16 @@ describe("AgentProfileDrawer", () => {
     expect(screen.getAllByText("运行数据暂不可用").length).toBeGreaterThan(1);
   });
 
+  it("shows the status in Basics, not in Workload", async () => {
+    const user = userEvent.setup();
+    renderDrawer(newServer());
+    await user.click(await tab("基本信息"));
+    expect(await screen.findByText("状态")).toBeTruthy();
+    await user.click(await tab("工作量"));
+    await screen.findByText("工具调用");
+    expect(screen.queryByText("状态")).toBeNull();
+  });
+
   it("hides the settings tab for built-in Agents", async () => {
     renderDrawer(newServer({ row: member({ kind: "built_in" }) }));
     await tab("基本信息");
