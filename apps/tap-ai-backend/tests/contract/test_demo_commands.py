@@ -386,6 +386,15 @@ def _make_dry_run(target: str, *assignments: str) -> subprocess.CompletedProcess
     )
 
 
+def test_e2e_script_pins_langfuse_environment_to_e2e():
+    source = (ROOT / "scripts/run-tapper-e2e.sh").read_text(encoding="utf-8")
+    assert "\nexport TAP_LANGFUSE_ENVIRONMENT=e2e\n" in source
+    assert (
+        "TAP_LANGFUSE_ENVIRONMENT"
+        in source.split("readonly TAP_AGENT_TEAM_RUNTIME_METRICS", 1)[1].splitlines()[0]
+    )
+
+
 def test_e2e_manifest_registers_durable_conversation_journey():
     manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
     assert "tests/e2e/knowledge-conversation.spec.ts" in manifest["journey"]
