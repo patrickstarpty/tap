@@ -381,22 +381,46 @@ describe("TeamTab", () => {
     ).toHaveTextContent("—");
   });
 
-  it("keeps the filter focused while the filtered query is pending", async () => {
+  it("keeps the filter focused and shows an inline indicator while the filtered query has no data", async () => {
     setup([row({})]);
     renderTab();
     const select = screen.getByLabelText("负责人");
-    const placeholder = vi.mocked(useTeamMembers).getMockImplementation()!;
+    const initial = vi.mocked(useTeamMembers).getMockImplementation()!;
+    // A changed filter is a new query key: no data at all until it answers.
     vi.mocked(useTeamMembers).mockImplementation(((...args: unknown[]) => {
-      const result = (placeholder as (...a: unknown[]) => object)(...args);
+      const result = (initial as (...a: unknown[]) => object)(...args);
       return args[1] === period
-        ? { ...result, isPlaceholderData: true, isPending: false }
+        ? { ...result, data: undefined, isPending: true }
         : result;
     }) as never);
     select.focus();
     await userEvent.selectOptions(select, "alice");
     expect(screen.getByLabelText("负责人")).toBe(select);
     expect(select).toHaveFocus();
-    expect(screen.queryByText("正在加载团队数据…")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("正在加载团队数据…");
+    // The previous cards stay visible underneath the indicator.
+    expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
+  });
+
+  it("shows no refresh indicator when nothing is refetching", () => {
+    setup([row({})]);
+    renderTab();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Job title", "job_title"],
+    ["Owner", "owner_actor_id"],
+    ["Status", "status"],
+    ["Type", "kind"],
+  ])("sorts the roster table by %s through the request", async (title, key) => {
+    setup([row({})]);
+    renderTab("en");
+    await userEvent.click(screen.getByRole("button", { name: "Table" }));
+    await userEvent.click(
+      screen.getAllByText(title, { selector: ".ant-table-column-title" })[0],
+    );
+    expect(periodCalls().at(-1)![2]).toMatchObject({ sort: key, order: "asc" });
   });
 
   it("draws the card sparkline from the last-30-days query", () => {

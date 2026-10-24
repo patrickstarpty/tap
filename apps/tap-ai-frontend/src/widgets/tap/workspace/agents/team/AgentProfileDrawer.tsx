@@ -451,8 +451,11 @@ function FeedbackPanel({
   const resolve = useResolveFeedback(projectId);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Per item, so resolving one never disables the others' buttons.
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const items = detail.pendingFeedback;
   const done = async (feedbackId: string) => {
+    setPending((prev) => new Set(prev).add(feedbackId));
     try {
       await resolve.mutateAsync({
         feedbackId,
@@ -465,6 +468,12 @@ function FeedbackPanel({
       });
     } catch (error) {
       setErrors((prev) => ({ ...prev, [feedbackId]: errorText(error, copy) }));
+    } finally {
+      setPending((prev) => {
+        const rest = new Set(prev);
+        rest.delete(feedbackId);
+        return rest;
+      });
     }
   };
   return (
@@ -508,7 +517,7 @@ function FeedbackPanel({
                 ) : null}
                 <button
                   type="button"
-                  disabled={tooLong || resolve.isPending}
+                  disabled={tooLong || pending.has(item.feedbackId)}
                   onClick={() => void done(item.feedbackId)}
                 >
                   {text.markResolved}

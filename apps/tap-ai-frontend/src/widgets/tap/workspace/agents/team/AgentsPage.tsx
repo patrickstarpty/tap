@@ -1,4 +1,12 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
 
 import { resolvePeriod } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
@@ -69,6 +77,20 @@ export function AgentsPage({
   );
 
   const [profileKey, setProfileKey] = useState<string | null>(null);
+  // The control that opened the profile, so closing it restores focus there.
+  // Captured at the panel, so cards, table links, org-chart nodes and
+  // feedback items all work without each passing an element up.
+  const lastControl = useRef<HTMLElement | null>(null);
+  const [profileOpener, setProfileOpener] = useState<HTMLElement | null>(null);
+  const rememberControl = (event: SyntheticEvent) => {
+    const target = event.target;
+    if (target instanceof Element) {
+      const control = target.closest<HTMLElement>(
+        'button, [role="button"], a[href]',
+      );
+      if (control !== null) lastControl.current = control;
+    }
+  };
   const [configRequest, setConfigRequest] = useState<{
     revisionId: string;
     nonce: number;
@@ -88,6 +110,7 @@ export function AgentsPage({
   };
 
   const openMember = (agentKey: string) => {
+    setProfileOpener(lastControl.current);
     setProfileKey(agentKey);
     onOpenMember(agentKey);
   };
@@ -122,6 +145,8 @@ export function AgentsPage({
         role="tabpanel"
         id={`agents-panel-${tab}`}
         aria-labelledby={`agents-tab-${tab}`}
+        onClickCapture={rememberControl}
+        onKeyDownCapture={rememberControl}
       >
         {tab === "config" ? (
           typeof configTab === "function" ? (
@@ -140,32 +165,42 @@ export function AgentsPage({
           ) : (
             configTab
           )
-        ) : tab === "report" ? (
-          <ReportTab projectId={projectId} copy={copy} />
         ) : (
-          <>
-            <PeriodPicker
-              copy={copy}
-              value={selection}
-              onChange={setSelection}
-            />
-            {rangeInvalid ? null : tab === "team" ? (
-              <TeamTab
-                projectId={projectId}
-                copy={copy}
-                period={period}
-                onOpenMember={openMember}
-                onCreateAgent={() => select("config")}
-              />
+          <div className="tap-module tap-team-panel">
+            <header className="tap-module-heading tap-team-panel-heading">
+              <div>
+                <h1>{text.heading}</h1>
+                <p>{text.descriptions[tab]}</p>
+              </div>
+            </header>
+            {tab === "report" ? (
+              <ReportTab projectId={projectId} copy={copy} />
             ) : (
-              <MyAgentsTab
-                projectId={projectId}
-                copy={copy}
-                period={period}
-                onOpenMember={openMember}
-              />
+              <>
+                <PeriodPicker
+                  copy={copy}
+                  value={selection}
+                  onChange={setSelection}
+                />
+                {rangeInvalid ? null : tab === "team" ? (
+                  <TeamTab
+                    projectId={projectId}
+                    copy={copy}
+                    period={period}
+                    onOpenMember={openMember}
+                    onCreateAgent={() => select("config")}
+                  />
+                ) : (
+                  <MyAgentsTab
+                    projectId={projectId}
+                    copy={copy}
+                    period={period}
+                    onOpenMember={openMember}
+                  />
+                )}
+              </>
             )}
-          </>
+          </div>
         )}
       </div>
       {profileKey === null ? null : (
@@ -174,6 +209,7 @@ export function AgentsPage({
           agentKey={profileKey}
           period={period}
           copy={copy}
+          opener={profileOpener}
           onClose={() => setProfileKey(null)}
           onViewConfig={viewConfig}
         />

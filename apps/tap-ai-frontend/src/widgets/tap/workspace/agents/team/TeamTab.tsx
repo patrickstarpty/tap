@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   useOrgChart,
@@ -69,7 +69,13 @@ export function TeamTab({
   const { query: spark, byAgentKey: sparklineByAgentKey } =
     useSparklines(projectId);
 
-  const rows = members.data?.data;
+  // Keep the last answer while a changed filter's query has no data yet, so
+  // the filter controls stay mounted (and focused) instead of being replaced
+  // by the loading state.
+  const lastMembers = useRef(members.data);
+  if (members.data !== undefined) lastMembers.current = members.data;
+  const membersData = members.data ?? lastMembers.current;
+  const rows = membersData?.data;
   const owners = [
     ...new Set([
       ...(owner === "" ? [] : [owner]),
@@ -88,15 +94,22 @@ export function TeamTab({
       ),
     [spark.data, rows],
   );
-  const refreshing = members.isPlaceholderData || summary.isPlaceholderData;
+  const refreshing =
+    members.isPlaceholderData ||
+    summary.isPlaceholderData ||
+    (members.data === undefined && membersData !== undefined);
 
   if (
-    (summary.data === undefined || members.data === undefined) &&
+    (summary.data === undefined || membersData === undefined) &&
     !summary.isError &&
     !members.isError
   )
     return <p role="status">{text.loading}</p>;
-  if (summary.data === undefined || members.data === undefined)
+  if (
+    summary.data === undefined ||
+    membersData === undefined ||
+    (members.isError && members.data === undefined)
+  )
     return (
       <div role="alert">
         <p>{text.loadFailed}</p>
@@ -186,7 +199,7 @@ export function TeamTab({
           </div>
         ))}
       </dl>
-      <section>
+      <section className="tap-team-section">
         <h3>{labels.rosterHeading}</h3>
         {empty ? (
           <div className="tap-team-empty">
@@ -199,7 +212,7 @@ export function TeamTab({
           <>
             <div className="tap-team-filters">
               <label>
-                {labels.filterOwner}
+                <span>{labels.filterOwner}</span>
                 <select
                   value={owner}
                   onChange={(e) => setOwner(e.target.value)}
@@ -213,7 +226,7 @@ export function TeamTab({
                 </select>
               </label>
               <label>
-                {labels.filterStatus}
+                <span>{labels.filterStatus}</span>
                 <select
                   value={status}
                   onChange={(e) =>
@@ -229,7 +242,7 @@ export function TeamTab({
                 </select>
               </label>
               <label>
-                {labels.filterKind}
+                <span>{labels.filterKind}</span>
                 <select
                   value={kind}
                   onChange={(e) => setKind(e.target.value as KindFilter | "")}
@@ -244,7 +257,11 @@ export function TeamTab({
                   )}
                 </select>
               </label>
-              <div role="group" aria-label={labels.viewLabel}>
+              <div
+                role="group"
+                aria-label={labels.viewLabel}
+                className="tap-team-segmented"
+              >
                 {(["cards", "table"] as const).map((id) => (
                   <button
                     key={id}
@@ -257,6 +274,11 @@ export function TeamTab({
                 ))}
               </div>
             </div>
+            {refreshing && view === "cards" ? (
+              <p role="status" className="tap-team-refreshing">
+                {text.loading}
+              </p>
+            ) : null}
             {view === "cards" ? (
               <RosterCards
                 rows={rows ?? []}
@@ -277,7 +299,7 @@ export function TeamTab({
           </>
         )}
       </section>
-      <section>
+      <section className="tap-team-section">
         <h3>{labels.peopleHeading}</h3>
         {people.isPending ? (
           <p role="status">{text.loading}</p>
@@ -297,7 +319,7 @@ export function TeamTab({
           />
         )}
       </section>
-      <section>
+      <section className="tap-team-section">
         <h3>{labels.orgChartHeading}</h3>
         {orgChart.isPending ? (
           <p role="status">{text.loading}</p>

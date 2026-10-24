@@ -78,14 +78,16 @@ export function PeopleTable({
     ? columnDefs?.map((column) => ({ ...column, sorter: undefined }))
     : columnDefs;
   return (
-    <Table<AgentTeamPersonRow>
-      size="small"
-      rowKey="actorId"
-      pagination={false}
-      dataSource={rows}
-      columns={columns}
-      showSorterTooltip={false}
-      locale={{ emptyText: copy.agentTeam.team.noPeople }}
-    />
+    <div className="tap-team-table-scroll">
+      <Table<AgentTeamPersonRow>
+        size="small"
+        rowKey="actorId"
+        pagination={false}
+        dataSource={rows}
+        columns={columns}
+        showSorterTooltip={false}
+        locale={{ emptyText: copy.agentTeam.team.noPeople }}
+      />
+    </div>
   );
 }

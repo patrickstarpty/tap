@@ -20,24 +20,32 @@ const created: {
 
 test.afterEach(async ({ page }) => {
   const request = page.request;
-  const runtime = (await (
-    await request.get("/api/v1/runtime-mode")
-  ).json()) as { projectId: string };
-  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
-  const headers = (key: string) => ({
-    Origin: ORIGIN,
-    "Idempotency-Key": `cleanup-agent-team-${key}`,
-  });
   // Each step runs independently; failures are collected and thrown at the
-  // end so one broken step never leaks the Agent or the source.
+  // end so one broken step never leaks the Agent or the source -- including
+  // the runtime-mode lookup itself, which every later step depends on.
   const errors: string[] = [];
+  let root = "";
   const step = async (name: string, run: () => Promise<void>) => {
+    if (name !== "runtime-mode" && root === "") {
+      errors.push(`${name}: skipped, no project id`);
+      return;
+    }
     try {
       await run();
     } catch (error) {
       errors.push(`${name}: ${String(error)}`);
     }
   };
+  const headers = (key: string) => ({
+    Origin: ORIGIN,
+    "Idempotency-Key": `cleanup-agent-team-${key}`,
+  });
+  await step("runtime-mode", async () => {
+    const runtime = (await (
+      await request.get("/api/v1/runtime-mode")
+    ).json()) as { projectId: string };
+    root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+  });
   const sourceId = created.sourceId;
   const agentId = created.agentId;
   const conversationIds = created.conversationIds;

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -98,14 +98,16 @@ class _StatsAccumulator:
     cost_usd: Decimal = Decimal(0)
 
 
-async def _gather[T](*awaitables: Awaitable[T]) -> list[T]:
+async def _gather[T](*awaitables: Coroutine[Any, Any, T]) -> list[T]:
     """`asyncio.gather` with structured cancellation: the first failure
     cancels the sibling requests (a bare `gather` leaves them running), and
     the failure is re-raised bare so callers' `except RuntimeMetricsUnavailable`
     still matches instead of seeing an `ExceptionGroup`."""
     try:
         async with asyncio.TaskGroup() as group:
-            tasks = [group.create_task(awaitable) for awaitable in awaitables]
+            tasks: list[asyncio.Task[T]] = [
+                group.create_task(awaitable) for awaitable in awaitables
+            ]
     except ExceptionGroup as group_error:
         raise group_error.exceptions[0] from None
     return [task.result() for task in tasks]

@@ -359,6 +359,7 @@ export interface WorkspaceCopy {
   };
   agentTeam: {
     heading: string;
+    descriptions: { mine: string; team: string; report: string };
     tablistLabel: string;
     tabs: { mine: string; team: string; report: string; config: string };
     period: {
@@ -436,6 +437,7 @@ export interface WorkspaceCopy {
       orgChartEmpty: string;
       orgChartOwns: string;
       orgChartServes: string;
+      orgChartDimmed: string;
       trendHeading: string;
       noJobTitle: string;
       ownerLabel: string;
@@ -1040,6 +1042,12 @@ export const WORKSPACE_COPY = {
     },
     agentTeam: {
       heading: "Agent team",
+      descriptions: {
+        mine: "The Agents you own, the Agents that serve you, and feedback waiting for you.",
+        team: "Who is on the Agent team, what each member has done and who looks after them.",
+        report:
+          "A printable summary of the selected period compared with the one before.",
+      },
       tablistLabel: "Agents views",
       tabs: {
         mine: "My Agents",
@@ -1127,6 +1135,7 @@ export const WORKSPACE_COPY = {
         orgChartEmpty: "No ownership or usage relations in this period.",
         orgChartOwns: "Owns",
         orgChartServes: "Served by",
+        orgChartDimmed: "Not related to the selected person",
         trendHeading: "Run trend",
         noJobTitle: "No job title",
         ownerLabel: "Owner",
@@ -1720,6 +1729,11 @@ export const WORKSPACE_COPY = {
     },
     agentTeam: {
       heading: "Agent 团队",
+      descriptions: {
+        mine: "你负责的 Agent、服务过你的 Agent，以及等你处理的反馈。",
+        team: "团队里有哪些 Agent、各自做了什么，以及由谁负责。",
+        report: "所选周期与上一周期对比的可打印汇总。",
+      },
       tablistLabel: "Agent 视图",
       tabs: {
         mine: "我的 Agent",
@@ -1806,6 +1820,7 @@ export const WORKSPACE_COPY = {
         orgChartEmpty: "本周期内没有负责或使用关系。",
         orgChartOwns: "负责",
         orgChartServes: "使用",
+        orgChartDimmed: "与所选成员无关",
         trendHeading: "运行趋势",
         noJobTitle: "未设岗位",
         ownerLabel: "负责人",

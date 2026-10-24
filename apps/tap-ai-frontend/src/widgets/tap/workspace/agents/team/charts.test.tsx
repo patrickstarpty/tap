@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { Sparkline, TrendChart } from "./charts";
@@ -62,6 +63,46 @@ describe("TrendChart", () => {
     ).toBeInTheDocument();
     fireEvent.mouseEnter(hits[0]);
     expect(screen.queryByText(/Failures/)).toBeNull();
+  });
+
+  it("moves the readout with the arrow keys", async () => {
+    render(
+      <TrendChart
+        unit="times"
+        series={[
+          {
+            label: "Runs",
+            points: [
+              { bucket: "2026-10-01", value: 2 },
+              { bucket: "2026-10-02", value: 7 },
+              { bucket: "2026-10-03", value: 4 },
+            ],
+          },
+        ]}
+      />,
+    );
+    const chart = screen.getByRole("img", { name: /Runs/ });
+    expect(chart).toHaveAttribute("tabindex", "0");
+    await userEvent.tab();
+    expect(chart).toHaveFocus();
+    // Focus lands on the latest bucket.
+    expect(
+      screen.getByText("2026-10-03 · Runs: 4 (times)"),
+    ).toBeInTheDocument();
+    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(
+      screen.getByText("2026-10-01 · Runs: 2 (times)"),
+    ).toBeInTheDocument();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(
+      screen.getByText("2026-10-01 · Runs: 2 (times)"),
+    ).toBeInTheDocument();
+    await userEvent.keyboard("{End}");
+    expect(
+      screen.getByText("2026-10-03 · Runs: 4 (times)"),
+    ).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByText(/Runs: /)).toBeNull();
   });
 
   it("does not throw without data", () => {

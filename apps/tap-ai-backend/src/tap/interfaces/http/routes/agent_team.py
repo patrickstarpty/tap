@@ -94,14 +94,12 @@ def _parse_period(from_: str, to: str) -> Period:
         raise AgentTeamRejected("period_invalid", str(exc)) from exc
 
 
-def _closed_choice[T: str](value: str | None, allowed: type[T], name: str) -> T | None:
+def _closed_choice(value: str | None, allowed: tuple[str, ...], name: str) -> Any:
     """Maps an out-of-vocabulary filter value to the closed `filter_invalid`
     400 rather than FastAPI's generic 422."""
-    if value is None:
-        return None
-    if value not in get_args(allowed):
+    if value is not None and value not in allowed:
         raise AgentTeamRejected("filter_invalid", f"invalid {name} {value!r}")
-    return value  # type: ignore[return-value]
+    return value
 
 
 def _period_query(
@@ -322,8 +320,8 @@ async def list_members(
     view = await agent_team_service(request).members(
         period,
         owner=owner,
-        status=_closed_choice(status, MemberStatus, "status"),
-        kind=_closed_choice(kind, AgentKind, "kind"),
+        status=_closed_choice(status, get_args(MemberStatus), "status"),
+        kind=_closed_choice(kind, get_args(AgentKind), "kind"),
         sort=sort,
         order=order,
     )

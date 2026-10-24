@@ -14573,11 +14573,6 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "active",
-                    "idle",
-                    "disabled"
-                  ],
                   "type": "string"
                 },
                 {
@@ -14594,11 +14589,6 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "custom",
-                    "built_in",
-                    "tapper_default"
-                  ],
                   "type": "string"
                 },
                 {
@@ -14837,8 +14827,6 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 2048,
-                  "minLength": 1,
                   "type": "string"
                 },
                 {
