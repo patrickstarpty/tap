@@ -213,25 +213,29 @@ class AgentTeamService:
         scope: ProjectScopeContext,
         clock: Callable[[], datetime],
         check_sync_lag: bool = False,
+        sync_settle_seconds: int = 60,
     ) -> None:
         self._store = store
         self._metrics = metrics
         self._scope = scope
         self._clock = clock
         self._check_sync_lag = check_sync_lag
+        self._sync_settle = timedelta(seconds=sync_settle_seconds)
 
     # ------------------------------------------------------------------
     # Runtime loading
     # ------------------------------------------------------------------
 
-    async def _load_runtime(self, period: Period) -> _RuntimeData:
+    async def _load_runtime(self, period: Period, records: Sequence[AgentRecord]) -> _RuntimeData:
         try:
             async with asyncio.timeout(_RUNTIME_LOAD_TIMEOUT_SECONDS):
-                return await self._load_runtime_unbounded(period)
+                return await self._load_runtime_unbounded(period, records)
         except TimeoutError:
             return _unavailable(self._clock())
 
-    async def _load_runtime_unbounded(self, period: Period) -> _RuntimeData:
+    async def _load_runtime_unbounded(
+        self, period: Period, records: Sequence[AgentRecord]
+    ) -> _RuntimeData:
         project_id = self._scope.project_id
         today = self._clock().date()
         trailing = trailing_30_days(today)
@@ -246,7 +250,7 @@ class AgentTeamService:
         trailing_stats_by_key = {s.agent_key: s for s in trailing_stats}
         # "最近运行" is not limited to the period (spec 2.2): ask for every
         # roster key, not only those with runs in the two stats windows.
-        roster_keys = {record.agent_id for record in await self._store.agents()}
+        roster_keys = {record.agent_id for record in records}
         roster_keys.add(TAPPER_DEFAULT_AGENT_KEY)
         agent_keys = sorted(set(stats_by_key) | set(trailing_stats_by_key) | roster_keys)
         try:
@@ -260,7 +264,9 @@ class AgentTeamService:
 
         status: RuntimeStatus = "ok"
         if self._check_sync_lag:
-            lag = await self._store.sync_lag()
+            lag = await self._store.oldest_unsynced_age(
+                now=self._clock(), settle=self._sync_settle
+            )
             if lag is not None and lag > _SYNC_LAG_THRESHOLD:
                 status = "syncing"
 
@@ -414,8 +420,8 @@ class AgentTeamService:
         ]
 
     async def _period_report(self, period: Period) -> tuple[PeriodReport, RuntimeStatus, datetime]:
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         members = self._build_members(runtime, store_data)
         people = self._people_rows(members, runtime, store_data)
         stats_by_key = self._member_stats(members, runtime)
@@ -464,8 +470,8 @@ class AgentTeamService:
         order: str = "desc",
     ) -> TeamView[tuple[MemberRow, ...]]:
         _validate_sort(sort, order, _MEMBER_SORT_FIELDS)
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         rows = self._build_members(runtime, store_data)
         if owner is not None:
             rows = [row for row in rows if row.owner_actor_id == owner]
@@ -477,8 +483,8 @@ class AgentTeamService:
         return self._view(period, runtime.status, runtime.computed_at, tuple(sorted_rows))
 
     async def member(self, agent_key: str, period: Period) -> TeamView[MemberDetail]:
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         rows = self._build_members(runtime, store_data)
         for row in rows:
             if row.agent_key == agent_key:
@@ -518,8 +524,8 @@ class AgentTeamService:
 
     async def person(self, actor_id: str, period: Period) -> TeamView[PersonDetail]:
         resolved = self._scope.actor_id if actor_id == "me" else actor_id
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         members = self._build_members(runtime, store_data)
         people = self._people_rows(members, runtime, store_data)
         runtime_available = runtime.status != "unavailable"
@@ -550,8 +556,8 @@ class AgentTeamService:
         return self._view(period, runtime.status, runtime.computed_at, data)
 
     async def org_chart(self, period: Period) -> TeamView[OrgChart]:
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         members = self._build_members(runtime, store_data)
         served_by_key = {
             row.agent_key: (

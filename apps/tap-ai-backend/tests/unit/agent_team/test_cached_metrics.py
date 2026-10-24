@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -147,3 +148,43 @@ async def test_cache_key_includes_period_and_kind() -> None:
     assert cached.computed_at("proj1", period_a, "trend:day") is not None
     assert cached.computed_at("proj1", None, ("last_runs", ("agent-1", "agent-2"))) is not None
     assert cached.computed_at("proj1", period_a, "trend:week") is None
+
+
+@pytest.mark.asyncio
+async def test_hanging_inner_is_negative_cached_after_fetch_timeout() -> None:
+    class _Hanging(_CountingInner):
+        async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+            self.agent_stats_calls += 1
+            await asyncio.sleep(3600)
+            return []
+
+    inner = _Hanging()
+    clock = _FakeClock()
+    cached = CachedRuntimeMetrics(
+        inner, ttl_seconds=300, failure_ttl_seconds=30, fetch_timeout_seconds=0.01, clock=clock
+    )
+
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period())
+    clock.value += 10
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period())
+    assert inner.agent_stats_calls == 1  # the hang is not retried within 30 s
+
+
+@pytest.mark.asyncio
+async def test_expired_entries_are_evicted_on_next_store() -> None:
+    inner = _CountingInner()
+    clock = _FakeClock()
+    cached = CachedRuntimeMetrics(inner, ttl_seconds=300, clock=clock)
+    period_a = Period.parse(datetime(2026, 10, 1).date(), datetime(2026, 10, 23).date())
+    period_b = Period.parse(datetime(2026, 9, 1).date(), datetime(2026, 9, 30).date())
+
+    await cached.agent_stats("proj1", period_a)
+    assert len(cached._entries) == 1
+    clock.value += 301
+    await cached.agent_stats("proj1", period_b)  # stores b, evicts the expired a
+
+    assert len(cached._entries) == 1
+    assert cached.computed_at("proj1", period_a, "stats") is None
+    assert cached.computed_at("proj1", period_b, "stats") is not None

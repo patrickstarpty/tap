@@ -78,6 +78,31 @@ Index(
 )
 
 
+async def insert_maintenance_event(
+    session: AsyncSession, scope: ProjectScopeContext, event: MaintenanceEvent
+) -> None:
+    """The one `agent_maintenance_event` insert, shared by every writer that
+    records a maintenance event in the same transaction as its state change
+    (revise, enable/disable, owner transfer, feedback resolution).
+
+    An `IntegrityError` raised here (duplicate `event_id`, or the Agent FK)
+    is only meaningful as a *transaction* failure: callers that map it to
+    `RevisionConflict` do so because the whole transaction -- including the
+    state change -- rolls back, never because the event alone conflicted."""
+    await session.execute(
+        agent_maintenance_event.insert().values(
+            event_id=event.event_id,
+            agent_id=event.agent_id,
+            kind=event.kind,
+            revision_id=event.revision_id,
+            feedback_id=event.feedback_id,
+            note=event.note,
+            occurred_at=event.occurred_at,
+            **scope_values(scope),
+        )
+    )
+
+
 def _naive(value: datetime) -> datetime:
     """MySQL DATETIME columns are naive (always UTC); strip tzinfo from an
     aware value before using it in a `WHERE` comparison against one."""
@@ -426,23 +451,24 @@ class MysqlAgentTeamStore:
             )
         return set(turn_actors) | set(maintenance_actors)
 
-    async def sync_lag(self) -> timedelta | None:
+    async def oldest_unsynced_age(self, *, now: datetime, settle: timedelta) -> timedelta | None:
+        settled_before = _naive(now - settle)
         async with self._sessions() as session:
-            max_recorded = await session.scalar(
-                select(func.max(trace_span.c.recorded_at)).where(
-                    *scope_predicates(trace_span, self._scope)
-                )
-            )
-            if max_recorded is None:
-                return None
             cursor_position = await session.scalar(
                 select(langfuse_sync_cursor.c.position).where(
                     langfuse_sync_cursor.c.name == _TRACE_CURSOR
                 )
             )
-        if cursor_position is None:
-            return timedelta.max
-        return max_recorded - cursor_position
+            query = select(func.min(trace_span.c.recorded_at)).where(
+                *scope_predicates(trace_span, self._scope),
+                trace_span.c.recorded_at <= settled_before,
+            )
+            if cursor_position is not None:
+                query = query.where(trace_span.c.recorded_at > cursor_position)
+            oldest = await session.scalar(query)
+        if oldest is None:
+            return None
+        return _naive(now) - oldest
 
     async def actor_exists(self, actor_id: str) -> bool:
         async with self._sessions() as session:
@@ -482,18 +508,7 @@ class MysqlAgentTeamStore:
             )
             if result.rowcount != 1:
                 raise LookupError(f"agent {agent_id!r} not found in this Project")
-            await session.execute(
-                agent_maintenance_event.insert().values(
-                    event_id=event.event_id,
-                    agent_id=event.agent_id,
-                    kind=event.kind,
-                    revision_id=event.revision_id,
-                    feedback_id=event.feedback_id,
-                    note=event.note,
-                    occurred_at=event.occurred_at,
-                    **scope_values(self._scope),
-                )
-            )
+            await insert_maintenance_event(session, self._scope, event)
             rows = await self._agent_rows(session, agent_id=agent_id)
         return self._to_agent_record(rows[0])
 
@@ -592,18 +607,7 @@ class MysqlAgentTeamStore:
                 )
             )
             if event is not None:
-                await session.execute(
-                    agent_maintenance_event.insert().values(
-                        event_id=event.event_id,
-                        agent_id=event.agent_id,
-                        kind=event.kind,
-                        revision_id=event.revision_id,
-                        feedback_id=event.feedback_id,
-                        note=event.note,
-                        occurred_at=event.occurred_at,
-                        **scope_values(self._scope),
-                    )
-                )
+                await insert_maintenance_event(session, self._scope, event)
         return ResolvedFeedback(
             feedback_id=row["feedback_id"],
             agent_key=agent_key,

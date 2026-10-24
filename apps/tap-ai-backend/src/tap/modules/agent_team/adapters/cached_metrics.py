@@ -11,6 +11,7 @@ retry the inner adapter on every view; other exceptions are never stored.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -69,12 +70,14 @@ class CachedRuntimeMetrics:
         *,
         ttl_seconds: int = 300,
         failure_ttl_seconds: int = 30,
+        fetch_timeout_seconds: float | None = 8.0,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = _default_now,
     ) -> None:
         self._inner = inner
         self._ttl_seconds = ttl_seconds
         self._failure_ttl_seconds = failure_ttl_seconds
+        self._fetch_timeout_seconds = fetch_timeout_seconds
         self._clock = clock
         self._now = now
         self._entries: dict[_CacheKey, _CacheEntry] = {}
@@ -90,7 +93,15 @@ class CachedRuntimeMetrics:
                 raise failure[1]
             del self._failures[key]
         try:
-            value = await fetch()
+            # Bounded here, strictly below the service's own per-view budget
+            # (`_RUNTIME_LOAD_TIMEOUT_SECONDS`): if the service's outer timeout
+            # fired first it would cancel this fetch before it could raise,
+            # and a hanging backend would never be negative-cached.
+            try:
+                async with asyncio.timeout(self._fetch_timeout_seconds):
+                    value = await fetch()
+            except TimeoutError as error:
+                raise RuntimeMetricsUnavailable("runtime metrics query timed out") from error
         except RuntimeMetricsUnavailable as exc:
             if self._failure_ttl_seconds > 0:
                 self._failures[key] = (self._clock() + self._failure_ttl_seconds, exc)

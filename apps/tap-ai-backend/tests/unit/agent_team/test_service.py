@@ -126,12 +126,15 @@ class FakeStore:
     active_actor_set: set[str] = field(default_factory=set)
     existing_actors: set[str] = field(default_factory=set)
     lag: timedelta | None = None
+    lag_queries: list[tuple[datetime, timedelta]] = dataclasses.field(default_factory=list)
     resolved: dict[str, ResolvedFeedback] = field(default_factory=dict)
     events: list[MaintenanceEvent] = field(default_factory=list)
     pending_feedback_calls: int = 0
     maintenance_counts_calls: int = 0
+    agents_calls: int = 0
 
     async def agents(self) -> list[AgentRecord]:
+        self.agents_calls += 1
         return list(self.agent_records.values())
 
     async def agent(self, agent_id: str) -> AgentRecord | None:
@@ -163,7 +166,10 @@ class FakeStore:
     async def active_actors(self, period: Period) -> set[str]:
         return set(self.active_actor_set)
 
-    async def sync_lag(self) -> timedelta | None:
+    async def oldest_unsynced_age(
+        self, *, now: datetime, settle: timedelta
+    ) -> timedelta | None:
+        self.lag_queries.append((now, settle))
         return self.lag
 
     async def actor_exists(self, actor_id: str) -> bool:
@@ -356,6 +362,24 @@ async def test_sync_lag_over_5_minutes_is_syncing():
 
 
 @pytest.mark.asyncio
+async def test_sync_lag_asks_store_with_service_clock_and_settle_window():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, lag=timedelta(minutes=5))
+    service = _service(store, FakeMetrics(), check_sync_lag=True)
+    view = await service.summary(_PERIOD)
+    # Exactly the 5 minute threshold is not "behind"; and the store is asked
+    # with the service clock and the default 60 s settle window.
+    assert view.runtime_status == "ok"
+    assert store.lag_queries and store.lag_queries[0] == (_NOW, timedelta(seconds=60))
+
+
+@pytest.mark.asyncio
+async def test_sync_lag_none_means_ok():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, lag=None)
+    service = _service(store, FakeMetrics(), check_sync_lag=True)
+    assert (await service.summary(_PERIOD)).runtime_status == "ok"
+
+
+@pytest.mark.asyncio
 async def test_writes_bypass_runtime_cache():
     store = FakeStore(
         agent_records={"agent-1": _agent("agent-1", owner_actor_id="owner-1")},
@@ -523,6 +547,27 @@ async def test_person_issues_one_round_of_store_queries():
     await service.person("owner-1", _PERIOD)
     assert store.pending_feedback_calls == 1
     assert store.maintenance_counts_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_each_view_loads_the_roster_once():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    service = _service(store, FakeMetrics())
+    await service.summary(_PERIOD)
+    assert store.agents_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_report_computed_at_is_the_oldest_cached_fetch():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    ticks = iter(_NOW - timedelta(minutes=n) for n in range(100))
+    cached = CachedRuntimeMetrics(FakeMetrics(), now=lambda: next(ticks))
+    service = AgentTeamService(store, cached, scope=_scope(), clock=_clock)
+    view = await service.report(_PERIOD)
+    # Every fetch gets an earlier timestamp than the one before; the report
+    # must surface the oldest of the two periods' data, not either period's
+    # newest.
+    assert view.computed_at == _NOW - timedelta(minutes=5)
 
 
 def _pending(feedback_id: str, agent_key: str) -> PendingFeedback:

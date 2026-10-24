@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
-from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
+from tap.modules.agent_team.adapters.mysql import insert_maintenance_event
 from tap.modules.agent_team.domain.models import MaintenanceEvent
 from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
 from tap.modules.ai.application.skill_authoring import SkillImportRecord
@@ -996,19 +996,12 @@ class MysqlAssetCatalog:
                     )
                 )
                 if event is not None:
-                    await session.execute(
-                        agent_maintenance_event.insert().values(
-                            event_id=event.event_id,
-                            agent_id=event.agent_id,
-                            kind=event.kind,
-                            revision_id=event.revision_id,
-                            feedback_id=event.feedback_id,
-                            note=event.note,
-                            occurred_at=event.occurred_at,
-                            **scope_values(self._scope),
-                        )
-                    )
+                    await insert_maintenance_event(session, self._scope, event)
         except IntegrityError as error:
+            # Also reached when the optional maintenance event's insert fails
+            # (`insert_maintenance_event`): the whole transaction rolled back,
+            # so the revision is not stored either -- a transaction failure,
+            # not an event-level conflict.
             raise RevisionConflict() from error
         return revision
 
@@ -1028,7 +1021,9 @@ class MysqlAssetCatalog:
         that reads per-revision status from anything but the latest row."""
         if kind not in ("agent", "skill"):
             raise AssetRevisionRejected()
-        if event is not None and not isinstance(event, MaintenanceEvent):
+        if event is not None and (not isinstance(event, MaintenanceEvent) or kind != "agent"):
+            # Maintenance events are Agent-only (`agent_maintenance_event.agent_id`
+            # FKs `ai_agent`); a Skill toggle carrying one is a caller bug.
             raise AssetRevisionRejected()
         table, id_column = (
             (ai_agent_revision, "agent_id") if kind == "agent" else (skill_revision, "skill_id")
@@ -1038,26 +1033,21 @@ class MysqlAssetCatalog:
             latest = await self._latest_revision_id(session, table, id_column, asset_id)
             if latest is None:
                 raise AssetRevisionRejected()
+            # Conditional on a revision actually changing status, so two
+            # concurrent toggles to the same target cannot both write an
+            # event: the loser's UPDATE matches no row (the winner's commit
+            # is visible to its locking write) and it records nothing.
             result = await session.execute(
                 update(table)
-                .where(*scope_predicates(table, self._scope), table.c[id_column] == asset_id)
+                .where(
+                    *scope_predicates(table, self._scope),
+                    table.c[id_column] == asset_id,
+                    table.c.status != target.value,
+                )
                 .values(status=target.value)
             )
             if result.rowcount >= 1 and event is not None:
-                await session.execute(
-                    agent_maintenance_event.insert().values(
-                        event_id=event.event_id,
-                        agent_id=event.agent_id,
-                        kind=event.kind,
-                        revision_id=event.revision_id,
-                        feedback_id=event.feedback_id,
-                        note=event.note,
-                        occurred_at=event.occurred_at,
-                        **scope_values(self._scope),
-                    )
-                )
-        if result.rowcount < 1:
-            raise AssetRevisionRejected()
+                await insert_maintenance_event(session, self._scope, event)
 
     async def list_revisions(
         self, kind: Literal["agent", "skill"], asset_id: str
