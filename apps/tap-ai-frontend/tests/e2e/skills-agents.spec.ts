@@ -288,6 +288,7 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
 
   // Step 2: build a new Agent bound to the imported Skill.
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();

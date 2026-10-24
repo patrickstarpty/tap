@@ -357,6 +357,186 @@ export interface WorkspaceCopy {
       saveFailed: string;
     };
   };
+  agentTeam: {
+    heading: string;
+    tablistLabel: string;
+    tabs: { mine: string; team: string; report: string; config: string };
+    period: {
+      label: string;
+      last7: string;
+      last30: string;
+      thisMonth: string;
+      lastMonth: string;
+      custom: string;
+      from: string;
+      to: string;
+      invalidRange: string;
+    };
+    metrics: {
+      runs: string;
+      active: string;
+      idle: string;
+      agentTotal: string;
+      failures: string;
+      satisfaction: string;
+      latency: string;
+      cost: string;
+      maintenance: string;
+      servedAvg: string;
+      ownersAvg: string;
+    };
+    status: { active: string; idle: string; disabled: string };
+    builtIn: string;
+    insufficientSample: string;
+    runtimeUnavailable: string;
+    runtimeSyncing: string;
+    runtimeLag: string;
+    updatedAt: string;
+    pendingFeedbackMine: string;
+    markResolved: string;
+    transferOwner: string;
+    viewConfig: string;
+    exportPdf: string;
+    exportCsv: string;
+    emptyState: string;
+    createAgent: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    report: {
+      title: string;
+      project: string;
+      period: string;
+      summaryHeading: string;
+      comparisonHeading: string;
+      comparedWith: string;
+      trendHeading: string;
+      current: string;
+      previous: string;
+      change: string;
+      metric: string;
+      failures: string;
+      noTrend: string;
+    };
+    team: {
+      viewLabel: string;
+      viewCards: string;
+      viewTable: string;
+      filterOwner: string;
+      filterStatus: string;
+      filterKind: string;
+      allOwners: string;
+      allStatuses: string;
+      allKinds: string;
+      kinds: { custom: string; built_in: string; tapper_default: string };
+      rosterHeading: string;
+      peopleHeading: string;
+      orgChartHeading: string;
+      orgChartLabel: string;
+      orgChartEmpty: string;
+      orgChartOwns: string;
+      orgChartServes: string;
+      trendHeading: string;
+      noJobTitle: string;
+      ownerLabel: string;
+      runsInPeriod: string;
+      runsTrend: string;
+      topServed: string;
+      noServed: string;
+      lastRun: string;
+      lastMaintenance: string;
+      pendingFeedback: string;
+      noPeople: string;
+      noMatch: string;
+      columns: {
+        name: string;
+        jobTitle: string;
+        owner: string;
+        status: string;
+        kind: string;
+        runs: string;
+        failures: string;
+        latencyTotal: string;
+        latencyP50: string;
+        cost: string;
+        served: string;
+        lastRun: string;
+        satisfaction: string;
+        lastMaintenance: string;
+        pendingFeedback: string;
+        joinedAt: string;
+        actor: string;
+        ownedAgents: string;
+        ownedRuns: string;
+        servedByAgents: string;
+        calls: string;
+        maintenance: string;
+      };
+    };
+    mine: {
+      ownedHeading: string;
+      servedHeading: string;
+      noFeedback: string;
+      noOwned: string;
+      noServed: string;
+      ratingUp: string;
+      ratingDown: string;
+      ratingNone: string;
+    };
+    profile: {
+      close: string;
+      tabs: {
+        basic: string;
+        workload: string;
+        history: string;
+        feedback: string;
+        settings: string;
+      };
+      tablistLabel: string;
+      noOwner: string;
+      servedPeople: string;
+      noServed: string;
+      currentRevision: string;
+      joinedAt: string;
+      secondaryMetrics: string;
+      generationCalls: string;
+      toolCalls: string;
+      callsPerRun: string;
+      abstained: string;
+      canceled: string;
+      trendRuns: string;
+      trendFailures: string;
+      runsUnit: string;
+      noHistory: string;
+      loadMore: string;
+      openRevision: string;
+      maintenanceKinds: {
+        revised: string;
+        skill_upgraded: string;
+        disabled: string;
+        enabled: string;
+        feedback_resolved: string;
+        owner_transferred: string;
+      };
+      noFeedback: string;
+      feedbackCount: string;
+      resolutionNote: string;
+      noteTooLong: string;
+      jobTitleLabel: string;
+      jobTitleTooLong: string;
+      save: string;
+      newOwnerLabel: string;
+      transferFailed: string;
+      errors: {
+        actor_not_found: string;
+        agent_read_only: string;
+        job_title_too_long: string;
+        note_too_long: string;
+        feedback_not_found: string;
+        generic: string;
+      };
+    };
+  };
   migrationBanner: {
     heading: string;
     descriptionAgent: string;
@@ -858,6 +1038,196 @@ export const WORKSPACE_COPY = {
         saveFailed: "This agent could not be saved.",
       },
     },
+    agentTeam: {
+      heading: "Agent team",
+      tablistLabel: "Agents views",
+      tabs: {
+        mine: "My Agents",
+        team: "Team",
+        report: "Report",
+        config: "Configuration",
+      },
+      period: {
+        label: "Period",
+        last7: "Last 7 days",
+        last30: "Last 30 days",
+        thisMonth: "This month",
+        lastMonth: "Last month",
+        custom: "Custom",
+        from: "From",
+        to: "To",
+        invalidRange: "Start date must be on or before end date",
+      },
+      metrics: {
+        runs: "Runs",
+        active: "Active",
+        idle: "Idle",
+        agentTotal: "Agents",
+        failures: "Failures",
+        satisfaction: "Satisfaction",
+        latency: "Total latency",
+        cost: "Cost",
+        maintenance: "Maintenance actions",
+        servedAvg: "Avg. Agents used per person",
+        ownersAvg: "Avg. Agents per owner",
+      },
+      status: { active: "Active", idle: "Idle", disabled: "Disabled" },
+      builtIn: "Built into Tapper",
+      insufficientSample: "Not enough ratings",
+      runtimeUnavailable: "Run data is temporarily unavailable",
+      runtimeSyncing: "Run data is syncing",
+      runtimeLag: "Run data can trail conversations by one sync cycle",
+      updatedAt: "Data updated at {time} ({timezone})",
+      pendingFeedbackMine: "Feedback waiting for me",
+      markResolved: "Mark as resolved",
+      transferOwner: "Transfer owner",
+      viewConfig: "View configuration",
+      exportPdf: "Export PDF",
+      exportCsv: "Export CSV",
+      emptyState: "No Agents yet. Create one",
+      createAgent: "Create Agent",
+      loading: "Loading team data...",
+      loadFailed: "Team data could not be loaded.",
+      retry: "Retry",
+      report: {
+        title: "Agent team report",
+        project: "Project",
+        period: "Period",
+        summaryHeading: "Summary",
+        comparisonHeading: "Compared with the previous period",
+        comparedWith: "Compared with {from} – {to}",
+        trendHeading: "Run trend",
+        current: "This period",
+        previous: "Previous period",
+        change: "Change",
+        metric: "Metric",
+        failures: "Failures",
+        noTrend: "No run trend in this period",
+      },
+      team: {
+        viewLabel: "Roster view",
+        viewCards: "Cards",
+        viewTable: "Table",
+        filterOwner: "Owner",
+        filterStatus: "Status",
+        filterKind: "Type",
+        allOwners: "All owners",
+        allStatuses: "All statuses",
+        allKinds: "All types",
+        kinds: {
+          custom: "Custom",
+          built_in: "Built-in",
+          tapper_default: "Tapper default",
+        },
+        rosterHeading: "Roster",
+        peopleHeading: "People",
+        orgChartHeading: "Org chart",
+        orgChartLabel:
+          "Org chart of people and the agents they own or are served by",
+        orgChartEmpty: "No ownership or usage relations in this period.",
+        orgChartOwns: "Owns",
+        orgChartServes: "Served by",
+        trendHeading: "Run trend",
+        noJobTitle: "No job title",
+        ownerLabel: "Owner",
+        runsInPeriod: "Runs in period",
+        runsTrend: "Runs trend, last 30 days",
+        topServed: "Top served",
+        noServed: "No one yet",
+        lastRun: "Last run",
+        lastMaintenance: "Last maintenance",
+        pendingFeedback: "Pending feedback",
+        noPeople: "No people in this period",
+        noMatch: "No matching Agents",
+        columns: {
+          name: "Name",
+          jobTitle: "Job title",
+          owner: "Owner",
+          status: "Status",
+          kind: "Type",
+          runs: "Runs",
+          failures: "Failures",
+          latencyTotal: "Total latency",
+          latencyP50: "Median latency",
+          cost: "Cost",
+          served: "People served",
+          lastRun: "Last run",
+          satisfaction: "Satisfaction",
+          lastMaintenance: "Last maintenance",
+          pendingFeedback: "Pending feedback",
+          joinedAt: "Joined",
+          actor: "Person",
+          ownedAgents: "Agents owned",
+          ownedRuns: "Runs of owned Agents",
+          servedByAgents: "Agents used",
+          calls: "Calls made",
+          maintenance: "Maintenance actions",
+        },
+      },
+      mine: {
+        ownedHeading: "Agents I own",
+        servedHeading: "Agents that serve me",
+        noFeedback: "No feedback waiting for you",
+        noOwned: "You do not own any Agents yet",
+        noServed: "No Agent has served you in this period",
+        ratingUp: "Helpful",
+        ratingDown: "Not helpful",
+        ratingNone: "Comment only",
+      },
+      profile: {
+        close: "Close",
+        tabs: {
+          basic: "Basics",
+          workload: "Workload",
+          history: "History",
+          feedback: "Pending feedback",
+          settings: "Settings",
+        },
+        tablistLabel: "Agent profile sections",
+        noOwner: "No owner",
+        servedPeople: "People served",
+        noServed: "No one served in this period",
+        currentRevision: "Current revision",
+        joinedAt: "Joined",
+        secondaryMetrics: "Call volume",
+        generationCalls: "Model calls",
+        toolCalls: "Tool calls",
+        callsPerRun: "Calls per run",
+        abstained: "Abstained",
+        canceled: "Canceled",
+        trendRuns: "Runs",
+        trendFailures: "Failures",
+        runsUnit: "runs",
+        noHistory: "No maintenance history yet.",
+        loadMore: "Load more",
+        openRevision: "Open revision",
+        maintenanceKinds: {
+          revised: "Revised",
+          skill_upgraded: "Skill upgraded",
+          disabled: "Disabled",
+          enabled: "Enabled",
+          feedback_resolved: "Feedback resolved",
+          owner_transferred: "Owner transferred",
+        },
+        noFeedback: "No pending feedback.",
+        feedbackCount: "Pending feedback: {count}",
+        resolutionNote: "Resolution note (optional, up to 500 characters)",
+        noteTooLong: "The note is over 500 characters.",
+        jobTitleLabel: "Job title",
+        jobTitleTooLong: "The job title is over 64 characters.",
+        save: "Save",
+        newOwnerLabel: "New owner (actor ID)",
+        transferFailed: "The owner could not be transferred.",
+        errors: {
+          actor_not_found: "That person was not found in this Project.",
+          agent_read_only: "This Agent is read-only.",
+          job_title_too_long: "The job title is over 64 characters.",
+          note_too_long: "The note is over 500 characters.",
+          feedback_not_found: "That feedback no longer exists.",
+          generic: "The change could not be saved.",
+        },
+      },
+    },
     migrationBanner: {
       heading: "Local drafts found",
       descriptionAgent:
@@ -1346,6 +1716,195 @@ export const WORKSPACE_COPY = {
         nameConflict: "已存在同名 Agent。",
         revisionConflict: "内容已被他人更新，请刷新。",
         saveFailed: "无法保存该 Agent。",
+      },
+    },
+    agentTeam: {
+      heading: "Agent 团队",
+      tablistLabel: "Agent 视图",
+      tabs: {
+        mine: "我的 Agent",
+        team: "团队",
+        report: "汇报",
+        config: "配置",
+      },
+      period: {
+        label: "周期",
+        last7: "近 7 天",
+        last30: "近 30 天",
+        thisMonth: "本月",
+        lastMonth: "上月",
+        custom: "自定义",
+        from: "开始",
+        to: "结束",
+        invalidRange: "开始日期不能晚于结束日期",
+      },
+      metrics: {
+        runs: "运行次数",
+        active: "活跃",
+        idle: "闲置",
+        agentTotal: "Agent 数",
+        failures: "失败",
+        satisfaction: "满意度",
+        latency: "总耗时",
+        cost: "成本",
+        maintenance: "维护动作",
+        servedAvg: "人均被服务 Agent 数",
+        ownersAvg: "人均负责 Agent",
+      },
+      status: { active: "活跃", idle: "闲置", disabled: "已停用" },
+      builtIn: "Tapper 内置",
+      insufficientSample: "样本不足",
+      runtimeUnavailable: "运行数据暂不可用",
+      runtimeSyncing: "运行数据同步中",
+      runtimeLag: "运行数据可能比对话晚一个同步周期",
+      updatedAt: "数据更新于 {time}（{timezone}）",
+      pendingFeedbackMine: "待我处理的反馈",
+      markResolved: "标记已处理",
+      transferOwner: "转交负责人",
+      viewConfig: "查看配置",
+      exportPdf: "导出 PDF",
+      exportCsv: "导出 CSV",
+      emptyState: "还没有 Agent，新建一个",
+      createAgent: "新建 Agent",
+      loading: "正在加载团队数据…",
+      loadFailed: "无法加载团队数据。",
+      retry: "重试",
+      report: {
+        title: "Agent 团队汇报",
+        project: "项目",
+        period: "周期",
+        summaryHeading: "汇总",
+        comparisonHeading: "与上一周期对比",
+        comparedWith: "对比：{from} – {to}",
+        trendHeading: "运行趋势",
+        current: "本周期",
+        previous: "上一周期",
+        change: "变化",
+        metric: "指标",
+        failures: "失败",
+        noTrend: "本周期没有运行趋势",
+      },
+      team: {
+        viewLabel: "花名册视图",
+        viewCards: "卡片",
+        viewTable: "表格",
+        filterOwner: "负责人",
+        filterStatus: "状态",
+        filterKind: "类型",
+        allOwners: "全部负责人",
+        allStatuses: "全部状态",
+        allKinds: "全部类型",
+        kinds: {
+          custom: "自定义",
+          built_in: "内置",
+          tapper_default: "Tapper 默认",
+        },
+        rosterHeading: "花名册",
+        peopleHeading: "人员",
+        orgChartHeading: "组织架构图",
+        orgChartLabel: "人员与其负责、使用的 Agent 的组织架构图",
+        orgChartEmpty: "本周期内没有负责或使用关系。",
+        orgChartOwns: "负责",
+        orgChartServes: "使用",
+        trendHeading: "运行趋势",
+        noJobTitle: "未设岗位",
+        ownerLabel: "负责人",
+        runsInPeriod: "周期内运行",
+        runsTrend: "近 30 天运行趋势",
+        topServed: "主要服务对象",
+        noServed: "暂无",
+        lastRun: "最近运行",
+        lastMaintenance: "最近维护",
+        pendingFeedback: "待处理反馈",
+        noPeople: "该周期内没有人员",
+        noMatch: "没有符合条件的 Agent",
+        columns: {
+          name: "名称",
+          jobTitle: "岗位",
+          owner: "负责人",
+          status: "状态",
+          kind: "类型",
+          runs: "运行次数",
+          failures: "失败",
+          latencyTotal: "总耗时",
+          latencyP50: "中位耗时",
+          cost: "成本",
+          served: "服务人数",
+          lastRun: "最近运行",
+          satisfaction: "满意度",
+          lastMaintenance: "最近维护",
+          pendingFeedback: "待处理反馈",
+          joinedAt: "入职日期",
+          actor: "人员",
+          ownedAgents: "负责 Agent 数",
+          ownedRuns: "负责 Agent 运行量",
+          servedByAgents: "被服务 Agent 数",
+          calls: "调用次数",
+          maintenance: "维护动作数",
+        },
+      },
+      mine: {
+        ownedHeading: "我负责的 Agent",
+        servedHeading: "为我服务的 Agent",
+        noFeedback: "暂无待你处理的反馈",
+        noOwned: "你还没有负责的 Agent",
+        noServed: "所选周期内没有 Agent 为你服务",
+        ratingUp: "有帮助",
+        ratingDown: "没帮助",
+        ratingNone: "仅评论",
+      },
+      profile: {
+        close: "关闭",
+        tabs: {
+          basic: "基本信息",
+          workload: "工作量",
+          history: "履历",
+          feedback: "待处理反馈",
+          settings: "设置",
+        },
+        tablistLabel: "Agent 档案分页",
+        noOwner: "无负责人",
+        servedPeople: "服务对象",
+        noServed: "本周期无服务对象",
+        currentRevision: "当前修订",
+        joinedAt: "入职日期",
+        secondaryMetrics: "调用量",
+        generationCalls: "模型调用",
+        toolCalls: "工具调用",
+        callsPerRun: "平均每次运行调用数",
+        abstained: "拒答",
+        canceled: "已取消",
+        trendRuns: "运行次数",
+        trendFailures: "失败",
+        runsUnit: "次",
+        noHistory: "暂无维护履历。",
+        loadMore: "加载更多",
+        openRevision: "打开修订",
+        maintenanceKinds: {
+          revised: "修订",
+          skill_upgraded: "Skill 升级",
+          disabled: "停用",
+          enabled: "启用",
+          feedback_resolved: "处理差评",
+          owner_transferred: "转交负责人",
+        },
+        noFeedback: "没有待处理反馈。",
+        feedbackCount: "待处理反馈：{count}",
+        resolutionNote: "处理说明（可选，最多 500 字）",
+        noteTooLong: "说明超过 500 字。",
+        jobTitleLabel: "岗位",
+        jobTitleTooLong: "岗位超过 64 个字符。",
+        save: "保存",
+        newOwnerLabel: "新负责人（actorId）",
+        transferFailed: "无法转交负责人。",
+        errors: {
+          actor_not_found: "在本项目中找不到该人员。",
+          agent_read_only: "该 Agent 为只读。",
+          job_title_too_long: "岗位超过 64 个字符。",
+          note_too_long: "说明超过 500 字。",
+          feedback_not_found: "该反馈已不存在。",
+          generic: "无法保存更改。",
+        },
       },
     },
     migrationBanner: {

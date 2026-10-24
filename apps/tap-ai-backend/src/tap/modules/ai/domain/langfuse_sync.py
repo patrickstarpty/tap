@@ -56,6 +56,8 @@ class TraceBundle:
     job_id: str | None
     spans: tuple[SpanRecord, ...]
     calls: tuple[CallRecord, ...]
+    agent_key: str | None = None
+    turn_outcome: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

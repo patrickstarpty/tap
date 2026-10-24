@@ -60,6 +60,7 @@ EXPECTED_TABLES = {
     "skill_revision",
     "skill_revision_file",
     "skill_import",
+    "agent_maintenance_event",
     "enterprise",
     "project",
     "actor_principal",

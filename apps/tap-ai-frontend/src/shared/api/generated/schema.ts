@@ -1,4 +1,157 @@
 export interface paths {
+    "/api/v1/projects/{project_id}/ai/agent-team/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Agent Team */
+        get: operations["agent_team_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Members */
+        get: operations["agent_team_list_members"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/members/{agent_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Member */
+        get: operations["agent_team_get_member"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/members/{agent_key}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Member History */
+        get: operations["agent_team_get_member_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/org-chart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Org Chart */
+        get: operations["agent_team_get_org_chart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List People */
+        get: operations["agent_team_list_people"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/people/{actor_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Person */
+        get: operations["agent_team_get_person"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Report */
+        get: operations["agent_team_get_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agent-team/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["agent_team_get_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/agents": {
         parameters: {
             query?: never;
@@ -51,6 +204,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transfer Agent Owner */
+        post: operations["agent_team_transfer_agent_owner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Agent Profile */
+        put: operations["agent_team_update_agent_profile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/agents/{agent_id}/revisions": {
         parameters: {
             query?: never;
@@ -80,6 +267,23 @@ export interface paths {
         get: operations["ai_get_agent_revision"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/feedback/{feedback_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Feedback */
+        post: operations["agent_team_resolve_feedback"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1576,6 +1780,16 @@ export interface components {
             /** Toolids */
             toolIds?: string[];
         };
+        /** AgentOwnerTransferRequest */
+        AgentOwnerTransferRequest: {
+            /** Newowneractorid */
+            newOwnerActorId: string;
+        };
+        /** AgentProfileUpdateRequest */
+        AgentProfileUpdateRequest: {
+            /** Jobtitle */
+            jobTitle?: string | null;
+        };
         /** AgentReviseRequest */
         AgentReviseRequest: {
             /** Baserevisionid */
@@ -1592,6 +1806,444 @@ export interface components {
             systemInstruction: string;
             /** Toolids */
             toolIds?: string[];
+        };
+        /** AgentTeamFeedbackResolveRequest */
+        AgentTeamFeedbackResolveRequest: {
+            /** Note */
+            note?: string | null;
+        };
+        /** AgentTeamHistoryEvent */
+        AgentTeamHistoryEvent: {
+            /** Actorid */
+            actorId: string;
+            /** Agentid */
+            agentId: string;
+            /** Eventid */
+            eventId: string;
+            /** Feedbackid */
+            feedbackId: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "revised" | "skill_upgraded" | "disabled" | "enabled" | "feedback_resolved" | "owner_transferred";
+            /** Note */
+            note: string | null;
+            /**
+             * Occurredat
+             * Format: date-time
+             */
+            occurredAt: string;
+            /** Revisionid */
+            revisionId: string | null;
+        };
+        /** AgentTeamHistoryPage */
+        AgentTeamHistoryPage: {
+            /** Events */
+            events: components["schemas"]["AgentTeamHistoryEvent"][];
+            /** Nextcursor */
+            nextCursor: string | null;
+        };
+        /** AgentTeamMemberDetail */
+        AgentTeamMemberDetail: {
+            /** Currentrevisionid */
+            currentRevisionId: string | null;
+            /** Pendingfeedback */
+            pendingFeedback: components["schemas"]["AgentTeamPendingFeedbackItem"][];
+            row: components["schemas"]["AgentTeamMemberRow"];
+            /** Served */
+            served: components["schemas"]["AgentTeamServedActor"][];
+        };
+        /** AgentTeamMemberRow */
+        AgentTeamMemberRow: {
+            /** Abstained */
+            abstained: number | null;
+            /** Agentkey */
+            agentKey: string;
+            /** Callsperrun */
+            callsPerRun: number | null;
+            /** Canceled */
+            canceled: number | null;
+            /** Costusd */
+            costUsd: string | null;
+            /** Failures */
+            failures: number | null;
+            /** Generationcalls */
+            generationCalls: number | null;
+            /** Jobtitle */
+            jobTitle: string | null;
+            /** Joinedat */
+            joinedAt: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "custom" | "built_in" | "tapper_default";
+            /** Lastmaintenanceat */
+            lastMaintenanceAt: string | null;
+            /** Lastrunat */
+            lastRunAt: string | null;
+            /** Latencyp50Ms */
+            latencyP50Ms: number | null;
+            /** Latencytotalms */
+            latencyTotalMs: number | null;
+            /** Maintenance */
+            maintenance: {
+                [key: string]: number;
+            };
+            /** Name */
+            name: string;
+            /** Owneractorid */
+            ownerActorId: string | null;
+            /** Pendingfeedback */
+            pendingFeedback: number;
+            /** Runs */
+            runs: number | null;
+            /** Satisfaction */
+            satisfaction: number | null;
+            /**
+             * Satisfactionsample
+             * @enum {string}
+             */
+            satisfactionSample: "ok" | "insufficient";
+            /** Servedcount */
+            servedCount: number | null;
+            /** Status */
+            status: ("active" | "idle" | "disabled") | null;
+            /** Toolcalls */
+            toolCalls: number | null;
+            /** Topserved */
+            topServed: components["schemas"]["AgentTeamServedActor"][];
+            /** Trend */
+            trend: components["schemas"]["AgentTeamTrendPoint"][];
+        };
+        /** AgentTeamMemberView */
+        AgentTeamMemberView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["AgentTeamMemberDetail"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamMembersView */
+        AgentTeamMembersView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            /** Data */
+            data: components["schemas"]["AgentTeamMemberRow"][];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamOrgChart */
+        AgentTeamOrgChart: {
+            /** Agents */
+            agents: string[];
+            /** Edges */
+            edges: components["schemas"]["AgentTeamOrgChartEdge"][];
+            /** People */
+            people: string[];
+        };
+        /** AgentTeamOrgChartEdge */
+        AgentTeamOrgChartEdge: {
+            /** From */
+            from: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "owns" | "serves";
+            /** To */
+            to: string;
+        };
+        /** AgentTeamOrgChartView */
+        AgentTeamOrgChartView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["AgentTeamOrgChart"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamPendingFeedbackItem */
+        AgentTeamPendingFeedbackItem: {
+            /** Actorid */
+            actorId: string;
+            /** Agentkey */
+            agentKey: string;
+            /** Comment */
+            comment: string | null;
+            /** Conversationid */
+            conversationId: string;
+            /** Feedbackid */
+            feedbackId: string;
+            /** Rating */
+            rating: string | null;
+            /** Turnid */
+            turnId: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** AgentTeamPeopleView */
+        AgentTeamPeopleView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            /** Data */
+            data: components["schemas"]["AgentTeamPersonRow"][];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamPeriod */
+        AgentTeamPeriod: {
+            /**
+             * From
+             * Format: date
+             */
+            from: string;
+            /**
+             * To
+             * Format: date
+             */
+            to: string;
+        };
+        /** AgentTeamPeriodReport */
+        AgentTeamPeriodReport: {
+            /** Members */
+            members: components["schemas"]["AgentTeamMemberRow"][];
+            /** People */
+            people: components["schemas"]["AgentTeamPersonRow"][];
+            summary: components["schemas"]["AgentTeamSummary"];
+        };
+        /** AgentTeamPersonDetail */
+        AgentTeamPersonDetail: {
+            /** Owned */
+            owned: components["schemas"]["AgentTeamMemberRow"][];
+            /** Pendingfeedback */
+            pendingFeedback: components["schemas"]["AgentTeamPendingFeedbackItem"][];
+            person: components["schemas"]["AgentTeamPersonRow"];
+            /** Served */
+            served: components["schemas"]["AgentTeamMemberRow"][];
+        };
+        /** AgentTeamPersonRow */
+        AgentTeamPersonRow: {
+            /** Actorid */
+            actorId: string;
+            /** Maintenance */
+            maintenance: number;
+            /** Ownedagents */
+            ownedAgents: number;
+            /** Ownedruns */
+            ownedRuns: number | null;
+            /** Runs */
+            runs: number | null;
+            /** Servedbyagents */
+            servedByAgents: number | null;
+        };
+        /** AgentTeamPersonView */
+        AgentTeamPersonView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["AgentTeamPersonDetail"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamReport */
+        AgentTeamReport: {
+            current: components["schemas"]["AgentTeamPeriodReport"];
+            previous: components["schemas"]["AgentTeamPeriodReport"];
+            previousPeriod: components["schemas"]["AgentTeamPeriod"];
+        };
+        /** AgentTeamReportView */
+        AgentTeamReportView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["AgentTeamReport"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamResolvedFeedback */
+        AgentTeamResolvedFeedback: {
+            /** Actorid */
+            actorId: string;
+            /** Agentkey */
+            agentKey: string;
+            /** Comment */
+            comment: string | null;
+            /** Conversationid */
+            conversationId: string;
+            /** Feedbackid */
+            feedbackId: string;
+            /** Rating */
+            rating: string | null;
+            /** Resolutionnote */
+            resolutionNote: string | null;
+            /**
+             * Resolvedat
+             * Format: date-time
+             */
+            resolvedAt: string;
+            /** Resolvedby */
+            resolvedBy: string;
+            /** Turnid */
+            turnId: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** AgentTeamServedActor */
+        AgentTeamServedActor: {
+            /** Actorid */
+            actorId: string;
+            /** Runs */
+            runs: number;
+        };
+        /** AgentTeamSummary */
+        AgentTeamSummary: {
+            /** Active */
+            active: number | null;
+            /** Agenttotal */
+            agentTotal: number;
+            /** Costusd */
+            costUsd: string | null;
+            /** Idle */
+            idle: number | null;
+            /** Latencytotalms */
+            latencyTotalMs: number | null;
+            /** Maintenancetotal */
+            maintenanceTotal: number;
+            /** Ownersavg */
+            ownersAvg: number;
+            /** Runs */
+            runs: number | null;
+            /** Servedavg */
+            servedAvg: number;
+        };
+        /** AgentTeamSummaryView */
+        AgentTeamSummaryView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["AgentTeamSummary"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** AgentTeamTrendPoint */
+        AgentTeamTrendPoint: {
+            /** Agentkey */
+            agentKey: string;
+            /**
+             * Bucketstart
+             * Format: date
+             */
+            bucketStart: string;
+            /** Costusd */
+            costUsd: string;
+            /** Failures */
+            failures: number;
+            /** Latencytotalms */
+            latencyTotalMs: number;
+            /** Runs */
+            runs: number;
         };
         /** AiAgentRevisionDetail */
         AiAgentRevisionDetail: {
@@ -6029,6 +6681,565 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    agent_team_export: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CSV zip export (roster, people, trend detail) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "application/zip": string;
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_list_members: {
+        parameters: {
+            query: {
+                owner?: string | null;
+                status?: ("active" | "idle" | "disabled") | null;
+                kind?: ("custom" | "built_in" | "tapper_default") | null;
+                sort?: string;
+                order?: string;
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamMembersView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_get_member: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                agent_key: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamMemberView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_get_member_history: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                agent_key: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamHistoryPage"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_get_org_chart: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamOrgChartView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_list_people: {
+        parameters: {
+            query: {
+                sort?: string;
+                order?: string;
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamPeopleView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_get_person: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                actor_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamPersonView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_get_report: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamReportView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_get_summary: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamSummaryView"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     ai_list_agent_revisions: {
         parameters: {
             query?: never;
@@ -6267,6 +7478,132 @@ export interface operations {
             };
         };
     };
+    agent_team_transfer_agent_owner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentOwnerTransferRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamMemberRow"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_update_agent_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamMemberRow"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     ai_list_agent_revision_history: {
         parameters: {
             query?: never;
@@ -6457,6 +7794,69 @@ export interface operations {
             };
             /** @description Knowledge runtime unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    agent_team_resolve_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                feedback_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTeamFeedbackResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTeamResolvedFeedback"];
+                };
+            };
+            /** @description Agent team request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in or Tapper-default agent is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent or feedback not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

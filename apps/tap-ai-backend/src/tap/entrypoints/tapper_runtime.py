@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.contracts.http import (
@@ -27,6 +27,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationS
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+from tap.modules.agent_team.ports import RuntimeMetricsUnavailable
 from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
@@ -65,6 +66,9 @@ if TYPE_CHECKING:
     )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.modules.agent_team.application.service import AgentTeamService
+    from tap.modules.agent_team.domain.models import Period
+    from tap.modules.agent_team.ports import AgentRuntimeStats, TrendPoint
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
     from tap.modules.chat.application.ports import DraftStream, EventWakeups
     from tap.modules.governance.ports.audit import ProjectAuditPort
@@ -198,6 +202,7 @@ class TapperSettings:
     langfuse_secret_key: str | None = field(default=None, repr=False)
     langfuse_environment: str = "local"
     langfuse_sync_settle_seconds: int = 60
+    agent_team_runtime_metrics: Literal["langfuse", "turn_table"] = "langfuse"
     trace_redaction_rules: Path | None = None
     turn_max_attempts: int = 3
     turn_budget: TurnBudget = field(default_factory=TurnBudget)
@@ -450,6 +455,17 @@ class TapperSettings:
             minimum=10,
             maximum=86400,
         )
+        agent_team_runtime_metrics = cast(
+            Literal["langfuse", "turn_table"],
+            _fixed_choice(
+                values,
+                "TAP_AGENT_TEAM_RUNTIME_METRICS",
+                default="langfuse",
+                choices=frozenset({"langfuse", "turn_table"}),
+            ),
+        )
+        if agent_team_runtime_metrics == "turn_table" and demo_mode != "e2e":
+            raise ValueError("TAP_AGENT_TEAM_RUNTIME_METRICS=turn_table requires TAP_DEMO_MODE=e2e")
         claim_lock_wait_seconds = _integer(
             values,
             "TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS",
@@ -683,11 +699,33 @@ class TapperSettings:
             langfuse_secret_key=langfuse_secret_key,
             langfuse_environment=langfuse_environment,
             langfuse_sync_settle_seconds=langfuse_sync_settle_seconds,
+            agent_team_runtime_metrics=agent_team_runtime_metrics,
             trace_redaction_rules=trace_redaction_rules,
             turn_max_attempts=turn_max_attempts,
             turn_budget=turn_budget,
             claim_lock_wait_seconds=claim_lock_wait_seconds,
         )
+
+
+class _UnavailableAgentRuntimeMetrics:
+    """`AgentRuntimeMetrics` stand-in used when `TAP_AGENT_TEAM_RUNTIME_METRICS`
+    is `langfuse` but `LANGFUSE_HOST` is not configured: every call raises
+    `RuntimeMetricsUnavailable` so the Agent team view reports
+    `runtimeStatus: "unavailable"` rather than silently reporting zeros."""
+
+    async def agent_stats(self, project_id: str, period: "Period") -> list["AgentRuntimeStats"]:
+        del project_id, period
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
+
+    async def trend(
+        self, project_id: str, period: "Period", granularity: str
+    ) -> list["TrendPoint"]:
+        del project_id, period, granularity
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
+
+    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        del project_id, agent_keys
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
 
 
 class _AsyncCloseable(Protocol):
@@ -1016,11 +1054,13 @@ async def create_api_runtime(
             agent_authoring = AgentAuthoringService(
                 asset_catalog, model_catalog, scope=repository.scope
             )
+        agent_team = _create_agent_team_service(settings, engine, repository.scope, resources)
         services = replace(
             services,
             chunk_manager=chunk_manager,
             skill_authoring=skill_authoring,
             agent_authoring=agent_authoring,
+            agent_team=agent_team,
         )
         if settings.insights_base_url:
             if services.insights_knowledge_search is None:
@@ -2025,6 +2065,70 @@ async def _create_asset_catalog(
     catalog = MysqlAssetCatalog(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
     await catalog.seed(validation_asset_seed(scope))
     return catalog
+
+
+def _create_agent_team_service(
+    settings: TapperSettings,
+    engine: AsyncEngine,
+    scope: ProjectScopeContext,
+    resources: OwnedResources,
+) -> "AgentTeamService":
+    """Wire the Agent team view's runtime metrics adapter (controller
+    rulings): `turn_table` only when `TAP_DEMO_MODE=e2e` (validated in
+    `TapperSettings.from_mapping`); `langfuse` with `LANGFUSE_HOST`
+    configured gets the real adapter over one shared, process-owned
+    `httpx.AsyncClient` and reports sync lag; `langfuse` without
+    `LANGFUSE_HOST` always raises `RuntimeMetricsUnavailable` and never
+    reports `"syncing"`. `CachedRuntimeMetrics` wraps whichever inner
+    adapter is chosen so both pick up the same TTL caching."""
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
+    from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore
+    from tap.modules.agent_team.application.service import AgentTeamService
+    from tap.modules.agent_team.ports import AgentRuntimeMetrics
+
+    check_sync_lag = False
+    cache_ttl_seconds = 300
+    failure_ttl_seconds = 30
+    inner: AgentRuntimeMetrics
+    if settings.agent_team_runtime_metrics == "turn_table":
+        # MySQL-backed and cheap: caching would only serve stale counts (the
+        # browser journey reloads right after running a turn).
+        cache_ttl_seconds = 0
+        failure_ttl_seconds = 0
+        from tap.modules.agent_team.adapters.turn_table_metrics import TurnTableRuntimeMetrics
+
+        inner = TurnTableRuntimeMetrics(async_sessionmaker(engine, expire_on_commit=False))
+    elif settings.langfuse_host is not None:
+        import httpx
+
+        from tap.modules.agent_team.adapters.langfuse_metrics import LangfuseRuntimeMetrics
+
+        langfuse_client = httpx.AsyncClient()
+        resources.push(langfuse_client)
+        inner = LangfuseRuntimeMetrics(
+            langfuse_client,
+            host=settings.langfuse_host,
+            public_key=settings.langfuse_public_key or "",
+            secret_key=settings.langfuse_secret_key or "",
+            environment=settings.langfuse_environment,
+        )
+        check_sync_lag = True
+    else:
+        inner = _UnavailableAgentRuntimeMetrics()
+
+    store = MysqlAgentTeamStore(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
+    return AgentTeamService(
+        store,
+        CachedRuntimeMetrics(
+            inner, ttl_seconds=cache_ttl_seconds, failure_ttl_seconds=failure_ttl_seconds
+        ),
+        scope=scope,
+        clock=lambda: datetime.now(UTC),
+        check_sync_lag=check_sync_lag,
+    )
 
 
 def _assemble_http_services(

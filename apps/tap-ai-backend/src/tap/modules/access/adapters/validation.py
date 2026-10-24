@@ -35,6 +35,7 @@ _VALIDATION_ACTIONS = frozenset(
         ("knowledge.original.read", "knowledge-original"),
         ("ai.agents.read", "ai"),
         ("ai.agents.write", "ai"),
+        ("ai.agent_team.read", "ai"),
         ("ai.models.read", "ai"),
         ("ai.skills.read", "ai"),
         ("ai.skills.write", "ai"),

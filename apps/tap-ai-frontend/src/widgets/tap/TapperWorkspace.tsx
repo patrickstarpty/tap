@@ -14,6 +14,7 @@ import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
 import { AgentsWorkspace } from "./workspace/agents/AgentsWorkspace";
+import { AgentsPage } from "./workspace/agents/team/AgentsPage";
 import { LocalDraftMigrationBanner } from "./workspace/agents/LocalDraftMigrationBanner";
 import { SkillsWorkspace } from "./workspace/skills/SkillsWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
@@ -3283,13 +3284,27 @@ export function TapperWorkspace() {
                 kind="agent"
                 copy={copy}
               />
-              <AgentsWorkspace
+              <AgentsPage
                 key={projectId}
                 projectId={projectId}
                 copy={copy}
-                onUse={(revisionId) => useCatalogItem("agent", revisionId)}
-                initialDetailRevisionId={pendingAgentRevisionId}
-                onInitialDetailConsumed={() => setPendingAgentRevisionId(null)}
+                initialTab={
+                  pendingAgentRevisionId !== null ? "config" : undefined
+                }
+                configTab={(request) => (
+                  <AgentsWorkspace
+                    projectId={projectId}
+                    copy={copy}
+                    onUse={(revisionId) => useCatalogItem("agent", revisionId)}
+                    initialDetailRevisionId={
+                      request.initialDetailRevisionId ?? pendingAgentRevisionId
+                    }
+                    onInitialDetailConsumed={() => {
+                      request.onInitialDetailConsumed();
+                      setPendingAgentRevisionId(null);
+                    }}
+                  />
+                )}
               />
             </>
           ) : (

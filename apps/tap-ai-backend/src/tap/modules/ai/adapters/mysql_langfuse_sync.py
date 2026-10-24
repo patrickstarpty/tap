@@ -18,6 +18,8 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY, UNKNOWN_AGENT_KEY
+from tap.modules.ai.adapters.mysql import ai_agent_revision
 from tap.modules.ai.domain.langfuse_sync import (
     CallRecord,
     FeedbackRecord,
@@ -26,6 +28,7 @@ from tap.modules.ai.domain.langfuse_sync import (
     TraceBundle,
 )
 from tap.modules.chat.adapters.mysql import chat_turn
+from tap.modules.chat.adapters.mysql_conversations import turn_input_snapshot
 from tap.modules.chat.adapters.mysql_feedback import answer_feedback
 from tap.platform.telemetry.schema import (
     langfuse_sync_cursor,
@@ -37,6 +40,8 @@ from tap.platform.telemetry.schema import (
 
 _EPOCH = datetime(1970, 1, 1)
 _LAST_ERROR_LIMIT = 1000
+_TURN_ROOT_SPAN_NAME = "turn.request"
+_TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
 
 _Row = TypeVar("_Row")
 
@@ -249,12 +254,42 @@ class MysqlLangfuseSyncStore:
             root = next((row for row in span_rows if row["parent_span_id"] is None), span_rows[0])
             turn_id = root["turn_id"]
             conversation_id: str | None = None
+            agent_key: str | None = None
+            turn_outcome: str | None = None
             if turn_id is not None:
-                conversation_id = (
+                turn_row = (
                     await session.execute(
-                        select(chat_turn.c.chat_id).where(chat_turn.c.turn_id == turn_id)
+                        select(chat_turn.c.chat_id, chat_turn.c.state).where(
+                            chat_turn.c.turn_id == turn_id
+                        )
                     )
-                ).scalar_one_or_none()
+                ).one_or_none()
+                if turn_row is not None:
+                    conversation_id = turn_row.chat_id
+                    if root["name"] == _TURN_ROOT_SPAN_NAME:
+                        if turn_row.state in _TERMINAL_TURN_STATES:
+                            turn_outcome = turn_row.state
+                        snapshot = (
+                            await session.execute(
+                                select(turn_input_snapshot.c.snapshot).where(
+                                    turn_input_snapshot.c.turn_id == turn_id
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        agent_revision_id = snapshot.get("agent_revision_id") if snapshot else None
+                        if not agent_revision_id:
+                            agent_key = TAPPER_DEFAULT_AGENT_KEY
+                        else:
+                            found_agent_id = (
+                                await session.execute(
+                                    select(ai_agent_revision.c.agent_id).where(
+                                        ai_agent_revision.c.revision_id == agent_revision_id
+                                    )
+                                )
+                            ).scalar_one_or_none()
+                            agent_key = (
+                                found_agent_id if found_agent_id is not None else UNKNOWN_AGENT_KEY
+                            )
 
         spans = tuple(_span_record(row) for row in span_rows)
         calls = tuple(_call_record(row) for row in call_rows)
@@ -267,6 +302,8 @@ class MysqlLangfuseSyncStore:
             job_id=root["job_id"],
             spans=spans,
             calls=calls,
+            agent_key=agent_key,
+            turn_outcome=turn_outcome,
         )
 
     async def load_feedback(self, feedback_id: str) -> FeedbackRecord | None:

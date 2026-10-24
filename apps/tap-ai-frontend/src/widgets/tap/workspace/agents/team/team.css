@@ -1,0 +1,299 @@
+.tap-agents-page [role="tablist"] {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.tap-agents-page [role="tab"] {
+  padding: 6px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tap-agents-page [role="tab"][aria-selected="true"] {
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.tap-team-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tap-team-period label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tap-team-freshness {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.tap-team-runtime-mark {
+  display: block;
+  color: var(--tap-muted);
+  font-size: 0.8em;
+}
+
+.tap-team-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.tap-team-summary > div {
+  padding: 8px 12px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+}
+
+.tap-team-summary dt {
+  color: var(--tap-muted);
+  font-size: 0.8em;
+}
+
+.tap-team-summary dd {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 1.25em;
+  font-weight: 600;
+}
+
+.tap-team-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tap-team-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tap-team-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-team-card {
+  padding: 12px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+}
+
+.tap-team-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tap-team-card-head p {
+  margin: 0;
+  color: var(--tap-muted);
+}
+
+.tap-team-card-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tap-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tap-team-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--tap-brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+.tap-team-card dl {
+  margin: 10px 0 0;
+}
+
+.tap-team-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.tap-team-card dt {
+  color: var(--tap-muted);
+}
+
+.tap-team-card dd {
+  margin: 0;
+  text-align: right;
+}
+
+.tap-team-trend-readout {
+  display: flex;
+  gap: 12px;
+  min-height: 1.4em;
+  color: var(--tap-muted);
+  font-size: 0.85em;
+}
+
+.tap-team-empty {
+  padding: 24px;
+  border: 1px dashed var(--tap-line-strong);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.tap-org-chart {
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.tap-org-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 480px;
+}
+
+.tap-org-chart [role="button"] {
+  cursor: pointer;
+  outline: none;
+}
+
+.tap-org-chart [role="button"]:focus-visible rect {
+  stroke: var(--tap-brand);
+  stroke-width: 2;
+}
+
+.tap-org-chart [data-dimmed="true"] {
+  opacity: 0.2;
+}
+
+.tap-org-chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+.tap-team-report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tap-team-report-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.tap-team-report-header h2 {
+  margin: 0 0 4px;
+}
+
+.tap-team-report-header p {
+  margin: 0;
+}
+
+.tap-team-report-section {
+  margin-top: 20px;
+}
+
+.tap-team-report-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tap-team-report-table th,
+.tap-team-report-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--tap-line-strong);
+  text-align: left;
+}
+
+.tap-team-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 16mm;
+}
+
+/* Applies to every printed page; only the report page is meant to be printed
+   from this app, and the rules below are scoped to it. */
+@media print {
+  .tap-product-shell:has(.tap-team-report) {
+    display: block;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .tap-product-shell:has(.tap-team-report) > *:not(.tap-product-main),
+  .tap-product-shell:has(.tap-team-report) .tap-agents-page [role="tablist"],
+  .tap-product-shell:has(.tap-team-report) .tap-team-report-controls {
+    display: none !important;
+  }
+
+  .tap-product-shell:has(.tap-team-report) .tap-product-main {
+    display: block;
+    grid-column: auto;
+    grid-row: auto;
+    overflow: visible;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .tap-team-report-header,
+  .tap-team-report-table {
+    break-inside: avoid;
+  }
+
+  .tap-team-report .ant-table-container,
+  .tap-team-report .ant-table-content,
+  .tap-team-report .ant-table-body {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  .tap-team-report .ant-table-content > table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto;
+  }
+
+  .tap-team-report tr {
+    break-inside: avoid;
+  }
+}

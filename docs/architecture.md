@@ -22,6 +22,7 @@
 | `graph` | 从文档抽取实体与关系、图谱任务与查询 |
 | `chat` | Conversation、不可变 Turn、回答规划与 Turn 处理 |
 | `ai` | Agent/Skill 资产 Revision（含导入的 Skill 包，存 MinIO `skills/{skill_id}/{revision_id}/<相对路径的 sha256>`，包内代码不执行）、代码定义的工具注册表（`domain/tools.py`，PR 5 起四项内置：`knowledge.search`、`knowledge.answer`、`graph.relations`、`insights.query`，后两项 `required=False`/`default_enabled=True`，新建 Agent 默认勾选，用户可取消）、模型目录、LangGraph 交互图 |
+| `agent_team` | Agent 团队视图：人事档案（岗位、负责人）、维护履历、反馈处理，以及按 Agent、按人、按周期的运行与满意度指标；运行数据只读 Langfuse Metrics API v1（带缓存，不可达时降级为 `unavailable`），其余实时查 MySQL；导出 CSV zip |
 | `governance` | 审计 |
 | `test_management` | 测试方案生成、校验与发布（V1 冻结） |
 
@@ -40,7 +41,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 | `tap-parser` | 隔离的文档解析 |
 | `tap-minio` | 唯一对象存储：原件与中间产物（S3 API） |
 | `clickhouse` | Test Insights 指标（`apps/backend`，不在 V1 交付路径） |
-| `langfuse-web` / `langfuse-worker` / `langfuse-postgres`（可选，profile `langfuse`） | 运营级可观测性看板（成本、延迟、用量、满意度），运行在 Tapper demo compose project 内；复用 insights 的 `clickhouse`（独立库/账号）、主 `redis`（独立 db）与 `tap-minio`（独立 bucket），`make langfuse-up` 先确保 insights ClickHouse 已启动 |
+| `langfuse-web` / `langfuse-worker` / `langfuse-postgres`（默认组件，见 [ADR-033](decisions/2026-10-23-adr-033-langfuse-default-runtime-source.md)） | 运营级可观测性看板（成本、延迟、用量、满意度），同时是 Agent 团队视图运行数据的唯一查询来源，运行在 Tapper demo compose project 内；复用 insights 的 `clickhouse`（独立库/账号）、主 `redis`（独立 db）与 `tap-minio`（独立 bucket），`make langfuse-up` 先确保 insights ClickHouse 已启动 |
 
 ## 4. 主要数据流
 
@@ -83,7 +84,8 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 1. API 处理请求时开启 `turn.request` span 并生成 traceparent，写入 `chat_turn.traceparent` 随 Outbox/Redis Stream 传给 worker。
 2. worker 用同一 traceparent 开启 `turn.execute` span，检索、图谱扩展、模型调用、工具调用各自开子 span；span 结束经 `MysqlSpanExporter` 写入 `trace_span`，每次模型调用同时由 `MysqlModelCallRecorder` 写入 `model_call` 与 `model_call_content`；只要网关收到了响应，token 用量与 LiteLLM 费用（`x-litellm-response-cost`，按列精度 DECIMAL(18,10) 四舍五入）都会记录，包括截断或输出不合 schema 的失败调用。共用的 `tap.platform.telemetry.span()` 在异常时把 `trace_span.status_message` 设为 `"ClassName: message"`（消息为空时退化为纯类名，整体截断到 200 字符），而不只是异常类名，让同一异常类下不同原因的失败可区分；`record_exception` 仍附带完整异常事件（含堆栈）。
 3. 若配置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，`BatchSpanProcessor` 同时把 span 导出到该 OTLP 端点；未配置时仅写 MySQL。
-4. `tapper_langfuse_sync_worker` 独立轮询 MySQL（`trace_span.recorded_at`、`answer_feedback.updated_at` 两个游标，`langfuse_sync_cursor` 记录位置），脱敏后把链路数据与反馈推送到可选的本地 Langfuse 运营看板；业务进程不感知该 worker，推送失败记入 `langfuse_sync_failure` 并无限重试，不阻塞游标前进。见[运营可观测性设计](superpowers/specs/2026-10-14-langfuse-ops-observability-design.md)、[可观测性指南](guides/2026-09-30-observability.md)。
+4. `tapper_langfuse_sync_worker` 独立轮询 MySQL（`trace_span.recorded_at`、`answer_feedback.updated_at` 两个游标，`langfuse_sync_cursor` 记录位置），脱敏后把链路数据与反馈推送到本地 Langfuse 运营看板；业务进程不感知该 worker，推送失败记入 `langfuse_sync_failure` 并无限重试，不阻塞游标前进。见[运营可观测性设计](superpowers/specs/2026-10-14-langfuse-ops-observability-design.md)、[可观测性指南](guides/2026-09-30-observability.md)。
+5. trace 同步到 Langfuse 时，根 span 为 `turn.request` 的 trace 打 `agent:<agentKey>`（未选 Agent 为 `tapper_default`）与 `outcome:<state>` 标签。团队视图 API（`agent-team/*`）经 Metrics API v1 按 `environment` 与标签聚合运行数据，缓存 300 秒；负责人、维护履历、反馈与满意度实时查 MySQL，两者在应用层合并。Langfuse 不可达时运行派生字段为 null 并返回 `runtimeStatus: "unavailable"`。见[Agent 团队视图设计](superpowers/specs/2026-10-22-agent-team-view-design.md)。
 
 ## 5. 与 V1 目标的已知差距
 

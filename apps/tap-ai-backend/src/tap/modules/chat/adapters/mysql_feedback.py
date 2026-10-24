@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    and_,
     func,
     select,
     text,
@@ -39,6 +40,11 @@ answer_feedback = Table(
     Column("comment", String(500), nullable=True),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("updated_at", DATETIME(fsp=6), nullable=False),
+    # Agent team view (spec 2.5/4): pending-feedback resolution. Schema only
+    # for now -- the resolve/clear-on-edit behavior lands in a later task.
+    Column("resolved_at", DATETIME(fsp=6), nullable=True),
+    Column("resolved_by", String(128), nullable=True),
+    Column("resolution_note", String(500), nullable=True),
 )
 augment_project_table(answer_feedback)
 answer_feedback.append_constraint(
@@ -118,13 +124,47 @@ class MysqlFeedbackRepository:
             "updated_at": _naive(feedback.updated_at),
         }
         insert_stmt = mysql_insert(answer_feedback).values(**values)
+        # `<=>` is MySQL's NULL-safe equality: both `rating` and `comment` can
+        # be NULL (a retracted or rating-only submission), so a plain `=`
+        # comparison would never detect "NULL -> NULL" as unchanged, or
+        # "value -> NULL" as changed. When either column's incoming value
+        # differs from the stored one, this is a re-rating/re-comment (spec
+        # 2.4): the resolution columns reset to NULL in the same statement so
+        # the feedback becomes pending again; otherwise (a same-value
+        # resubmit) they are left untouched via `IF(...)`.
+        unchanged = and_(
+            answer_feedback.c.rating.op("<=>")(insert_stmt.inserted.rating),
+            answer_feedback.c.comment.op("<=>")(insert_stmt.inserted.comment),
+        )
+        # MySQL's `ON DUPLICATE KEY UPDATE` SET list is evaluated left to
+        # right like a plain multi-column `UPDATE`: a bare column reference
+        # in a later assignment sees the value an earlier assignment in the
+        # *same* statement just wrote, not the row's original value. The
+        # `resolved_*` assignments must therefore come before `rating`/
+        # `comment` are overwritten in the rendered SQL, or `unchanged`
+        # would always compare the new value against itself and never
+        # detect a change. SQLAlchemy ignores **kwargs order here (it
+        # renders `ON DUPLICATE KEY UPDATE` in the table's column-definition
+        # order), so the ordering is passed explicitly as a list of 2-tuples
+        # (see `Insert.on_duplicate_key_update`'s "parameter ordering" form).
         upsert_stmt = insert_stmt.on_duplicate_key_update(
-            rating=insert_stmt.inserted.rating,
-            comment=insert_stmt.inserted.comment,
-            updated_at=func.greatest(
-                answer_feedback.c.updated_at + text("INTERVAL 1 MICROSECOND"),
-                insert_stmt.inserted.updated_at,
-            ),
+            [
+                ("resolved_at", func.IF(unchanged, answer_feedback.c.resolved_at, None)),
+                ("resolved_by", func.IF(unchanged, answer_feedback.c.resolved_by, None)),
+                (
+                    "resolution_note",
+                    func.IF(unchanged, answer_feedback.c.resolution_note, None),
+                ),
+                ("rating", insert_stmt.inserted.rating),
+                ("comment", insert_stmt.inserted.comment),
+                (
+                    "updated_at",
+                    func.greatest(
+                        answer_feedback.c.updated_at + text("INTERVAL 1 MICROSECOND"),
+                        insert_stmt.inserted.updated_at,
+                    ),
+                ),
+            ]
         )
         async with self._sessions() as session, session.begin():
             await session.execute(upsert_stmt)

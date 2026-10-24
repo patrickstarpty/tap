@@ -19,6 +19,7 @@ from tap.interfaces.http.dependencies import (
     KnowledgeRuntimeUnavailable,
 )
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.agent_team.application.service import AgentTeamRejected
 from tap.modules.ai.application.agent_authoring import AgentAuthoringRejected
 from tap.modules.ai.application.skill_package import SkillPackageRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected
@@ -140,6 +141,16 @@ _SKILL_PROBLEM_STATUS: dict[str, int] = {
     "agent_built_in_immutable": 403,
     "agent_frontmatter_invalid": 400,
     "skill_built_in_immutable": 403,
+    # Agent team view (controller rulings extend the spec's error list).
+    "period_invalid": 400,
+    "actor_not_found": 400,
+    "cursor_invalid": 400,
+    "job_title_too_long": 400,
+    "sort_invalid": 400,
+    "note_too_long": 400,
+    "agent_read_only": 403,
+    "agent_not_found": 404,
+    "feedback_not_found": 404,
 }
 
 
@@ -447,6 +458,12 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(AgentAuthoringRejected)
     async def agent_authoring_rejected_problem(
         _request: Request, error: AgentAuthoringRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(AgentTeamRejected)
+    async def agent_team_rejected_problem(
+        _request: Request, error: AgentTeamRejected
     ) -> JSONResponse:
         return skill_problem_response(error.code, error.detail)
 

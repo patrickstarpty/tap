@@ -53,7 +53,7 @@ from tap.modules.chat.domain.conversations import (
 )
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.budget import TurnBudgetExhausted
-from tap.platform.telemetry import current_binding
+from tap.platform.telemetry import current_binding, span
 
 
 async def _identity_redact(text: str) -> str:
@@ -901,11 +901,12 @@ class ChatTurnNodes:
                     )
                     continue
                 try:
-                    records = await self._insights_explanation.query_metrics(
-                        self._conversations.scope,
-                        tuple(getattr(value, "insights_report_refs", ())),
-                        call.arguments,
-                    )
+                    with span("tool.insights.query", {"tap.tool.step_id": this_step_id}):
+                        records = await self._insights_explanation.query_metrics(
+                            self._conversations.scope,
+                            tuple(getattr(value, "insights_report_refs", ())),
+                            call.arguments,
+                        )
                 except InsightsAuthorizationChanged:
                     duration_ms = int((time.monotonic() - started_at) * 1000)
                     summary = await self._redact_summary("insights.query → 查询授权已变更")
@@ -966,13 +967,14 @@ class ChatTurnNodes:
                 )
                 continue
 
-            tool_result = await self._steps.run_conversation_tool(
-                cast(ConversationAnswerStep, current_step),
-                value,
-                call,
-                answer_plan=active_plan,
-                authorize=self._require_authorized,
-            )
+            with span(f"tool.{call.tool_id}", {"tap.tool.step_id": this_step_id}):
+                tool_result = await self._steps.run_conversation_tool(
+                    cast(ConversationAnswerStep, current_step),
+                    value,
+                    call,
+                    answer_plan=active_plan,
+                    authorize=self._require_authorized,
+                )
             current_step = dict(tool_result["step"])
             duration_ms = int((time.monotonic() - started_at) * 1000)
             status = tool_result["status"]

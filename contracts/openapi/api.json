@@ -74,6 +74,38 @@
         "title": "AgentDraftRequest",
         "type": "object"
       },
+      "AgentOwnerTransferRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "newOwnerActorId": {
+            "title": "Newowneractorid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "newOwnerActorId"
+        ],
+        "title": "AgentOwnerTransferRequest",
+        "type": "object"
+      },
+      "AgentProfileUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "jobTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jobtitle"
+          }
+        },
+        "title": "AgentProfileUpdateRequest",
+        "type": "object"
+      },
       "AgentReviseRequest": {
         "additionalProperties": false,
         "properties": {
@@ -142,6 +174,1336 @@
           "baseRevisionId"
         ],
         "title": "AgentReviseRequest",
+        "type": "object"
+      },
+      "AgentTeamFeedbackResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "AgentTeamFeedbackResolveRequest",
+        "type": "object"
+      },
+      "AgentTeamHistoryEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "agentId": {
+            "title": "Agentid",
+            "type": "string"
+          },
+          "eventId": {
+            "title": "Eventid",
+            "type": "string"
+          },
+          "feedbackId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedbackid"
+          },
+          "kind": {
+            "enum": [
+              "revised",
+              "skill_upgraded",
+              "disabled",
+              "enabled",
+              "feedback_resolved",
+              "owner_transferred"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revisionid"
+          }
+        },
+        "required": [
+          "eventId",
+          "agentId",
+          "actorId",
+          "kind",
+          "revisionId",
+          "feedbackId",
+          "note",
+          "occurredAt"
+        ],
+        "title": "AgentTeamHistoryEvent",
+        "type": "object"
+      },
+      "AgentTeamHistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamHistoryEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "events",
+          "nextCursor"
+        ],
+        "title": "AgentTeamHistoryPage",
+        "type": "object"
+      },
+      "AgentTeamMemberDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "currentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentrevisionid"
+          },
+          "pendingFeedback": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamPendingFeedbackItem"
+            },
+            "title": "Pendingfeedback",
+            "type": "array"
+          },
+          "row": {
+            "$ref": "#/components/schemas/AgentTeamMemberRow"
+          },
+          "served": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamServedActor"
+            },
+            "title": "Served",
+            "type": "array"
+          }
+        },
+        "required": [
+          "row",
+          "currentRevisionId",
+          "served",
+          "pendingFeedback"
+        ],
+        "title": "AgentTeamMemberDetail",
+        "type": "object"
+      },
+      "AgentTeamMemberRow": {
+        "additionalProperties": false,
+        "properties": {
+          "abstained": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstained"
+          },
+          "agentKey": {
+            "title": "Agentkey",
+            "type": "string"
+          },
+          "callsPerRun": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callsperrun"
+          },
+          "canceled": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canceled"
+          },
+          "costUsd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
+          },
+          "failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failures"
+          },
+          "generationCalls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generationcalls"
+          },
+          "jobTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jobtitle"
+          },
+          "joinedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joinedat"
+          },
+          "kind": {
+            "enum": [
+              "custom",
+              "built_in",
+              "tapper_default"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lastMaintenanceAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastmaintenanceat"
+          },
+          "lastRunAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastrunat"
+          },
+          "latencyP50Ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp50Ms"
+          },
+          "latencyTotalMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencytotalms"
+          },
+          "maintenance": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Maintenance",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ownerActorId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owneractorid"
+          },
+          "pendingFeedback": {
+            "title": "Pendingfeedback",
+            "type": "integer"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
+          },
+          "satisfaction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Satisfaction"
+          },
+          "satisfactionSample": {
+            "enum": [
+              "ok",
+              "insufficient"
+            ],
+            "title": "Satisfactionsample",
+            "type": "string"
+          },
+          "servedCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servedcount"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "idle",
+                  "disabled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "toolCalls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toolcalls"
+          },
+          "topServed": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamServedActor"
+            },
+            "title": "Topserved",
+            "type": "array"
+          },
+          "trend": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamTrendPoint"
+            },
+            "title": "Trend",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agentKey",
+          "name",
+          "kind",
+          "jobTitle",
+          "ownerActorId",
+          "joinedAt",
+          "status",
+          "runs",
+          "failures",
+          "abstained",
+          "canceled",
+          "latencyTotalMs",
+          "latencyP50Ms",
+          "costUsd",
+          "servedCount",
+          "topServed",
+          "lastRunAt",
+          "satisfaction",
+          "satisfactionSample",
+          "lastMaintenanceAt",
+          "pendingFeedback",
+          "maintenance",
+          "trend",
+          "generationCalls",
+          "toolCalls",
+          "callsPerRun"
+        ],
+        "title": "AgentTeamMemberRow",
+        "type": "object"
+      },
+      "AgentTeamMemberView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AgentTeamMemberDetail"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamMemberView",
+        "type": "object"
+      },
+      "AgentTeamMembersView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamMemberRow"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamMembersView",
+        "type": "object"
+      },
+      "AgentTeamOrgChart": {
+        "additionalProperties": false,
+        "properties": {
+          "agents": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamOrgChartEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "people": {
+            "items": {
+              "type": "string"
+            },
+            "title": "People",
+            "type": "array"
+          }
+        },
+        "required": [
+          "people",
+          "agents",
+          "edges"
+        ],
+        "title": "AgentTeamOrgChart",
+        "type": "object"
+      },
+      "AgentTeamOrgChartEdge": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "title": "From",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "owns",
+              "serves"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "to": {
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "kind"
+        ],
+        "title": "AgentTeamOrgChartEdge",
+        "type": "object"
+      },
+      "AgentTeamOrgChartView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AgentTeamOrgChart"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamOrgChartView",
+        "type": "object"
+      },
+      "AgentTeamPendingFeedbackItem": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "agentKey": {
+            "title": "Agentkey",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "conversationId": {
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "feedbackId": {
+            "title": "Feedbackid",
+            "type": "string"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedbackId",
+          "agentKey",
+          "turnId",
+          "conversationId",
+          "actorId",
+          "rating",
+          "comment",
+          "updatedAt"
+        ],
+        "title": "AgentTeamPendingFeedbackItem",
+        "type": "object"
+      },
+      "AgentTeamPeopleView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamPersonRow"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamPeopleView",
+        "type": "object"
+      },
+      "AgentTeamPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "AgentTeamPeriod",
+        "type": "object"
+      },
+      "AgentTeamPeriodReport": {
+        "additionalProperties": false,
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamMemberRow"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamPersonRow"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/AgentTeamSummary"
+          }
+        },
+        "required": [
+          "summary",
+          "members",
+          "people"
+        ],
+        "title": "AgentTeamPeriodReport",
+        "type": "object"
+      },
+      "AgentTeamPersonDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "owned": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamMemberRow"
+            },
+            "title": "Owned",
+            "type": "array"
+          },
+          "pendingFeedback": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamPendingFeedbackItem"
+            },
+            "title": "Pendingfeedback",
+            "type": "array"
+          },
+          "person": {
+            "$ref": "#/components/schemas/AgentTeamPersonRow"
+          },
+          "served": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTeamMemberRow"
+            },
+            "title": "Served",
+            "type": "array"
+          }
+        },
+        "required": [
+          "person",
+          "owned",
+          "served",
+          "pendingFeedback"
+        ],
+        "title": "AgentTeamPersonDetail",
+        "type": "object"
+      },
+      "AgentTeamPersonRow": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "maintenance": {
+            "title": "Maintenance",
+            "type": "integer"
+          },
+          "ownedAgents": {
+            "title": "Ownedagents",
+            "type": "integer"
+          },
+          "ownedRuns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownedruns"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
+          },
+          "servedByAgents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servedbyagents"
+          }
+        },
+        "required": [
+          "actorId",
+          "ownedAgents",
+          "ownedRuns",
+          "servedByAgents",
+          "runs",
+          "maintenance"
+        ],
+        "title": "AgentTeamPersonRow",
+        "type": "object"
+      },
+      "AgentTeamPersonView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AgentTeamPersonDetail"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamPersonView",
+        "type": "object"
+      },
+      "AgentTeamReport": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/AgentTeamPeriodReport"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/AgentTeamPeriodReport"
+          },
+          "previousPeriod": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          }
+        },
+        "required": [
+          "current",
+          "previous",
+          "previousPeriod"
+        ],
+        "title": "AgentTeamReport",
+        "type": "object"
+      },
+      "AgentTeamReportView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AgentTeamReport"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamReportView",
+        "type": "object"
+      },
+      "AgentTeamResolvedFeedback": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "agentKey": {
+            "title": "Agentkey",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "conversationId": {
+            "title": "Conversationid",
+            "type": "string"
+          },
+          "feedbackId": {
+            "title": "Feedbackid",
+            "type": "string"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "resolutionNote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolutionnote"
+          },
+          "resolvedAt": {
+            "format": "date-time",
+            "title": "Resolvedat",
+            "type": "string"
+          },
+          "resolvedBy": {
+            "title": "Resolvedby",
+            "type": "string"
+          },
+          "turnId": {
+            "title": "Turnid",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedbackId",
+          "agentKey",
+          "turnId",
+          "conversationId",
+          "actorId",
+          "rating",
+          "comment",
+          "updatedAt",
+          "resolvedAt",
+          "resolvedBy",
+          "resolutionNote"
+        ],
+        "title": "AgentTeamResolvedFeedback",
+        "type": "object"
+      },
+      "AgentTeamServedActor": {
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "actorId",
+          "runs"
+        ],
+        "title": "AgentTeamServedActor",
+        "type": "object"
+      },
+      "AgentTeamSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "agentTotal": {
+            "title": "Agenttotal",
+            "type": "integer"
+          },
+          "costUsd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costusd"
+          },
+          "idle": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle"
+          },
+          "latencyTotalMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencytotalms"
+          },
+          "maintenanceTotal": {
+            "title": "Maintenancetotal",
+            "type": "integer"
+          },
+          "ownersAvg": {
+            "title": "Ownersavg",
+            "type": "number"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
+          },
+          "servedAvg": {
+            "title": "Servedavg",
+            "type": "number"
+          }
+        },
+        "required": [
+          "agentTotal",
+          "active",
+          "idle",
+          "ownersAvg",
+          "servedAvg",
+          "runs",
+          "latencyTotalMs",
+          "costUsd",
+          "maintenanceTotal"
+        ],
+        "title": "AgentTeamSummary",
+        "type": "object"
+      },
+      "AgentTeamSummaryView": {
+        "additionalProperties": false,
+        "properties": {
+          "computedAt": {
+            "format": "date-time",
+            "title": "Computedat",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AgentTeamSummary"
+          },
+          "granularity": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "period": {
+            "$ref": "#/components/schemas/AgentTeamPeriod"
+          },
+          "runtimeStatus": {
+            "enum": [
+              "ok",
+              "syncing",
+              "unavailable"
+            ],
+            "title": "Runtimestatus",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeStatus",
+          "computedAt",
+          "timezone",
+          "period",
+          "granularity",
+          "data"
+        ],
+        "title": "AgentTeamSummaryView",
+        "type": "object"
+      },
+      "AgentTeamTrendPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "agentKey": {
+            "title": "Agentkey",
+            "type": "string"
+          },
+          "bucketStart": {
+            "format": "date",
+            "title": "Bucketstart",
+            "type": "string"
+          },
+          "costUsd": {
+            "title": "Costusd",
+            "type": "string"
+          },
+          "failures": {
+            "title": "Failures",
+            "type": "integer"
+          },
+          "latencyTotalMs": {
+            "title": "Latencytotalms",
+            "type": "integer"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucketStart",
+          "agentKey",
+          "runs",
+          "failures",
+          "latencyTotalMs",
+          "costUsd"
+        ],
+        "title": "AgentTeamTrendPoint",
         "type": "object"
       },
       "AiAgentRevisionDetail": {
@@ -13077,6 +14439,963 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/projects/{project_id}/ai/agent-team/export": {
+      "get": {
+        "operationId": "agent_team_export",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "CSV zip export (roster, people, trend detail)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Export Agent Team",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/members": {
+      "get": {
+        "operationId": "agent_team_list_members",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "idle",
+                    "disabled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "custom",
+                    "built_in",
+                    "tapper_default"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "runs",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamMembersView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "List Members",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/members/{agent_key}": {
+      "get": {
+        "operationId": "agent_team_get_member",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_key",
+            "required": true,
+            "schema": {
+              "title": "Agent Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamMemberView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get Member",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/members/{agent_key}/history": {
+      "get": {
+        "operationId": "agent_team_get_member_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_key",
+            "required": true,
+            "schema": {
+              "title": "Agent Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamHistoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get Member History",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/org-chart": {
+      "get": {
+        "operationId": "agent_team_get_org_chart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamOrgChartView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get Org Chart",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/people": {
+      "get": {
+        "operationId": "agent_team_list_people",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "runs",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamPeopleView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "List People",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/people/{actor_id}": {
+      "get": {
+        "operationId": "agent_team_get_person",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "title": "Actor Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamPersonView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get Person",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/report": {
+      "get": {
+        "operationId": "agent_team_get_report",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get Report",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agent-team/summary": {
+      "get": {
+        "operationId": "agent_team_get_summary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamSummaryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Get Summary",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/ai/agents": {
       "get": {
         "operationId": "ai_list_agent_revisions",
@@ -13399,6 +15718,192 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/owner": {
+      "post": {
+        "operationId": "agent_team_transfer_agent_owner",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentOwnerTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamMemberRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Transfer Agent Owner",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/profile": {
+      "put": {
+        "operationId": "agent_team_update_agent_profile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentProfileUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamMemberRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Update Agent Profile",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/ai/agents/{agent_id}/revisions": {
       "get": {
         "operationId": "ai_list_agent_revision_history",
@@ -13671,6 +16176,99 @@
           }
         },
         "summary": "Get Agent",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/feedback/{feedback_id}/resolve": {
+      "post": {
+        "operationId": "agent_team_resolve_feedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTeamFeedbackResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTeamResolvedFeedback"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent team request rejected"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Built-in or Tapper-default agent is read-only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProblem"
+                }
+              }
+            },
+            "description": "Agent or feedback not found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          }
+        },
+        "summary": "Resolve Feedback",
         "tags": [
           "ai"
         ]

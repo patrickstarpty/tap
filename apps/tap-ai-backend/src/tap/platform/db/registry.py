@@ -3,6 +3,7 @@
 from sqlalchemy import MetaData
 
 from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
+from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
 from tap.modules.ai.adapters.mysql import (
     ai_agent,
     ai_agent_revision,
@@ -106,6 +107,7 @@ BUSINESS_TABLES = (
     skill_revision,
     skill_revision_file,
     skill_import,
+    agent_maintenance_event,
     *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
     *PROJECT_GRAPH_TABLES,

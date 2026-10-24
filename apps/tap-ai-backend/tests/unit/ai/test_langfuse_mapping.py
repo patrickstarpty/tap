@@ -80,18 +80,24 @@ def bundle(
     project_id: str = "proj-1",
     actor_id: str = "actor-1",
     conversation_id: str | None = "conv-1",
+    turn_id: str | None = "turn-1",
+    job_id: str | None = None,
     spans: tuple[SpanRecord, ...] = (),
     calls: tuple[CallRecord, ...] = (),
+    agent_key: str | None = None,
+    turn_outcome: str | None = None,
 ) -> TraceBundle:
     return TraceBundle(
         trace_id=trace_id,
         project_id=project_id,
         actor_id=actor_id,
         conversation_id=conversation_id,
-        turn_id="turn-1",
-        job_id=None,
+        turn_id=turn_id,
+        job_id=job_id,
         spans=spans or (_span(),),
         calls=calls,
+        agent_key=agent_key,
+        turn_outcome=turn_outcome,
     )
 
 
@@ -207,6 +213,53 @@ def test_reasoning_text_is_redacted_into_metadata():
     )
     g = generation_of(t)
     assert g.metadata["tap.reasoning"] == "contact [EMAIL] for help"
+
+
+def test_turn_trace_gets_agent_tag():
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", agent_key="agent-42", turn_outcome="completed"),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == ("project:proj-1", "agent:agent-42", "outcome:completed")
+
+
+def test_default_turn_gets_tapper_default_tag():
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", agent_key="tapper_default"),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == ("project:proj-1", "agent:tapper_default")
+
+
+def test_job_trace_has_no_agent_tag():
+    t = to_langfuse_trace(
+        bundle(
+            project_id="proj-1",
+            turn_id=None,
+            conversation_id=None,
+            agent_key=None,
+            turn_outcome=None,
+        ),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == ("project:proj-1",)
+
+
+def test_terminal_turn_gets_outcome_tag():
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", turn_outcome="completed"), ExportRedactor(), environment="local"
+    )
+    assert t.tags == ("project:proj-1", "outcome:completed")
+
+
+def test_running_turn_has_no_outcome_tag():
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", turn_outcome=None), ExportRedactor(), environment="local"
+    )
+    assert t.tags == ("project:proj-1",)
 
 
 def test_feedback_score_id_is_deterministic_and_scoped_to_turn_and_actor():

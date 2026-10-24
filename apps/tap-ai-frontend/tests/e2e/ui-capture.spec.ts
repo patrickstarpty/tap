@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { captureAgentTeamResponse } from "./agentTeamCaptureFixture";
 import {
   CAPTURE_GRAPH_HIGHLIGHT,
   CAPTURE_GRAPH_NODE,
@@ -100,6 +101,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown;
+    const teamBody = captureAgentTeamResponse(path);
     if (path === "/api/v1/runtime-mode") {
       body = {
         mode: "validation",
@@ -122,6 +124,8 @@ test.beforeEach(async ({ page }) => {
       body = { items: CAPTURE_PROMPT_SUGGESTIONS };
     } else if (await fulfillGraphRoutes(route, path)) {
       return;
+    } else if (teamBody !== undefined) {
+      body = teamBody;
     } else if (/\/(ai\/(agents|skills)|conversations)$/u.test(path)) {
       body = { items: [], nextCursor: null };
     } else {
@@ -359,6 +363,7 @@ test("captures the fresh Tapper conversation and model selector", async ({
 
 test("captures AI Agent and Skill catalogs", async ({ page }) => {
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
@@ -523,6 +528,16 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
       await route.fulfill({ json: { items: [], nextCursor: null } });
       return;
     }
+    if (path.endsWith("/ai/tools") && method === "GET") {
+      // The Agent form lists checkable tools.
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
+    const team = captureAgentTeamResponse(path);
+    if (team !== undefined && method === "GET") {
+      await route.fulfill({ json: team });
+      return;
+    }
     throw new Error(`Unexpected capture API request: ${method} ${path}`);
   });
 
@@ -570,6 +585,7 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
@@ -1053,4 +1069,76 @@ test("captures a restored Insights explanation before and after refresh", async 
     page.getByText("Request timed out before retry passed.", { exact: true }),
   ).toHaveCount(0);
   await capture(page, "09-insights-withdrawn");
+});
+
+// Hashes of the Agent team captures so far: each must differ from the others.
+const teamCaptureHashes: string[] = [];
+async function captureTeam(page: Page, name: string) {
+  const hash = await capture(page, name);
+  expect(teamCaptureHashes).not.toContain(hash);
+  teamCaptureHashes.push(hash);
+}
+
+async function openAgentTeam(page: Page, tab: string) {
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: tab, exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: tab, selected: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Loading team data...")).toHaveCount(0);
+}
+
+test("captures the Agent team cards", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  const roster = page
+    .getByRole("list")
+    .filter({ hasText: "Claims intake reviewer" });
+  await expect(
+    roster.getByText("Life Underwriting Analyst", { exact: true }),
+  ).toBeVisible();
+  await expect(roster.getByText("Disabled", { exact: true })).toBeVisible();
+  await expect(roster.getByText("Idle", { exact: true })).toBeVisible();
+  await expect(roster.getByText("Tapper", { exact: true })).toBeVisible();
+  await captureTeam(page, "05-agent-team-cards");
+});
+
+test("captures the Agent team org chart", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  const chart = page.getByRole("group", {
+    name: /Org chart of people and the agents/u,
+  });
+  await chart.scrollIntoViewIfNeeded();
+  await expect(chart).toBeVisible();
+  await page
+    .getByRole("button", { name: "actor-capture", exact: true })
+    .click();
+  await captureTeam(page, "06-agent-team-org-chart");
+});
+
+test("captures an Agent profile", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  await page
+    .locator(".tap-team-card-name", { hasText: "Claims intake reviewer" })
+    .click();
+  const profile = page.getByRole("dialog", { name: "Claims intake reviewer" });
+  await expect(profile).toBeVisible();
+  await profile.getByRole("tab", { name: "Workload", exact: true }).click();
+  await expect(profile.getByText("Call volume")).toBeVisible();
+  await captureTeam(page, "07-agent-profile");
+});
+
+test("captures My Agents", async ({ page }) => {
+  await openAgentTeam(page, "My Agents");
+  await expect(page.getByText("Agents I own")).toBeVisible();
+  await expect(page.getByText("Feedback waiting for me")).toBeVisible();
+  await captureTeam(page, "08-my-agents");
+});
+
+test("captures the Agent team report", async ({ page }) => {
+  await openAgentTeam(page, "Report");
+  await expect(
+    page.getByRole("link", { name: "Export CSV", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Loading team data...")).toHaveCount(0);
+  await captureTeam(page, "09-agent-team-report");
 });
