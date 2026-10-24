@@ -68,8 +68,10 @@ export function OrgChart({
           <span key={kind}>
             <svg aria-hidden="true" width={28} height={8} viewBox="0 0 28 8">
               <line x1={0} y1={4} x2={28} y2={4} {...edgeStyle(kind)} />
-            </svg>{" "}
-            {kind === "owns" ? labels.orgChartOwns : labels.orgChartServes}
+            </svg>
+            <span>
+              {kind === "owns" ? labels.orgChartOwns : labels.orgChartServes}
+            </span>
           </span>
         ))}
       </div>
@@ -106,6 +108,11 @@ export function OrgChart({
               tabIndex={0}
               aria-pressed={selected === id}
               aria-label={id}
+              aria-description={
+                selected !== null && selected !== id
+                  ? labels.orgChartDimmed
+                  : undefined
+              }
               data-dimmed={
                 selected !== null && selected !== id ? "true" : "false"
               }
@@ -142,6 +149,11 @@ export function OrgChart({
               role="button"
               tabIndex={0}
               aria-label={label}
+              aria-description={
+                selected !== null && !related.has(key)
+                  ? labels.orgChartDimmed
+                  : undefined
+              }
               data-dimmed={
                 selected !== null && !related.has(key) ? "true" : "false"
               }

@@ -140,6 +140,7 @@ export function AgentProfileDrawer({
                 detail={detail}
                 copy={copy}
                 timezone={view.timezone}
+                runtimeStatus={view.runtimeStatus}
                 onViewConfig={onViewConfig}
               />
             ) : null}
@@ -186,11 +187,13 @@ function BasicPanel({
   detail,
   copy,
   timezone,
+  runtimeStatus,
   onViewConfig,
 }: {
   detail: AgentTeamMemberDetail;
   copy: WorkspaceCopy;
   timezone: string;
+  runtimeStatus: CellContext["runtimeStatus"];
   onViewConfig: (revisionId: string) => void;
 }) {
   const text = copy.agentTeam;
@@ -198,13 +201,23 @@ function BasicPanel({
   const locale = teamLocale(copy);
   const row = detail.row;
   const revisionId = detail.currentRevisionId;
+  const ctx: CellContext = {
+    copy,
+    locale,
+    timezone,
+    runtimeStatus,
+  };
   return (
     <>
-      <dl>
+      <dl className="tap-team-profile-facts">
         <dt>{text.team.columns.jobTitle}</dt>
         <dd>{row.jobTitle ?? text.team.noJobTitle}</dd>
         <dt>{labels.joinedAt}</dt>
         <dd>{formatDate(row.joinedAt, timezone, locale)}</dd>
+        <dt>{text.team.columns.status}</dt>
+        <dd>
+          <StatusValue row={row} ctx={ctx} />
+        </dd>
         <dt>{text.team.ownerLabel}</dt>
         <dd>
           {row.kind === "custom"
@@ -306,7 +319,6 @@ function WorkloadPanel({
       text.metrics.satisfaction,
       <SatisfactionValue key="sat" row={row} ctx={ctx} />,
     ],
-    [text.team.columns.status, <StatusValue key="st" row={row} ctx={ctx} />],
   ];
   const secondary: [string, ReactNode][] = [
     [
@@ -343,7 +355,12 @@ function WorkloadPanel({
   ];
   return (
     <>
-      <TrendChart series={series} unit={labels.runsUnit} locale={locale} />
+      <TrendChart
+        series={series}
+        unit={labels.runsUnit}
+        locale={locale}
+        hint={text.team.chartHint}
+      />
       <dl className="tap-team-profile-metrics">
         {primary.map(([label, value]) => (
           <div key={label}>
@@ -352,7 +369,7 @@ function WorkloadPanel({
           </div>
         ))}
       </dl>
-      <h3>{labels.secondaryMetrics}</h3>
+      <h3 className="tap-team-profile-subheading">{labels.secondaryMetrics}</h3>
       <dl className="tap-team-profile-metrics">
         {secondary.map(([label, value]) => (
           <div key={label}>
@@ -451,8 +468,11 @@ function FeedbackPanel({
   const resolve = useResolveFeedback(projectId);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Per item, so resolving one never disables the others' buttons.
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const items = detail.pendingFeedback;
   const done = async (feedbackId: string) => {
+    setPending((prev) => new Set(prev).add(feedbackId));
     try {
       await resolve.mutateAsync({
         feedbackId,
@@ -465,6 +485,12 @@ function FeedbackPanel({
       });
     } catch (error) {
       setErrors((prev) => ({ ...prev, [feedbackId]: errorText(error, copy) }));
+    } finally {
+      setPending((prev) => {
+        const rest = new Set(prev);
+        rest.delete(feedbackId);
+        return rest;
+      });
     }
   };
   return (
@@ -508,7 +534,7 @@ function FeedbackPanel({
                 ) : null}
                 <button
                   type="button"
-                  disabled={tooLong || resolve.isPending}
+                  disabled={tooLong || pending.has(item.feedbackId)}
                   onClick={() => void done(item.feedbackId)}
                 >
                   {text.markResolved}

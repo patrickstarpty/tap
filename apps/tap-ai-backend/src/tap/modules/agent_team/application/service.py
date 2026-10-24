@@ -65,6 +65,10 @@ _MEMBER_SORT_FIELDS = frozenset(
         "last_maintenance_at",
         "pending_feedback",
         "joined_at",
+        "job_title",
+        "owner_actor_id",
+        "status",
+        "kind",
     }
 )
 _PEOPLE_SORT_FIELDS = frozenset(
@@ -196,7 +200,10 @@ def _validate_sort(sort: str, order: str, allowed: frozenset[str]) -> None:
 
 _T = TypeVar("_T")
 
-_RUNTIME_LOAD_TIMEOUT_SECONDS = 10
+_RUNTIME_LOAD_TIMEOUT_SECONDS = 10.0
+# Safety net only: every cached fetch already carries its own deadline-derived
+# timeout, which fires first and is negative-cached.
+_RUNTIME_LOAD_GRACE_SECONDS = 1.0
 
 
 class AgentTeamService:
@@ -213,32 +220,53 @@ class AgentTeamService:
         scope: ProjectScopeContext,
         clock: Callable[[], datetime],
         check_sync_lag: bool = False,
+        sync_settle_seconds: int = 60,
+        runtime_timeout_seconds: float | None = None,
     ) -> None:
         self._store = store
         self._metrics = metrics
         self._scope = scope
         self._clock = clock
         self._check_sync_lag = check_sync_lag
+        self._sync_settle = timedelta(seconds=sync_settle_seconds)
+        self._runtime_timeout = (
+            _RUNTIME_LOAD_TIMEOUT_SECONDS
+            if runtime_timeout_seconds is None
+            else runtime_timeout_seconds
+        )
 
     # ------------------------------------------------------------------
     # Runtime loading
     # ------------------------------------------------------------------
 
-    async def _load_runtime(self, period: Period) -> _RuntimeData:
+    async def _load_runtime(self, period: Period, records: Sequence[AgentRecord]) -> _RuntimeData:
         try:
-            async with asyncio.timeout(_RUNTIME_LOAD_TIMEOUT_SECONDS):
-                return await self._load_runtime_unbounded(period)
+            async with asyncio.timeout(self._runtime_timeout + _RUNTIME_LOAD_GRACE_SECONDS):
+                return await self._load_runtime_unbounded(period, records)
         except TimeoutError:
             return _unavailable(self._clock())
 
-    async def _load_runtime_unbounded(self, period: Period) -> _RuntimeData:
+    async def _load_runtime_unbounded(
+        self, period: Period, records: Sequence[AgentRecord]
+    ) -> _RuntimeData:
         project_id = self._scope.project_id
         today = self._clock().date()
         trailing = trailing_30_days(today)
+        # One deadline for the whole view: each query may use what is left.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._runtime_timeout
+
+        def remaining() -> float:
+            return max(deadline - loop.time(), 0.0)
+
         try:
-            stats = await self._metrics.agent_stats(project_id, period)
-            trailing_stats = await self._metrics.agent_stats(project_id, trailing)
-            trend = await self._metrics.trend(project_id, period, period.granularity)
+            stats = await self._metrics.agent_stats(project_id, period, timeout_seconds=remaining())
+            trailing_stats = await self._metrics.agent_stats(
+                project_id, trailing, timeout_seconds=remaining()
+            )
+            trend = await self._metrics.trend(
+                project_id, period, period.granularity, timeout_seconds=remaining()
+            )
         except RuntimeMetricsUnavailable:
             return _unavailable(self._clock())
 
@@ -246,11 +274,13 @@ class AgentTeamService:
         trailing_stats_by_key = {s.agent_key: s for s in trailing_stats}
         # "最近运行" is not limited to the period (spec 2.2): ask for every
         # roster key, not only those with runs in the two stats windows.
-        roster_keys = {record.agent_id for record in await self._store.agents()}
+        roster_keys = {record.agent_id for record in records}
         roster_keys.add(TAPPER_DEFAULT_AGENT_KEY)
         agent_keys = sorted(set(stats_by_key) | set(trailing_stats_by_key) | roster_keys)
         try:
-            last_runs = await self._metrics.last_runs(project_id, agent_keys)
+            last_runs = await self._metrics.last_runs(
+                project_id, agent_keys, timeout_seconds=remaining()
+            )
         except RuntimeMetricsUnavailable:
             return _unavailable(self._clock())
 
@@ -260,7 +290,7 @@ class AgentTeamService:
 
         status: RuntimeStatus = "ok"
         if self._check_sync_lag:
-            lag = await self._store.sync_lag()
+            lag = await self._store.oldest_unsynced_age(now=self._clock(), settle=self._sync_settle)
             if lag is not None and lag > _SYNC_LAG_THRESHOLD:
                 status = "syncing"
 
@@ -414,8 +444,8 @@ class AgentTeamService:
         ]
 
     async def _period_report(self, period: Period) -> tuple[PeriodReport, RuntimeStatus, datetime]:
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         members = self._build_members(runtime, store_data)
         people = self._people_rows(members, runtime, store_data)
         stats_by_key = self._member_stats(members, runtime)
@@ -464,8 +494,8 @@ class AgentTeamService:
         order: str = "desc",
     ) -> TeamView[tuple[MemberRow, ...]]:
         _validate_sort(sort, order, _MEMBER_SORT_FIELDS)
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         rows = self._build_members(runtime, store_data)
         if owner is not None:
             rows = [row for row in rows if row.owner_actor_id == owner]
@@ -477,8 +507,8 @@ class AgentTeamService:
         return self._view(period, runtime.status, runtime.computed_at, tuple(sorted_rows))
 
     async def member(self, agent_key: str, period: Period) -> TeamView[MemberDetail]:
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         rows = self._build_members(runtime, store_data)
         for row in rows:
             if row.agent_key == agent_key:
@@ -499,6 +529,12 @@ class AgentTeamService:
                 return self._view(period, runtime.status, runtime.computed_at, detail)
         raise AgentTeamRejected("agent_not_found", f"no Agent {agent_key!r} in this Project")
 
+    async def member_row(self, agent_id: str) -> MemberRow:
+        """The Agent's roster row over the trailing 30 days ending today by
+        this service's clock -- what the personnel writes return."""
+        view = await self.member(agent_id, trailing_30_days(self._clock().date()))
+        return view.data.row
+
     async def history(self, agent_id: str, cursor: str | None) -> HistoryPage:
         record = await self._store.agent(agent_id)
         if record is None and agent_id != TAPPER_DEFAULT_AGENT_KEY:
@@ -518,8 +554,8 @@ class AgentTeamService:
 
     async def person(self, actor_id: str, period: Period) -> TeamView[PersonDetail]:
         resolved = self._scope.actor_id if actor_id == "me" else actor_id
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         members = self._build_members(runtime, store_data)
         people = self._people_rows(members, runtime, store_data)
         runtime_available = runtime.status != "unavailable"
@@ -550,8 +586,8 @@ class AgentTeamService:
         return self._view(period, runtime.status, runtime.computed_at, data)
 
     async def org_chart(self, period: Period) -> TeamView[OrgChart]:
-        runtime = await self._load_runtime(period)
         store_data = await self._load_store_data(period)
+        runtime = await self._load_runtime(period, store_data.records)
         members = self._build_members(runtime, store_data)
         served_by_key = {
             row.agent_key: (
@@ -645,14 +681,38 @@ def _actor_served(stats: AgentRuntimeStats | None, actor_id: str) -> bool:
     return any(served.actor_id == actor_id and served.runs > 0 for served in stats.served)
 
 
+_STATUS_RANK_ORDER = {"active": 0, "idle": 1, "disabled": 2}
+_KIND_RANK_ORDER = {"custom": 0, "built_in": 1, "tapper_default": 2}
+
+
+def _sort_value(row, sort: str):
+    value = getattr(row, sort)
+    if sort == "status" and value is not None:
+        return _STATUS_RANK_ORDER[value]
+    if sort == "kind" and value is not None:
+        return _KIND_RANK_ORDER[value]
+    return value
+
+
 def _sorted(rows: list, sort: str, order: str) -> list:
     """Sorts by the `sort` attribute, descending unless `order == "asc"`.
     Rows whose sort attribute is `None` (e.g. `last_run_at`) always sort
-    last, regardless of direction. Callers must validate `sort`/`order`
-    against a closed allowlist first (`_validate_sort`) -- this helper
-    trusts its inputs."""
+    last, regardless of direction. `status`/`kind` sort by their domain rank
+    (active < idle < disabled; custom < built_in < tapper_default), not
+    alphabetically. Ties keep name order (spec 6.1) in both directions: rows
+    are first ordered by name ascending, and Python's stable sort -- which
+    also keeps equal keys in input order under `reverse=True` -- does the
+    rest. Callers must validate `sort`/`order` against a closed allowlist
+    first (`_validate_sort`) -- this helper trusts its inputs."""
     reverse = order != "asc"
-    with_value = [row for row in rows if getattr(row, sort) is not None]
-    without_value = [row for row in rows if getattr(row, sort) is None]
-    with_value.sort(key=lambda row: getattr(row, sort), reverse=reverse)
+    by_name = sorted(
+        rows,
+        key=lambda row: (
+            getattr(row, "name", None) or getattr(row, "actor_id", ""),
+            getattr(row, "agent_key", ""),
+        ),
+    )
+    with_value = [row for row in by_name if getattr(row, sort) is not None]
+    without_value = [row for row in by_name if getattr(row, sort) is None]
+    with_value.sort(key=lambda row: _sort_value(row, sort), reverse=reverse)
     return with_value + without_value

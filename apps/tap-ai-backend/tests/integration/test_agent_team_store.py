@@ -752,42 +752,68 @@ def test_same_rating_resubmit_keeps_resolution(owned_project_mysql: IsolatedMysq
     asyncio.run(scenario())
 
 
-def test_sync_lag(owned_project_mysql: IsolatedMysql) -> None:
+def test_oldest_unsynced_age(owned_project_mysql: IsolatedMysql) -> None:
+    """Not run locally (no isolated MySQL): covers B1's redefined lag."""
+
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(
             owned_project_database_url(owned_project_mysql)
         )
         try:
-            recorded_at = _T0 + timedelta(hours=10)
-            cursor_position = recorded_at - timedelta(minutes=12)
+            now = _T0 + timedelta(hours=10)
+            settle = timedelta(seconds=60)
+            store = _store(sessions)
+
+            async def add_span(recorded_at) -> None:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        sa.insert(trace_span).values(
+                            trace_id=uuid4().hex,
+                            span_id=uuid4().hex[:16],
+                            parent_span_id=None,
+                            turn_id=None,
+                            job_id=None,
+                            service_name="tap-ai",
+                            name="turn.request",
+                            status="DEFAULT",
+                            status_message=None,
+                            started_at=_T0,
+                            duration_ms=10,
+                            attributes=None,
+                            recorded_at=recorded_at,
+                            **_scope_values(VALIDATION_SCOPE),
+                        )
+                    )
+
+            # No spans at all.
+            assert await store.oldest_unsynced_age(now=now, settle=settle) is None
+
+            # A span older than the settle window and no cursor row: unsynced.
+            await add_span(now - timedelta(minutes=12))
+            assert (
+                await store.oldest_unsynced_age(now=now, settle=settle)
+                == timedelta(minutes=12) - settle
+            )
+
+            # The cursor has caught up with it: nothing is behind.
             async with engine.begin() as connection:
                 await connection.execute(
-                    sa.insert(trace_span).values(
-                        trace_id=uuid4().hex,
-                        span_id=uuid4().hex[:16],
-                        parent_span_id=None,
-                        turn_id=None,
-                        job_id=None,
-                        service_name="tap-ai",
-                        name="turn.request",
-                        status="DEFAULT",
-                        status_message=None,
-                        started_at=_T0,
-                        duration_ms=10,
-                        attributes=None,
-                        recorded_at=recorded_at,
-                        **_scope_values(VALIDATION_SCOPE),
-                    )
-                )
-                await connection.execute(
                     sa.insert(langfuse_sync_cursor).values(
-                        name=_TRACE_CURSOR, position=cursor_position
+                        name=_TRACE_CURSOR, position=now - timedelta(minutes=12)
                     )
                 )
+            assert await store.oldest_unsynced_age(now=now, settle=settle) is None
 
-            store = _store(sessions)
-            lag = await store.sync_lag()
-            assert lag == timedelta(minutes=12)
+            # A span still inside the settle window is not behind yet...
+            await add_span(now - timedelta(seconds=30))
+            assert await store.oldest_unsynced_age(now=now, settle=settle) is None
+
+            # ...but a settled span past the cursor is, measured past its settle deadline.
+            await add_span(now - timedelta(minutes=7))
+            assert (
+                await store.oldest_unsynced_age(now=now, settle=settle)
+                == timedelta(minutes=7) - settle
+            )
         finally:
             await engine.dispose()
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tap.interfaces.http.app import create_app
@@ -134,7 +135,8 @@ class FakeStore:
         del period
         return set()
 
-    async def sync_lag(self) -> timedelta | None:
+    async def oldest_unsynced_age(self, *, now: datetime, settle: timedelta) -> timedelta | None:
+        del now, settle
         return None
 
     async def actor_exists(self, actor_id: str) -> bool:
@@ -519,6 +521,25 @@ def test_history_bad_cursor_returns_cursor_invalid() -> None:
 
     assert response.status_code == 400
     assert response.json()["code"] == "cursor_invalid"
+
+
+def test_history_empty_cursor_returns_cursor_invalid() -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/members/agent-1/history?cursor=")
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "cursor_invalid"
+
+
+@pytest.mark.parametrize("query", ["status=bogus", "kind=bogus"])
+def test_members_invalid_filter_returns_filter_invalid(query: str) -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/members?{PERIOD_QS}&{query}")
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "filter_invalid"
 
 
 def test_history_unknown_agent_returns_agent_not_found() -> None:

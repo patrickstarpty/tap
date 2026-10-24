@@ -4,6 +4,7 @@ Langfuse involved."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -126,12 +127,15 @@ class FakeStore:
     active_actor_set: set[str] = field(default_factory=set)
     existing_actors: set[str] = field(default_factory=set)
     lag: timedelta | None = None
+    lag_queries: list[tuple[datetime, timedelta]] = dataclasses.field(default_factory=list)
     resolved: dict[str, ResolvedFeedback] = field(default_factory=dict)
     events: list[MaintenanceEvent] = field(default_factory=list)
     pending_feedback_calls: int = 0
     maintenance_counts_calls: int = 0
+    agents_calls: int = 0
 
     async def agents(self) -> list[AgentRecord]:
+        self.agents_calls += 1
         return list(self.agent_records.values())
 
     async def agent(self, agent_id: str) -> AgentRecord | None:
@@ -163,7 +167,8 @@ class FakeStore:
     async def active_actors(self, period: Period) -> set[str]:
         return set(self.active_actor_set)
 
-    async def sync_lag(self) -> timedelta | None:
+    async def oldest_unsynced_age(self, *, now: datetime, settle: timedelta) -> timedelta | None:
+        self.lag_queries.append((now, settle))
         return self.lag
 
     async def actor_exists(self, actor_id: str) -> bool:
@@ -356,6 +361,24 @@ async def test_sync_lag_over_5_minutes_is_syncing():
 
 
 @pytest.mark.asyncio
+async def test_sync_lag_asks_store_with_service_clock_and_settle_window():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, lag=timedelta(minutes=5))
+    service = _service(store, FakeMetrics(), check_sync_lag=True)
+    view = await service.summary(_PERIOD)
+    # Exactly the 5 minute threshold is not "behind"; and the store is asked
+    # with the service clock and the default 60 s settle window.
+    assert view.runtime_status == "ok"
+    assert store.lag_queries and store.lag_queries[0] == (_NOW, timedelta(seconds=60))
+
+
+@pytest.mark.asyncio
+async def test_sync_lag_none_means_ok():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, lag=None)
+    service = _service(store, FakeMetrics(), check_sync_lag=True)
+    assert (await service.summary(_PERIOD)).runtime_status == "ok"
+
+
+@pytest.mark.asyncio
 async def test_writes_bypass_runtime_cache():
     store = FakeStore(
         agent_records={"agent-1": _agent("agent-1", owner_actor_id="owner-1")},
@@ -468,7 +491,7 @@ async def test_members_invalid_sort_field_rejected():
     store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
     service = _service(store, FakeMetrics())
     with pytest.raises(AgentTeamRejected) as exc_info:
-        await service.members(_PERIOD, sort="owner_actor_id")
+        await service.members(_PERIOD, sort="agent_key")
     assert exc_info.value.code == "sort_invalid"
 
 
@@ -479,6 +502,31 @@ async def test_members_invalid_order_rejected():
     with pytest.raises(AgentTeamRejected) as exc_info:
         await service.members(_PERIOD, order="sideways")
     assert exc_info.value.code == "sort_invalid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field_name", ["job_title", "owner_actor_id", "status", "kind"])
+async def test_members_sort_by_personnel_columns_is_deterministic(field_name):
+    store = FakeStore(
+        agent_records={
+            "agent-b": _agent("agent-b", owner_actor_id="owner-2", job_title="QA"),
+            "agent-a": _agent("agent-a", owner_actor_id="owner-1", job_title="Dev"),
+            "agent-c": _agent("agent-c", owner_actor_id="owner-1", enabled=False),
+        }
+    )
+    service = _service(store, FakeMetrics())
+    asc = await service.members(_PERIOD, sort=field_name, order="asc")
+    desc = await service.members(_PERIOD, sort=field_name, order="desc")
+    keys = [row.agent_key for row in asc.data]
+    assert sorted(keys) == ["agent-a", "agent-b", "agent-c"]
+    assert keys == [
+        row.agent_key for row in (await service.members(_PERIOD, sort=field_name, order="asc")).data
+    ]
+    if field_name == "job_title":
+        assert keys[:2] == ["agent-a", "agent-b"]  # Dev < QA; missing last
+        assert [row.agent_key for row in desc.data][-1] == "agent-c"
+    if field_name == "owner_actor_id":
+        assert keys == ["agent-a", "agent-c", "agent-b"]
 
 
 @pytest.mark.asyncio
@@ -523,6 +571,27 @@ async def test_person_issues_one_round_of_store_queries():
     await service.person("owner-1", _PERIOD)
     assert store.pending_feedback_calls == 1
     assert store.maintenance_counts_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_each_view_loads_the_roster_once():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    service = _service(store, FakeMetrics())
+    await service.summary(_PERIOD)
+    assert store.agents_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_report_computed_at_is_the_oldest_cached_fetch():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    ticks = iter(_NOW - timedelta(minutes=n) for n in range(100))
+    cached = CachedRuntimeMetrics(FakeMetrics(), now=lambda: next(ticks))
+    service = AgentTeamService(store, cached, scope=_scope(), clock=_clock)
+    view = await service.report(_PERIOD)
+    # Every fetch gets an earlier timestamp than the one before; the report
+    # must surface the oldest of the two periods' data, not either period's
+    # newest.
+    assert view.computed_at == _NOW - timedelta(minutes=5)
 
 
 def _pending(feedback_id: str, agent_key: str) -> PendingFeedback:
@@ -610,3 +679,84 @@ async def test_blank_job_title_normalized_to_none():
     store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
     record = await _service(store, FakeMetrics()).update_job_title("agent-1", "   ")
     assert record.job_title is None
+
+
+@pytest.mark.asyncio
+async def test_hanging_second_fetch_is_negative_cached_across_views():
+    class _HangingTrend(FakeMetrics):
+        trend_calls: int = 0
+
+        async def trend(self, project_id, period, granularity):
+            self.trend_calls += 1
+            await asyncio.sleep(3600)
+            return []
+
+    metrics = _HangingTrend()
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    cached = CachedRuntimeMetrics(metrics, now=lambda: _NOW)
+    service = AgentTeamService(
+        store, cached, scope=_scope(), clock=_clock, runtime_timeout_seconds=0.05
+    )
+
+    first = await service.summary(_PERIOD)
+    second = await service.summary(_PERIOD)
+
+    # The first two fetches were fast; the third hung and ran out the shared
+    # deadline, so its failure is cached and the next view never re-asks.
+    assert first.runtime_status == "unavailable"
+    assert second.runtime_status == "unavailable"
+    assert metrics.trend_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_member_sort_ties_break_by_name_and_status_kind_use_domain_rank():
+    store = FakeStore(
+        agent_records={
+            "agent-c": _agent("agent-c", enabled=False),
+            "agent-b": _agent("agent-b", source_kind="built_in"),
+            "agent-a": _agent("agent-a"),
+            "agent-d": _agent("agent-d"),
+        }
+    )
+    service = _service(store, FakeMetrics())
+    # Names follow ids ("Agent agent-a" ...). All four have 0 runs: ties.
+    for order in ("asc", "desc"):
+        view = await service.members(_PERIOD, sort="runs", order=order)
+        assert [r.agent_key for r in view.data if r.kind != "tapper_default"] == [
+            "agent-a",
+            "agent-b",
+            "agent-c",
+            "agent-d",
+        ]
+    # Status: idle (a, b, d have no runs) < disabled (c); names break ties.
+    asc = await service.members(_PERIOD, sort="status", order="asc")
+    assert [r.agent_key for r in asc.data if r.status == "idle"] == [
+        "agent-a",
+        "agent-b",
+        "agent-d",
+    ]
+    assert asc.data[-1].agent_key == "agent-c"
+    desc = await service.members(_PERIOD, sort="status", order="desc")
+    assert desc.data[0].agent_key == "agent-c"
+    assert [r.agent_key for r in desc.data if r.status == "idle"] == [
+        "agent-a",
+        "agent-b",
+        "agent-d",
+    ]
+    # Kind: custom (a, c, d) < built_in (b); names break ties either way.
+    for order, expected in (
+        ("asc", ["agent-a", "agent-c", "agent-d", "agent-b"]),
+        ("desc", ["agent-b", "agent-a", "agent-c", "agent-d"]),
+    ):
+        by_kind = await service.members(_PERIOD, sort="kind", order=order)
+        assert [r.agent_key for r in by_kind.data] == expected
+
+
+def test_naive_converts_to_utc_before_stripping_tzinfo():
+    from datetime import timezone
+
+    from tap.modules.agent_team.adapters.mysql import _naive
+
+    plus8 = timezone(timedelta(hours=8))
+    assert _naive(datetime(2026, 10, 23, 8, 0, tzinfo=plus8)) == datetime(2026, 10, 23, 0, 0)
+    assert _naive(datetime(2026, 10, 23, 8, 0)) == datetime(2026, 10, 23, 8, 0)

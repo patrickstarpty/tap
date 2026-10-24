@@ -1,3 +1,4 @@
+import { Button } from "antd";
 import { useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -118,13 +119,15 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
     <div className="tap-team-report-controls">
       <PeriodPicker copy={copy} value={selection} onChange={setSelection} />
       <div className="tap-team-report-actions">
-        <button type="button" onClick={() => window.print()}>
-          {text.exportPdf}
-        </button>
+        <Button onClick={() => window.print()}>{text.exportPdf}</Button>
         {rangeInvalid ? null : (
-          <a href={agentTeamExportUrl(projectId, period)} download>
+          <Button
+            type="primary"
+            href={agentTeamExportUrl(projectId, period)}
+            download
+          >
             {text.exportCsv}
-          </a>
+          </Button>
         )}
       </div>
     </div>
@@ -301,7 +304,12 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
         {trend.length === 0 ? (
           <p>{labels.noTrend}</p>
         ) : (
-          <TrendChart series={trend} unit={text.metrics.runs} locale={locale} />
+          <TrendChart
+            series={trend}
+            unit={text.metrics.runs}
+            locale={locale}
+            hint={text.team.chartHint}
+          />
         )}
       </section>
       <section className="tap-team-report-section">

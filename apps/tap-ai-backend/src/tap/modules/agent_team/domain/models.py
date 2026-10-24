@@ -54,8 +54,6 @@ class Period:
 
     @staticmethod
     def parse(from_: date, to: date) -> Period:
-        if from_ > to:
-            raise PeriodInvalid("period start must not be after end")
         return Period(from_, to)
 
     @property

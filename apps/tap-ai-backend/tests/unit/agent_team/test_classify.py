@@ -82,3 +82,12 @@ def test_no_skill_change_at_all_is_revised():
     skill_of = {"s1r1": "skill-1"}
 
     assert classify_revision(previous, current, skill_of) == "revised"
+
+
+def test_unresolvable_skill_ids_are_revised_not_upgraded():
+    previous = _revision(skill_revision_ids=("gone-1",))
+    current = _revision(revision_id="agent-rev-2", skill_revision_ids=("gone-2",))
+
+    assert classify_revision(previous, current, {}) == "revised"
+    assert classify_revision(previous, current, {"gone-1": "skill-1"}) == "revised"
+    assert classify_revision(previous, current, {"gone-2": "skill-1"}) == "revised"

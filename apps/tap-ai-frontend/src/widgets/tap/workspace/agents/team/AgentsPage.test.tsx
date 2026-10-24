@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  useTeamMember,
   useTeamMembers,
   useOrgChart,
   useTeamPeople,
@@ -22,6 +23,7 @@ vi.mock(
     return {
       ...actual,
       useTeamSummary: vi.fn(),
+      useTeamMember: vi.fn(),
       useTeamMembers: vi.fn(),
       useTeamPeople: vi.fn(),
       useOrgChart: vi.fn(),
@@ -82,6 +84,67 @@ function mockSummary(runtimeStatus: "ok" | "unavailable" = "ok") {
         idle: null,
         latencyTotalMs: null,
         costUsd: null,
+      },
+    },
+  } as never);
+}
+
+const MEMBER = {
+  agentKey: "a1",
+  name: "Reviewer",
+  kind: "custom",
+  jobTitle: null,
+  ownerActorId: "alice",
+  status: "active",
+  runs: 3,
+  failures: 0,
+  abstained: 0,
+  canceled: 0,
+  latencyTotalMs: 10,
+  latencyP50Ms: 5,
+  costUsd: "1",
+  servedCount: 1,
+  topServed: [],
+  lastRunAt: null,
+  satisfaction: null,
+  satisfactionSample: "insufficient",
+  lastMaintenanceAt: null,
+  joinedAt: "2026-09-01T00:00:00Z",
+  pendingFeedback: 0,
+  maintenance: {},
+  trend: [],
+  generationCalls: 1,
+  toolCalls: 1,
+  callsPerRun: 2,
+};
+
+/** Team tab with one roster member whose profile can be opened. */
+function mockRosterAndProfile() {
+  mockSummary();
+  const base = {
+    runtimeStatus: "ok",
+    computedAt: "2026-10-23T08:00:00Z",
+    timezone: "UTC",
+    period: { from: "2026-09-24", to: "2026-10-23" },
+    granularity: "day",
+  };
+  vi.mocked(useTeamMembers).mockReturnValue({
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    data: { ...base, data: [MEMBER] },
+  } as never);
+  vi.mocked(useTeamMember).mockReturnValue({
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    data: {
+      ...base,
+      data: {
+        row: MEMBER,
+        currentRevisionId: "rev-7",
+        served: [],
+        pendingFeedback: [],
       },
     },
   } as never);
@@ -217,5 +280,73 @@ describe("AgentsPage", () => {
       screen.getByText("Start date must be on or before end date"),
     ).toBeVisible();
     expect(useTeamSummary).not.toHaveBeenCalled();
+  });
+
+  it("heads each analytics panel like the Configuration tab", async () => {
+    mockSummary();
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        configTab={<p>config content</p>}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Agent team",
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "Report" }));
+    expect(
+      screen.getByText(WORKSPACE_COPY.en.agentTeam.descriptions.report),
+    ).toBeVisible();
+  });
+
+  it("returns focus to the card that opened the profile", async () => {
+    mockRosterAndProfile();
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        configTab={<p>config content</p>}
+      />,
+    );
+    const opener = screen.getByRole("button", { name: "Reviewer" });
+    await userEvent.click(opener);
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", {
+        name: WORKSPACE_COPY.en.agentTeam.profile.close,
+      }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it("View configuration opens the Configuration tab with the revision id", async () => {
+    mockRosterAndProfile();
+    const received: (string | null)[] = [];
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        configTab={(request) => {
+          received.push(request.initialDetailRevisionId);
+          return <p>config content</p>;
+        }}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: WORKSPACE_COPY.en.agentTeam.viewConfig,
+      }),
+    );
+    expect(screen.getByRole("tab", { name: "Configuration" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("config content")).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(received).toContain("rev-7");
+    expect(window.location.search).toContain("agentsTab=config");
   });
 });

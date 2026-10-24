@@ -60,6 +60,19 @@ describe("OrgChart", () => {
     expect(dimmed()).toEqual(["false", "false", "false"]);
   });
 
+  it("tells assistive technology which nodes are dimmed", async () => {
+    setup();
+    const description = (name: string) =>
+      screen.getByRole("button", { name }).getAttribute("aria-description");
+    expect(description("bob")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "alice" }));
+    const dimmed = copy.agentTeam.team.orgChartDimmed;
+    expect(description("alice")).toBeNull();
+    expect(description("bob")).toBe(dimmed);
+    expect(description("Reviewer")).toBeNull();
+    expect(description("Tapper default")).toBe(dimmed);
+  });
+
   it("opens an agent from click and keyboard", async () => {
     const { onOpen } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Reviewer" }));

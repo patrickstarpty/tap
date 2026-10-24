@@ -14573,16 +14573,16 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "active",
-                    "idle",
-                    "disabled"
-                  ],
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
+              ],
+              "enum": [
+                "active",
+                "idle",
+                "disabled"
               ],
               "title": "Status"
             }
@@ -14594,16 +14594,16 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": [
-                    "custom",
-                    "built_in",
-                    "tapper_default"
-                  ],
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
+              ],
+              "enum": [
+                "custom",
+                "built_in",
+                "tapper_default"
               ],
               "title": "Kind"
             }
@@ -14837,14 +14837,14 @@
             "schema": {
               "anyOf": [
                 {
-                  "maxLength": 2048,
-                  "minLength": 1,
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "maxLength": 2048,
+              "minLength": 1,
               "title": "Cursor"
             }
           }

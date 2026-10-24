@@ -6747,8 +6747,8 @@ export interface operations {
         parameters: {
             query: {
                 owner?: string | null;
-                status?: ("active" | "idle" | "disabled") | null;
-                kind?: ("custom" | "built_in" | "tapper_default") | null;
+                status?: "active" | "idle" | "disabled";
+                kind?: "custom" | "built_in" | "tapper_default";
                 sort?: string;
                 order?: string;
                 from: string;

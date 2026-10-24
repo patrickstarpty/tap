@@ -76,22 +76,22 @@ export function RosterTable({
     },
     {
       title: cols.jobTitle,
-      key: "jobTitle",
+      ...sortable("job_title"),
       render: (_: unknown, row) => row.jobTitle ?? labels.noJobTitle,
     },
     {
       title: cols.owner,
-      key: "owner",
+      ...sortable("owner_actor_id"),
       render: (_: unknown, row) => ownerName(row, ctx.copy),
     },
     {
       title: cols.status,
-      key: "status",
+      ...sortable("status"),
       render: (_: unknown, row) => <StatusValue row={row} ctx={ctx} />,
     },
     {
       title: cols.kind,
-      key: "kind",
+      ...sortable("kind"),
       render: (_: unknown, row) => labels.kinds[row.kind],
     },
     {

@@ -11,6 +11,7 @@ retry the inner adapter on every view; other exceptions are never stored.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -69,18 +70,25 @@ class CachedRuntimeMetrics:
         *,
         ttl_seconds: int = 300,
         failure_ttl_seconds: int = 30,
+        fetch_timeout_seconds: float | None = 8.0,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = _default_now,
     ) -> None:
         self._inner = inner
         self._ttl_seconds = ttl_seconds
         self._failure_ttl_seconds = failure_ttl_seconds
+        self._fetch_timeout_seconds = fetch_timeout_seconds
         self._clock = clock
         self._now = now
         self._entries: dict[_CacheKey, _CacheEntry] = {}
         self._failures: dict[_CacheKey, tuple[float, RuntimeMetricsUnavailable]] = {}
 
-    async def _cached(self, key: _CacheKey, fetch: Callable[[], Awaitable[_T]]) -> _T:
+    async def _cached(
+        self,
+        key: _CacheKey,
+        fetch: Callable[[], Awaitable[_T]],
+        timeout_seconds: float | None = None,
+    ) -> _T:
         entry = self._entries.get(key)
         if entry is not None and self._clock() < entry.expires_at:
             return entry.value  # type: ignore[return-value]
@@ -89,8 +97,25 @@ class CachedRuntimeMetrics:
             if self._clock() < failure[0]:
                 raise failure[1]
             del self._failures[key]
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            # The caller's view deadline is already spent: this key was never
+            # tried, so it is neither fetched nor negative-cached.
+            raise RuntimeMetricsUnavailable("view deadline exhausted")
         try:
-            value = await fetch()
+            # Bounded here by min(per-fetch cap, the caller's remaining view
+            # deadline): if the service's own timeout fired first it would
+            # cancel this fetch before it could raise, and a hanging backend
+            # would never be negative-cached.
+            limits = [
+                limit
+                for limit in (self._fetch_timeout_seconds, timeout_seconds)
+                if limit is not None
+            ]
+            try:
+                async with asyncio.timeout(min(limits) if limits else None):
+                    value = await fetch()
+            except TimeoutError as error:
+                raise RuntimeMetricsUnavailable("runtime metrics query timed out") from error
         except RuntimeMetricsUnavailable as exc:
             if self._failure_ttl_seconds > 0:
                 self._failures[key] = (self._clock() + self._failure_ttl_seconds, exc)
@@ -112,30 +137,45 @@ class CachedRuntimeMetrics:
         for key in [k for k, (until, _) in self._failures.items() if now >= until]:
             del self._failures[key]
 
-    async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+    async def agent_stats(
+        self, project_id: str, period: Period, *, timeout_seconds: float | None = None
+    ) -> list[AgentRuntimeStats]:
         key: _CacheKey = (project_id, _period_key(period), "stats")
 
         async def fetch() -> list[AgentRuntimeStats]:
             return await self._inner.agent_stats(project_id, period)
 
-        return await self._cached(key, fetch)
+        return await self._cached(key, fetch, timeout_seconds)
 
-    async def trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
+    async def trend(
+        self,
+        project_id: str,
+        period: Period,
+        granularity: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> list[TrendPoint]:
         key: _CacheKey = (project_id, _period_key(period), f"trend:{granularity}")
 
         async def fetch() -> list[TrendPoint]:
             return await self._inner.trend(project_id, period, granularity)
 
-        return await self._cached(key, fetch)
+        return await self._cached(key, fetch, timeout_seconds)
 
-    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+    async def last_runs(
+        self,
+        project_id: str,
+        agent_keys: Sequence[str],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, datetime]:
         sorted_keys = tuple(sorted(agent_keys))
         key: _CacheKey = (project_id, None, ("last_runs", sorted_keys))
 
         async def fetch() -> dict[str, datetime]:
             return await self._inner.last_runs(project_id, agent_keys)
 
-        return await self._cached(key, fetch)
+        return await self._cached(key, fetch, timeout_seconds)
 
     def computed_at(self, project_id: str, period: Period | None, kind: _Kind) -> datetime | None:
         """The UTC wall-clock time the cached value for `(project_id, period,

@@ -2128,6 +2128,7 @@ def _create_agent_team_service(
         scope=scope,
         clock=lambda: datetime.now(UTC),
         check_sync_lag=check_sync_lag,
+        sync_settle_seconds=settings.langfuse_sync_settle_seconds,
     )
 
 

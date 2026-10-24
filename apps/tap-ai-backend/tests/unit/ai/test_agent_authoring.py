@@ -7,6 +7,7 @@ exercise only the service's own validation and orchestration logic.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -453,3 +454,16 @@ async def test_outdated_skill_ids_flags_disabled_bound_revision() -> None:
     outdated = await service.outdated_skill_ids(VALIDATION_SCOPE, agent)
 
     assert outdated == frozenset({"skill-rev-1"})
+
+
+@pytest.mark.asyncio
+async def test_set_asset_enabled_rejects_an_event_on_a_skill() -> None:
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE as scope
+    from tap.modules.agent_team.domain.models import new_event
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+
+    # The guard fires before any session is opened, so no database is needed.
+    catalog = MysqlAssetCatalog(None, scope=scope)  # type: ignore[arg-type]
+    event = new_event(scope, "skill-1", "disabled", now=datetime.now(UTC))
+    with pytest.raises(AssetRevisionRejected):
+        await catalog.set_asset_enabled("skill", "skill-1", False, event=event)

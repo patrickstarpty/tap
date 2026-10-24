@@ -7,8 +7,8 @@ All logic lives in ``AgentTeamService`` (Task 7) and ``build_export`` (Task
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
-from typing import Any
+from datetime import date
+from typing import Any, get_args
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
@@ -46,7 +46,9 @@ from tap.interfaces.http.scope import project_authorization
 from tap.modules.agent_team.application.export import build_export
 from tap.modules.agent_team.application.service import (
     AgentTeamRejected,
+    AgentTeamService,
     MemberDetail,
+    PeriodReport,
     PersonDetail,
     TeamReport,
 )
@@ -60,7 +62,7 @@ from tap.modules.agent_team.domain.models import (
     PeriodInvalid,
     PersonRow,
     TeamSummary,
-    trailing_30_days,
+    TeamView,
 )
 from tap.modules.agent_team.ports import PendingFeedback, ResolvedFeedback, ServedActor, TrendPoint
 
@@ -90,6 +92,14 @@ def _parse_period(from_: str, to: str) -> Period:
         return Period.parse(start, end)
     except PeriodInvalid as exc:
         raise AgentTeamRejected("period_invalid", str(exc)) from exc
+
+
+def _closed_choice(value: str | None, allowed: tuple[str, ...], name: str) -> Any:
+    """Maps an out-of-vocabulary filter value to the closed `filter_invalid`
+    400 rather than FastAPI's generic 422."""
+    if value is not None and value not in allowed:
+        raise AgentTeamRejected("filter_invalid", f"invalid {name} {value!r}")
+    return value
 
 
 def _period_query(
@@ -248,7 +258,7 @@ def _history_event_dto(event: MaintenanceEvent) -> AgentTeamHistoryEvent:
     )
 
 
-def _period_report_dto(report) -> AgentTeamPeriodReport:
+def _period_report_dto(report: PeriodReport) -> AgentTeamPeriodReport:
     return AgentTeamPeriodReport(
         summary=_summary_dto(report.summary),
         members=[_member_dto(row) for row in report.members],
@@ -264,7 +274,7 @@ def _team_report_dto(report: TeamReport) -> AgentTeamReport:
     )
 
 
-def _envelope_kwargs(view) -> dict:
+def _envelope_kwargs(view: TeamView[Any]) -> dict[str, Any]:
     return {
         "runtime_status": view.runtime_status,
         "computed_at": view.computed_at,
@@ -302,16 +312,21 @@ async def list_members(
     request: Request,
     period: Period = Depends(_period_query),
     owner: str | None = Query(default=None),
-    status: MemberStatus | None = Query(default=None),
-    kind: AgentKind | None = Query(default=None),
+    # Plain `str` (not the Literal) so an unknown value reaches
+    # `_closed_choice` and maps to 400 `filter_invalid`, not FastAPI's 422;
+    # the allowed values stay documented in the schema.
+    status: str | None = Query(
+        default=None, json_schema_extra={"enum": list(get_args(MemberStatus))}
+    ),
+    kind: str | None = Query(default=None, json_schema_extra={"enum": list(get_args(AgentKind))}),
     sort: str = Query(default="runs"),
     order: str = Query(default="desc"),
 ) -> AgentTeamMembersView:
     view = await agent_team_service(request).members(
         period,
         owner=owner,
-        status=status,
-        kind=kind,
+        status=_closed_choice(status, get_args(MemberStatus), "status"),
+        kind=_closed_choice(kind, get_args(AgentKind), "kind"),
         sort=sort,
         order=order,
     )
@@ -344,8 +359,10 @@ async def get_member(
 async def get_member_history(
     request: Request,
     agent_key: str,
-    cursor: str | None = Query(default=None, min_length=1, max_length=2048),
+    cursor: str | None = Query(default=None, json_schema_extra={"minLength": 1, "maxLength": 2048}),
 ) -> AgentTeamHistoryPage:
+    if cursor is not None and not 1 <= len(cursor) <= 2048:
+        raise AgentTeamRejected("cursor_invalid", "cursor must be 1-2048 characters")
     page = await agent_team_service(request).history(agent_key, cursor)
     return AgentTeamHistoryPage(
         events=[_history_event_dto(event) for event in page.events],
@@ -491,11 +508,8 @@ async def _member_row_for(request: Request, agent_id: str) -> MemberRow:
     """`update_job_title`/`transfer_owner` write only personnel fields on the
     MySQL `AgentRecord`, but the public contract returns the full `MemberRow`
     (personnel fields merged with runtime metrics), consistent with every
-    other Agent team response. Neither write takes a period, so the trailing
-    30-day window already used to classify "active"/"idle" (spec 1.4) is the
-    one period both writes re-read the roster entry with."""
+    other Agent team response. The service re-reads it over the trailing
+    30-day window (spec 1.4) ending on its own clock's "today"."""
 
-    view = await agent_team_service(request).member(
-        agent_id, trailing_30_days(datetime.now(UTC).date())
-    )
-    return view.data.row
+    service: AgentTeamService = agent_team_service(request)
+    return await service.member_row(agent_id)

@@ -42,7 +42,10 @@ def classify_revision(
         if old_id == new_id:
             continue
         any_changed = True
-        if skill_of.get(old_id) != skill_of.get(new_id):
+        old_skill, new_skill = skill_of.get(old_id), skill_of.get(new_id)
+        # An unresolvable revision (deleted/unknown) cannot be shown to be the
+        # same Skill, so it never counts as an upgrade.
+        if old_skill is None or new_skill is None or old_skill != new_skill:
             return "revised"
     if not any_changed:
         return "revised"

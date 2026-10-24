@@ -135,7 +135,8 @@ class FakeStore:
         del period
         return set()
 
-    async def sync_lag(self) -> timedelta | None:
+    async def oldest_unsynced_age(self, *, now: datetime, settle: timedelta) -> timedelta | None:
+        del now, settle
         return None
 
     async def actor_exists(self, actor_id: str) -> bool:

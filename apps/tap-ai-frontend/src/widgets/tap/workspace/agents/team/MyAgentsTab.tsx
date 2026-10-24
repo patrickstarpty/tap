@@ -68,7 +68,10 @@ export function MyAgentsTab({
         timezone={view.timezone}
         copy={copy}
       />
-      <section aria-labelledby="my-agents-feedback">
+      <section
+        className="tap-team-section"
+        aria-labelledby="my-agents-feedback"
+      >
         <h3 id="my-agents-feedback">{text.pendingFeedbackMine}</h3>
         {pendingFeedback.length === 0 ? (
           <p className="tap-team-empty">{labels.noFeedback}</p>
@@ -92,7 +95,7 @@ export function MyAgentsTab({
           </ul>
         )}
       </section>
-      <section aria-labelledby="my-agents-owned">
+      <section className="tap-team-section" aria-labelledby="my-agents-owned">
         <h3 id="my-agents-owned">{labels.ownedHeading}</h3>
         {owned.length === 0 ? (
           <p className="tap-team-empty">{labels.noOwned}</p>
@@ -105,7 +108,7 @@ export function MyAgentsTab({
           />
         )}
       </section>
-      <section aria-labelledby="my-agents-served">
+      <section className="tap-team-section" aria-labelledby="my-agents-served">
         <h3 id="my-agents-served">{labels.servedHeading}</h3>
         {served.length === 0 ? (
           <p className="tap-team-empty">{labels.noServed}</p>

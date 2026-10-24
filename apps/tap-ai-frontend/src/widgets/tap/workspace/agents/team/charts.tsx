@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 
 import { formatCount } from "./format";
 
@@ -73,10 +73,13 @@ export function TrendChart({
   series,
   unit,
   locale = "en",
+  hint,
 }: {
   series: TrendSeries[];
   unit: string;
   locale?: string;
+  /** Localized keyboard instructions, announced with the chart. */
+  hint?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   // Series share one x-axis keyed by bucket, not by array position.
@@ -96,6 +99,25 @@ export function TrendChart({
     CHART_H - PAD - (value / span) * (CHART_H - PAD * 2);
   const slot = length > 0 ? (CHART_W - PAD * 2) / Math.max(length - 1, 1) : 0;
   const hoverKey = hover === null ? undefined : keys[hover];
+  const labelOf = (key: string) => {
+    for (const s of series) {
+      const point = s.points.find((p) => p.bucket === key);
+      if (point !== undefined) return point.label ?? point.bucket;
+    }
+    return key;
+  };
+  // Arrow keys move the readout, so the chart is usable without a pointer.
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (length === 0) return;
+    const current = hover ?? length - 1;
+    if (event.key === "ArrowRight") setHover(Math.min(current + 1, length - 1));
+    else if (event.key === "ArrowLeft") setHover(Math.max(current - 1, 0));
+    else if (event.key === "Home") setHover(0);
+    else if (event.key === "End") setHover(length - 1);
+    else if (event.key === "Escape") setHover(null);
+    else return;
+    event.preventDefault();
+  };
   const readout = series.flatMap((s) => {
     const point = s.points.find((p) => p.bucket === hoverKey);
     return point === undefined
@@ -110,12 +132,28 @@ export function TrendChart({
   });
   return (
     <div className="tap-team-trend">
+      {length === 0 ? null : (
+        <div className="tap-team-trend-ymax" aria-hidden="true">
+          {formatCount(max, locale)} {unit}
+        </div>
+      )}
       <svg
-        role="img"
+        role="group"
+        aria-roledescription="chart"
+        aria-description={hint}
+        tabIndex={0}
         aria-label={series.map((s) => s.label).join(", ") + ` (${unit})`}
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
         width="100%"
+        height={CHART_H}
+        preserveAspectRatio="none"
+        className="tap-team-trend-svg"
         onMouseLeave={() => setHover(null)}
+        onKeyDown={onKeyDown}
+        onFocus={() =>
+          setHover((prev) => prev ?? (length > 0 ? length - 1 : null))
+        }
+        onBlur={() => setHover(null)}
       >
         <line
           x1={PAD}
@@ -132,6 +170,7 @@ export function TrendChart({
               stroke={SERIES_COLORS[si % SERIES_COLORS.length]}
               strokeWidth={2}
               strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
               points={s.points
                 .map((p) => `${x(indexOf.get(p.bucket) ?? 0)},${y(p.value)}`)
                 .join(" ")}
@@ -145,6 +184,7 @@ export function TrendChart({
             y1={PAD}
             y2={CHART_H - PAD}
             stroke="var(--tap-line-strong)"
+            vectorEffect="non-scaling-stroke"
           />
         )}
         {Array.from({ length }, (_, i) => (
@@ -160,6 +200,25 @@ export function TrendChart({
           />
         ))}
       </svg>
+      {length === 0 ? null : (
+        <div className="tap-team-trend-axis" aria-hidden="true">
+          <span>{labelOf(keys[0])}</span>
+          <span>{labelOf(keys[length - 1])}</span>
+        </div>
+      )}
+      {series.length > 1 ? (
+        <ul className="tap-team-trend-legend" aria-hidden="true">
+          {series.map((s, si) => (
+            <li key={s.label}>
+              <span
+                className="tap-team-trend-swatch"
+                style={{ background: SERIES_COLORS[si % SERIES_COLORS.length] }}
+              />
+              {s.label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="tap-team-trend-readout" aria-live="polite">
         {readout.map((r) => (
           <span key={r.label}>

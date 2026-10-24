@@ -69,11 +69,14 @@ interface Server {
   history: Array<Record<string, unknown>>;
   calls: string[];
   failTransfer: boolean;
+  runtimeStatus?: string;
+  /** Holds feedback-resolve responses until released. */
+  hold?: Promise<void>;
 }
 
 function install(server: Server) {
   const envelope = {
-    runtimeStatus: "ok",
+    runtimeStatus: server.runtimeStatus ?? "ok",
     computedAt: "2026-10-23T08:00:00Z",
     timezone: "UTC",
     period,
@@ -94,13 +97,15 @@ function install(server: Server) {
       server.calls.push(`${method} ${url}`);
       if (method === "POST" && url.includes("/feedback/")) {
         const id = url.split("/feedback/")[1].split("/")[0];
-        server.pending = server.pending.filter((f) => f.feedbackId !== id);
-        server.row.pendingFeedback = server.pending.length;
-        server.history = [
-          event("h-new", "feedback_resolved"),
-          ...server.history,
-        ];
-        return json({});
+        return (server.hold ?? Promise.resolve()).then(() => {
+          server.pending = server.pending.filter((f) => f.feedbackId !== id);
+          server.row.pendingFeedback = server.pending.length;
+          server.history = [
+            event("h-new", "feedback_resolved"),
+            ...server.history,
+          ];
+          return json({});
+        });
       }
       if (method === "POST" && url.endsWith("/owner")) {
         return server.failTransfer
@@ -314,11 +319,72 @@ describe("AgentProfileDrawer", () => {
     expect(onViewConfig).toHaveBeenCalledWith("rev-1");
   });
 
-  it("marks unavailable run data with a dash", async () => {
+  it("marks unavailable run data with a dash and the unavailable marker", async () => {
     const user = userEvent.setup();
-    renderDrawer(newServer());
+    renderDrawer(
+      newServer({
+        runtimeStatus: "unavailable",
+        row: member({
+          runs: null,
+          failures: null,
+          generationCalls: null,
+          toolCalls: null,
+          callsPerRun: null,
+          trend: [],
+        }),
+      }),
+    );
     await user.click(await tab("工作量"));
     await screen.findByText("工具调用");
     expect(screen.getAllByText(/—/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("运行数据暂不可用").length).toBeGreaterThan(1);
+  });
+
+  it("shows the status in Basics, not in Workload", async () => {
+    const user = userEvent.setup();
+    renderDrawer(newServer());
+    await user.click(await tab("基本信息"));
+    expect(await screen.findByText("状态")).toBeTruthy();
+    await user.click(await tab("工作量"));
+    await screen.findByText("工具调用");
+    expect(screen.queryByText("状态")).toBeNull();
+  });
+
+  it("hides the settings tab for built-in Agents", async () => {
+    renderDrawer(newServer({ row: member({ kind: "built_in" }) }));
+    await tab("基本信息");
+    expect(screen.queryByRole("tab", { name: "设置" })).toBeNull();
+  });
+
+  it("disables only the feedback item being resolved", async () => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const second = {
+      feedbackId: "f2",
+      agentKey: "a1",
+      actorId: "carol",
+      rating: "down",
+      comment: "also wrong",
+      conversationId: "c2",
+      turnId: "t2",
+      updatedAt: "2026-10-03T00:00:00Z",
+    };
+    const server = newServer({ hold });
+    server.pending.push(second);
+    renderDrawer(server);
+    await user.click(await tab("待处理反馈"));
+    const buttons = await screen.findAllByRole("button", {
+      name: "标记已处理",
+    });
+    expect(buttons).toHaveLength(2);
+    await user.click(buttons[0]);
+    await waitFor(() => expect(buttons[0]).toBeDisabled());
+    expect(buttons[1]).toBeEnabled();
+    release();
+    await waitFor(() => expect(screen.queryByText("wrong answer")).toBeNull());
+    expect(screen.getByText("also wrong")).toBeTruthy();
   });
 });

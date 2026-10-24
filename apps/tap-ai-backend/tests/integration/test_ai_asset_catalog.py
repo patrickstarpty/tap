@@ -965,3 +965,47 @@ async def test_new_agent_owner_defaults_to_creator(owned_project_mysql) -> None:
         assert row["owner_assigned_at"] == row["created_at"]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_disables_write_exactly_one_event(owned_project_mysql) -> None:
+    """B5 (not run locally: needs isolated MySQL): two simultaneous disables
+    of one Agent both pass the service's pre-check, but the conditional
+    UPDATE lets only the first record a maintenance event."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    import sqlalchemy as sa
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
+    from tap.modules.agent_team.domain.models import new_event
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        catalog = MysqlAssetCatalog(
+            async_sessionmaker(engine, expire_on_commit=False), scope=VALIDATION_SCOPE
+        )
+        from tap.modules.ai.application.assets import validation_asset_seed
+
+        await catalog.seed(validation_asset_seed(VALIDATION_SCOPE))
+        agent_id = (await catalog.list_agents(VALIDATION_SCOPE))[0].asset_id
+
+        def _event():
+            return new_event(VALIDATION_SCOPE, agent_id, "disabled", now=datetime.now(UTC))
+
+        await asyncio.gather(
+            catalog.set_asset_enabled("agent", agent_id, False, event=_event()),
+            catalog.set_asset_enabled("agent", agent_id, False, event=_event()),
+        )
+        async with engine.connect() as connection:
+            count = await connection.scalar(
+                sa.select(sa.func.count())
+                .select_from(agent_maintenance_event)
+                .where(agent_maintenance_event.c.kind == "disabled")
+            )
+        assert count == 1
+    finally:
+        await engine.dispose()
