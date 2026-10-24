@@ -299,7 +299,7 @@ test("an Agent joins the team, serves two turns, gets a thumbs-down that its own
   await page.goto("/");
   await openAgentsTab(page, "Team");
   const card = agentCard(page, agentName);
-  await expect(card).toContainText(/Runs in period\s*2\b/u);
+  await expect(card).toContainText(/Runs in period\s*2(?!\d)/u);
   await expect(card).toContainText(runtime.actorId);
 
   // Step 5: the owner resolves the pending feedback from the profile; the
