@@ -70,7 +70,13 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   expect(skillsResponse.status()).toBe(200);
   expect(modelsResponse.status()).toBe(200);
   const agents = (await agentsResponse.json()) as {
-    items: Array<{ revisionId: string; displayName: string }>;
+    items: Array<{
+      builtIn: boolean;
+      status: string;
+      isLatest: boolean;
+      revisionId: string;
+      displayName: string;
+    }>;
   };
   const skills = (await skillsResponse.json()) as {
     items: Array<{ revisionId: string; displayName: string }>;
@@ -82,7 +88,10 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   const defaultModel = models.items.find(
     (model) => model.alias === models.defaultAlias,
   );
-  expect(agents.items.length).toBeGreaterThan(0);
+  const agent = agents.items.find(
+    (item) => item.builtIn && item.status === "enabled" && item.isLatest,
+  );
+  expect(agent).toBeDefined();
   expect(skills.items.length).toBeGreaterThan(0);
   expect(defaultModel).toBeDefined();
 
@@ -93,9 +102,7 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     .check();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Agents" }).click();
-  await page
-    .getByRole("option", { name: agents.items[0]!.displayName })
-    .click();
+  await page.getByRole("option", { name: agent!.displayName }).click();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Skills" }).click();
   await page
@@ -518,7 +525,7 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       .getByText(prompt, { exact: true }),
   ).toBeVisible();
   await writeConversationState({
-    agentLabel: agents.items[0]!.displayName,
+    agentLabel: agent!.displayName,
     citationId: citationId!,
     conversationId: accepted.conversationId,
     modelAlias: models.defaultAlias,
