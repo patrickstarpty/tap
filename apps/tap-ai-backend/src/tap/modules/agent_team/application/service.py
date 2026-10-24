@@ -200,7 +200,10 @@ def _validate_sort(sort: str, order: str, allowed: frozenset[str]) -> None:
 
 _T = TypeVar("_T")
 
-_RUNTIME_LOAD_TIMEOUT_SECONDS = 10
+_RUNTIME_LOAD_TIMEOUT_SECONDS = 10.0
+# Safety net only: every cached fetch already carries its own deadline-derived
+# timeout, which fires first and is negative-cached.
+_RUNTIME_LOAD_GRACE_SECONDS = 1.0
 
 
 class AgentTeamService:
@@ -218,6 +221,7 @@ class AgentTeamService:
         clock: Callable[[], datetime],
         check_sync_lag: bool = False,
         sync_settle_seconds: int = 60,
+        runtime_timeout_seconds: float | None = None,
     ) -> None:
         self._store = store
         self._metrics = metrics
@@ -225,6 +229,11 @@ class AgentTeamService:
         self._clock = clock
         self._check_sync_lag = check_sync_lag
         self._sync_settle = timedelta(seconds=sync_settle_seconds)
+        self._runtime_timeout = (
+            _RUNTIME_LOAD_TIMEOUT_SECONDS
+            if runtime_timeout_seconds is None
+            else runtime_timeout_seconds
+        )
 
     # ------------------------------------------------------------------
     # Runtime loading
@@ -232,7 +241,7 @@ class AgentTeamService:
 
     async def _load_runtime(self, period: Period, records: Sequence[AgentRecord]) -> _RuntimeData:
         try:
-            async with asyncio.timeout(_RUNTIME_LOAD_TIMEOUT_SECONDS):
+            async with asyncio.timeout(self._runtime_timeout + _RUNTIME_LOAD_GRACE_SECONDS):
                 return await self._load_runtime_unbounded(period, records)
         except TimeoutError:
             return _unavailable(self._clock())
@@ -243,10 +252,21 @@ class AgentTeamService:
         project_id = self._scope.project_id
         today = self._clock().date()
         trailing = trailing_30_days(today)
+        # One deadline for the whole view: each query may use what is left.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._runtime_timeout
+
+        def remaining() -> float:
+            return max(deadline - loop.time(), 0.0)
+
         try:
-            stats = await self._metrics.agent_stats(project_id, period)
-            trailing_stats = await self._metrics.agent_stats(project_id, trailing)
-            trend = await self._metrics.trend(project_id, period, period.granularity)
+            stats = await self._metrics.agent_stats(project_id, period, timeout_seconds=remaining())
+            trailing_stats = await self._metrics.agent_stats(
+                project_id, trailing, timeout_seconds=remaining()
+            )
+            trend = await self._metrics.trend(
+                project_id, period, period.granularity, timeout_seconds=remaining()
+            )
         except RuntimeMetricsUnavailable:
             return _unavailable(self._clock())
 
@@ -258,7 +278,9 @@ class AgentTeamService:
         roster_keys.add(TAPPER_DEFAULT_AGENT_KEY)
         agent_keys = sorted(set(stats_by_key) | set(trailing_stats_by_key) | roster_keys)
         try:
-            last_runs = await self._metrics.last_runs(project_id, agent_keys)
+            last_runs = await self._metrics.last_runs(
+                project_id, agent_keys, timeout_seconds=remaining()
+            )
         except RuntimeMetricsUnavailable:
             return _unavailable(self._clock())
 
@@ -659,14 +681,38 @@ def _actor_served(stats: AgentRuntimeStats | None, actor_id: str) -> bool:
     return any(served.actor_id == actor_id and served.runs > 0 for served in stats.served)
 
 
+_STATUS_RANK_ORDER = {"active": 0, "idle": 1, "disabled": 2}
+_KIND_RANK_ORDER = {"custom": 0, "built_in": 1, "tapper_default": 2}
+
+
+def _sort_value(row, sort: str):
+    value = getattr(row, sort)
+    if sort == "status" and value is not None:
+        return _STATUS_RANK_ORDER[value]
+    if sort == "kind" and value is not None:
+        return _KIND_RANK_ORDER[value]
+    return value
+
+
 def _sorted(rows: list, sort: str, order: str) -> list:
     """Sorts by the `sort` attribute, descending unless `order == "asc"`.
     Rows whose sort attribute is `None` (e.g. `last_run_at`) always sort
-    last, regardless of direction. Callers must validate `sort`/`order`
-    against a closed allowlist first (`_validate_sort`) -- this helper
-    trusts its inputs."""
+    last, regardless of direction. `status`/`kind` sort by their domain rank
+    (active < idle < disabled; custom < built_in < tapper_default), not
+    alphabetically. Ties keep name order (spec 6.1) in both directions: rows
+    are first ordered by name ascending, and Python's stable sort -- which
+    also keeps equal keys in input order under `reverse=True` -- does the
+    rest. Callers must validate `sort`/`order` against a closed allowlist
+    first (`_validate_sort`) -- this helper trusts its inputs."""
     reverse = order != "asc"
-    with_value = [row for row in rows if getattr(row, sort) is not None]
-    without_value = [row for row in rows if getattr(row, sort) is None]
-    with_value.sort(key=lambda row: getattr(row, sort), reverse=reverse)
+    by_name = sorted(
+        rows,
+        key=lambda row: (
+            getattr(row, "name", None) or getattr(row, "actor_id", ""),
+            getattr(row, "agent_key", ""),
+        ),
+    )
+    with_value = [row for row in by_name if getattr(row, sort) is not None]
+    without_value = [row for row in by_name if getattr(row, sort) is None]
+    with_value.sort(key=lambda row: _sort_value(row, sort), reverse=reverse)
     return with_value + without_value

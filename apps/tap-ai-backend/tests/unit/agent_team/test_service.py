@@ -4,6 +4,7 @@ Langfuse involved."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -678,3 +679,72 @@ async def test_blank_job_title_normalized_to_none():
     store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
     record = await _service(store, FakeMetrics()).update_job_title("agent-1", "   ")
     assert record.job_title is None
+
+
+@pytest.mark.asyncio
+async def test_hanging_second_fetch_is_negative_cached_across_views():
+    class _HangingTrend(FakeMetrics):
+        trend_calls: int = 0
+
+        async def trend(self, project_id, period, granularity):
+            self.trend_calls += 1
+            await asyncio.sleep(3600)
+            return []
+
+    metrics = _HangingTrend()
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    cached = CachedRuntimeMetrics(metrics, now=lambda: _NOW)
+    service = AgentTeamService(
+        store, cached, scope=_scope(), clock=_clock, runtime_timeout_seconds=0.05
+    )
+
+    first = await service.summary(_PERIOD)
+    second = await service.summary(_PERIOD)
+
+    # The first two fetches were fast; the third hung and ran out the shared
+    # deadline, so its failure is cached and the next view never re-asks.
+    assert first.runtime_status == "unavailable"
+    assert second.runtime_status == "unavailable"
+    assert metrics.trend_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_member_sort_ties_break_by_name_and_status_kind_use_domain_rank():
+    store = FakeStore(
+        agent_records={
+            "agent-c": _agent("agent-c", enabled=False),
+            "agent-b": _agent("agent-b", source_kind="built_in"),
+            "agent-a": _agent("agent-a"),
+            "agent-d": _agent("agent-d"),
+        }
+    )
+    service = _service(store, FakeMetrics())
+    # Names follow ids ("Agent agent-a" ...). All four have 0 runs: ties.
+    for order in ("asc", "desc"):
+        view = await service.members(_PERIOD, sort="runs", order=order)
+        assert [r.agent_key for r in view.data if r.kind != "tapper_default"] == [
+            "agent-a",
+            "agent-b",
+            "agent-c",
+            "agent-d",
+        ]
+    status = await service.members(_PERIOD, sort="status", order="asc")
+    keys = [r.agent_key for r in status.data]
+    # idle (a, b, d: no runs) before disabled (c); ties by name.
+    assert keys[-1] == "agent-c"
+    kind = await service.members(_PERIOD, sort="kind", order="asc")
+    kinds = [r.kind for r in kind.data]
+    assert kinds == sorted(kinds, key={"custom": 0, "built_in": 1, "tapper_default": 2}.get)
+    kind_desc = await service.members(_PERIOD, sort="kind", order="desc")
+    assert [r.kind for r in kind_desc.data][0] == "built_in"
+    assert [r.kind for r in kind_desc.data][-1] == "custom"
+
+
+def test_naive_converts_to_utc_before_stripping_tzinfo():
+    from datetime import timezone
+
+    from tap.modules.agent_team.adapters.mysql import _naive
+
+    plus8 = timezone(timedelta(hours=8))
+    assert _naive(datetime(2026, 10, 23, 8, 0, tzinfo=plus8)) == datetime(2026, 10, 23, 0, 0)
+    assert _naive(datetime(2026, 10, 23, 8, 0)) == datetime(2026, 10, 23, 8, 0)

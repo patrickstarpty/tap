@@ -24,11 +24,11 @@
 - 运行与失败（spec 2.2）：只有根 span 为 `turn.request` 的 trace 打 `agent:` 与 `outcome:<state>` 标签；`failures` = `outcome:failed`；`abstained`、`canceled` 计入运行、单列次要指标。
 - 上一周期（spec 6.4）：按形状判定——完整自然月 → 再上一个自然月；同月 1 日至非月末 → 上月 1 日至同日（无该日取月末）；其他 → 紧邻等长区间。
 - 人员范围（spec 2.5）：全部当前负责人 ∪ 周期内调用过 Agent 的人 ∪ 周期内做过维护的人；显示 `actor_id`。
-- 只缓存 Langfuse 运行数据；MySQL 部分每次实时查询。`runtimeStatus`：`ok`、`syncing`（`langfuse_sync_cursor` 中 `trace` 落后 `max(trace_span.recorded_at)` 超过 5 分钟）、`unavailable`。
+- 只缓存 Langfuse 运行数据；MySQL 部分每次实时查询。`runtimeStatus`：`ok`、`syncing`（`trace` 游标之后最早一条未同步 span，超出其同步沉淀窗口 `TAP_LANGFUSE_SYNC_SETTLE_SECONDS` 后仍未同步超过 5 分钟）、`unavailable`。
 - Langfuse 查询按 `environment = TAP_LANGFUSE_ENVIRONMENT` 过滤。
 - 汇总 Agent 总数只计启用中的自定义与内置 Agent，不含 `tapper_default`。
 - 待处理反馈：`(rating = 'down' OR comment IS NOT NULL) AND resolved_at IS NULL`；用户改评分或评论时清空 `resolved_*`，重新变为待处理。
-- Langfuse 查询：10 秒超时；`config.row_limit = 1000`，返回满 1 000 行时按日期二分重查并合并；缓存键（项目、`from`、`to`、查询类型），TTL 300 秒。
+- Langfuse 查询：整个视图共享 10 秒期限，每次查询的超时取 min(8 秒, 剩余期限)，超时按不可用处理并负缓存 30 秒；`config.row_limit = 1000`，返回满 1 000 行时按日期二分重查并合并；缓存键（项目、`from`、`to`、查询类型），TTL 300 秒。
 - 错误沿用 `B/interfaces/http/problems.py` 的 `{code, detail}` 简单体：`period_invalid` 400、`actor_not_found` 400、`agent_read_only` 403、`agent_not_found` 404、`feedback_not_found` 404。Langfuse 失败不返回 5xx，返回 `runtimeStatus: "unavailable"`。
 - 新权限 `ai.agent_team.read`（读接口）；三个写接口用 `ai.agents.write`。
 - "最近运行"取自 Langfuse：Metrics API v1 没有时间戳度量（2026-10-23 本地 3.225.11 实测，traces 视图度量仅 `count, observationsCount, scoresCount, uniqueUserIds, uniqueSessionIds, latency, totalTokens, totalCost`），改用 Traces 列表 API `GET /api/public/traces?tags=project:<id>&tags=agent:<key>&orderBy=timestamp.desc&limit=1`，每个 Agent 一次，随其他查询一起缓存。
@@ -264,7 +264,7 @@ async def test_last_runs_queries_traces_api_per_agent(): ...    # 断言 tags �
     - `async def history(self, agent_id: str, cursor: str | None, limit: int = 50) -> HistoryPage`（按 `occurred_at` 降序、`event_id` 次序；游标为不透明 base64）
     - `async def last_maintenance(self) -> dict[str, datetime]`（每个 `agent_id` 最近一条维护事件时间）
     - `async def active_actors(self, period: Period) -> set[str]`（周期内有 Turn 或维护事件的 actor，用于人员范围）
-    - `async def sync_lag(self) -> timedelta | None`（`max(trace_span.recorded_at) - langfuse_sync_cursor['trace']`；无游标行时视为无限落后）
+    - `async def oldest_unsynced_age(self, *, now, settle) -> timedelta | None`（游标之后、已过沉淀窗口的最早一条 `trace_span` 超出 `now - settle` 的时长；无游标行时全部 span 视为未同步；无则 `None`）
     - `async def actor_exists(self, actor_id: str) -> bool`（`actor_principal` 中同企业且启用）
     - `async def set_job_title(self, agent_id: str, job_title: str | None) -> AgentRecord`
     - `async def transfer_owner(self, agent_id: str, new_owner: str, event: MaintenanceEvent) -> AgentRecord`
@@ -283,7 +283,7 @@ async def test_last_maintenance_per_agent(): ...
 async def test_rerating_resolved_feedback_makes_it_pending(): ...   # 经 MysqlFeedbackRepository.upsert 改评分 → 重新出现在 pending_feedback
 async def test_same_rating_resubmit_keeps_resolution(): ...
 async def test_ratings_use_turn_created_time(): ...               # Turn 在周期内、反馈在周期后 → 计入
-async def test_sync_lag(): ...
+async def test_oldest_unsynced_age(): ...
 async def test_history_pages_with_cursor(): ...                  # 120 条事件，limit 50 → 3 页，无重复
 async def test_queries_are_project_scoped(): ...                 # 另一项目的数据不出现
 ```

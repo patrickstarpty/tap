@@ -14579,6 +14579,11 @@
                   "type": "null"
                 }
               ],
+              "enum": [
+                "active",
+                "idle",
+                "disabled"
+              ],
               "title": "Status"
             }
           },
@@ -14594,6 +14599,11 @@
                 {
                   "type": "null"
                 }
+              ],
+              "enum": [
+                "custom",
+                "built_in",
+                "tapper_default"
               ],
               "title": "Kind"
             }
@@ -14833,6 +14843,8 @@
                   "type": "null"
                 }
               ],
+              "maxLength": 2048,
+              "minLength": 1,
               "title": "Cursor"
             }
           }

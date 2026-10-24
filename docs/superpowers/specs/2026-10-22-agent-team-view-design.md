@@ -165,7 +165,7 @@ flowchart LR
 - 满意度、维护动作与人事字段来自 MySQL，由 `agent_team` 模块合并。
 - 新增后端模块 `agent_team`，通过端口 `AgentRuntimeMetrics` 访问 Langfuse；生产适配器调用 Metrics API，测试适配器返回 mock 数据。
 - 只缓存 Langfuse 运行数据，按（项目、周期、查询类型）缓存 5 分钟；人事字段、维护动作、满意度与反馈每次实时查询，写操作后立即可见。界面显示"数据更新于"，并说明运行数据比对话最多晚一个同步周期。
-- "运行数据同步中"：游标之后最早一条未同步 span 的年龄（当前时间减其记录时间）超过 5 分钟时显示；只统计已超过同步沉淀窗口（`TAP_LANGFUSE_SYNC_SETTLE_SECONDS`，默认 60 秒）的 span，因此长时间无新运行后不会误报；没有游标行时视为全部 span 未同步。
+- "运行数据同步中"：游标之后最早一条未同步 span 超出其同步沉淀窗口（`TAP_LANGFUSE_SYNC_SETTLE_SECONDS`，默认 60 秒）的时长（即 `当前时间 − 沉淀窗口 − 记录时间`）超过 5 分钟时显示；窗口内的 span 不计入，因此长时间无新运行后不会误报；没有游标行时视为全部 span 未同步。
 - 单次查询超过 1 000 行时按日期分段查询后合并。
 - `make demo-up` 默认启动 Langfuse 与 ClickHouse（原为可选的 `make langfuse-up`）；`make demo-check` 增加 Langfuse 检查。
 
@@ -216,7 +216,7 @@ flowchart LR
 
 | 情况 | 处理 |
 | --- | --- |
-| Langfuse 不可达或 10 秒超时 | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；所有运行派生字段为 null（不是 0），卡片状态为 null（已停用除外），汇总的活跃数、闲置数为 null；CSV 的运行列留空，三个文件首行均注明 `# runtime=unavailable`；花名册、负责人、履历、满意度照常显示；不返回 500 |
+| Langfuse 不可达或超时（整个视图共享 10 秒期限；单次查询超时取 8 秒与剩余期限的较小者，超时同样负缓存 30 秒） | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；所有运行派生字段为 null（不是 0），卡片状态为 null（已停用除外），汇总的活跃数、闲置数为 null；CSV 的运行列留空，三个文件首行均注明 `# runtime=unavailable`；花名册、负责人、履历、满意度照常显示；不返回 500 |
 | 同步积压 | 显示"数据更新于"并提示可能滞后 |
 | `from` 晚于 `to`，或日期格式错误 | 400 `period_invalid` |
 | 履历游标无效（含空串） | 400 `cursor_invalid` |

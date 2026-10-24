@@ -114,10 +114,18 @@ def test_0036_downgrade_removes_added_columns_and_event_table(owned_project_mysq
         sync_engine.dispose()
 
 
-def test_0037_renames_the_agent_fk_to_the_metadata_name_and_back(owned_project_mysql):
-    """Not run locally (needs isolated MySQL)."""
+def test_0037_renames_the_agent_fk_resets_the_trace_cursor_and_reverts_the_fk(
+    owned_project_mysql,
+):
+    owned_project_mysql.rebuild("0036_agent_team")
     sync_engine = create_engine(owned_project_mysql.url)
     try:
+        with sync_engine.begin() as connection:
+            for name in ("trace", "feedback"):
+                connection.execute(
+                    text("INSERT INTO langfuse_sync_cursor (name, position) VALUES (:n, :t)"),
+                    {"n": name, "t": LEGACY_TIME},
+                )
         owned_project_mysql.upgrade("head")
 
         def fk_names() -> set[str]:
@@ -128,6 +136,12 @@ def test_0037_renames_the_agent_fk_to_the_metadata_name_and_back(owned_project_m
 
         assert "fk_agent_maintenance_event_project_parent_0" in fk_names()
         assert "fk_agent_maintenance_event_agent" not in fk_names()
+        with sync_engine.connect() as connection:
+            names = {
+                r.name for r in connection.execute(text("SELECT name FROM langfuse_sync_cursor"))
+            }
+        # The `trace` row is gone so the worker re-walks history; `feedback` stays.
+        assert names == {"feedback"}
 
         owned_project_mysql.downgrade("0036_agent_team")
         assert "fk_agent_maintenance_event_agent" in fk_names()

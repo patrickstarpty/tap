@@ -106,7 +106,9 @@ async def insert_maintenance_event(
 def _naive(value: datetime) -> datetime:
     """MySQL DATETIME columns are naive (always UTC); strip tzinfo from an
     aware value before using it in a `WHERE` comparison against one."""
-    return value.replace(tzinfo=None) if value.tzinfo is not None else value
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _aware(value: datetime) -> datetime:
@@ -468,7 +470,8 @@ class MysqlAgentTeamStore:
             oldest = await session.scalar(query)
         if oldest is None:
             return None
-        return _naive(now) - oldest
+        # How far past its settle deadline the oldest unsynced span is.
+        return settled_before - oldest
 
     async def actor_exists(self, actor_id: str) -> bool:
         async with self._sessions() as session:

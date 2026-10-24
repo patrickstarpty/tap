@@ -312,8 +312,13 @@ async def list_members(
     request: Request,
     period: Period = Depends(_period_query),
     owner: str | None = Query(default=None),
-    status: str | None = Query(default=None),
-    kind: str | None = Query(default=None),
+    # Plain `str` (not the Literal) so an unknown value reaches
+    # `_closed_choice` and maps to 400 `filter_invalid`, not FastAPI's 422;
+    # the allowed values stay documented in the schema.
+    status: str | None = Query(
+        default=None, json_schema_extra={"enum": list(get_args(MemberStatus))}
+    ),
+    kind: str | None = Query(default=None, json_schema_extra={"enum": list(get_args(AgentKind))}),
     sort: str = Query(default="runs"),
     order: str = Query(default="desc"),
 ) -> AgentTeamMembersView:
@@ -354,7 +359,7 @@ async def get_member(
 async def get_member_history(
     request: Request,
     agent_key: str,
-    cursor: str | None = Query(default=None),
+    cursor: str | None = Query(default=None, json_schema_extra={"minLength": 1, "maxLength": 2048}),
 ) -> AgentTeamHistoryPage:
     if cursor is not None and not 1 <= len(cursor) <= 2048:
         raise AgentTeamRejected("cursor_invalid", "cursor must be 1-2048 characters")
