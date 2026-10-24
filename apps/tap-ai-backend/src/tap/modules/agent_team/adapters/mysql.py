@@ -116,6 +116,7 @@ _UNRESOLVABLE_AGENT_KEYS = frozenset({TAPPER_DEFAULT_AGENT_KEY, UNKNOWN_AGENT_KE
 # The cursor row the ai-module Langfuse sync store writes for traces.
 _TRACE_CURSOR: SyncKind = "trace"
 
+
 def _to_event(row) -> MaintenanceEvent:
     return MaintenanceEvent(
         event_id=row["event_id"],
