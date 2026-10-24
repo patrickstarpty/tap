@@ -158,9 +158,7 @@ def test_agent_team_runtime_metrics_defaults_to_langfuse() -> None:
 
 def test_agent_team_runtime_metrics_turn_table_rejected_outside_e2e_mode() -> None:
     with pytest.raises(ValueError, match="TAP_AGENT_TEAM_RUNTIME_METRICS"):
-        TapperSettings.from_mapping(
-            S3_SETTINGS | {"TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table"}
-        )
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table"})
 
 
 def test_agent_team_runtime_metrics_turn_table_accepted_in_e2e_mode() -> None:

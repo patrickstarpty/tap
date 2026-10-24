@@ -1339,15 +1339,11 @@ def test_langfuse_bootstrap_scopes_provider_secrets_from_its_own_subprocesses(
         "LITELLM_EMBEDDING_API_KEY",
         "LITELLM_EMBEDDING_API_BASE",
     )
-    assertion = "\n".join(
-        f'[ -z "${{{name}:-}}" ] || exit 71' for name in secret_names
-    )
+    assertion = "\n".join(f'[ -z "${{{name}:-}}" ] || exit 71' for name in secret_names)
     for command in ("docker", "uv"):
         script = stubs / command
         extra = (
-            '\ncase " $* " in\n'
-            '  *" ps -q tap-minio "*) printf "%s\\n" "deadbeefcafe";;\n'
-            "esac\n"
+            '\ncase " $* " in\n  *" ps -q tap-minio "*) printf "%s\\n" "deadbeefcafe";;\nesac\n'
             if command == "docker"
             else ""
         )

@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.domain.classify import classify_revision
-from tap.modules.agent_team.domain.models import MaintenanceEvent, new_event
+from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, new_event
 from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
@@ -221,7 +221,7 @@ class AgentAuthoringService:
         target_status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
         event: MaintenanceEvent | None = None
         if latest.status != target_status:
-            kind = "enabled" if enabled else "disabled"
+            kind: MaintenanceKind = "enabled" if enabled else "disabled"
             event = new_event(scope, agent_id, kind, now=datetime.now(UTC))
         await self._catalog.set_asset_enabled("agent", agent_id, enabled, event=event)
 

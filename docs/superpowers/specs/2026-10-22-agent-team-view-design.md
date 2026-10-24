@@ -198,31 +198,36 @@ flowchart LR
 | --- | --- |
 | `GET agent-team/summary` | 团队汇总 |
 | `GET agent-team/members` | 花名册，支持按负责人、状态、类型筛选与按列排序 |
-| `GET agent-team/members/{agentKey}` | Agent 档案：人事字段、工作量、服务对象、趋势 |
-| `GET agent-team/members/{agentKey}/history` | 履历，游标分页 |
+| `GET agent-team/members/{agentKey}` | Agent 档案，返回 `{row, currentRevisionId, served（完整名单）, pendingFeedback}`：人事字段、工作量、服务对象、趋势 |
+| `GET agent-team/members/{agentKey}/history` | 履历，游标分页，返回 `{events, nextCursor}`，不带读取信封（`runtimeStatus`、`computedAt`） |
 | `GET agent-team/people` | 人员表 |
 | `GET agent-team/people/{actorId}` | 个人视图，"我的 Agent"传 `me`（解析为当前身份） |
 | `GET agent-team/org-chart` | 组织架构图节点与边（`owns`、`serves`） |
-| `GET agent-team/report` | 报告页数据，附上一周期对比 |
+| `GET agent-team/report` | 报告页数据，含 `previousPeriod`（上一周期对比） |
 | `GET agent-team/export` | CSV zip：花名册、人员、趋势明细三个文件，UTF-8 BOM；明细粒度与界面趋势相同（2.1），在文件首行注明 |
 | `PUT agents/{agentId}/profile` | 修改岗位 |
-| `POST agents/{agentId}/owner` | 转交负责人 |
+| `POST agents/{agentId}/owner` | 转交负责人，请求体字段 `newOwnerActorId` |
 | `POST feedback/{feedbackId}/resolve` | 标记反馈已处理，可带说明；重复提交返回原结果 |
 
-- 查询接口返回 `runtimeStatus`（`ok`、`unavailable`）与 `computedAt`。
+- 查询接口（履历除外）返回 `runtimeStatus`（`ok`、`syncing`、`unavailable`）与 `computedAt`。
 - 权限：新增 `ai.agent_team.read`；三个写接口沿用 `ai.agents.write`。演示身份拥有全部权限，按角色限制随 V4。
 
 ### 5.1 错误与降级
 
 | 情况 | 处理 |
 | --- | --- |
-| Langfuse 不可达或 10 秒超时 | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；花名册、负责人、履历、满意度照常显示；不返回 500 |
+| Langfuse 不可达或 10 秒超时 | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；所有运行派生字段为 null（不是 0），卡片状态为 null（已停用除外），汇总的活跃数、闲置数为 null；CSV 的运行列留空，三个文件首行均注明 `# runtime=unavailable`；花名册、负责人、履历、满意度照常显示；不返回 500 |
 | 同步积压 | 显示"数据更新于"并提示可能滞后 |
-| `from` 晚于 `to` | 400 `period_invalid` |
+| `from` 晚于 `to`，或日期格式错误 | 400 `period_invalid` |
+| 履历游标无效 | 400 `cursor_invalid` |
+| 岗位超过 64 字符 | 400 `job_title_too_long` |
+| 排序字段不在允许范围 | 400 `sort_invalid` |
+| 转交或处理反馈的说明超过 500 字符 | 400 `note_too_long` |
 | 转交给不存在的成员（同企业、启用中的身份才算存在） | 400 `actor_not_found` |
 | 修改内置 Agent 或 Tapper 默认的人事字段 | 403 `agent_read_only` |
 | Agent 或反馈不存在、不属于本项目 | 404 `agent_not_found`、`feedback_not_found` |
 | 转交给当前负责人 | 200，原样返回，不记维护动作 |
+| 处理 `tapper_default` 的反馈（没有 Agent 记录） | 200，反馈标记已处理，不写维护动作 |
 
 ## 6. 前端
 
