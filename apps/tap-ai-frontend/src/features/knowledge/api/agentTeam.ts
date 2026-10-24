@@ -7,7 +7,13 @@ import {
 } from "@tanstack/react-query";
 
 import type { components } from "../../../shared/api/generated/schema";
-import { aiAssetKeys, jsonInit, projectAiPath, requestJson } from "./aiAssets";
+import {
+  agentTeamRootKey,
+  aiAssetKeys,
+  jsonInit,
+  projectAiPath,
+  requestJson,
+} from "./aiAssets";
 
 type Schemas = components["schemas"];
 
@@ -75,7 +81,7 @@ export function resolvePeriod(
 }
 
 export const agentTeamKeys = {
-  all: (projectId: string) => ["agent-team", projectId] as const,
+  all: agentTeamRootKey,
   summary: (projectId: string, period: TeamPeriod) =>
     ["agent-team", projectId, "summary", period.from, period.to] as const,
   members: (projectId: string, period: TeamPeriod, filters: MemberFilters) =>
