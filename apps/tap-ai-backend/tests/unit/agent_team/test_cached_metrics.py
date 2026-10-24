@@ -92,15 +92,20 @@ async def test_call_after_ttl_refetches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unavailable_is_not_cached() -> None:
+async def test_unavailable_is_negative_cached_for_failure_ttl() -> None:
     inner = _CountingInner()
     inner.raise_next = True
     clock = _FakeClock()
-    cached = CachedRuntimeMetrics(inner, ttl_seconds=300, clock=clock)
+    cached = CachedRuntimeMetrics(inner, ttl_seconds=300, failure_ttl_seconds=30, clock=clock)
 
     with pytest.raises(RuntimeMetricsUnavailable):
         await cached.agent_stats("proj1", _period())
+    clock.value += 10
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period())
+    assert inner.agent_stats_calls == 1  # outage not retried within 30 s
 
+    clock.value += 20
     result = await cached.agent_stats("proj1", _period())
     assert inner.agent_stats_calls == 2
     assert result[0].runs == 2

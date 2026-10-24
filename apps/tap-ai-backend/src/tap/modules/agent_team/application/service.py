@@ -6,6 +6,7 @@ never touches routes.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -195,6 +196,8 @@ def _validate_sort(sort: str, order: str, allowed: frozenset[str]) -> None:
 
 _T = TypeVar("_T")
 
+_RUNTIME_LOAD_TIMEOUT_SECONDS = 10
+
 
 class AgentTeamService:
     """`check_sync_lag` should be `True` only when the runtime adapter is the
@@ -222,6 +225,13 @@ class AgentTeamService:
     # ------------------------------------------------------------------
 
     async def _load_runtime(self, period: Period) -> _RuntimeData:
+        try:
+            async with asyncio.timeout(_RUNTIME_LOAD_TIMEOUT_SECONDS):
+                return await self._load_runtime_unbounded(period)
+        except TimeoutError:
+            return _unavailable(self._clock())
+
+    async def _load_runtime_unbounded(self, period: Period) -> _RuntimeData:
         project_id = self._scope.project_id
         today = self._clock().date()
         trailing = trailing_30_days(today)
@@ -234,7 +244,11 @@ class AgentTeamService:
 
         stats_by_key = {s.agent_key: s for s in stats}
         trailing_stats_by_key = {s.agent_key: s for s in trailing_stats}
-        agent_keys = sorted(set(stats_by_key) | set(trailing_stats_by_key))
+        # "最近运行" is not limited to the period (spec 2.2): ask for every
+        # roster key, not only those with runs in the two stats windows.
+        roster_keys = {record.agent_id for record in await self._store.agents()}
+        roster_keys.add(TAPPER_DEFAULT_AGENT_KEY)
+        agent_keys = sorted(set(stats_by_key) | set(trailing_stats_by_key) | roster_keys)
         try:
             last_runs = await self._metrics.last_runs(project_id, agent_keys)
         except RuntimeMetricsUnavailable:
@@ -588,6 +602,8 @@ class AgentTeamService:
 
     async def update_job_title(self, agent_id: str, job_title: str | None) -> AgentRecord:
         await self._require_writable_agent(agent_id)
+        if job_title is not None:
+            job_title = job_title.strip() or None
         if job_title is not None and len(job_title) > _MAX_JOB_TITLE_LENGTH:
             raise AgentTeamRejected("job_title_too_long", "job_title must be <= 64 characters")
         return await self._store.set_job_title(agent_id, job_title)

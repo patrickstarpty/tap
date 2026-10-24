@@ -197,6 +197,31 @@ def test_agent_team_service_uses_unavailable_adapter_without_langfuse_host() -> 
         asyncio.run(engine.dispose())
 
 
+def test_agent_team_service_does_not_cache_turn_table_metrics() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import OwnedResources, _create_agent_team_service
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.agent_team.adapters.turn_table_metrics import TurnTableRuntimeMetrics
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table",
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "TAPPER_GRAPH_EXTRACTION_MODE": "fake",
+        }
+    )
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    try:
+        service = _create_agent_team_service(settings, engine, VALIDATION_SCOPE, OwnedResources())
+        assert isinstance(service._metrics._inner, TurnTableRuntimeMetrics)
+        assert service._metrics._ttl_seconds == 0
+    finally:
+        asyncio.run(engine.dispose())
+
+
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
         S3_SETTINGS

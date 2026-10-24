@@ -2142,8 +2142,9 @@ def test_langfuse_check_ok(monkeypatch) -> None:  # type: ignore[no-untyped-def]
         async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def get(self, url: str):  # type: ignore[no-untyped-def]
-            assert url == "http://127.0.0.1:23000/api/public/health"
+        async def get(self, url: str, *, auth):  # type: ignore[no-untyped-def]
+            assert url == "http://127.0.0.1:23000/api/public/projects"
+            assert auth == ("pk-lf-local", "sk-lf-local")
             return Response()
 
     monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
@@ -2177,13 +2178,48 @@ def test_langfuse_check_strips_trailing_slash_from_host(monkeypatch) -> None:  #
         async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def get(self, url: str):  # type: ignore[no-untyped-def]
-            assert url == "http://127.0.0.1:23000/api/public/health"
+        async def get(self, url: str, *, auth):  # type: ignore[no-untyped-def]
+            assert url == "http://127.0.0.1:23000/api/public/projects"
+            assert auth == ("pk-lf-local", "sk-lf-local")
             return Response()
 
     monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
 
     assert asyncio.run(safe_check._check_langfuse(settings, {})) is True
+
+
+def test_langfuse_check_fails_when_keys_are_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-wrong",
+            "LANGFUSE_SECRET_KEY": "sk-lf-wrong",
+        }
+    )
+
+    class Response:
+        status_code = 401
+
+    class Client:
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url: str, *, auth):  # type: ignore[no-untyped-def]
+            return Response()
+
+    monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is False
 
 
 def test_langfuse_check_failed_has_remediation() -> None:

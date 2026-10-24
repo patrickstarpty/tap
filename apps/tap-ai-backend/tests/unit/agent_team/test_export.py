@@ -311,3 +311,21 @@ def test_people_row_covers_every_person_field() -> None:
         assert row[header.index("served_by_agents")] == "1"
         assert row[header.index("runs")] == "5"
         assert row[header.index("maintenance")] == "2"
+
+
+def test_trend_first_bucket_start_is_clamped_to_period_start() -> None:
+    period = Period(date(2026, 1, 7), date(2026, 6, 1))  # week buckets; Jan 7 is a Wednesday
+    early = TrendPoint(
+        bucket_start=date(2026, 1, 5),
+        agent_key="agent-1",
+        runs=1,
+        failures=0,
+        latency_total_ms=1,
+        cost_usd=Decimal("0"),
+    )
+    report = PeriodReport(summary=_summary(), members=(_member(),), people=(_person(),))
+    content = build_export(report, [early], period=period, runtime_status="ok")
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        rows = archive.read("trend.csv").decode("utf-8-sig").splitlines()
+    assert rows[-1].startswith("2026-01-07,agent-1,")

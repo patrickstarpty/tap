@@ -4,6 +4,7 @@ Langfuse involved."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -94,6 +95,8 @@ class FakeMetrics:
     stats_by_period: dict[tuple[date, date], list[AgentRuntimeStats]] = field(default_factory=dict)
     unavailable: bool = False
     agent_stats_calls: int = 0
+    last_run_by_key: dict[str, datetime] = field(default_factory=dict)
+    last_runs_keys: list[str] = field(default_factory=list)
 
     async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
         self.agent_stats_calls += 1
@@ -107,9 +110,10 @@ class FakeMetrics:
         return []
 
     async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        self.last_runs_keys = list(agent_keys)
         if self.unavailable:
             raise RuntimeMetricsUnavailable("boom")
-        return {}
+        return {key: self.last_run_by_key[key] for key in agent_keys if key in self.last_run_by_key}
 
 
 @dataclass
@@ -167,7 +171,7 @@ class FakeStore:
 
     async def set_job_title(self, agent_id: str, job_title: str | None) -> AgentRecord:
         record = self.agent_records[agent_id]
-        updated = AgentRecord(**{**record.__dict__, "job_title": job_title})
+        updated = dataclasses.replace(record, job_title=job_title)
         self.agent_records[agent_id] = updated
         return updated
 
@@ -570,3 +574,39 @@ async def test_member_detail_served_empty_when_runtime_unavailable():
 
     assert view.runtime_status == "unavailable"
     assert view.data.served == ()
+
+
+@pytest.mark.asyncio
+async def test_last_run_covers_idle_agents_without_recent_stats():
+    old = _NOW - timedelta(days=45)
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    metrics = FakeMetrics(last_run_by_key={"agent-1": old})
+    view = await _service(store, metrics).members(_PERIOD)
+    row = next(r for r in view.data if r.agent_key == "agent-1")
+    assert "agent-1" in metrics.last_runs_keys
+    assert row.last_run_at == old
+
+
+@pytest.mark.asyncio
+async def test_runtime_load_timeout_maps_to_unavailable(monkeypatch):
+    import asyncio
+
+    from tap.modules.agent_team.application import service as service_module
+
+    monkeypatch.setattr(service_module, "_RUNTIME_LOAD_TIMEOUT_SECONDS", 0.05)
+
+    class Hanging(FakeMetrics):
+        async def agent_stats(self, project_id, period):
+            await asyncio.sleep(5)
+            return []
+
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    view = await _service(store, Hanging()).members(_PERIOD)
+    assert view.runtime_status == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_blank_job_title_normalized_to_none():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    record = await _service(store, FakeMetrics()).update_job_title("agent-1", "   ")
+    assert record.job_title is None

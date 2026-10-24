@@ -4,9 +4,9 @@ MySQL-backed data is always queried live; this decorator wraps whichever
 `AgentRuntimeMetrics` the project is configured with -- Langfuse or
 `TurnTableRuntimeMetrics` -- so both pick up the same TTL behavior for free).
 
-Only successful results are cached; a raised exception (typically
-`RuntimeMetricsUnavailable`) is never stored, so the next call retries the
-inner adapter immediately.
+Successful results are cached for `ttl_seconds`. A `RuntimeMetricsUnavailable`
+is negative-cached for `failure_ttl_seconds` (default 30) so an outage does not
+retry the inner adapter on every view; other exceptions are never stored.
 """
 
 from __future__ import annotations
@@ -18,7 +18,12 @@ from datetime import UTC, datetime
 from typing import TypeVar
 
 from tap.modules.agent_team.domain.models import Period
-from tap.modules.agent_team.ports import AgentRuntimeMetrics, AgentRuntimeStats, TrendPoint
+from tap.modules.agent_team.ports import (
+    AgentRuntimeMetrics,
+    AgentRuntimeStats,
+    RuntimeMetricsUnavailable,
+    TrendPoint,
+)
 
 _T = TypeVar("_T")
 
@@ -63,20 +68,33 @@ class CachedRuntimeMetrics:
         inner: AgentRuntimeMetrics,
         *,
         ttl_seconds: int = 300,
+        failure_ttl_seconds: int = 30,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = _default_now,
     ) -> None:
         self._inner = inner
         self._ttl_seconds = ttl_seconds
+        self._failure_ttl_seconds = failure_ttl_seconds
         self._clock = clock
         self._now = now
         self._entries: dict[_CacheKey, _CacheEntry] = {}
+        self._failures: dict[_CacheKey, tuple[float, RuntimeMetricsUnavailable]] = {}
 
     async def _cached(self, key: _CacheKey, fetch: Callable[[], Awaitable[_T]]) -> _T:
         entry = self._entries.get(key)
         if entry is not None and self._clock() < entry.expires_at:
             return entry.value  # type: ignore[return-value]
-        value = await fetch()
+        failure = self._failures.get(key)
+        if failure is not None:
+            if self._clock() < failure[0]:
+                raise failure[1]
+            del self._failures[key]
+        try:
+            value = await fetch()
+        except RuntimeMetricsUnavailable as exc:
+            if self._failure_ttl_seconds > 0:
+                self._failures[key] = (self._clock() + self._failure_ttl_seconds, exc)
+            raise
         self._entries[key] = _CacheEntry(
             value=value, computed_at=self._now(), expires_at=self._clock() + self._ttl_seconds
         )
@@ -91,6 +109,8 @@ class CachedRuntimeMetrics:
         expired = [key for key, entry in self._entries.items() if now >= entry.expires_at]
         for key in expired:
             del self._entries[key]
+        for key in [k for k, (until, _) in self._failures.items() if now >= until]:
+            del self._failures[key]
 
     async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
         key: _CacheKey = (project_id, _period_key(period), "stats")

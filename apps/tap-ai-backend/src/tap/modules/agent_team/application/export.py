@@ -167,9 +167,11 @@ def _people_row(row: PersonRow) -> list[str]:
     ]
 
 
-def _trend_row(point: TrendPoint) -> list[str]:
+def _trend_row(point: TrendPoint, period_start: date) -> list[str]:
+    # A week/month bucket can begin before the period; label it with the
+    # period start (spec 2.1) rather than a date outside the chosen range.
     return [
-        _iso_date(point.bucket_start),
+        _iso_date(max(point.bucket_start, period_start)),
         point.agent_key,
         str(point.runs),
         str(point.failures),
@@ -220,7 +222,9 @@ def build_export(
     )
     trend_comments = [f"# granularity={period.granularity}", *unavailable_comment]
     trend_csv = _csv_bytes(
-        _TREND_HEADER, (_trend_row(point) for point in trend), comment_lines=trend_comments
+        _TREND_HEADER,
+        (_trend_row(point, period.start) for point in trend),
+        comment_lines=trend_comments,
     )
 
     buffer = io.BytesIO()

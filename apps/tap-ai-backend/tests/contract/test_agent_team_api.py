@@ -510,3 +510,30 @@ def test_langfuse_down_leaves_member_run_fields_null() -> None:
         assert data[key] is None, key
     assert data["topServed"] == []
     assert data["trend"] == []
+
+
+def test_history_bad_cursor_returns_cursor_invalid() -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/members/agent-1/history?cursor=bad-cursor")
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "cursor_invalid"
+
+
+def test_history_unknown_agent_returns_agent_not_found() -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/members/ghost/history")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "agent_not_found"
+
+
+def test_get_person_me_resolves_to_the_caller() -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/people/me?{PERIOD_QS}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["person"]["actorId"] == VALIDATION_SCOPE.actor_id

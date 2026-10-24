@@ -183,7 +183,15 @@ async def _check_langfuse(settings: TapperSettings, _values: Mapping[str, str]) 
         return False
     host = settings.langfuse_host.rstrip("/")
     async with httpx.AsyncClient(timeout=settings.ready_timeout_seconds) as client:
-        response = await client.get(f"{host}/api/public/health")
+        # An authenticated endpoint, so wrong LANGFUSE_* keys fail the check
+        # (the Agent team view needs a working key pair, not just a live host).
+        response = await client.get(
+            f"{host}/api/public/projects",
+            auth=(
+                settings.langfuse_public_key or "",
+                settings.langfuse_secret_key or "",
+            ),
+        )
         return response.status_code == 200
 
 

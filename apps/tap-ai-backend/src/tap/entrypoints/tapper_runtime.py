@@ -2090,8 +2090,14 @@ def _create_agent_team_service(
     from tap.modules.agent_team.ports import AgentRuntimeMetrics
 
     check_sync_lag = False
+    cache_ttl_seconds = 300
+    failure_ttl_seconds = 30
     inner: AgentRuntimeMetrics
     if settings.agent_team_runtime_metrics == "turn_table":
+        # MySQL-backed and cheap: caching would only serve stale counts (the
+        # browser journey reloads right after running a turn).
+        cache_ttl_seconds = 0
+        failure_ttl_seconds = 0
         from tap.modules.agent_team.adapters.turn_table_metrics import TurnTableRuntimeMetrics
 
         inner = TurnTableRuntimeMetrics(async_sessionmaker(engine, expire_on_commit=False))
@@ -2116,7 +2122,9 @@ def _create_agent_team_service(
     store = MysqlAgentTeamStore(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
     return AgentTeamService(
         store,
-        CachedRuntimeMetrics(inner),
+        CachedRuntimeMetrics(
+            inner, ttl_seconds=cache_ttl_seconds, failure_ttl_seconds=failure_ttl_seconds
+        ),
         scope=scope,
         clock=lambda: datetime.now(UTC),
         check_sync_lag=check_sync_lag,
