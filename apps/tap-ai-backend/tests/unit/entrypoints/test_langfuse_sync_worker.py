@@ -30,6 +30,31 @@ async def test_worker_idles_without_langfuse_host(caplog, monkeypatch) -> None: 
 
 
 @pytest.mark.asyncio
+async def test_worker_idles_in_e2e_mode_even_with_langfuse_configured(caplog, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    settings = TapperSettings.from_mapping(
+        {
+            **S3_SETTINGS,
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "LANGFUSE_HOST": "http://127.0.0.1:3000",
+            "LANGFUSE_PUBLIC_KEY": "pk-test",
+            "LANGFUSE_SECRET_KEY": "sk-test",
+        }
+    )
+    assert settings.e2e_mode and settings.langfuse_host is not None
+
+    def _fail_if_called(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("build_service must not run in e2e mode")
+
+    monkeypatch.setattr(worker, "build_service", _fail_if_called)
+
+    with caplog.at_level(logging.INFO, logger=worker.logger.name):
+        await worker.run(settings=settings, signal_installer=lambda _stop: None, max_iterations=1)
+
+    assert any("TAP_DEMO_MODE=e2e" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_worker_loop_survives_run_once_exception() -> None:
     calls = 0
 

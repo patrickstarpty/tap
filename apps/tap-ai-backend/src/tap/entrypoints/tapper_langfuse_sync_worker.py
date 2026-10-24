@@ -154,10 +154,12 @@ async def run_idle_loop(
     stop: asyncio.Event,
     sleep_seconds: float = _LOOP_SLEEP_SECONDS,
     max_iterations: int | None = None,
+    announce: bool = True,
 ) -> None:
     """Idle without constructing any store, sink, or Langfuse SDK client."""
 
-    logger.info("langfuse sync disabled")
+    if announce:
+        logger.info("langfuse sync disabled")
     iterations = 0
     while not stop.is_set():
         iterations += 1
@@ -188,7 +190,12 @@ async def run(
     try:
         stop = asyncio.Event()
         remove_handlers = signal_installer(stop)
-        if settings.langfuse_host is None:
+        if settings.e2e_mode:
+            logger.info(
+                "langfuse sync disabled: TAP_DEMO_MODE=e2e never writes to a shared Langfuse"
+            )
+            await run_idle_loop(stop=stop, max_iterations=max_iterations, announce=False)
+        elif settings.langfuse_host is None:
             await run_idle_loop(stop=stop, max_iterations=max_iterations)
         else:
             service = build_service(settings, resources)
