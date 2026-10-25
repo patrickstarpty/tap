@@ -4,9 +4,9 @@
 
 ## 1. 状态
 
-- 工程完成，已合入本地 `develop`（合并提交 `b45b3398`），**尚未推送远端**。
+- 工程完成，已合入 `develop`（合并提交 `b45b3398`）并于 2026-10-25 推送远端。
 - 路线图 V2.1 行：工程完成；待业务验证（spec 7.4）。
-- ADR-033 状态仍为 `proposed`，待负责人接受。
+- ADR-033 已于 2026-10-25 接受。
 - 演示环境已迁移到 `0037_agent_team_fk_name`，`make demo-dev` 运行的是合并后的代码。
 
 ## 2. 代码位置
@@ -54,6 +54,7 @@ TAP_RUN_LANGFUSE_SMOKE=1 TAP_LANGFUSE_SMOKE_PROJECT_ID=tapper-demo \
 
 - 同步游标行名为 `trace`（不是 `traces`）。需要让 worker 带标签重推历史时，删除 `langfuse_sync_cursor` 中 `name = 'trace'` 的行；重推期间团队页显示"运行数据同步中"。
 - `make demo-dev` 启动失败并提示 `Parser supervisor unavailable` 时，先确认解析器镜像存在；镜像被清理后用 `make parser-build` 重建（按 `.tapper/parser-build.json` 固定版本）。
+- ClickHouse 的诊断日志表 `system.trace_log`、`system.text_log` 会持续增长（2026-10-25 曾达 21 GB 并占满 Docker 虚拟机磁盘）；可用 `docker exec tap-insights-local-clickhouse-1 clickhouse-client --query "TRUNCATE TABLE system.trace_log"`（`text_log` 同理）清空，不影响 Langfuse 数据。
 - `make demo-check` 的磁盘提示测量的是 Docker 虚拟机内 ClickHouse 所在文件系统；低于 5 GB 时 Langfuse 与 ClickHouse 可能无法启动。不要用 `docker image prune` 清理：解析器镜像按 ID 固定、可能没有标签，会被一并删除。
 - 运行数据来源由 `TAP_AGENT_TEAM_RUNTIME_METRICS` 控制：默认 `langfuse`；`turn_table` 只在 `TAP_DEMO_MODE=e2e` 时允许。
 
@@ -94,9 +95,7 @@ TAP_RUN_LANGFUSE_SMOKE=1 TAP_LANGFUSE_SMOKE_PROJECT_ID=tapper-demo \
 
 | 事项 | 负责 | 说明 |
 | --- | --- | --- |
-| 删除共享 Langfuse 中的 e2e trace | 负责人 | 2026-10-24 08:35–09:43 UTC 的 654 条 trace 来自隔离 e2e，演示库无对应记录，会抬高内置 Agent 与 Tapper 默认的运行次数；删除需人工执行（自动化删除被权限策略拦下） |
-| 清理 Docker 磁盘 | 负责人 | 剩余约 2.9 GB；只清理确认无用的镜像与卷 |
 | 业务验证（spec 7.4） | 负责人 | 用真实模型积累至少一周数据，核对汇报页数字与口径后把路线图 V2.1 改为完成 |
-| 接受 ADR-033 | 负责人 | 当前 `proposed` |
-| 推送 `develop` | 负责人 | 本地领先远端，含本功能及后续修复 |
 | V2 后续 | 开发 | 按路线图进入 LangGraph 收尾（PR 6/7），再进入 V2.2 主动框架 |
+
+2026-10-25 已完成：删除 654 条 e2e trace、清理 Docker 磁盘（清空 ClickHouse 诊断日志、删除两个旧镜像与调试卷）、接受 ADR-033、推送 `develop`。
