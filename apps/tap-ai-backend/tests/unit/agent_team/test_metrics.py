@@ -140,6 +140,14 @@ def test_call_volume_fields_are_none_when_runtime_unavailable():
     assert row.calls_per_run is None
 
 
+def test_people_scope_adds_runtime_callers():
+    # Spec 2.5 (2026-10-27): callers come from Langfuse as well as MySQL, so a
+    # caller whose Turns are gone from MySQL still appears.
+    assert people_scope(
+        owners={"owner-1"}, active_actors={"maintainer-3"}, runtime_callers={"caller-4"}
+    ) == {"owner-1", "maintainer-3", "caller-4"}
+
+
 def test_people_scope_is_owners_callers_and_maintainers():
     # `store.active_actors` already covers callers and maintainers (spec 2.5).
     active_actors = {"owner-1", "caller-2", "maintainer-3"}
@@ -302,27 +310,25 @@ def test_roster_always_includes_tapper_default_when_runtime_unavailable():
     assert keys == {"agent-1", TAPPER_DEFAULT_AGENT_KEY}
 
 
-def test_owners_avg_and_served_avg_divide_by_full_people_scope():
-    # Review fix round 1, finding 1: divide by the whole spec-2.5 people
-    # scope (`len(person_rows)`), not only people with a nonzero count.
-    # 2 people owning [2, 0] -> average 1.0, not 2.0.
+def _person(actor_id, *, owned, served_by, runs):
+    return PersonRow(
+        actor_id=actor_id,
+        owned_agents=owned,
+        owned_runs=0,
+        served_by_agents=served_by,
+        runs=runs,
+        maintenance=0,
+    )
+
+
+def test_owners_avg_divides_by_people_who_own_at_least_one_agent():
+    # Spec 2.6 (2026-10-27): Agents per owner, not per person in scope.
+    # Owners own [2, 1]; the caller and the maintainer own nothing -> 1.5.
     person_rows = [
-        PersonRow(
-            actor_id="owner-1",
-            owned_agents=2,
-            owned_runs=0,
-            served_by_agents=0,
-            runs=0,
-            maintenance=0,
-        ),
-        PersonRow(
-            actor_id="caller-1",
-            owned_agents=0,
-            owned_runs=0,
-            served_by_agents=0,
-            runs=0,
-            maintenance=0,
-        ),
+        _person("owner-1", owned=2, served_by=0, runs=0),
+        _person("owner-2", owned=1, served_by=1, runs=3),
+        _person("caller-1", owned=0, served_by=3, runs=5),
+        _person("maintainer-1", owned=0, served_by=0, runs=0),
     ]
     summary = team_summary(
         stats_by_key={},
@@ -331,7 +337,49 @@ def test_owners_avg_and_served_avg_divide_by_full_people_scope():
         person_rows=person_rows,
         maintenance_total=0,
     )
+    assert summary.owners_avg == 1.5
+
+
+def test_served_avg_divides_by_people_who_called_in_the_period():
+    # Spec 2.6 (2026-10-27): Agents used per caller; owner-1 and the
+    # maintainer made no calls and stay out of the denominator -> (1+3)/2.
+    person_rows = [
+        _person("owner-1", owned=2, served_by=0, runs=0),
+        _person("owner-2", owned=1, served_by=1, runs=3),
+        _person("caller-1", owned=0, served_by=3, runs=5),
+        _person("maintainer-1", owned=0, served_by=0, runs=0),
+    ]
+    summary = team_summary(
+        stats_by_key={},
+        kinds_by_key={},
+        statuses_by_key={},
+        person_rows=person_rows,
+        maintenance_total=0,
+    )
+    assert summary.served_avg == 2.0
+
+
+def test_served_avg_is_zero_when_runtime_unknown():
+    person_rows = [
+        PersonRow(
+            actor_id="owner-1",
+            owned_agents=1,
+            owned_runs=None,
+            served_by_agents=None,
+            runs=None,
+            maintenance=0,
+        )
+    ]
+    summary = team_summary(
+        stats_by_key={},
+        kinds_by_key={},
+        statuses_by_key={},
+        person_rows=person_rows,
+        maintenance_total=0,
+        runtime_available=False,
+    )
     assert summary.owners_avg == 1.0
+    assert summary.served_avg == 0.0
 
 
 def test_owners_avg_is_zero_for_empty_people_scope():

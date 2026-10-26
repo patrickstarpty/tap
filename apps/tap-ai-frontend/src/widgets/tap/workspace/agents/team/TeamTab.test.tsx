@@ -193,9 +193,9 @@ describe("TeamTab", () => {
     renderTab();
     expect(screen.getByText("运行次数").nextSibling).toHaveTextContent("120");
     expect(screen.getByText("Agent 数").nextSibling).toHaveTextContent("4");
-    expect(screen.getByText("人均负责 Agent").nextSibling).toHaveTextContent(
-      "1.5",
-    );
+    expect(
+      screen.getByText("每位负责人管理 Agent 数").nextSibling,
+    ).toHaveTextContent("1.5");
     expect(screen.getByText("维护动作").nextSibling).toHaveTextContent("7");
     expect(screen.getByText("数据更新于 08:00（UTC）")).toBeVisible();
   });
@@ -217,6 +217,13 @@ describe("TeamTab", () => {
     expect(screen.getByText("2026/10/20 09:00")).toBeVisible();
   });
 
+  it("labels the two averages by owner and by caller", () => {
+    setup([row({})]);
+    renderTab();
+    expect(screen.getByText("每位负责人管理 Agent 数")).toBeVisible();
+    expect(screen.getByText("每位使用者用到的 Agent 数")).toBeVisible();
+  });
+
   it("labels built-in members and insufficient satisfaction samples", () => {
     setup([
       row({
@@ -227,7 +234,7 @@ describe("TeamTab", () => {
       }),
     ]);
     renderTab();
-    expect(screen.getByText("Tapper 内置", { selector: "dd" })).toBeVisible();
+    expect(screen.getByText("平台维护", { selector: "dd" })).toBeVisible();
     expect(screen.getByText("样本不足")).toBeVisible();
   });
 

@@ -75,6 +75,7 @@ function mockReport(
   current: Record<string, unknown> = {},
   previous: Record<string, unknown> = {},
   runtimeStatus = "ok",
+  members: unknown[] = [member("a1", [["2026-09-01", 3]])],
 ) {
   vi.mocked(useTeamReport).mockReturnValue({
     data: {
@@ -86,7 +87,7 @@ function mockReport(
       data: {
         current: {
           summary: summary(current),
-          members: [member("a1", [["2026-09-01", 3]])],
+          members,
           people: [],
         },
         previousPeriod: { from: "2026-08-01", to: "2026-08-31" },
@@ -177,6 +178,37 @@ describe("ReportTab", () => {
     expect(root?.querySelector(".ant-table-column-has-sorters")).toBeNull();
   });
 
+  it("shows period activity instead of the 30-day status in the roster", () => {
+    mockReport({}, {}, "ok", [
+      { ...member("ran", []), status: "idle", runs: 5 },
+      { ...member("quiet", []), status: "active", runs: 0 },
+      { ...member("off", []), status: "disabled", runs: 0 },
+    ]);
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
+    expect(screen.getByRole("row", { name: /^ran/ })).toHaveTextContent(
+      "Ran this period",
+    );
+    expect(screen.getByRole("row", { name: /^quiet/ })).toHaveTextContent(
+      "No runs this period",
+    );
+    expect(screen.getByRole("row", { name: /^off/ })).toHaveTextContent(
+      "Disabled",
+    );
+    expect(screen.getByRole("row", { name: /^ran/ })).not.toHaveTextContent(
+      "Idle",
+    );
+  });
+
+  it("names platform-maintained owners in the roster", () => {
+    mockReport({}, {}, "ok", [
+      { ...member("default", []), kind: "tapper_default", ownerActorId: null },
+    ]);
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    expect(screen.getByRole("row", { name: /^default/ })).toHaveTextContent(
+      "平台维护",
+    );
+  });
+
   it("prints through window.print", async () => {
     mockReport();
     const print = vi.fn();
@@ -239,7 +271,7 @@ describe("ReportTab", () => {
   it("shows only the current value for point-in-time agent counts", () => {
     mockReport({ agentTotal: 7, idle: 3 }, { agentTotal: 5, idle: 1 });
     render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
-    for (const name of [/^Agents/, /^Idle/]) {
+    for (const name of [/^Agents(?! (per|used))/, /^Idle/]) {
       const cells = within(screen.getByRole("row", { name })).getAllByRole(
         "cell",
       );

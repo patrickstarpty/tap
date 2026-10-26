@@ -163,7 +163,7 @@ def build_member_row(
         name=name,
         kind=kind,
         job_title=job_title,
-        # Spec 1.1: built-in and tapper_default show "Tapper 内置", never an owner.
+        # Spec 1.1: built-in and tapper_default show "平台维护", never an owner.
         owner_actor_id=None if kind in ("built_in", "tapper_default") else owner_actor_id,
         joined_at=joined_at,
         status=status,
@@ -213,10 +213,10 @@ def team_summary(
     `cost_usd` are likewise `None` -- never `0`/`Decimal("0")` -- when
     `runtime_available` is `False`.
 
-    `owners_avg`/`served_avg` divide by the full spec-2.5 people scope
-    (`len(person_rows)`, `0.0` when empty), not merely the people with a
-    nonzero count -- someone who owns/serves nothing still counts in the
-    denominator."""
+    Spec 2.6 (2026-10-27): `owners_avg` is Agents per owner (denominator:
+    people owning at least one Agent) and `served_avg` is Agents used per
+    caller (denominator: people with runs in the period); each is `0.0`
+    when its denominator is empty."""
     countable = [
         key
         for key, kind in kinds_by_key.items()
@@ -244,18 +244,16 @@ def team_summary(
         runs = None
         latency_total_ms = None
         cost_usd = None
-    owners_avg = (
-        sum(row.owned_agents for row in person_rows) / len(person_rows) if person_rows else 0.0
-    )
+    owners = [row for row in person_rows if row.owned_agents > 0]
+    owners_avg = sum(row.owned_agents for row in owners) / len(owners) if owners else 0.0
     # `served_by_agents` is `None` on every `person_rows` entry exactly when
     # `runtime_available` is `False` (same flag `build_person_row` used to
     # build them); `owners_avg`/`served_avg` are not part of this ruling's
     # `| None` widening (they stay plain `float`), so an outage's `None`s
     # coalesce to `0` here rather than changing this field's type.
+    callers = [row for row in person_rows if (row.runs or 0) > 0]
     served_avg = (
-        sum((row.served_by_agents or 0) for row in person_rows) / len(person_rows)
-        if person_rows
-        else 0.0
+        sum((row.served_by_agents or 0) for row in callers) / len(callers) if callers else 0.0
     )
     return TeamSummary(
         agent_total=agent_total,
@@ -270,11 +268,18 @@ def team_summary(
     )
 
 
-def people_scope(*, owners: Iterable[str], active_actors: Iterable[str]) -> frozenset[str]:
+def people_scope(
+    *,
+    owners: Iterable[str],
+    active_actors: Iterable[str],
+    runtime_callers: Iterable[str] = (),
+) -> frozenset[str]:
     """Spec 2.5: all current owners union everyone who called an Agent or
-    made a maintenance change in the period (`store.active_actors` already
-    covers both of the latter -- see `ports.AgentTeamStore.active_actors`)."""
-    return frozenset(owners) | frozenset(active_actors)
+    made a maintenance change in the period. `active_actors` is MySQL's view
+    of callers and maintainers (`ports.AgentTeamStore.active_actors`);
+    `runtime_callers` adds Langfuse's callers, the same source as each
+    Agent's served list (empty when the runtime backend is unavailable)."""
+    return frozenset(owners) | frozenset(active_actors) | frozenset(runtime_callers)
 
 
 def build_person_row(

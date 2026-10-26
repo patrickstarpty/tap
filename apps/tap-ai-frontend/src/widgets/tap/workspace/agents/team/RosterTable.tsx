@@ -9,6 +9,7 @@ import {
   formatDuration,
 } from "./format";
 import {
+  PeriodActivityValue,
   RunValue,
   SatisfactionValue,
   StatusValue,
@@ -84,11 +85,19 @@ export function RosterTable({
       ...sortable("owner_actor_id"),
       render: (_: unknown, row) => ownerName(row, ctx.copy),
     },
-    {
-      title: cols.status,
-      ...sortable("status"),
-      render: (_: unknown, row) => <StatusValue row={row} ctx={ctx} />,
-    },
+    readOnly
+      ? {
+          title: labels.periodActivity.column,
+          key: "period_activity",
+          render: (_: unknown, row) => (
+            <PeriodActivityValue row={row} ctx={ctx} />
+          ),
+        }
+      : {
+          title: cols.status,
+          ...sortable("status"),
+          render: (_: unknown, row) => <StatusValue row={row} ctx={ctx} />,
+        },
     {
       title: cols.kind,
       ...sortable("kind"),

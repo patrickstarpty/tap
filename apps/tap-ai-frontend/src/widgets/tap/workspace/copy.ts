@@ -387,7 +387,7 @@ export interface WorkspaceCopy {
       ownersAvg: string;
     };
     status: { active: string; idle: string; disabled: string };
-    builtIn: string;
+    platformOwner: string;
     insufficientSample: string;
     runtimeUnavailable: string;
     runtimeSyncing: string;
@@ -451,6 +451,7 @@ export interface WorkspaceCopy {
       pendingFeedback: string;
       noPeople: string;
       noMatch: string;
+      periodActivity: { column: string; ran: string; noRuns: string };
       columns: {
         name: string;
         jobTitle: string;
@@ -1077,11 +1078,11 @@ export const WORKSPACE_COPY = {
         latency: "Total latency",
         cost: "Cost",
         maintenance: "Maintenance actions",
-        servedAvg: "Avg. Agents used per person",
-        ownersAvg: "Avg. Agents per owner",
+        servedAvg: "Agents used per caller",
+        ownersAvg: "Agents per owner",
       },
       status: { active: "Active", idle: "Idle", disabled: "Disabled" },
-      builtIn: "Built into Tapper",
+      platformOwner: "Platform-maintained",
       insufficientSample: "Not enough ratings",
       runtimeUnavailable: "Run data is temporarily unavailable",
       runtimeSyncing: "Run data is syncing",
@@ -1150,6 +1151,11 @@ export const WORKSPACE_COPY = {
         pendingFeedback: "Pending feedback",
         noPeople: "No people in this period",
         noMatch: "No matching Agents",
+        periodActivity: {
+          column: "This period",
+          ran: "Ran this period",
+          noRuns: "No runs this period",
+        },
         columns: {
           name: "Name",
           jobTitle: "Job title",
@@ -1764,11 +1770,11 @@ export const WORKSPACE_COPY = {
         latency: "总耗时",
         cost: "成本",
         maintenance: "维护动作",
-        servedAvg: "人均被服务 Agent 数",
-        ownersAvg: "人均负责 Agent",
+        servedAvg: "每位使用者用到的 Agent 数",
+        ownersAvg: "每位负责人管理 Agent 数",
       },
       status: { active: "活跃", idle: "闲置", disabled: "已停用" },
-      builtIn: "Tapper 内置",
+      platformOwner: "平台维护",
       insufficientSample: "样本不足",
       runtimeUnavailable: "运行数据暂不可用",
       runtimeSyncing: "运行数据同步中",
@@ -1836,6 +1842,11 @@ export const WORKSPACE_COPY = {
         pendingFeedback: "待处理反馈",
         noPeople: "该周期内没有人员",
         noMatch: "没有符合条件的 Agent",
+        periodActivity: {
+          column: "本期",
+          ran: "本期运行",
+          noRuns: "本期未运行",
+        },
         columns: {
           name: "名称",
           jobTitle: "岗位",
