@@ -464,6 +464,29 @@ async def test_person_served_count_ignores_non_roster_stats():
 
 
 @pytest.mark.asyncio
+async def test_people_include_runtime_callers_missing_from_mysql():
+    # Spec 2.5 (2026-10-27): a caller Langfuse saw in the period is a person
+    # even when MySQL has no Turn for them, so people and served lists agree.
+    store = FakeStore(
+        agent_records={"agent-1": _agent("agent-1", owner_actor_id="owner-1")},
+        active_actor_set=set(),
+    )
+    trailing = trailing_30_days(_NOW.date())
+    stats = [_stats("agent-1", runs=3, served=(ServedActor("langfuse-only", 3),))]
+    metrics = FakeMetrics(
+        stats_by_period={
+            (_PERIOD.start, _PERIOD.end): stats,
+            (trailing.start, trailing.end): stats,
+        }
+    )
+    view = await _service(store, metrics).people(_PERIOD)
+    rows = {row.actor_id: row for row in view.data}
+    assert set(rows) == {"owner-1", "langfuse-only"}
+    assert rows["langfuse-only"].runs == 3
+    assert rows["langfuse-only"].served_by_agents == 1
+
+
+@pytest.mark.asyncio
 async def test_report_runtime_status_is_worst_of_current_and_previous():
     # Review fix round 1, finding 2: only the previous period's fetch is
     # unavailable -> the combined report is still "unavailable".

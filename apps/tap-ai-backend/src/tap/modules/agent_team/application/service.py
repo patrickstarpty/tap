@@ -428,8 +428,13 @@ class AgentTeamService:
         self, members: Sequence[MemberRow], runtime: _RuntimeData, store_data: _StoreData
     ) -> list[PersonRow]:
         owners = {row.owner_actor_id for row in members if row.owner_actor_id is not None}
-        scope_ids = pure.people_scope(owners=owners, active_actors=store_data.active_actors)
         stats_by_key = self._member_stats(members, runtime)
+        runtime_callers = {
+            served.actor_id for stats in stats_by_key.values() for served in stats.served
+        }
+        scope_ids = pure.people_scope(
+            owners=owners, active_actors=store_data.active_actors, runtime_callers=runtime_callers
+        )
         return [
             pure.build_person_row(
                 actor_id=actor_id,

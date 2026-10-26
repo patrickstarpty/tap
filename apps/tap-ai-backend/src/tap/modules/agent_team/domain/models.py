@@ -174,7 +174,7 @@ class MemberRow:
     satisfaction/maintenance/pending-feedback (spec 2.3/2.4).
 
     `owner_actor_id` is always `None` for `kind in ("built_in",
-    "tapper_default")` -- the frontend shows "Tapper 内置" instead (spec 1.1).
+    "tapper_default")` -- the frontend shows "平台维护" instead (spec 1.1, 6.1).
     `top_served` holds at most the top 3 served actors by run count.
 
     `status` is `None` for a non-disabled Agent when the runtime backend is

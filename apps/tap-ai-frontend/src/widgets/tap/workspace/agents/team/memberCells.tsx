@@ -11,7 +11,7 @@ export interface CellContext {
 }
 
 export function ownerName(row: AgentTeamMemberRow, copy: WorkspaceCopy) {
-  return row.ownerActorId ?? copy.agentTeam.builtIn;
+  return row.ownerActorId ?? copy.agentTeam.platformOwner;
 }
 
 /** A run-derived value; "—" plus the runtime marker when it is missing. */
@@ -44,6 +44,26 @@ export function StatusValue({
       ctx={ctx}
     />
   );
+}
+
+/** Report layout (spec 6.4): whether the Agent ran in the selected period,
+ * not its trailing-30-day status; disabled still reads "disabled". */
+export function PeriodActivityValue({
+  row,
+  ctx,
+}: {
+  row: AgentTeamMemberRow;
+  ctx: CellContext;
+}) {
+  const text = ctx.copy.agentTeam;
+  if (row.status === "disabled") return <>{text.status.disabled}</>;
+  const value =
+    row.runs === null
+      ? null
+      : row.runs > 0
+        ? text.team.periodActivity.ran
+        : text.team.periodActivity.noRuns;
+  return <RunValue value={value} ctx={ctx} />;
 }
 
 export function SatisfactionValue({

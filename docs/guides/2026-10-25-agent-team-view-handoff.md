@@ -81,7 +81,8 @@ TAP_RUN_LANGFUSE_SMOKE=1 TAP_LANGFUSE_SMOKE_PROJECT_ID=tapper-demo \
 - 转交负责人的请求字段为 `newOwnerActorId`：现有身份防伪检查会拒绝任何形如 `actorId` 的请求体字段。
 - 档案接口返回 `{row, currentRevisionId, served, pendingFeedback}`；汇报接口返回 `previousPeriod`；履历接口不带读取信封。
 - 新增错误码：`cursor_invalid`、`job_title_too_long`、`sort_invalid`、`note_too_long`、`filter_invalid`（均 400）。
-- 人均负责／被服务 Agent 数以全部人员范围为分母；报告对比中 Agent 总数与闲置数不可按周期比较，显示"—"。
+- 报告对比中 Agent 总数与闲置数不可按周期比较，显示"—"。
+- 2026-10-27 口径调整（业务验证后）：每位负责人管理的 Agent 数以负责人为分母、每位使用者用到的 Agent 数以本期调用者为分母；人员范围加入 Langfuse 中的调用者；汇报页花名册显示"本期运行／本期未运行"而非状态；内置 Agent 与 Tapper 默认的负责人显示"平台维护"；删除会话不影响满意度。
 - 卡片趋势线固定为近 30 天（单独查询），卡片数字为所选周期运行次数。
 - 花名册各列可排序；并列按名称稳定，状态按 活跃 < 闲置 < 已停用，类型按 自定义 < 内置 < Tapper 默认。
 
