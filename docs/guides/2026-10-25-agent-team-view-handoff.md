@@ -8,6 +8,7 @@
 - 路线图 V2.1 行：工程完成；待业务验证（spec 7.4）。
 - ADR-033 已于 2026-10-25 接受。
 - 演示环境已迁移到 `0037_agent_team_fk_name`，`make demo-dev` 运行的是合并后的代码。
+- 2026-10-27 起的业务验证数据、口径调整与后续待办见 [Agent 团队视图业务验证交接](2026-10-27-agent-team-business-validation-handoff.md)。
 
 ## 2. 代码位置
 
