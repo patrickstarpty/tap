@@ -1,7 +1,12 @@
 import type { AgentTeamMemberRow } from "../../../../../features/knowledge/api/agentTeam";
 import { Avatar } from "./avatar";
 import { Sparkline } from "./charts";
-import { formatCost, formatCount, formatDuration } from "./format";
+import {
+  formatCost,
+  formatCount,
+  formatDuration,
+  memberDisplayName,
+} from "./format";
 import {
   RelativeTime,
   RunValue,
@@ -43,14 +48,14 @@ export function RosterCards({
           data-status={row.status ?? "unknown"}
         >
           <div className="tap-team-card-head">
-            <Avatar name={row.name} />
+            <Avatar name={memberDisplayName(row, text)} />
             <div className="tap-team-card-id">
               <button
                 type="button"
                 className="tap-team-card-name"
                 onClick={() => onOpenMember(row.agentKey)}
               >
-                {row.name}
+                {memberDisplayName(row, text)}
               </button>
               <p data-empty={row.jobTitle === null ? "true" : undefined}>
                 {row.jobTitle ?? labels.noJobTitle}
@@ -78,7 +83,7 @@ export function RosterCards({
               ) : (
                 <Sparkline
                   points={sparklineByAgentKey.get(row.agentKey) ?? []}
-                  label={`${row.name} ${labels.runsTrend}`}
+                  label={`${memberDisplayName(row, text)} ${labels.runsTrend}`}
                   height={34}
                 />
               )}

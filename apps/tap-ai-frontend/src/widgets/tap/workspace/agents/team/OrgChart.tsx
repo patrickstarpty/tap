@@ -81,7 +81,7 @@ export function OrgChart({
 
   const agentLabel = (key: string) =>
     agentStats[key]?.name ??
-    (key === "tapper_default" ? labels.kinds.tapper_default : key);
+    (key === "tapper_default" ? copy.agentTeam.tapperDefaultName : key);
   const countText = (value: number | null | undefined) =>
     value === null || value === undefined ? "" : formatCompact(value, locale);
 

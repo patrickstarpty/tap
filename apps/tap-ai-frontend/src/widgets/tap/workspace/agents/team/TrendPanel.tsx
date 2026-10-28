@@ -15,6 +15,7 @@ import {
   formatCount,
   formatDuration,
   formatShortDate,
+  memberDisplayName,
 } from "./format";
 import type { CellContext } from "./memberCells";
 import { RuntimeMark } from "./RuntimeBadge";
@@ -133,7 +134,7 @@ export function TrendPanel({ members, axis, ctx }: TrendPanelProps) {
     );
     const list: Series[] = top.map((row, i) => ({
       key: row.agentKey,
-      label: row.name,
+      label: memberDisplayName(row, text),
       color: SERIES_COLORS[i],
       values: memberSeries(row, axis, metric),
       total: rowTotal(row, metric),
@@ -156,7 +157,7 @@ export function TrendPanel({ members, axis, ctx }: TrendPanelProps) {
       });
     }
     return list;
-  }, [members, axis, metric, labels.others]);
+  }, [members, axis, metric, labels.others, text]);
 
   const format = metricFormatter(metric, ctx);
   const visible = series.filter((s) => !hidden.has(s.key));

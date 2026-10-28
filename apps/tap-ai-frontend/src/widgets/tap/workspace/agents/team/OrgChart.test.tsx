@@ -38,7 +38,7 @@ describe("OrgChart", () => {
     expect(serves).toHaveLength(2);
     expect(owns[0]?.getAttribute("stroke-dasharray")).toBeNull();
     expect(serves[0]?.getAttribute("stroke-dasharray")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Tapper default" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tapper" })).toBeTruthy();
   });
 
   it("highlights a person's relations and toggles off", async () => {
@@ -71,7 +71,7 @@ describe("OrgChart", () => {
     expect(description("alice")).toBeNull();
     expect(description("bob")).toBe(dimmed);
     expect(description("Reviewer")).toBeNull();
-    expect(description("Tapper default")).toBe(dimmed);
+    expect(description("Tapper")).toBe(dimmed);
   });
 
   it("opens an agent from click and keyboard", async () => {

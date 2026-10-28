@@ -6,7 +6,7 @@ import {
 import type { WorkspaceCopy } from "../../copy";
 import type { ProfileTab } from "./AgentProfileDrawer";
 import { Avatar } from "./avatar";
-import { EMPTY, formatDateTime, teamLocale } from "./format";
+import { EMPTY, formatDateTime, memberDisplayName, teamLocale } from "./format";
 import {
   LoadError,
   TeamSkeleton,
@@ -65,7 +65,10 @@ export function MyAgentsTab({
   };
   const { owned, served, pendingFeedback } = view.data;
   const names = new Map(
-    [...owned, ...served].map((row) => [row.agentKey, row.name]),
+    [...owned, ...served].map((row) => [
+      row.agentKey,
+      memberDisplayName(row, text),
+    ]),
   );
   const rating = (item: PendingItem) =>
     item.rating === "up"

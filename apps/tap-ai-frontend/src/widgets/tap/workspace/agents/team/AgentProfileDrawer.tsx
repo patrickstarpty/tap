@@ -24,6 +24,7 @@ import {
   formatDate,
   formatDateTime,
   formatDuration,
+  memberDisplayName,
   teamLocale,
 } from "./format";
 import {
@@ -96,6 +97,7 @@ export function AgentProfileDrawer({
   const view = memberQuery.data;
   const detail = view?.data;
   const row = detail?.row;
+  const displayName = row === undefined ? null : memberDisplayName(row, text);
 
   const tabs: ProfileTab[] = ["basic", "workload", "history", "feedback"];
   if (row?.kind === "custom") tabs.push("settings");
@@ -113,15 +115,17 @@ export function AgentProfileDrawer({
 
   return (
     <AccessibleDialog
-      ariaLabel={row?.name ?? text.heading}
+      ariaLabel={displayName ?? text.heading}
       className="tap-agent-profile-drawer"
       onClose={onClose}
       opener={opener}
     >
       <header className="tap-profile-head">
-        {row === undefined ? null : <Avatar name={row.name} size="lg" />}
+        {row === undefined ? null : (
+          <Avatar name={displayName ?? ""} size="lg" />
+        )}
         <div className="tap-profile-id">
-          <h2>{row?.name ?? text.heading}</h2>
+          <h2>{displayName ?? text.heading}</h2>
           {row === undefined || ctx === null ? null : (
             <>
               <p

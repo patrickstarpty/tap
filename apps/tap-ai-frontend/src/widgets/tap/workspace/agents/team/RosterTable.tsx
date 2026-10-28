@@ -10,6 +10,7 @@ import {
   formatDate,
   formatDateTime,
   formatDuration,
+  memberDisplayName,
 } from "./format";
 import {
   PeriodActivityValue,
@@ -113,7 +114,11 @@ export function RosterTable({
   });
 
   const reportColumns: TableProps<AgentTeamMemberRow>["columns"] = [
-    { title: cols.name, key: "name", render: (_: unknown, row) => row.name },
+    {
+      title: cols.name,
+      key: "name",
+      render: (_: unknown, row) => memberDisplayName(row, ctx.copy.agentTeam),
+    },
     {
       title: cols.jobTitle,
       key: "job_title",
@@ -253,14 +258,14 @@ export function RosterTable({
       className: "tap-team-col-name",
       render: (_: unknown, row) => (
         <span className="tap-team-agent-cell">
-          <Avatar name={row.name} size="sm" />
+          <Avatar name={memberDisplayName(row, ctx.copy.agentTeam)} size="sm" />
           <span className="tap-team-agent-id">
             <button
               type="button"
               className="tap-team-card-name"
               onClick={() => onOpenMember(row.agentKey)}
             >
-              {row.name}
+              {memberDisplayName(row, ctx.copy.agentTeam)}
             </button>
             <span
               className="tap-team-agent-title"
@@ -375,7 +380,7 @@ export function RosterTable({
         ) : (
           <Sparkline
             points={sparklineByAgentKey.get(row.agentKey) ?? []}
-            label={`${row.name} ${labels.runsTrend}`}
+            label={`${memberDisplayName(row, ctx.copy.agentTeam)} ${labels.runsTrend}`}
             height={26}
           />
         ),

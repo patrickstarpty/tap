@@ -317,6 +317,55 @@ describe("TeamTab", () => {
     expect(open).toHaveBeenCalledWith("a1");
   });
 
+  it("shows the Tapper default member as Tapper on English screens", async () => {
+    const tapper = row({
+      agentKey: "tapper_default",
+      name: "Tapper 默认",
+      kind: "tapper_default",
+      ownerActorId: null,
+    });
+    setup([tapper]);
+    const open = vi.fn();
+    renderTab("en", { open });
+    expect(screen.queryByText("Tapper 默认")).toBeNull();
+    const tableRow = screen
+      .getByRole("button", { name: "Tapper" })
+      .closest("tr")!;
+    expect(
+      within(tableRow).getByText("T", { selector: ".tap-team-avatar" }),
+    ).toBeVisible();
+    expect(
+      within(tableRow).getByRole("img", { name: /^Tapper /u }),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Tapper" }));
+    expect(open).toHaveBeenCalledWith("tapper_default");
+    // The trend legend names the same member.
+    expect(
+      within(
+        screen.getByRole("list", { name: "Show or hide Agents" }),
+      ).getByRole("button", { name: /^Tapper \d/u }),
+    ).toBeVisible();
+    await showCards("en");
+    const card = screen
+      .getByRole("button", { name: "Tapper" })
+      .closest("li") as HTMLElement;
+    expect(within(card).getByRole("img", { name: /^Tapper /u })).toBeVisible();
+    expect(screen.queryByText("Tapper 默认")).toBeNull();
+  });
+
+  it("keeps the Tapper default member's Chinese name on Chinese screens", () => {
+    setup([
+      row({
+        agentKey: "tapper_default",
+        name: "Tapper 默认",
+        kind: "tapper_default",
+        ownerActorId: null,
+      }),
+    ]);
+    renderTab("zh");
+    expect(screen.getByRole("button", { name: "Tapper 默认" })).toBeVisible();
+  });
+
   it("passes owner, status and kind filters to the request", async () => {
     setup([
       row({}),

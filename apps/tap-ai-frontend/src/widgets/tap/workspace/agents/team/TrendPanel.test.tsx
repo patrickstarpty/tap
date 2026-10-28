@@ -44,6 +44,33 @@ function ctx(runtimeStatus: CellContext["runtimeStatus"] = "ok"): CellContext {
 }
 
 describe("TrendPanel", () => {
+  it("names the Tapper default member by language in the legend", () => {
+    const tapper = {
+      ...(member("tapper_default", 9, [3, 3, 3]) as object),
+      name: "Tapper 默认",
+      kind: "tapper_default",
+    } as never;
+    const chipLabels = (lang: "en" | "zh") => {
+      const { unmount } = render(
+        <TrendPanel
+          members={[tapper]}
+          axis={axis}
+          ctx={{ ...ctx(), copy: WORKSPACE_COPY[lang] }}
+        />,
+      );
+      const legend = screen.getByRole("list", {
+        name: WORKSPACE_COPY[lang].agentTeam.trend.legendLabel,
+      });
+      const labels = within(legend)
+        .getAllByRole("button")
+        .map((chip) => chip.getAttribute("aria-label"));
+      unmount();
+      return labels;
+    };
+    expect(chipLabels("en")).toEqual(["Tapper 9"]);
+    expect(chipLabels("zh")).toEqual(["Tapper 默认 9"]);
+  });
+
   it("stacks the top five Agents and folds the rest into one series", () => {
     render(<TrendPanel members={members} axis={axis} ctx={ctx()} />);
     const legend = screen.getByRole("list", { name: "Show or hide Agents" });

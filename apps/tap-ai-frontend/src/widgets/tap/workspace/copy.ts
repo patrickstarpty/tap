@@ -360,6 +360,8 @@ export interface WorkspaceCopy {
   };
   agentTeam: {
     heading: string;
+    /** Display name of the built-in `tapper_default` member; the server sends one fixed-language name. */
+    tapperDefaultName: string;
     descriptions: { mine: string; team: string; report: string };
     tablistLabel: string;
     tabs: { mine: string; team: string; report: string; config: string };
@@ -1112,6 +1114,7 @@ export const WORKSPACE_COPY = {
     },
     agentTeam: {
       heading: "Agent team",
+      tapperDefaultName: "Tapper",
       descriptions: {
         mine: "The Agents you own, the Agents that serve you, and feedback waiting for you.",
         team: "Who is on the Agent team, what each member has done and who looks after them.",
@@ -1872,6 +1875,7 @@ export const WORKSPACE_COPY = {
     },
     agentTeam: {
       heading: "Agent 团队",
+      tapperDefaultName: "Tapper 默认",
       descriptions: {
         mine: "你负责的 Agent、服务过你的 Agent，以及等你处理的反馈。",
         team: "团队里有哪些 Agent、各自做了什么，以及由谁负责。",

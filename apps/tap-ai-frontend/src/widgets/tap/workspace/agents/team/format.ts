@@ -1,3 +1,4 @@
+import type { AgentTeamMemberRow } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 
 export const EMPTY = "—";
@@ -5,6 +6,17 @@ export const EMPTY = "—";
 /** The codebase derives language from copy text; keep that check in one place. */
 export function teamLocale(copy: WorkspaceCopy): "en" | "zh-CN" {
   return copy.agentTeam.heading === "Agent team" ? "en" : "zh-CN";
+}
+
+/** The name a member is shown under. The server sends the Tapper default
+ * member with one fixed-language name, so it is localised here. */
+export function memberDisplayName(
+  member: Pick<AgentTeamMemberRow, "kind" | "name">,
+  text: WorkspaceCopy["agentTeam"],
+): string {
+  return member.kind === "tapper_default"
+    ? text.tapperDefaultName
+    : member.name;
 }
 
 export function formatCount(

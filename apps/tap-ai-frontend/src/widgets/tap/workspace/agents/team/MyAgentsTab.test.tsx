@@ -113,6 +113,49 @@ describe("MyAgentsTab", () => {
     expect(screen.getByText("Planner")).toBeTruthy();
   });
 
+  it("shows the Tapper default member as Tapper in cards and feedback", () => {
+    const tapper = {
+      ...row("tapper_default", "Tapper 默认"),
+      kind: "tapper_default",
+      ownerActorId: null,
+    };
+    setup({
+      served: [tapper],
+      pendingFeedback: [
+        {
+          feedbackId: "f1",
+          agentKey: "tapper_default",
+          actorId: "u1",
+          rating: "down",
+          comment: "Too slow",
+          conversationId: "c",
+          turnId: "t",
+          updatedAt: "2026-10-22T10:30:00Z",
+        },
+      ],
+    });
+    const { unmount } = render(
+      <MyAgentsTab
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        period={period}
+        onOpenMember={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Tapper 默认")).toBeNull();
+    expect(screen.getAllByText("Tapper").length).toBeGreaterThanOrEqual(2);
+    unmount();
+    render(
+      <MyAgentsTab
+        projectId="p1"
+        copy={WORKSPACE_COPY.zh}
+        period={period}
+        onOpenMember={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByText("Tapper 默认").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("shows an empty state per block", () => {
     setup({});
     render(

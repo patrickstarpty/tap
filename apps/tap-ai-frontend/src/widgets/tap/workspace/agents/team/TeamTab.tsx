@@ -12,7 +12,7 @@ import {
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 import { bucketAxis } from "./buckets";
-import { formatCount, teamLocale } from "./format";
+import { formatCount, memberDisplayName, teamLocale } from "./format";
 import { ActivityHeatmap } from "./Heatmap";
 import { KpiStrip } from "./KpiStrip";
 import {
@@ -125,12 +125,12 @@ export function TeamTab({
       ...(teamRows ?? []),
     ])
       stats[row.agentKey] = {
-        name: row.name,
+        name: memberDisplayName(row, text),
         runs: row.runs,
         status: row.status,
       };
     return stats;
-  }, [spark.data, rows, teamRows]);
+  }, [spark.data, rows, teamRows, text]);
   // A failed filtered query keeps the filters on screen (error below them)
   // so the user can change or clear the filter instead of being trapped.
   const membersFailed = members.isError && members.data === undefined;

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { WORKSPACE_COPY } from "../../copy";
-import { formatCost, formatDuration, formatRelative } from "./format";
+import {
+  formatCost,
+  formatDuration,
+  formatRelative,
+  memberDisplayName,
+} from "./format";
 
 const en = WORKSPACE_COPY.en.agentTeam.durationUnits;
 const zh = WORKSPACE_COPY.zh.agentTeam.durationUnits;
@@ -51,5 +56,29 @@ describe("formatRelative", () => {
       "3小时前",
     );
     expect(formatRelative(null, "en", now)).toBe("—");
+  });
+});
+
+describe("memberDisplayName", () => {
+  const tapper = { kind: "tapper_default" as const, name: "Tapper 默认" };
+
+  it("localises the Tapper default member, whatever name the server sent", () => {
+    expect(memberDisplayName(tapper, WORKSPACE_COPY.en.agentTeam)).toBe(
+      "Tapper",
+    );
+    expect(memberDisplayName(tapper, WORKSPACE_COPY.zh.agentTeam)).toBe(
+      "Tapper 默认",
+    );
+  });
+
+  it("keeps every other member's own name", () => {
+    const custom = { kind: "custom" as const, name: "Reviewer" };
+    const builtIn = { kind: "built_in" as const, name: "Planner" };
+    expect(memberDisplayName(custom, WORKSPACE_COPY.en.agentTeam)).toBe(
+      "Reviewer",
+    );
+    expect(memberDisplayName(builtIn, WORKSPACE_COPY.zh.agentTeam)).toBe(
+      "Planner",
+    );
   });
 });

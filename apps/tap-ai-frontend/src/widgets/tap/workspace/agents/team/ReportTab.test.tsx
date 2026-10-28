@@ -214,9 +214,23 @@ describe("ReportTab", () => {
       { ...member("default", []), kind: "tapper_default", ownerActorId: null },
     ]);
     render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
-    expect(screen.getByRole("row", { name: /^default/ })).toHaveTextContent(
+    expect(screen.getByRole("row", { name: /^Tapper 默认/ })).toHaveTextContent(
       "平台维护",
     );
+  });
+
+  it("names the Tapper default member by language in the roster", () => {
+    mockReport({}, {}, "ok", [
+      {
+        ...member("tapper_default", []),
+        name: "Tapper 默认",
+        kind: "tapper_default",
+        ownerActorId: null,
+      },
+    ]);
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
+    expect(screen.getByRole("row", { name: /^Tapper / })).toBeVisible();
+    expect(screen.queryByText("Tapper 默认")).toBeNull();
   });
 
   it("prints through window.print", async () => {
