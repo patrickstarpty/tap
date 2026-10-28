@@ -204,3 +204,105 @@ async def test_exhausted_deadline_neither_fetches_nor_negative_caches() -> None:
     result = await cached.agent_stats("proj1", _period(), timeout_seconds=5.0)
     assert inner.agent_stats_calls == 1
     assert result[0].runs == 1
+
+
+# -- review fix 6: in-flight dedupe and the view-budget rule -----------------
+
+
+class _Gated(_CountingInner):
+    """`agent_stats` blocks until `release` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+        self.agent_stats_calls += 1
+        await self.release.wait()
+        return []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_share_one_in_flight_fetch() -> None:
+    inner = _Gated()
+    cached = CachedRuntimeMetrics(inner, clock=_FakeClock())
+
+    callers = [
+        asyncio.create_task(cached.agent_stats("proj1", _period(), timeout_seconds=5.0))
+        for _ in range(5)
+    ]
+    await asyncio.sleep(0)
+    inner.release.set()
+    results = await asyncio.gather(*callers)
+
+    assert inner.agent_stats_calls == 1
+    assert results == [[]] * 5
+    assert cached._inflight == {}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_share_one_failure() -> None:
+    class _FailingGated(_Gated):
+        async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+            self.agent_stats_calls += 1
+            await self.release.wait()
+            raise RuntimeMetricsUnavailable("boom")
+
+    inner = _FailingGated()
+    cached = CachedRuntimeMetrics(inner, clock=_FakeClock())
+
+    callers = [asyncio.create_task(cached.agent_stats("proj1", _period())) for _ in range(3)]
+    await asyncio.sleep(0)
+    inner.release.set()
+    results = await asyncio.gather(*callers, return_exceptions=True)
+
+    assert inner.agent_stats_calls == 1
+    assert all(isinstance(result, RuntimeMetricsUnavailable) for result in results)
+
+
+@pytest.mark.asyncio
+async def test_one_caller_giving_up_does_not_cancel_the_shared_fetch() -> None:
+    inner = _Gated()
+    cached = CachedRuntimeMetrics(inner, clock=_FakeClock())
+
+    patient = asyncio.create_task(cached.agent_stats("proj1", _period(), timeout_seconds=5.0))
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period(), timeout_seconds=0.01)
+    inner.release.set()
+
+    assert await patient == []
+    assert inner.agent_stats_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_budget_shorter_than_cap_times_out_without_negative_caching() -> None:
+    inner = _Gated()
+    clock = _FakeClock()
+    cached = CachedRuntimeMetrics(
+        inner, failure_ttl_seconds=30, fetch_timeout_seconds=8.0, clock=clock
+    )
+
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period(), timeout_seconds=0.01)
+    assert cached._failures == {}
+    assert cached._inflight == {}  # the abandoned fetch was cancelled
+
+    inner.release.set()
+    assert await cached.agent_stats("proj1", _period(), timeout_seconds=5.0) == []
+    assert inner.agent_stats_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cap_shorter_than_budget_times_out_and_is_negative_cached() -> None:
+    inner = _Gated()
+    clock = _FakeClock()
+    cached = CachedRuntimeMetrics(
+        inner, failure_ttl_seconds=30, fetch_timeout_seconds=0.01, clock=clock
+    )
+
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period(), timeout_seconds=5.0)
+    with pytest.raises(RuntimeMetricsUnavailable):
+        await cached.agent_stats("proj1", _period(), timeout_seconds=5.0)
+
+    assert inner.agent_stats_calls == 1

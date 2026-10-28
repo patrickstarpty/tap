@@ -74,7 +74,7 @@
 
 动作由系统在对应写操作中自动记录，不需要人工填写。
 
-能力 4 没有"Skill 出新版本后自动生成 Agent 修订"的路径，修订都由人发起。修订时若与上一修订相比只有绑定的 Skill 修订变化，且每处变化都是同一 Skill 的新修订，记 `skill_upgraded`；其余记 `revised`。创建 Agent 不记维护动作。
+能力 4 没有"Skill 出新版本后自动生成 Agent 修订"的路径，修订都由人发起。修订时若与上一修订相比只有绑定的 Skill 修订变化，且每处变化都是同一 Skill 的新修订（与绑定顺序无关），记 `skill_upgraded`；其余记 `revised`。创建 Agent 不记维护动作。
 
 ### 1.4 状态
 
@@ -163,7 +163,7 @@ flowchart LR
   AT --> EX[报告页 / CSV]
 ```
 
-- 运行数据只从 Langfuse 查询：统计用 Metrics API v1（自托管 3.x 只提供 v1）；"最近运行"用 Traces 列表 API（`tags` 过滤、`orderBy=timestamp.desc`、`limit=1`），因为 Metrics API v1 没有时间戳度量。已在本地 3.225.11 实测：按 `tags`、`userId`、`name` 分组，`timeDimension` 按天或周，`count`、`sum_totalCost`、`p50_latency`（毫秒），observations 视图可按 `tags`（即 trace 标签）分组，按 `type`、`name` 前缀、`parentObservationId` 为空过滤，metadata 与 tags 过滤均可用。metadata 只能过滤不能分组，因此 Agent 标识与 Turn 终态写入标签。`tags` 维度返回整组标签而非逐个展开，`timeDimension` 会补齐空桶，空桶也计入行数上限。
+- 运行数据只从 Langfuse 查询：统计用 Metrics API v1（自托管 3.x 只提供 v1）；"最近运行"用 Traces 列表 API（`tags` 过滤、`orderBy=timestamp.desc`、`limit=1`），因为 Metrics API v1 没有时间戳度量。已在本地 3.225.11 实测：按 `tags`、`userId`、`name` 分组，`timeDimension` 按天或周，`count`、`sum_totalCost`、`p50_latency`（毫秒），observations 视图可按 `tags`（即 trace 标签）分组，按 `type`、`name` 前缀、`parentObservationId` 为空过滤，metadata 与 tags 过滤均可用。metadata 只能过滤不能分组，因此 Agent 标识与 Turn 终态写入标签。`tags` 维度返回整组标签而非逐个展开，`timeDimension` 会补齐空桶，空桶也计入行数上限。`tags` 维度按整组标签分组，含 `outcome:` 标签的行会被拆开，p50 不能跨组合并；因此运行时长 p50 对每个有运行的 Agent 单独发一次按 `agent:` 标签过滤、不分组的查询（并发执行），失败时才退回按组加权的近似值。
 - 查询按 `environment`（`TAP_LANGFUSE_ENVIRONMENT`）过滤，本地与 e2e 数据不混算。
 - 满意度、维护动作与人事字段来自 MySQL，由 `agent_team` 模块合并。
 - 新增后端模块 `agent_team`，通过端口 `AgentRuntimeMetrics` 访问 Langfuse；生产适配器调用 Metrics API，测试适配器返回 mock 数据。
@@ -206,8 +206,8 @@ flowchart LR
 | `GET agent-team/people` | 人员表 |
 | `GET agent-team/people/{actorId}` | 个人视图，"我的 Agent"传 `me`（解析为当前身份） |
 | `GET agent-team/org-chart` | 组织架构图节点与边（`owns`、`serves`） |
-| `GET agent-team/report` | 报告页数据，含 `previousPeriod`（上一周期对比） |
-| `GET agent-team/export` | CSV zip：花名册、人员、趋势明细三个文件，UTF-8 BOM；明细粒度与界面趋势相同（2.1），在文件首行注明 |
+| `GET agent-team/report` | 报告页数据，含 `previousPeriod`（上一周期对比）；查询参数 `preset`（`last7`、`last30`、`thisMonth`、`lastMonth`、`custom`）指明周期预设，按 6.4 推算上一周期，缺省时按日期形状推断 |
+| `GET agent-team/export` | CSV zip：花名册、人员、趋势明细三个文件，UTF-8 BOM；明细粒度与界面趋势相同（2.1），在文件首行注明；明细含 `bucket_start`、`bucket_end`（桶的实际起止，首尾按周期截断）；文本单元格以 `=`、`+`、`-`、`@`、制表符或回车开头时加前导单引号，防止表格软件当作公式执行 |
 | `PUT agents/{agentId}/profile` | 修改岗位 |
 | `POST agents/{agentId}/owner` | 转交负责人，请求体字段 `newOwnerActorId` |
 | `POST feedback/{feedbackId}/resolve` | 标记反馈已处理，可带说明；重复提交返回原结果 |
@@ -219,9 +219,9 @@ flowchart LR
 
 | 情况 | 处理 |
 | --- | --- |
-| Langfuse 不可达或超时（整个视图共享 10 秒期限；单次查询超时取 8 秒与剩余期限的较小者，超时同样负缓存 30 秒） | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；所有运行派生字段为 null（不是 0），卡片状态为 null（已停用除外），汇总的活跃数、闲置数为 null；CSV 的运行列留空，三个文件首行均注明 `# runtime=unavailable`；花名册、负责人、履历、满意度照常显示；不返回 500 |
+| Langfuse 不可达或超时（整个视图共享 10 秒期限；单次查询超时取 8 秒与剩余期限的较小者，超时同样负缓存 30 秒） | `runtimeStatus: unavailable`，运行数据区块显示"运行数据暂不可用"；所有运行派生字段为 null（不是 0），卡片状态为 null（已停用除外），汇总的活跃数、闲置数为 null；CSV 的运行列留空，三个文件首行均注明 `runtime=unavailable`（趋势明细与粒度合写为一行 `# granularity=day; runtime=unavailable`）；花名册、负责人、履历、满意度照常显示；不返回 500 |
 | 同步积压 | 显示"数据更新于"并提示可能滞后 |
-| `from` 晚于 `to`，或日期格式错误 | 400 `period_invalid` |
+| `from` 晚于 `to`、日期格式错误、日期不在 2000-01-01 至 2100-12-31 之间，或 `preset` 不在允许范围 | 400 `period_invalid` |
 | 履历游标无效（含空串） | 400 `cursor_invalid` |
 | 状态或类型筛选值不在允许范围 | 400 `filter_invalid` |
 | 岗位超过 64 字符 | 400 `job_title_too_long` |
@@ -232,6 +232,7 @@ flowchart LR
 | Agent 或反馈不存在、不属于本项目 | 404 `agent_not_found`、`feedback_not_found` |
 | 转交给当前负责人 | 200，原样返回，不记维护动作 |
 | 处理 `tapper_default` 的反馈（没有 Agent 记录） | 200，反馈标记已处理，不写维护动作 |
+| 处理的反馈不是待处理状态（无评论的赞，或已撤回） | 200，原样返回，不标记、不写维护动作 |
 
 ## 6. 前端
 

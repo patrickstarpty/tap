@@ -38,7 +38,26 @@ MaintenanceKind = Literal[
 
 
 class PeriodInvalid(Exception):
-    """`from` is after `to`."""
+    """`from` is after `to`, or either date lies outside the supported range."""
+
+
+# The period selector the UI used (spec 2.1): decides the "previous period"
+# (spec 6.4) when the date shape alone is ambiguous.
+PeriodPreset = Literal["last7", "last30", "thisMonth", "lastMonth", "custom"]
+PERIOD_PRESETS: tuple[PeriodPreset, ...] = ("last7", "last30", "thisMonth", "lastMonth", "custom")
+
+# User-supplied dates outside this range are rejected (400 `period_invalid`)
+# rather than reaching `datetime`/`timedelta` arithmetic that can overflow.
+MIN_PERIOD_DATE = date(2000, 1, 1)
+MAX_PERIOD_DATE = date(2100, 12, 31)
+
+
+def _month_start(day: date) -> date:
+    return day.replace(day=1)
+
+
+def _previous_month_start(day: date) -> date:
+    return _month_start(_month_start(day) - timedelta(days=1))
 
 
 @dataclass(frozen=True)
@@ -54,6 +73,14 @@ class Period:
 
     @staticmethod
     def parse(from_: date, to: date) -> Period:
+        """Validates user input: `from <= to`, both within
+        `[MIN_PERIOD_DATE, MAX_PERIOD_DATE]`."""
+        for value in (from_, to):
+            if not MIN_PERIOD_DATE <= value <= MAX_PERIOD_DATE:
+                raise PeriodInvalid(
+                    f"dates must be between {MIN_PERIOD_DATE.isoformat()} "
+                    f"and {MAX_PERIOD_DATE.isoformat()}"
+                )
         return Period(from_, to)
 
     @property
@@ -78,32 +105,49 @@ class Period:
         ) + timedelta(days=1)
         return start, end_exclusive
 
-    def previous(self) -> Period:
-        """The "previous period" per spec 6.4, judged by shape:
+    def previous(self, preset: PeriodPreset | None = None) -> Period:
+        """The "previous period" per spec 6.4.
+
+        With an explicit `preset` (the selector the UI used):
+
+        - `lastMonth` -> the whole calendar month before `start`'s month.
+        - `thisMonth` -> the 1st of the previous month through the same day
+          number as `end`, clamped to that month's last day.
+        - `last7`/`last30`/`custom` -> the adjacent, equal-length period
+          immediately before this one.
+
+        Without one (`None`), the preset is inferred from the shape -- a
+        fallback only, since e.g. a 7-day range starting on the 1st looks
+        like "month to date":
 
         - A full calendar month -> the previous calendar month.
         - The 1st of a month through a non-month-end day of the same month
-          ("month to date") -> the 1st of the previous month through the same
-          day number, clamped to the previous month's last day if it is
-          shorter.
-        - Anything else -> the adjacent, equal-length period immediately
-          before this one.
+          -> as `thisMonth`.
+        - Anything else -> as `custom`.
         """
-        same_month = self.start.year == self.end.year and self.start.month == self.end.month
-        if self.start.day == 1 and same_month:
-            last_day_of_start_month = calendar.monthrange(self.start.year, self.start.month)[1]
-            previous_month_last_day = self.start - timedelta(days=1)
-            previous_month_first_day = previous_month_last_day.replace(day=1)
-            if self.end.day == last_day_of_start_month:
-                return Period(previous_month_first_day, previous_month_last_day)
-            clamped_day = min(self.end.day, previous_month_last_day.day)
-            return Period(
-                previous_month_first_day, previous_month_first_day.replace(day=clamped_day)
-            )
+        if preset is None:
+            preset = self._inferred_preset()
+        if preset == "lastMonth":
+            first = _previous_month_start(self.start)
+            last_day = calendar.monthrange(first.year, first.month)[1]
+            return Period(first, first.replace(day=last_day))
+        if preset == "thisMonth":
+            first = _previous_month_start(self.start)
+            last_day = calendar.monthrange(first.year, first.month)[1]
+            return Period(first, first.replace(day=min(self.end.day, last_day)))
         length = self.days
         new_end = self.start - timedelta(days=1)
         new_start = new_end - timedelta(days=length - 1)
         return Period(new_start, new_end)
+
+    def _inferred_preset(self) -> PeriodPreset:
+        same_month = self.start.year == self.end.year and self.start.month == self.end.month
+        if self.start.day == 1 and same_month:
+            last_day_of_start_month = calendar.monthrange(self.start.year, self.start.month)[1]
+            if self.end.day == last_day_of_start_month:
+                return "lastMonth"
+            return "thisMonth"
+        return "custom"
 
 
 def trailing_30_days(today: date) -> Period:
@@ -130,6 +174,13 @@ class MaintenanceEvent:
     feedback_id: str | None
     note: str | None
     occurred_at: datetime
+
+
+def is_pending_feedback(rating: str | None, comment: str | None) -> bool:
+    """Spec 2.4: a thumbs-down, or any feedback with a comment (including a
+    commented thumbs-up), is pending until resolved. A plain thumbs-up and
+    withdrawn feedback (rating and comment both empty) never are."""
+    return rating == "down" or comment is not None
 
 
 def new_event(
@@ -237,13 +288,13 @@ class TeamSummary:
     both require knowing run counts, which an outage makes unknown
     (`agent_total` stays a real number: it only depends on MySQL's
     `enabled` flag). Per the same ruling, `runs`/`latency_total_ms`/
-    `cost_usd` are also `None` (not `0`) during an outage."""
+    `cost_usd`/`served_avg` are also `None` (not `0`) during an outage."""
 
     agent_total: int
     active: int | None
     idle: int | None
     owners_avg: float
-    served_avg: float
+    served_avg: float | None
     runs: int | None
     latency_total_ms: int | None
     cost_usd: Decimal | None

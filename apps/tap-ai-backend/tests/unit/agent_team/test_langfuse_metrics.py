@@ -95,6 +95,8 @@ def _classify(query: dict[str, Any]) -> str:
             return "served"
         if dims == ["tags"]:
             return "stats"
+        if dims == []:
+            return "p50"
     raise AssertionError(f"unrecognized query: {query}")
 
 
@@ -135,7 +137,9 @@ async def test_stats_query_groups_traces_by_tags() -> None:
     assert stats_q["filters"] == base_filters
     assert stats_q["config"] == {"row_limit": 1000}
     assert stats_q["fromTimestamp"] == "2026-01-01T00:00:00.000Z"
-    assert stats_q["toTimestamp"] == "2026-01-02T00:00:00.000Z"
+    # Langfuse applies `toTimestamp` inclusively (`<=`), so the exclusive
+    # day boundary is sent 1 ms early (review fix 8).
+    assert stats_q["toTimestamp"] == "2026-01-01T23:59:59.999Z"
 
     served_q = by_kind["served"]
     assert served_q["view"] == "traces"
@@ -254,13 +258,13 @@ async def test_split_on_row_limit_merges_without_double_count() -> None:
 
     row_plan = {
         # Full period: pretend the cap was hit; these rows must be discarded.
-        ("2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z"): (1000, 7),
+        ("2026-01-01T00:00:00.000Z", "2026-01-04T23:59:59.999Z"): (1000, 7),
         # First half (days 1-2): below the cap, no further split.
-        ("2026-01-01T00:00:00.000Z", "2026-01-03T00:00:00.000Z"): (1, 500),
+        ("2026-01-01T00:00:00.000Z", "2026-01-02T23:59:59.999Z"): (1, 500),
         # Second half (days 3-4): hits the cap again -> bisected into quarters.
-        ("2026-01-03T00:00:00.000Z", "2026-01-05T00:00:00.000Z"): (1000, 1),
-        ("2026-01-03T00:00:00.000Z", "2026-01-04T00:00:00.000Z"): (1, 300),
-        ("2026-01-04T00:00:00.000Z", "2026-01-05T00:00:00.000Z"): (1, 400),
+        ("2026-01-03T00:00:00.000Z", "2026-01-04T23:59:59.999Z"): (1000, 1),
+        ("2026-01-03T00:00:00.000Z", "2026-01-03T23:59:59.999Z"): (1, 300),
+        ("2026-01-04T00:00:00.000Z", "2026-01-04T23:59:59.999Z"): (1, 400),
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -445,7 +449,7 @@ async def test_trend_merges_rows_sharing_a_bucket_label_across_split_halves() ->
             return _metrics_response([])
         from_ts = query["fromTimestamp"]
         to_ts = query["toTimestamp"]
-        if from_ts == "2026-01-05T00:00:00.000Z" and to_ts == "2026-01-09T00:00:00.000Z":
+        if from_ts == "2026-01-05T00:00:00.000Z" and to_ts == "2026-01-08T23:59:59.999Z":
             # Full period: pretend the cap was hit.
             return _metrics_response(
                 [
@@ -457,7 +461,7 @@ async def test_trend_merges_rows_sharing_a_bucket_label_across_split_halves() ->
                 ]
                 * 1000
             )
-        if from_ts == "2026-01-05T00:00:00.000Z" and to_ts == "2026-01-07T00:00:00.000Z":
+        if from_ts == "2026-01-05T00:00:00.000Z" and to_ts == "2026-01-06T23:59:59.999Z":
             # First half: both halves' rows fall in the same (Monday-labeled) week bucket.
             return _metrics_response(
                 [
@@ -470,7 +474,7 @@ async def test_trend_merges_rows_sharing_a_bucket_label_across_split_halves() ->
                     )
                 ]
             )
-        if from_ts == "2026-01-07T00:00:00.000Z" and to_ts == "2026-01-09T00:00:00.000Z":
+        if from_ts == "2026-01-07T00:00:00.000Z" and to_ts == "2026-01-08T23:59:59.999Z":
             return _metrics_response(
                 [
                     _row(
@@ -591,3 +595,101 @@ async def test_gather_cancels_siblings_and_reraises_the_bare_failure() -> None:
     with pytest.raises(RuntimeMetricsUnavailable):
         await _gather(slow(), boom())
     assert cancelled.is_set()
+
+
+# -- review fix 5: a true per-Agent p50 ----------------------------------------
+
+
+def _agent_of_p50(query: dict[str, Any]) -> str:
+    for f in query["filters"]:
+        values = f.get("value")
+        if f.get("column") == "tags" and isinstance(values, list):
+            for value in values:
+                if value.startswith("agent:"):
+                    return value[len("agent:") :]
+    raise AssertionError(f"p50 query without an agent filter: {query}")
+
+
+def _two_outcome_rows(agent: str) -> list[dict[str, Any]]:
+    return [
+        _row(
+            [f"project:{_PROJECT_ID}", f"agent:{agent}", "outcome:completed"],
+            count=10,
+            latency_sum=1000,
+            latency_p50=90,
+        ),
+        _row(
+            [f"project:{_PROJECT_ID}", f"agent:{agent}", "outcome:abstained"],
+            count=4,
+            latency_sum=40,
+            latency_p50=10,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_p50_is_queried_per_agent_over_the_whole_period() -> None:
+    period = Period(date(2026, 1, 1), date(2026, 1, 7))
+    p50_queries: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = _query_of(request)
+        kind = _classify(query)
+        if kind == "stats":
+            return _metrics_response([*_two_outcome_rows("a"), *_two_outcome_rows("b")])
+        if kind == "served":
+            # `c` only shows up here, with no runs: no p50 query for it.
+            return _metrics_response([_row(["agent:c"], user_id="u1", count=0)])
+        if kind == "p50":
+            p50_queries.append(query)
+            return _metrics_response([{"p50_latency": {"a": 75, "b": 60}[_agent_of_p50(query)]}])
+        return _metrics_response([])
+
+    async with _make_client(handler) as client:
+        stats = await _adapter(client).agent_stats(_PROJECT_ID, period)
+
+    by_key = {s.agent_key: s for s in stats}
+    assert by_key["a"].latency_p50_ms == 75
+    assert by_key["b"].latency_p50_ms == 60
+    assert by_key["c"].latency_p50_ms is None
+    assert sorted(_agent_of_p50(q) for q in p50_queries) == ["a", "b"]
+
+    query = next(q for q in p50_queries if _agent_of_p50(q) == "a")
+    assert query["view"] == "traces"
+    assert query["dimensions"] == []
+    assert query["metrics"] == [{"measure": "latency", "aggregation": "p50"}]
+    assert query["filters"] == [
+        {
+            "column": "tags",
+            "operator": "any of",
+            "value": [f"project:{_PROJECT_ID}"],
+            "type": "arrayOptions",
+        },
+        {"column": "tags", "operator": "any of", "value": ["agent:a"], "type": "arrayOptions"},
+        {"column": "environment", "operator": "=", "value": _ENVIRONMENT, "type": "string"},
+    ]
+    assert query["fromTimestamp"] == "2026-01-01T00:00:00.000Z"
+    assert query["toTimestamp"] == "2026-01-07T23:59:59.999Z"
+    assert "timeDimension" not in query
+
+
+@pytest.mark.asyncio
+async def test_p50_falls_back_to_weighted_mean_when_the_agent_query_fails() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = _query_of(request)
+        kind = _classify(query)
+        if kind == "stats":
+            return _metrics_response([*_two_outcome_rows("a"), *_two_outcome_rows("b")])
+        if kind == "p50":
+            if _agent_of_p50(query) == "a":
+                return httpx.Response(500, json={"error": "boom"})
+            return _metrics_response([])  # no row -> fallback too
+        return _metrics_response([])
+
+    async with _make_client(handler) as client:
+        stats = await _adapter(client).agent_stats(
+            _PROJECT_ID, Period(date(2026, 1, 1), date(2026, 1, 7))
+        )
+
+    # Run-weighted mean of the two outcome groups: (90*10 + 10*4) / 14 = 67.
+    assert [s.latency_p50_ms for s in stats] == [67, 67]

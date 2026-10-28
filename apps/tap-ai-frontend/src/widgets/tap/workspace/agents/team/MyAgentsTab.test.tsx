@@ -50,13 +50,13 @@ function row(agentKey: string, name: string) {
   };
 }
 
-function setup(data: Record<string, unknown>) {
+function setup(data: Record<string, unknown>, runtimeStatus = "ok") {
   vi.mocked(usePerson).mockReturnValue({
     isPending: false,
     isError: false,
     refetch: vi.fn(),
     data: {
-      runtimeStatus: "ok",
+      runtimeStatus,
       computedAt: "2026-10-23T08:00:00Z",
       timezone: "UTC",
       period,
@@ -108,7 +108,8 @@ describe("MyAgentsTab", () => {
     expect(screen.getByText("Too slow")).toBeTruthy();
     expect(screen.queryByText(/down/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /Not helpful/ }));
-    expect(onOpen).toHaveBeenCalledWith("a1");
+    // Lands on the profile's pending-feedback section.
+    expect(onOpen).toHaveBeenCalledWith("a1", "feedback");
     expect(screen.getByText("Planner")).toBeTruthy();
   });
 
@@ -125,6 +126,23 @@ describe("MyAgentsTab", () => {
     expect(screen.getByText("暂无待你处理的反馈")).toBeTruthy();
     expect(screen.getByText("你还没有负责的 Agent")).toBeTruthy();
     expect(screen.getByText("所选周期内没有 Agent 为你服务")).toBeTruthy();
+  });
+
+  it("marks served Agents unavailable instead of nobody during an outage", () => {
+    setup({}, "unavailable");
+    render(
+      <MyAgentsTab
+        projectId="p1"
+        copy={WORKSPACE_COPY.zh}
+        period={period}
+        onOpenMember={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("所选周期内没有 Agent 为你服务")).toBeNull();
+    const served = screen
+      .getByRole("heading", { name: "为我服务的 Agent" })
+      .closest("section")!;
+    expect(served).toHaveTextContent("运行数据暂不可用");
   });
 
   it("shows English empty states", () => {

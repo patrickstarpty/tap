@@ -31,22 +31,29 @@ def classify_revision(
     current: AiAgentRevision,
     skill_of: Mapping[str, str],
 ) -> Literal["revised", "skill_upgraded"]:
-    """`skill_of` maps a bound `skill_revision_id` to its owning `skill_id`."""
+    """`skill_of` maps a bound `skill_revision_id` to its owning `skill_id`.
+
+    Bindings compare as a `skill_id -> revision_id` mapping, not by position:
+    the Agent form appends re-checked Skills, so upgrading A on `[A1, B1]`
+    submits `[B1, A2]`. `skill_upgraded` needs the same Skill set with at
+    least one revision changed and nothing else changed."""
     for field in _CONTENT_FIELDS:
         if getattr(previous, field) != getattr(current, field):
             return "revised"
     if len(previous.skill_revision_ids) != len(current.skill_revision_ids):
         return "revised"
-    any_changed = False
-    for old_id, new_id in zip(previous.skill_revision_ids, current.skill_revision_ids, strict=True):
-        if old_id == new_id:
-            continue
-        any_changed = True
-        old_skill, new_skill = skill_of.get(old_id), skill_of.get(new_id)
-        # An unresolvable revision (deleted/unknown) cannot be shown to be the
-        # same Skill, so it never counts as an upgrade.
-        if old_skill is None or new_skill is None or old_skill != new_skill:
-            return "revised"
-    if not any_changed:
+    previous_ids, current_ids = set(previous.skill_revision_ids), set(current.skill_revision_ids)
+    removed, added = previous_ids - current_ids, current_ids - previous_ids
+    if not removed and not added:
+        return "revised"
+    removed_skills = [skill_of.get(revision_id) for revision_id in removed]
+    added_skills = [skill_of.get(revision_id) for revision_id in added]
+    # An unresolvable revision (deleted/unknown) cannot be shown to be the
+    # same Skill, so it never counts as an upgrade.
+    if None in removed_skills or None in added_skills:
+        return "revised"
+    # Each changed Skill must swap exactly one revision for one other: a
+    # Skill added, dropped, or bound twice is a plain revise.
+    if len(set(removed_skills)) != len(removed) or set(removed_skills) != set(added_skills):
         return "revised"
     return "skill_upgraded"

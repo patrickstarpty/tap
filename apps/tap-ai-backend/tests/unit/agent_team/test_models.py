@@ -13,6 +13,7 @@ from tap.modules.agent_team.domain.models import (
     MaintenanceEvent,
     Period,
     PeriodInvalid,
+    is_pending_feedback,
     new_event,
     project_timezone,
     trailing_30_days,
@@ -109,3 +110,70 @@ def test_new_event_builds_immutable_maintenance_event():
     assert event.occurred_at == now
     with pytest.raises(AttributeError):
         event.kind = "disabled"  # type: ignore[misc]
+
+
+# -- review fix: explicit presets (spec 6.4) and a sane date range ----------
+
+
+@pytest.mark.parametrize(
+    ("preset", "start", "end", "expected_start", "expected_end"),
+    [
+        # 近 7 天 / 近 30 天 / 自定义 starting on the 1st: adjacent equal length.
+        ("last7", date(2026, 10, 1), date(2026, 10, 7), date(2026, 9, 24), date(2026, 9, 30)),
+        ("last30", date(2026, 9, 1), date(2026, 9, 30), date(2026, 8, 2), date(2026, 8, 31)),
+        ("custom", date(2026, 10, 1), date(2026, 10, 7), date(2026, 9, 24), date(2026, 9, 30)),
+        ("custom", date(2026, 9, 1), date(2026, 9, 30), date(2026, 8, 2), date(2026, 8, 31)),
+        # 本月: the 1st of last month through the same day, clamped to month end.
+        ("thisMonth", date(2026, 10, 1), date(2026, 10, 23), date(2026, 9, 1), date(2026, 9, 23)),
+        ("thisMonth", date(2026, 3, 1), date(2026, 3, 30), date(2026, 2, 1), date(2026, 2, 28)),
+        ("thisMonth", date(2026, 10, 1), date(2026, 10, 31), date(2026, 9, 1), date(2026, 9, 30)),
+        ("thisMonth", date(2026, 1, 1), date(2026, 1, 5), date(2025, 12, 1), date(2025, 12, 5)),
+        # 上月: the whole calendar month before.
+        ("lastMonth", date(2026, 9, 1), date(2026, 9, 30), date(2026, 8, 1), date(2026, 8, 31)),
+        ("lastMonth", date(2026, 3, 1), date(2026, 3, 31), date(2026, 2, 1), date(2026, 2, 28)),
+        ("lastMonth", date(2026, 1, 1), date(2026, 1, 31), date(2025, 12, 1), date(2025, 12, 31)),
+    ],
+)
+def test_previous_follows_explicit_preset(preset, start, end, expected_start, expected_end):
+    assert Period(start, end).previous(preset) == Period(expected_start, expected_end)
+
+
+def test_previous_without_preset_still_infers_from_shape():
+    assert Period(date(2026, 10, 1), date(2026, 10, 7)).previous(None) == Period(
+        date(2026, 9, 1), date(2026, 9, 7)
+    )
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        (date(1, 1, 5), date(2026, 1, 1)),
+        (date(1999, 12, 31), date(2026, 1, 1)),
+        (date(2026, 1, 1), date(2101, 1, 1)),
+        (date(2026, 1, 1), date(9999, 12, 31)),
+    ],
+)
+def test_parse_rejects_dates_outside_supported_range(start, end):
+    with pytest.raises(PeriodInvalid):
+        Period.parse(start, end)
+
+
+def test_parse_accepts_range_edges():
+    period = Period.parse(date(2000, 1, 1), date(2100, 12, 31))
+    assert period.previous("custom").end == date(1999, 12, 31)
+    assert period.utc_bounds()[1] == datetime(2101, 1, 1, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("rating", "comment", "expected"),
+    [
+        ("down", None, True),
+        ("down", "bad", True),
+        ("up", "nice but", True),
+        (None, "just a comment", True),
+        ("up", None, False),  # plain thumbs-up
+        (None, None, False),  # withdrawn
+    ],
+)
+def test_is_pending_feedback_matches_spec_2_4(rating, comment, expected) -> None:
+    assert is_pending_feedback(rating, comment) is expected

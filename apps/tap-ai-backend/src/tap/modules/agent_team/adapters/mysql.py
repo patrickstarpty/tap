@@ -32,6 +32,7 @@ from tap.modules.agent_team.domain.models import (
     MaintenanceEvent,
     MaintenanceKind,
     Period,
+    is_pending_feedback,
 )
 from tap.modules.agent_team.ports import (
     AgentRecord,
@@ -126,12 +127,19 @@ def _encode_history_cursor(occurred_at: datetime, event_id: str) -> str:
 
 
 def _decode_history_cursor(cursor: str) -> tuple[datetime, str]:
+    """Inverse of `_encode_history_cursor`. Only its exact shape is accepted:
+    a string `eventId` and a naive `occurredAt` (DATETIME columns are naive
+    UTC); anything else is `HistoryCursorInvalid` (400 `cursor_invalid`)."""
     try:
         decoded = base64.urlsafe_b64decode(cursor.encode("ascii"))
         payload = json.loads(decoded)
-        return datetime.fromisoformat(payload["occurredAt"]), payload["eventId"]
+        occurred_at = datetime.fromisoformat(payload["occurredAt"])
+        event_id = payload["eventId"]
     except (ValueError, TypeError, KeyError, binascii.Error) as error:
         raise HistoryCursorInvalid(cursor) from error
+    if not isinstance(event_id, str) or occurred_at.tzinfo is not None:
+        raise HistoryCursorInvalid(cursor)
+    return occurred_at, event_id
 
 
 # A Turn with no selected Agent (`tapper_default`) or whose frozen revision
@@ -521,6 +529,8 @@ class MysqlAgentTeamStore:
         actor_id: str,
         note: str | None,
         event_factory: Callable[[str], MaintenanceEvent],
+        *,
+        now: datetime,
     ) -> ResolvedFeedback:
         async with self._sessions.begin() as session:
             # `FOR UPDATE` on the feedback row itself serializes concurrent
@@ -567,11 +577,16 @@ class MysqlAgentTeamStore:
             )
             agent_key = agent_keys[row["turn_id"]]
 
-            if row["resolved_at"] is not None:
+            if row["resolved_at"] is not None or not is_pending_feedback(
+                row["rating"], row["comment"]
+            ):
                 # Already resolved (by this call's own previous attempt, or
                 # by whoever held the row lock before us): return the
                 # existing resolution unchanged and write no event (spec
                 # 5.1's "repeat submission returns the original result").
+                # Not pending (plain thumbs-up, or withdrawn): nothing to
+                # resolve, so likewise unchanged -- `resolved_*` stay NULL.
+                resolved_at = row["resolved_at"]
                 return ResolvedFeedback(
                     feedback_id=row["feedback_id"],
                     agent_key=agent_key,
@@ -581,21 +596,16 @@ class MysqlAgentTeamStore:
                     rating=row["rating"],
                     comment=row["comment"],
                     updated_at=_aware(row["updated_at"]),
-                    resolved_at=_aware(row["resolved_at"]),
+                    resolved_at=_aware(resolved_at) if resolved_at is not None else None,
                     resolved_by=row["resolved_by"],
                     resolution_note=row["resolution_note"],
                 )
 
-            if agent_key in _UNRESOLVABLE_AGENT_KEYS:
-                # No real `ai_agent` row to attach an event to -- resolve the
-                # feedback but write no event, and never call `event_factory`.
-                event = None
-                resolved_at = datetime.now(UTC)
-            else:
-                event = event_factory(agent_key)
-                resolved_at = (
-                    event.occurred_at if event.occurred_at.tzinfo else _aware(event.occurred_at)
-                )
+            # No real `ai_agent` row to attach an event to for these keys --
+            # resolve the feedback but write no event, and never call
+            # `event_factory`.
+            event = None if agent_key in _UNRESOLVABLE_AGENT_KEYS else event_factory(agent_key)
+            resolved_at = now if now.tzinfo else _aware(now)
 
             await session.execute(
                 update(answer_feedback)

@@ -114,6 +114,28 @@ def test_0036_downgrade_removes_added_columns_and_event_table(owned_project_mysq
         sync_engine.dispose()
 
 
+def test_0036_downgrade_then_upgrade_round_trips(owned_project_mysql):
+    """MySQL auto-creates an index named after `fk_ai_agent_owner_actor`;
+    downgrade must drop it too, or re-upgrading fails with "Duplicate key
+    name"."""
+    owned_project_mysql.rebuild("0035_skills_agents_authoring")
+    sync_engine = create_engine(owned_project_mysql.url)
+    try:
+        owned_project_mysql.upgrade("head")
+        owned_project_mysql.downgrade("0035_skills_agents_authoring")
+        index_names = {index["name"] for index in inspect(sync_engine).get_indexes("ai_agent")}
+        assert "fk_ai_agent_owner_actor" not in index_names
+
+        owned_project_mysql.upgrade("head")
+        inspector = inspect(sync_engine)
+        assert "agent_maintenance_event" in inspector.get_table_names()
+        assert "fk_ai_agent_owner_actor" in {
+            fk["name"] for fk in inspector.get_foreign_keys("ai_agent")
+        }
+    finally:
+        sync_engine.dispose()
+
+
 def test_0037_renames_the_agent_fk_resets_the_trace_cursor_and_reverts_the_fk(
     owned_project_mysql,
 ):

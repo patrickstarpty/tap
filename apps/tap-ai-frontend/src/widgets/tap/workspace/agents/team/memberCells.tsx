@@ -14,19 +14,35 @@ export function ownerName(row: AgentTeamMemberRow, copy: WorkspaceCopy) {
   return row.ownerActorId ?? copy.agentTeam.platformOwner;
 }
 
-/** A run-derived value; "—" plus the runtime marker when it is missing. */
+/** Run-derived values need only the copy and the runtime status. */
+export type RunContext = Pick<CellContext, "copy" | "runtimeStatus">;
+
+/** A run-derived value. The marker follows the runtime status: syncing
+ * annotates a shown value, unavailable shows "—" plus the notice. A value
+ * that is legitimately empty (e.g. never ran) is a plain "—". */
 export function RunValue({
   value,
   ctx,
 }: {
   value: string | null;
-  ctx: CellContext;
+  ctx: RunContext;
 }) {
-  if (value !== null && value !== EMPTY) return <>{value}</>;
+  const missing = value === null || value === EMPTY;
+  if (missing)
+    return (
+      <>
+        {EMPTY}
+        {ctx.runtimeStatus === "unavailable" ? (
+          <RuntimeMark status="unavailable" copy={ctx.copy} />
+        ) : null}
+      </>
+    );
   return (
     <>
-      {EMPTY}
-      <RuntimeMark status={ctx.runtimeStatus} copy={ctx.copy} />
+      {value}
+      {ctx.runtimeStatus === "syncing" ? (
+        <RuntimeMark status="syncing" copy={ctx.copy} />
+      ) : null}
     </>
   );
 }
@@ -39,10 +55,21 @@ export function StatusValue({
   ctx: CellContext;
 }) {
   return (
-    <RunValue
-      value={row.status === null ? null : ctx.copy.agentTeam.status[row.status]}
-      ctx={ctx}
-    />
+    <>
+      {row.status === null ? null : (
+        <span
+          className="tap-team-status-dot"
+          data-status={row.status}
+          aria-hidden="true"
+        />
+      )}
+      <RunValue
+        value={
+          row.status === null ? null : ctx.copy.agentTeam.status[row.status]
+        }
+        ctx={ctx}
+      />
+    </>
   );
 }
 

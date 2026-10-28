@@ -35,30 +35,47 @@ export function formatCost(
   if (value === null || value === undefined) return EMPTY;
   const amount = Number(value);
   if (!Number.isFinite(amount)) return EMPTY;
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  }).format(amount);
+  const currency = (n: number) =>
+    new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: COST_DIGITS,
+    }).format(n);
+  // A real but tiny spend must not read as zero.
+  if (amount !== 0 && Math.abs(amount) < COST_FLOOR)
+    return `<${currency(COST_FLOOR)}`;
+  return currency(amount);
 }
+
+const COST_DIGITS = 4;
+const COST_FLOOR = 10 ** -COST_DIGITS;
+
+export type DurationUnits = WorkspaceCopy["agentTeam"]["durationUnits"];
 
 export function formatDuration(
   ms: number | null | undefined,
   locale: string,
+  units: DurationUnits,
 ): string {
   if (ms === null || ms === undefined) return EMPTY;
   const number = (value: number, digits = 0) =>
     new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(
       value,
     );
-  if (ms < 1000) return `${number(ms)} ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${number(seconds, 1)} s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60)
-    return `${number(minutes)} m ${number(Math.round(seconds % 60))} s`;
-  return `${number(Math.floor(minutes / 60))} h ${number(minutes % 60)} m`;
+  const part = (value: number, unit: string, digits = 0) =>
+    `${number(value, digits)} ${unit}`;
+  if (Math.round(ms) < 1000) return part(ms, units.ms);
+  // Round once at the displayed precision, then split, so a value never
+  // reads "60 s" or "1 m 60 s".
+  const tenths = Math.round(ms / 100);
+  if (tenths < 600) return part(tenths / 10, units.s, 1);
+  const total = Math.round(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours === 0)
+    return `${part(minutes, units.m)} ${part(total % 60, units.s)}`;
+  return `${part(hours, units.h)} ${part(minutes, units.m)}`;
 }
 
 export function formatTime(

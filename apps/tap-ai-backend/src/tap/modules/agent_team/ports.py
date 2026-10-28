@@ -31,9 +31,9 @@ class AgentRuntimeStats:
     abstained: int
     canceled: int
     latency_total_ms: int
-    # A run-count-weighted mean of each underlying group's p50 (Langfuse never
-    # returns one p50 over the whole period -- see `LangfuseRuntimeMetrics.agent_stats`
-    # for why), not a statistically exact p50 over all of `runs`.
+    # The p50 over all of `runs` (one per-Agent query); only when that query
+    # fails, a run-count-weighted mean of each underlying group's p50 -- see
+    # `LangfuseRuntimeMetrics.agent_stats`.
     latency_p50_ms: int | None
     cost_usd: Decimal
     # Sorted by `runs` descending, then `actor_id` ascending.
@@ -128,8 +128,10 @@ class ResolvedFeedback:
     rating: str | None
     comment: str | None
     updated_at: datetime
-    resolved_at: datetime
-    resolved_by: str
+    # `None` only when the feedback was not pending (spec 2.4) and was
+    # therefore returned unchanged rather than resolved.
+    resolved_at: datetime | None
+    resolved_by: str | None
     resolution_note: str | None
 
 
@@ -211,14 +213,18 @@ class AgentTeamStore(Protocol):
         actor_id: str,
         note: str | None,
         event_factory: Callable[[str], MaintenanceEvent],
+        *,
+        now: datetime,
     ) -> ResolvedFeedback:
-        """Marks `feedback_id` resolved and writes the Turn's frozen Agent's
-        `feedback_resolved` event (`event_factory` is called with that
-        `agent_id`) in one transaction, locking the row so two concurrent
-        calls for the same `feedback_id` serialize rather than both writing
-        an event. Already-resolved feedback is returned unchanged (spec
-        5.1's "repeat submission returns the original result") and writes no
-        event, and no event is written -- `event_factory` is not even called
+        """Marks `feedback_id` resolved at `now` and writes the Turn's frozen
+        Agent's `feedback_resolved` event (`event_factory` is called with
+        that `agent_id`) in one transaction, locking the row so two
+        concurrent calls for the same `feedback_id` serialize rather than
+        both writing an event. Already-resolved feedback is returned
+        unchanged (spec 5.1's "repeat submission returns the original
+        result") and writes no event; so is feedback that is not pending
+        (spec 2.4: a plain thumbs-up or withdrawn feedback), whose
+        `resolved_*` fields stay `None`. No event is written -- `event_factory` is not even called
         -- when the Turn's frozen `agent_key` is `tapper_default` or
         `unknown`: neither names a real `ai_agent` row, so
         `agent_maintenance_event`'s FK would reject the insert and roll back

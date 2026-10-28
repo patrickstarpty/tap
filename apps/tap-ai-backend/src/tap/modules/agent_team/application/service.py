@@ -7,10 +7,10 @@ never touches routes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
@@ -23,6 +23,7 @@ from tap.modules.agent_team.domain.models import (
     MemberStatus,
     OrgChart,
     Period,
+    PeriodPreset,
     PersonRow,
     RuntimeStatus,
     TeamSummary,
@@ -202,8 +203,22 @@ _T = TypeVar("_T")
 
 _RUNTIME_LOAD_TIMEOUT_SECONDS = 10.0
 # Safety net only: every cached fetch already carries its own deadline-derived
-# timeout, which fires first and is negative-cached.
+# timeout, which fires first.
 _RUNTIME_LOAD_GRACE_SECONDS = 1.0
+
+# Seconds left in one view's shared runtime budget (spec 5.1).
+_Remaining = Callable[[], float]
+
+
+async def _gather_runtime(*awaitables: Coroutine[Any, Any, Any]) -> list[Any]:
+    """Runs one view's runtime queries concurrently; the first failure
+    cancels the rest and is re-raised bare (not as an `ExceptionGroup`)."""
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(awaitable) for awaitable in awaitables]
+    except ExceptionGroup as group_error:
+        raise group_error.exceptions[0] from None
+    return [task.result() for task in tasks]
 
 
 class AgentTeamService:
@@ -239,50 +254,59 @@ class AgentTeamService:
     # Runtime loading
     # ------------------------------------------------------------------
 
-    async def _load_runtime(self, period: Period, records: Sequence[AgentRecord]) -> _RuntimeData:
-        try:
-            async with asyncio.timeout(self._runtime_timeout + _RUNTIME_LOAD_GRACE_SECONDS):
-                return await self._load_runtime_unbounded(period, records)
-        except TimeoutError:
-            return _unavailable(self._clock())
-
-    async def _load_runtime_unbounded(
-        self, period: Period, records: Sequence[AgentRecord]
-    ) -> _RuntimeData:
-        project_id = self._scope.project_id
-        today = self._clock().date()
-        trailing = trailing_30_days(today)
-        # One deadline for the whole view: each query may use what is left.
+    def _deadline(self) -> _Remaining:
+        """Starts one view's shared runtime budget; returns how much is left."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._runtime_timeout
 
         def remaining() -> float:
             return max(deadline - loop.time(), 0.0)
 
+        return remaining
+
+    async def _load_runtime(
+        self,
+        period: Period,
+        records: Sequence[AgentRecord],
+        remaining: _Remaining | None = None,
+    ) -> _RuntimeData:
+        """`remaining` lets a caller loading several periods (`report()`)
+        share one budget across them; by default each call starts its own."""
+        if remaining is None:
+            remaining = self._deadline()
         try:
-            stats = await self._metrics.agent_stats(project_id, period, timeout_seconds=remaining())
-            trailing_stats = await self._metrics.agent_stats(
-                project_id, trailing, timeout_seconds=remaining()
-            )
-            trend = await self._metrics.trend(
-                project_id, period, period.granularity, timeout_seconds=remaining()
+            async with asyncio.timeout(remaining() + _RUNTIME_LOAD_GRACE_SECONDS):
+                return await self._load_runtime_unbounded(period, records, remaining)
+        except TimeoutError:
+            return _unavailable(self._clock())
+
+    async def _load_runtime_unbounded(
+        self, period: Period, records: Sequence[AgentRecord], remaining: _Remaining
+    ) -> _RuntimeData:
+        project_id = self._scope.project_id
+        today = self._clock().date()
+        trailing = trailing_30_days(today)
+        # "最近运行" is not limited to the period (spec 2.2): ask for every
+        # roster key (only roster rows ever show it), independent of the two
+        # stats windows -- so all four queries run concurrently.
+        roster_keys = {record.agent_id for record in records}
+        roster_keys.add(TAPPER_DEFAULT_AGENT_KEY)
+        agent_keys = sorted(roster_keys)
+
+        try:
+            stats, trailing_stats, trend, last_runs = await _gather_runtime(
+                self._metrics.agent_stats(project_id, period, timeout_seconds=remaining()),
+                self._metrics.agent_stats(project_id, trailing, timeout_seconds=remaining()),
+                self._metrics.trend(
+                    project_id, period, period.granularity, timeout_seconds=remaining()
+                ),
+                self._metrics.last_runs(project_id, agent_keys, timeout_seconds=remaining()),
             )
         except RuntimeMetricsUnavailable:
             return _unavailable(self._clock())
 
         stats_by_key = {s.agent_key: s for s in stats}
         trailing_stats_by_key = {s.agent_key: s for s in trailing_stats}
-        # "最近运行" is not limited to the period (spec 2.2): ask for every
-        # roster key, not only those with runs in the two stats windows.
-        roster_keys = {record.agent_id for record in records}
-        roster_keys.add(TAPPER_DEFAULT_AGENT_KEY)
-        agent_keys = sorted(set(stats_by_key) | set(trailing_stats_by_key) | roster_keys)
-        try:
-            last_runs = await self._metrics.last_runs(
-                project_id, agent_keys, timeout_seconds=remaining()
-            )
-        except RuntimeMetricsUnavailable:
-            return _unavailable(self._clock())
 
         trend_by_key: dict[str, list[TrendPoint]] = {}
         for point in trend:
@@ -359,6 +383,9 @@ class AgentTeamService:
             ),
             tapper_default_runs_trailing_30d=_runs_or_zero(
                 runtime.trailing_stats_by_key.get(TAPPER_DEFAULT_AGENT_KEY)
+            ),
+            tapper_default_pending_feedback=store_data.pending_count_by_key.get(
+                TAPPER_DEFAULT_AGENT_KEY, 0
             ),
             runtime_available=runtime_available,
         )
@@ -448,9 +475,11 @@ class AgentTeamService:
             for actor_id in sorted(scope_ids)
         ]
 
-    async def _period_report(self, period: Period) -> tuple[PeriodReport, RuntimeStatus, datetime]:
+    async def _period_report(
+        self, period: Period, remaining: _Remaining | None = None
+    ) -> tuple[PeriodReport, RuntimeStatus, datetime]:
         store_data = await self._load_store_data(period)
-        runtime = await self._load_runtime(period, store_data.records)
+        runtime = await self._load_runtime(period, store_data.records, remaining)
         members = self._build_members(runtime, store_data)
         people = self._people_rows(members, runtime, store_data)
         stats_by_key = self._member_stats(members, runtime)
@@ -605,10 +634,23 @@ class AgentTeamService:
         data = pure.build_org_chart(members=members, served_by_key=served_by_key)
         return self._view(period, runtime.status, runtime.computed_at, data)
 
-    async def report(self, period: Period) -> TeamView[TeamReport]:
-        current, current_status, current_computed_at = await self._period_report(period)
-        previous_period = period.previous()
-        previous, previous_status, previous_computed_at = await self._period_report(previous_period)
+    async def report(
+        self, period: Period, preset: PeriodPreset | None = None
+    ) -> TeamView[TeamReport]:
+        """`preset` is the period selector the UI used; it decides the
+        previous period (spec 6.4). Both periods load concurrently under one
+        shared runtime budget, so a hanging backend costs one budget, not
+        two, and cannot leave one period `ok` and the other `unavailable`
+        merely because the second started later."""
+        previous_period = period.previous(preset)
+        remaining = self._deadline()
+        (
+            (current, current_status, current_computed_at),
+            (previous, previous_status, previous_computed_at),
+        ) = await asyncio.gather(
+            self._period_report(period, remaining),
+            self._period_report(previous_period, remaining),
+        )
         status = _combine_status(current_status, previous_status)
         computed_at = min(current_computed_at, previous_computed_at)
         data = TeamReport(current=current, previous=previous, previous_period=previous_period)
@@ -659,8 +701,11 @@ class AgentTeamService:
         return await self._store.transfer_owner(agent_id, new_owner, event)
 
     async def resolve_feedback(self, feedback_id: str, note: str | None) -> ResolvedFeedback:
+        # Surrounding whitespace is not part of the note; a blank one is NULL.
+        note = (note.strip() or None) if note is not None else None
         if note is not None and len(note) > _MAX_NOTE_LENGTH:
             raise AgentTeamRejected("note_too_long", "note must be <= 500 characters")
+        now = self._clock()
 
         def event_factory(agent_id: str):
             return new_event(
@@ -669,12 +714,12 @@ class AgentTeamService:
                 "feedback_resolved",
                 feedback_id=feedback_id,
                 note=note,
-                now=self._clock(),
+                now=now,
             )
 
         try:
             return await self._store.resolve_feedback(
-                feedback_id, self._scope.actor_id, note, event_factory
+                feedback_id, self._scope.actor_id, note, event_factory, now=now
             )
         except FeedbackNotFound as exc:
             raise AgentTeamRejected("feedback_not_found", str(exc)) from exc

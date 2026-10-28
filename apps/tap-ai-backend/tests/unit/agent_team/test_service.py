@@ -130,6 +130,7 @@ class FakeStore:
     lag_queries: list[tuple[datetime, timedelta]] = dataclasses.field(default_factory=list)
     resolved: dict[str, ResolvedFeedback] = field(default_factory=dict)
     events: list[MaintenanceEvent] = field(default_factory=list)
+    resolve_calls: list[tuple[str, str | None, datetime]] = field(default_factory=list)
     pending_feedback_calls: int = 0
     maintenance_counts_calls: int = 0
     agents_calls: int = 0
@@ -190,8 +191,9 @@ class FakeStore:
         return updated
 
     async def resolve_feedback(
-        self, feedback_id, actor_id, note, event_factory
+        self, feedback_id, actor_id, note, event_factory, *, now
     ) -> ResolvedFeedback:
+        self.resolve_calls.append((feedback_id, note, now))
         known = {item.feedback_id for item in self.pending}
         if feedback_id not in known and feedback_id not in self.resolved:
             raise FeedbackNotFound(feedback_id)
@@ -210,7 +212,7 @@ class FakeStore:
             rating=item.rating,
             comment=item.comment,
             updated_at=item.updated_at,
-            resolved_at=_NOW,
+            resolved_at=now,
             resolved_by=actor_id,
             resolution_note=note,
         )
@@ -716,6 +718,36 @@ async def test_hanging_second_fetch_is_negative_cached_across_views():
 
     metrics = _HangingTrend()
     store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    cached = CachedRuntimeMetrics(metrics, now=lambda: _NOW, fetch_timeout_seconds=0.05)
+    service = AgentTeamService(
+        store, cached, scope=_scope(), clock=_clock, runtime_timeout_seconds=1.0
+    )
+
+    first = await service.summary(_PERIOD)
+    second = await service.summary(_PERIOD)
+
+    # The trend fetch hung past its own per-fetch cap (well inside the view
+    # budget), so its failure is cached and the next view never re-asks.
+    assert first.runtime_status == "unavailable"
+    assert second.runtime_status == "unavailable"
+    assert metrics.trend_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_view_budget_exhaustion_is_not_negative_cached():
+    # Review fix 6: a fetch cut short only because the view budget (0.05 s)
+    # is below the per-fetch cap (8 s) says nothing about the backend; the
+    # next view must retry it.
+    class _HangingTrend(FakeMetrics):
+        trend_calls: int = 0
+
+        async def trend(self, project_id, period, granularity):
+            self.trend_calls += 1
+            await asyncio.sleep(3600)
+            return []
+
+    metrics = _HangingTrend()
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
     cached = CachedRuntimeMetrics(metrics, now=lambda: _NOW)
     service = AgentTeamService(
         store, cached, scope=_scope(), clock=_clock, runtime_timeout_seconds=0.05
@@ -724,11 +756,94 @@ async def test_hanging_second_fetch_is_negative_cached_across_views():
     first = await service.summary(_PERIOD)
     second = await service.summary(_PERIOD)
 
-    # The first two fetches were fast; the third hung and ran out the shared
-    # deadline, so its failure is cached and the next view never re-asks.
     assert first.runtime_status == "unavailable"
     assert second.runtime_status == "unavailable"
-    assert metrics.trend_calls == 1
+    assert metrics.trend_calls == 2
+
+
+@dataclass
+class _SlowMetrics(FakeMetrics):
+    """Every query takes `delay` seconds (or hangs when `delay` is None)."""
+
+    delay: float | None = 0.3
+
+    async def _wait(self) -> None:
+        await asyncio.sleep(3600 if self.delay is None else self.delay)
+
+    async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+        await self._wait()
+        return await super().agent_stats(project_id, period)
+
+    async def trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
+        await self._wait()
+        return await super().trend(project_id, period, granularity)
+
+    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        await self._wait()
+        return await super().last_runs(project_id, agent_keys)
+
+
+@pytest.mark.asyncio
+async def test_runtime_queries_of_one_view_run_concurrently():
+    # Review fix 6: four 0.3 s queries in sequence (1.2 s) would blow a 1 s
+    # budget; run concurrently they fit.
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    cached = CachedRuntimeMetrics(_SlowMetrics(delay=0.3), now=lambda: _NOW)
+    service = AgentTeamService(
+        store, cached, scope=_scope(), clock=_clock, runtime_timeout_seconds=1.0
+    )
+
+    view = await service.summary(_PERIOD)
+
+    assert view.runtime_status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_report_shares_one_deadline_across_both_periods():
+    # Review fix 3: a hanging runtime costs the report one budget, not two,
+    # and both periods end up with the same (unavailable) outcome.
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    cached = CachedRuntimeMetrics(_SlowMetrics(delay=None), now=lambda: _NOW)
+    service = AgentTeamService(
+        store, cached, scope=_scope(), clock=_clock, runtime_timeout_seconds=1.0
+    )
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    view = await service.report(_PERIOD)
+    elapsed = loop.time() - started
+
+    assert elapsed < 1.5
+    assert view.runtime_status == "unavailable"
+    assert view.data.current.summary.runs is None
+    assert view.data.previous.summary.runs is None
+
+
+@pytest.mark.asyncio
+async def test_report_previous_period_follows_preset():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")})
+    period = Period(date(2026, 10, 1), date(2026, 10, 7))
+    service = _service(store, FakeMetrics())
+
+    inferred = await service.report(period)
+    explicit = await service.report(period, preset="last7")
+
+    assert inferred.data.previous_period == Period(date(2026, 9, 1), date(2026, 9, 7))
+    assert explicit.data.previous_period == Period(date(2026, 9, 24), date(2026, 9, 30))
+
+
+@pytest.mark.asyncio
+async def test_tapper_default_with_only_pending_feedback_is_on_the_roster():
+    # Review fix 7: no runs in the period or trailing 30 days, but older
+    # pending feedback must stay reachable.
+    store = FakeStore(pending=[_pending("fb-old", "tapper_default")])
+    service = _service(store, FakeMetrics())
+
+    members = await service.members(_PERIOD)
+    view = await service.member("tapper_default", _PERIOD)
+
+    assert "tapper_default" in [row.agent_key for row in members.data]
+    assert [item.feedback_id for item in view.data.pending_feedback] == ["fb-old"]
 
 
 @pytest.mark.asyncio
@@ -783,3 +898,64 @@ def test_naive_converts_to_utc_before_stripping_tzinfo():
     plus8 = timezone(timedelta(hours=8))
     assert _naive(datetime(2026, 10, 23, 8, 0, tzinfo=plus8)) == datetime(2026, 10, 23, 0, 0)
     assert _naive(datetime(2026, 10, 23, 8, 0)) == datetime(2026, 10, 23, 8, 0)
+
+
+def _pending_down(feedback_id: str = "fb-1") -> PendingFeedback:
+    return PendingFeedback(
+        feedback_id=feedback_id,
+        agent_key="agent-1",
+        turn_id="turn-1",
+        conversation_id="conv-1",
+        actor_id="caller-1",
+        rating="down",
+        comment=None,
+        updated_at=_NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_feedback_strips_note():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, pending=[_pending_down()])
+    service = _service(store, FakeMetrics())
+
+    result = await service.resolve_feedback("fb-1", "  handled \n")
+
+    assert store.resolve_calls == [("fb-1", "handled", _NOW)]
+    assert result.resolution_note == "handled"
+    assert store.events[0].note == "handled"
+
+
+@pytest.mark.asyncio
+async def test_resolve_feedback_blank_note_is_stored_as_null():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, pending=[_pending_down()])
+    service = _service(store, FakeMetrics())
+
+    result = await service.resolve_feedback("fb-1", "   ")
+
+    assert store.resolve_calls == [("fb-1", None, _NOW)]
+    assert result.resolution_note is None
+    assert store.events[0].note is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_feedback_note_length_is_checked_after_strip():
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, pending=[_pending_down()])
+    service = _service(store, FakeMetrics())
+
+    await service.resolve_feedback("fb-1", " " + "x" * 500 + " ")
+
+    assert store.resolve_calls[0][1] == "x" * 500
+
+
+@pytest.mark.asyncio
+async def test_resolve_feedback_passes_the_injected_clock_to_the_store():
+    later = _NOW + timedelta(hours=3)
+    store = FakeStore(agent_records={"agent-1": _agent("agent-1")}, pending=[_pending_down()])
+    cached = CachedRuntimeMetrics(FakeMetrics(), now=lambda: later)
+    service = AgentTeamService(store, cached, scope=_scope(), clock=lambda: later)
+
+    result = await service.resolve_feedback("fb-1", None)
+
+    assert store.resolve_calls == [("fb-1", None, later)]
+    assert result.resolved_at == later
+    assert store.events[0].occurred_at == later

@@ -386,6 +386,12 @@ export interface WorkspaceCopy {
       servedAvg: string;
       ownersAvg: string;
     };
+    kpiCaptions: {
+      runs: string;
+      cost: string;
+      latency: string;
+      active: string;
+    };
     status: { active: string; idle: string; disabled: string };
     platformOwner: string;
     insufficientSample: string;
@@ -399,6 +405,8 @@ export interface WorkspaceCopy {
     viewConfig: string;
     exportPdf: string;
     exportCsv: string;
+    exportFailed: string;
+    durationUnits: { ms: string; s: string; m: string; h: string };
     emptyState: string;
     createAgent: string;
     loading: string;
@@ -438,12 +446,15 @@ export interface WorkspaceCopy {
       orgChartOwns: string;
       orgChartServes: string;
       orgChartDimmed: string;
+      orgChartUsers: string;
+      orgChartHint: string;
       chartHint: string;
       trendHeading: string;
       noJobTitle: string;
       ownerLabel: string;
       runsInPeriod: string;
       runsTrend: string;
+      sparklineCaption: string;
       topServed: string;
       noServed: string;
       lastRun: string;
@@ -503,6 +514,7 @@ export interface WorkspaceCopy {
       currentRevision: string;
       joinedAt: string;
       secondaryMetrics: string;
+      primaryMetrics: string;
       generationCalls: string;
       toolCalls: string;
       callsPerRun: string;
@@ -529,7 +541,10 @@ export interface WorkspaceCopy {
       jobTitleLabel: string;
       jobTitleTooLong: string;
       save: string;
+      saved: string;
+      currentOwner: string;
       newOwnerLabel: string;
+      transferred: string;
       transferFailed: string;
       errors: {
         actor_not_found: string;
@@ -1081,6 +1096,12 @@ export const WORKSPACE_COPY = {
         servedAvg: "Agents used per caller",
         ownersAvg: "Agents per owner",
       },
+      kpiCaptions: {
+        runs: "Runs in the selected period",
+        cost: "Model spend in the selected period",
+        latency: "Time spent across all runs",
+        active: "Ran in the period · {total} Agents in total",
+      },
       status: { active: "Active", idle: "Idle", disabled: "Disabled" },
       platformOwner: "Platform-maintained",
       insufficientSample: "Not enough ratings",
@@ -1094,6 +1115,8 @@ export const WORKSPACE_COPY = {
       viewConfig: "View configuration",
       exportPdf: "Export PDF",
       exportCsv: "Export CSV",
+      exportFailed: "The CSV export failed. Please try again.",
+      durationUnits: { ms: "ms", s: "s", m: "m", h: "h" },
       emptyState: "No Agents yet. Create one",
       createAgent: "Create Agent",
       loading: "Loading team data...",
@@ -1138,12 +1161,15 @@ export const WORKSPACE_COPY = {
         orgChartOwns: "Owns",
         orgChartServes: "Served by",
         orgChartDimmed: "Not related to the selected person",
+        orgChartUsers: "Other people",
+        orgChartHint: "Select a person to see the Agents that serve them.",
         chartHint: "Use the left and right arrow keys to read each point.",
         trendHeading: "Run trend",
         noJobTitle: "No job title",
         ownerLabel: "Owner",
         runsInPeriod: "Runs in period",
         runsTrend: "Runs trend, last 30 days",
+        sparklineCaption: "Last 30 days",
         topServed: "Top served",
         noServed: "No one yet",
         lastRun: "Last run",
@@ -1207,6 +1233,7 @@ export const WORKSPACE_COPY = {
         currentRevision: "Current revision",
         joinedAt: "Joined",
         secondaryMetrics: "Call volume",
+        primaryMetrics: "Run metrics",
         generationCalls: "Model calls",
         toolCalls: "Tool calls",
         callsPerRun: "Calls per run",
@@ -1233,7 +1260,10 @@ export const WORKSPACE_COPY = {
         jobTitleLabel: "Job title",
         jobTitleTooLong: "The job title is over 64 characters.",
         save: "Save",
-        newOwnerLabel: "New owner (actor ID)",
+        saved: "Saved",
+        currentOwner: "Current owner",
+        newOwnerLabel: "New owner",
+        transferred: "Transferred to {owner}",
         transferFailed: "The owner could not be transferred.",
         errors: {
           actor_not_found: "That person was not found in this Project.",
@@ -1773,6 +1803,12 @@ export const WORKSPACE_COPY = {
         servedAvg: "每位使用者用到的 Agent 数",
         ownersAvg: "每位负责人管理 Agent 数",
       },
+      kpiCaptions: {
+        runs: "所选周期内的运行总数",
+        cost: "所选周期内的模型费用",
+        latency: "所有运行的耗时之和",
+        active: "周期内有运行 · 共 {total} 个 Agent",
+      },
       status: { active: "活跃", idle: "闲置", disabled: "已停用" },
       platformOwner: "平台维护",
       insufficientSample: "样本不足",
@@ -1786,6 +1822,8 @@ export const WORKSPACE_COPY = {
       viewConfig: "查看配置",
       exportPdf: "导出 PDF",
       exportCsv: "导出 CSV",
+      exportFailed: "导出 CSV 失败，请重试。",
+      durationUnits: { ms: "毫秒", s: "秒", m: "分", h: "小时" },
       emptyState: "还没有 Agent，新建一个",
       createAgent: "新建 Agent",
       loading: "正在加载团队数据…",
@@ -1829,12 +1867,15 @@ export const WORKSPACE_COPY = {
         orgChartOwns: "负责",
         orgChartServes: "使用",
         orgChartDimmed: "与所选成员无关",
+        orgChartUsers: "其他使用者",
+        orgChartHint: "选择一位人员，查看为其服务的 Agent。",
         chartHint: "用左右方向键逐点查看数值。",
         trendHeading: "运行趋势",
         noJobTitle: "未设岗位",
         ownerLabel: "负责人",
         runsInPeriod: "周期内运行",
         runsTrend: "近 30 天运行趋势",
+        sparklineCaption: "近 30 天趋势",
         topServed: "主要服务对象",
         noServed: "暂无",
         lastRun: "最近运行",
@@ -1898,6 +1939,7 @@ export const WORKSPACE_COPY = {
         currentRevision: "当前修订",
         joinedAt: "入职日期",
         secondaryMetrics: "调用量",
+        primaryMetrics: "运行指标",
         generationCalls: "模型调用",
         toolCalls: "工具调用",
         callsPerRun: "平均每次运行调用数",
@@ -1924,7 +1966,10 @@ export const WORKSPACE_COPY = {
         jobTitleLabel: "岗位",
         jobTitleTooLong: "岗位超过 64 个字符。",
         save: "保存",
-        newOwnerLabel: "新负责人（actorId）",
+        saved: "已保存",
+        currentOwner: "当前负责人",
+        newOwnerLabel: "新负责人",
+        transferred: "已转交给 {owner}",
         transferFailed: "无法转交负责人。",
         errors: {
           actor_not_found: "在本项目中找不到该人员。",

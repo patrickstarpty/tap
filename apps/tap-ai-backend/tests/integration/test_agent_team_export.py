@@ -148,7 +148,7 @@ class FakeStore:
     async def transfer_owner(self, agent_id: str, new_owner: str, event) -> AgentRecord:
         raise NotImplementedError
 
-    async def resolve_feedback(self, feedback_id, actor_id, note, event_factory):
+    async def resolve_feedback(self, feedback_id, actor_id, note, event_factory, *, now):
         raise FeedbackNotFound(feedback_id)
 
 
@@ -217,3 +217,6 @@ def test_downloaded_zip_round_trips_chinese_agent_name() -> None:
         trend_header, trend_data = trend_rows[0], trend_rows[1:]
         assert [row[trend_header.index("agent_key")] for row in trend_data] == ["agent-1"]
         assert trend_data[0][trend_header.index("runs")] == "5"
+        # Day buckets: the inclusive `bucket_end` equals `bucket_start`.
+        assert trend_data[0][trend_header.index("bucket_start")] == "2026-10-01"
+        assert trend_data[0][trend_header.index("bucket_end")] == "2026-10-01"

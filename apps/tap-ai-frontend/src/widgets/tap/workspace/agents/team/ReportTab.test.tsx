@@ -1,4 +1,10 @@
-import { render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -76,6 +82,7 @@ function mockReport(
   previous: Record<string, unknown> = {},
   runtimeStatus = "ok",
   members: unknown[] = [member("a1", [["2026-09-01", 3]])],
+  extra: Record<string, unknown> = {},
 ) {
   vi.mocked(useTeamReport).mockReturnValue({
     data: {
@@ -99,7 +106,9 @@ function mockReport(
       },
     },
     isError: false,
+    isPlaceholderData: false,
     refetch: vi.fn(),
+    ...extra,
   } as never);
 }
 
@@ -116,10 +125,11 @@ describe("ReportTab", () => {
   it("defaults to last month", () => {
     mockReport();
     render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
-    expect(vi.mocked(useTeamReport)).toHaveBeenCalledWith("p1", {
-      from: "2026-09-01",
-      to: "2026-09-30",
-    });
+    expect(vi.mocked(useTeamReport)).toHaveBeenCalledWith(
+      "p1",
+      { from: "2026-09-01", to: "2026-09-30" },
+      "lastMonth",
+    );
     expect(screen.getByLabelText("Period")).toHaveValue("lastMonth");
   });
 
@@ -219,15 +229,127 @@ describe("ReportTab", () => {
     vi.unstubAllGlobals();
   });
 
-  it("links CSV export with the period", () => {
+  it("downloads the CSV export for the shown period", async () => {
     mockReport();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        blob: () => Promise.resolve(new Blob(["zip"])),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    // jsdom has no object URLs.
+    const urls = URL as unknown as Record<string, unknown>;
+    urls.createObjectURL = vi.fn(() => "blob:x");
+    urls.revokeObjectURL = vi.fn();
+    const clicked: string[] = [];
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        clicked.push(this.download);
+      });
     render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.en} />);
-    const href =
-      screen.getByRole("link", { name: "Export CSV" }).getAttribute("href") ??
-      "";
-    expect(href).toContain("agent-team/export");
-    expect(href).toContain("from=2026-09-01");
-    expect(href).toContain("to=2026-09-30");
+    await userEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    const url = String((fetchMock.mock.calls[0] as unknown[])[0]);
+    expect(url).toContain("agent-team/export");
+    expect(url).toContain("from=2026-09-01");
+    expect(url).toContain("to=2026-09-30");
+    expect(clicked).toEqual(["agent-team-2026-09-01-2026-09-30.zip"]);
+    expect(urls.revokeObjectURL).toHaveBeenCalledWith("blob:x");
+    expect(screen.queryByRole("alert")).toBeNull();
+    delete urls.createObjectURL;
+    delete urls.revokeObjectURL;
+    vi.unstubAllGlobals();
+  });
+
+  it("shows progress and an inline error when the CSV export fails", async () => {
+    mockReport();
+    let fail!: () => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            fail = () => resolve(new Response("{}", { status: 500 }));
+          }),
+      ),
+    );
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    const button = screen.getByRole("button", { name: "导出 CSV" });
+    await userEvent.click(button);
+    await waitFor(() => expect(button).toHaveClass("ant-btn-loading"));
+    fail();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "导出 CSV 失败，请重试。",
+    );
+    await waitFor(() => expect(button).not.toHaveClass("ant-btn-loading"));
+    vi.unstubAllGlobals();
+  });
+
+  it("does not query an inverted custom range and keeps the last report", async () => {
+    mockReport();
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    await userEvent.selectOptions(screen.getByLabelText("周期"), "custom");
+    fireEvent.change(screen.getByLabelText("开始"), {
+      target: { value: "2026-10-18" },
+    });
+    expect(screen.getByText("开始日期不能晚于结束日期")).toBeVisible();
+    const periods = vi.mocked(useTeamReport).mock.calls.map((call) => call[1]);
+    expect(periods).not.toContainEqual({
+      from: "2026-10-18",
+      to: "2026-09-30",
+    });
+    expect(periods.at(-1)).toEqual({ from: "2026-09-01", to: "2026-09-30" });
+    expect(screen.getByText("Agent 团队汇报")).toBeVisible();
+    expect(screen.getByRole("button", { name: "导出 CSV" })).toBeDisabled();
+  });
+
+  it("shows a refreshing line while a changed period loads", () => {
+    mockReport({}, {}, "ok", undefined, { isPlaceholderData: true });
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在加载团队数据…");
+    // The header names the period on screen, not the one still loading.
+    expect(screen.getByText(/周期: 2026-09-01 – 2026-09-30/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "导出 CSV" })).toBeDisabled();
+  });
+
+  it("says the trend is unavailable instead of empty during an outage", () => {
+    mockReport({ runs: null }, {}, "unavailable", [
+      { ...member("a1", []), runs: null },
+    ]);
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    const section = screen
+      .getByRole("heading", { name: "运行趋势" })
+      .closest("section")!;
+    expect(section).toHaveTextContent("运行数据暂不可用");
+    expect(section).not.toHaveTextContent("本周期没有运行趋势");
+  });
+
+  it("labels the trend with a count unit, not a metric name", () => {
+    mockReport();
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    expect(screen.getByText("3 次")).toBeInTheDocument();
+    expect(screen.queryByText(/运行次数$/, { selector: "div" })).toBeNull();
+  });
+
+  it("marks summary values by runtime status", () => {
+    mockReport({ servedAvg: null }, {}, "syncing");
+    render(<ReportTab projectId="p1" copy={WORKSPACE_COPY.zh} />);
+    const runs = within(
+      screen.getByRole("row", { name: /^运行次数/ }),
+    ).getAllByRole("cell");
+    expect(runs[0]).toHaveTextContent("120运行数据同步中");
+    const total = within(
+      screen.getByRole("row", { name: /^Agent 数/ }),
+    ).getAllByRole("cell");
+    expect(total[0]).toHaveTextContent(/^3$/);
+    // A legitimately empty value is a dash, not "syncing".
+    const served = within(
+      screen.getByRole("row", { name: /^每位使用者/ }),
+    ).getAllByRole("cell");
+    expect(served[0]).toHaveTextContent(/^—$/);
   });
 
   it("flags unavailable run data and dashes comparisons", () => {

@@ -2162,13 +2162,10 @@ export interface components {
             rating: string | null;
             /** Resolutionnote */
             resolutionNote: string | null;
-            /**
-             * Resolvedat
-             * Format: date-time
-             */
-            resolvedAt: string;
+            /** Resolvedat */
+            resolvedAt: string | null;
             /** Resolvedby */
-            resolvedBy: string;
+            resolvedBy: string | null;
             /** Turnid */
             turnId: string;
             /**
@@ -2203,7 +2200,7 @@ export interface components {
             /** Runs */
             runs: number | null;
             /** Servedavg */
-            servedAvg: number;
+            servedAvg: number | null;
         };
         /** AgentTeamSummaryView */
         AgentTeamSummaryView: {
@@ -7121,6 +7118,8 @@ export interface operations {
     agent_team_get_report: {
         parameters: {
             query: {
+                /** @description Period selector that produced from/to; decides previousPeriod. Unknown values are rejected with 400 period_invalid. */
+                preset?: "last7" | "last30" | "thisMonth" | "lastMonth" | "custom";
                 from: string;
                 to: string;
             };

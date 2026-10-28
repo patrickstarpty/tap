@@ -1,5 +1,5 @@
 import { Button } from "antd";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
   agentTeamExportUrl,
@@ -7,6 +7,7 @@ import {
   useTeamReport,
   type AgentTeamMemberRow,
   type AgentTeamReportView,
+  type TeamPeriod,
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
@@ -19,11 +20,16 @@ import {
   formatDuration,
   teamLocale,
 } from "./format";
-import type { CellContext } from "./memberCells";
+import { LoadError, TeamSkeleton } from "./layout";
+import { RunValue, type CellContext } from "./memberCells";
 import { PeopleTable } from "./PeopleTable";
-import { PeriodPicker, type PeriodSelection } from "./PeriodPicker";
+import {
+  PeriodPicker,
+  useValidPeriod,
+  type PeriodSelection,
+} from "./PeriodPicker";
 import { RosterTable } from "./RosterTable";
-import { RuntimeBadge } from "./RuntimeBadge";
+import { RuntimeBadge, RuntimeMark } from "./RuntimeBadge";
 
 export interface ReportTabProps {
   projectId: string;
@@ -77,6 +83,31 @@ interface Metric {
   /** False for point-in-time counts (roster size, idle) that are not
    * period-comparable: only the current value is shown. */
   comparable?: false;
+  /** Derived from run data: marked by the runtime status. */
+  runtime?: true;
+}
+
+/** Downloads the CSV zip as a blob so failures can be reported inline. */
+async function downloadExport(projectId: string, period: TeamPeriod) {
+  const response = await fetch(agentTeamExportUrl(projectId, period));
+  if (!response.ok) throw new Error(`export failed: ${response.status}`);
+  const url = URL.createObjectURL(await response.blob());
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `agent-team-${period.from}-${period.to}.zip`;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Direction of a comparable change, for the soft cell tint. */
+function changeTrend(metric: Metric): "up" | "down" | "flat" | "none" {
+  const { current, previous } = metric;
+  if (metric.comparable === false) return "none";
+  if (current === null || previous === null || previous === 0) return "none";
+  return current > previous ? "up" : current < previous ? "down" : "flat";
 }
 
 function ChangeCell({ metric }: { metric: Metric }) {
@@ -91,11 +122,11 @@ function ChangeCell({ metric }: { metric: Metric }) {
   // The percent's sign follows the rounded value so it never reads "−0%".
   const percentSign = percent > 0 ? "+" : percent < 0 ? "−" : "";
   return (
-    <>
+    <span className="tap-team-change-chip">
       {arrow} {sign}
       {format(Math.abs(delta))} ({percentSign}
       {Math.abs(percent)}%)
-    </>
+    </span>
   );
 }
 
@@ -106,48 +137,66 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
   // Independent of the other tabs: the report defaults to last month.
   const [selection, setSelection] =
     useState<PeriodSelection>(lastMonthSelection);
-  const period = useMemo(
-    () => resolvePeriod(selection.preset, new Date(), selection.custom),
-    [selection],
-  );
-  const rangeInvalid =
-    selection.preset === "custom" &&
-    selection.custom.from > selection.custom.to;
-  const report = useTeamReport(projectId, period);
+  const { period, invalid: rangeInvalid } = useValidPeriod(selection);
+  const report = useTeamReport(projectId, period, selection.preset);
+  const view: AgentTeamReportView | undefined = report.data;
+  // keepPreviousData shows the last report while a new period loads; say so
+  // and export only what is on screen.
+  const refreshing = report.isPlaceholderData === true;
+  const [exporting, setExporting] = useState(false);
+  const [exportFailed, setExportFailed] = useState(false);
+  const exportCsv = async (target: TeamPeriod) => {
+    setExporting(true);
+    setExportFailed(false);
+    try {
+      await downloadExport(projectId, target);
+    } catch {
+      setExportFailed(true);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const picker = (
     <div className="tap-team-report-controls">
       <PeriodPicker copy={copy} value={selection} onChange={setSelection} />
       <div className="tap-team-report-actions">
-        <Button onClick={() => window.print()}>{text.exportPdf}</Button>
-        {rangeInvalid ? null : (
-          <Button
-            type="primary"
-            href={agentTeamExportUrl(projectId, period)}
-            download
-          >
-            {text.exportCsv}
-          </Button>
-        )}
+        <Button onClick={() => window.print()}>
+          <PrintIcon />
+          {text.exportPdf}
+        </Button>
+        <Button
+          type="primary"
+          loading={exporting}
+          disabled={view === undefined || rangeInvalid || refreshing}
+          onClick={() => {
+            if (view !== undefined) void exportCsv(view.period);
+          }}
+        >
+          {text.exportCsv}
+        </Button>
       </div>
+      {exportFailed ? (
+        <p role="alert" className="tap-team-inline-error">
+          {text.exportFailed}
+        </p>
+      ) : null}
+      {refreshing ? (
+        <p role="status" className="tap-team-refreshing">
+          {text.loading}
+        </p>
+      ) : null}
     </div>
   );
-  if (rangeInvalid) return <div className="tap-team-report">{picker}</div>;
 
-  const view: AgentTeamReportView | undefined = report.data;
   if (view === undefined) {
     return (
       <div className="tap-team-report">
         {picker}
-        {report.isError ? (
-          <div role="alert">
-            <p>{text.loadFailed}</p>
-            <button type="button" onClick={() => void report.refetch()}>
-              {text.retry}
-            </button>
-          </div>
+        {rangeInvalid ? null : report.isError ? (
+          <LoadError copy={copy} onRetry={() => void report.refetch()} />
         ) : (
-          <p role="status">{text.loading}</p>
+          <TeamSkeleton copy={copy} kpis={false} cards={2} />
         )}
       </div>
     );
@@ -178,6 +227,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       current: cs.active,
       previous: ps.active,
       format: count,
+      runtime: true,
     },
     {
       label: text.metrics.idle,
@@ -185,24 +235,28 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       previous: ps.idle,
       format: count,
       comparable: false,
+      runtime: true,
     },
     {
       label: text.metrics.runs,
       current: cs.runs,
       previous: ps.runs,
       format: count,
+      runtime: true,
     },
     {
       label: text.metrics.latency,
       current: cs.latencyTotalMs,
       previous: ps.latencyTotalMs,
-      format: (value) => formatDuration(value, locale),
+      format: (value) => formatDuration(value, locale, text.durationUnits),
+      runtime: true,
     },
     {
       label: text.metrics.cost,
       current: num(cs.costUsd),
       previous: num(ps.costUsd),
       format: cost,
+      runtime: true,
     },
     {
       label: text.metrics.maintenance,
@@ -212,9 +266,12 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
     },
     {
       label: text.metrics.servedAvg,
-      current: cs.servedAvg,
-      previous: ps.servedAvg,
+      // Its denominator is the period's callers, which is run data; the
+      // contract may still type it as a number.
+      current: cs.servedAvg as number | null,
+      previous: ps.servedAvg as number | null,
       format: count,
+      runtime: true,
     },
     {
       label: text.metrics.ownersAvg,
@@ -223,8 +280,19 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       format: count,
     },
   ];
-  const show = (metric: Metric, value: number | null): ReactNode =>
-    value === null || Number.isNaN(value) ? EMPTY : metric.format(value);
+  const show = (
+    metric: Metric,
+    value: number | null,
+    column: "current" | "previous",
+  ): ReactNode => {
+    const formatted =
+      value === null || Number.isNaN(value) ? null : metric.format(value);
+    if (metric.runtime !== true) return formatted ?? EMPTY;
+    // Sync lag only affects recent runs: annotate the current period only.
+    if (column === "previous" && view.runtimeStatus === "syncing")
+      return formatted ?? EMPTY;
+    return <RunValue value={formatted} ctx={ctx} />;
+  };
   const comparedWith = labels.comparedWith
     .replace("{from}", view.data.previousPeriod.from)
     .replace("{to}", view.data.previousPeriod.to);
@@ -237,102 +305,129 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
   return (
     <div className="tap-team-report">
       {picker}
-      <header className="tap-team-report-header">
-        <h2>{labels.title}</h2>
-        <p>
-          {labels.project}: {projectId}
-        </p>
-        <p>
-          {labels.period}: {view.period.from} – {view.period.to} (
-          {view.timezone})
-        </p>
-        <p>
-          {text.updatedAt
-            .replace(
-              "{time}",
-              formatDateTime(view.computedAt, view.timezone, locale),
-            )
-            .replace("{timezone}", view.timezone)}
-        </p>
-        <p>{comparedWith}</p>
-        {view.runtimeStatus === "ok" ? null : (
-          <RuntimeBadge
-            status={view.runtimeStatus}
-            computedAt={view.computedAt}
-            timezone={view.timezone}
+      <article className="tap-team-report-sheet">
+        <header className="tap-team-report-header">
+          <h2>{labels.title}</h2>
+          <div className="tap-team-report-meta">
+            <p>
+              {labels.project}: {projectId}
+            </p>
+            <p>
+              {labels.period}: {view.period.from} – {view.period.to} (
+              {view.timezone})
+            </p>
+            <p>{comparedWith}</p>
+            <p>
+              {text.updatedAt
+                .replace(
+                  "{time}",
+                  formatDateTime(view.computedAt, view.timezone, locale),
+                )
+                .replace("{timezone}", view.timezone)}
+            </p>
+          </div>
+          {view.runtimeStatus === "ok" ? null : (
+            <RuntimeBadge
+              status={view.runtimeStatus}
+              computedAt={view.computedAt}
+              timezone={view.timezone}
+              copy={copy}
+            />
+          )}
+        </header>
+        <div className="tap-team-report-grid">
+          <section className="tap-team-report-section">
+            <h3>
+              {labels.summaryHeading} · {comparedWith}
+            </h3>
+            <table className="tap-team-report-table">
+              <caption className="tap-team-sr-only">
+                {labels.comparisonHeading}
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">{labels.metric}</th>
+                  <th scope="col">{labels.current}</th>
+                  <th scope="col">{labels.previous}</th>
+                  <th scope="col">{labels.change}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.map((metric) => (
+                  <tr key={metric.label}>
+                    <th scope="row">{metric.label}</th>
+                    <td>{show(metric, metric.current, "current")}</td>
+                    <td>
+                      {metric.comparable === false
+                        ? EMPTY
+                        : show(metric, metric.previous, "previous")}
+                    </td>
+                    <td
+                      className="tap-team-change"
+                      data-trend={changeTrend(metric)}
+                    >
+                      <ChangeCell metric={metric} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+          <section className="tap-team-report-section">
+            <h3>{labels.trendHeading}</h3>
+            {view.runtimeStatus === "unavailable" ? (
+              <p>
+                {EMPTY}
+                <RuntimeMark status="unavailable" copy={copy} />
+              </p>
+            ) : trend.length === 0 ? (
+              <p className="tap-team-empty tap-team-empty--quiet">
+                {labels.noTrend}
+              </p>
+            ) : (
+              <TrendChart
+                series={trend}
+                unit={text.profile.runsUnit}
+                locale={locale}
+                hint={text.team.chartHint}
+              />
+            )}
+          </section>
+        </div>
+        <section className="tap-team-report-section">
+          <h3>{text.team.rosterHeading}</h3>
+          <RosterTable
+            rows={current.members}
+            ctx={ctx}
+            sorting={{}}
+            onSort={NOOP}
+            onOpenMember={NOOP}
+            readOnly
+          />
+        </section>
+        <section className="tap-team-report-section">
+          <h3>{text.team.peopleHeading}</h3>
+          <PeopleTable
+            rows={current.people}
             copy={copy}
-          />
-        )}
-      </header>
-      <section className="tap-team-report-section">
-        <h3>
-          {labels.summaryHeading} · {comparedWith}
-        </h3>
-        <table className="tap-team-report-table">
-          <caption className="tap-team-sr-only">
-            {labels.comparisonHeading}
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">{labels.metric}</th>
-              <th scope="col">{labels.current}</th>
-              <th scope="col">{labels.previous}</th>
-              <th scope="col">{labels.change}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map((metric) => (
-              <tr key={metric.label}>
-                <th scope="row">{metric.label}</th>
-                <td>{show(metric, metric.current)}</td>
-                <td>
-                  {show(
-                    metric,
-                    metric.comparable === false ? null : metric.previous,
-                  )}
-                </td>
-                <td>
-                  <ChangeCell metric={metric} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-      <section className="tap-team-report-section">
-        <h3>{labels.trendHeading}</h3>
-        {trend.length === 0 ? (
-          <p>{labels.noTrend}</p>
-        ) : (
-          <TrendChart
-            series={trend}
-            unit={text.metrics.runs}
             locale={locale}
-            hint={text.team.chartHint}
+            runtimeStatus={view.runtimeStatus}
+            readOnly
           />
-        )}
-      </section>
-      <section className="tap-team-report-section">
-        <h3>{text.team.rosterHeading}</h3>
-        <RosterTable
-          rows={current.members}
-          ctx={ctx}
-          sorting={{}}
-          onSort={NOOP}
-          onOpenMember={NOOP}
-          readOnly
-        />
-      </section>
-      <section className="tap-team-report-section">
-        <h3>{text.team.peopleHeading}</h3>
-        <PeopleTable
-          rows={current.people}
-          copy={copy}
-          locale={locale}
-          runtimeStatus={view.runtimeStatus}
-          readOnly
-        />
-      </section>
+        </section>
+      </article>
     </div>
+  );
+}
+
+function PrintIcon() {
+  return (
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14">
+      <g fill="none" stroke="currentColor" strokeWidth="1.2">
+        <path d="M3.5 5V1.5h7V5" />
+        <rect x="1.5" y="5" width="11" height="5" rx="1.2" />
+        <path d="M3.5 8.5h7v4h-7z" fill="#fff" />
+      </g>
+    </svg>
   );
 }

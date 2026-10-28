@@ -15,10 +15,11 @@ two independent half-periods, recursively, until each sub-query returns fewer th
 1000 rows or the sub-period is a single day (in which case the partial result is
 accepted as-is -- a single day cannot be split further). The raw rows from every
 sub-query are concatenated before aggregation, so `count`/`latency sum`/`totalCost
-sum` combine by plain addition; `latency p50` cannot be averaged this way, so it is
-always recomputed as a run-count-weighted mean across whatever rows happen to be
-in hand (whether those rows differ by `outcome:` tag within one query, or came
-from different date sub-queries).
+sum` combine by plain addition. `latency p50` cannot be combined this way (the
+`tags` dimension returns the whole tag set, so each row is one `outcome:` group),
+so each Agent with runs gets its own dimensionless p50 query filtered to its
+`agent:` tag over the whole period; only if that query fails does the p50 fall
+back to a run-count-weighted mean of the grouped rows' p50s.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ _TRACES_PATH = "/api/public/traces"
 _AGENT_PREFIX = "agent:"
 _OUTCOME_PREFIX = "outcome:"
 _PROJECT_PREFIX = "project:"
+_TIMESTAMP_RESOLUTION = timedelta(milliseconds=1)
 # Malformed response bodies (bad numbers, bad timestamps, non-dict rows) are a
 # backend-contract break, not a programming error -- mapped to
 # `RuntimeMetricsUnavailable` same as a network failure.
@@ -136,11 +138,10 @@ class LangfuseRuntimeMetrics:
     async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
         """Aggregated runtime stats per Agent over `period`.
 
-        `AgentRuntimeStats.latency_p50_ms` is a run-count-weighted mean of
-        each `outcome:`/date-segment group's own p50 (see module docstring),
-        not a statistically exact p50 over all runs -- Langfuse's Metrics API
-        never returns a single p50 spanning multiple `tags` rows or multiple
-        date-bisected sub-queries.
+        `AgentRuntimeStats.latency_p50_ms` is the p50 over all of the
+        Agent's runs in `period`, from one extra per-Agent query (see module
+        docstring); when that query fails it falls back to a run-count-
+        weighted mean of each `outcome:`/date-segment group's own p50.
 
         The whole call is bounded by `timeout_seconds` regardless of how many
         underlying HTTP requests the row-limit bisection needs; raises
@@ -227,11 +228,24 @@ class LangfuseRuntimeMetrics:
         generation_calls = self._accumulate_counts(generation_rows)
         tool_calls = self._accumulate_counts(tool_rows)
 
+        p50_keys = sorted(key for key, acc in accumulators.items() if acc.runs > 0)
+        exact_p50 = dict(
+            zip(
+                p50_keys,
+                await _gather(
+                    *(self._fetch_agent_p50(project_id, key, period) for key in p50_keys)
+                ),
+                strict=True,
+            )
+        )
+
         agent_keys = set(accumulators) | set(served) | set(generation_calls) | set(tool_calls)
         results: list[AgentRuntimeStats] = []
         for agent_key in sorted(agent_keys):
             acc = accumulators.get(agent_key, _StatsAccumulator())
-            p50 = _as_int(acc.latency_weighted_p50 / acc.runs) if acc.runs > 0 else None
+            p50 = exact_p50.get(agent_key)
+            if p50 is None and acc.runs > 0:
+                p50 = _as_int(acc.latency_weighted_p50 / acc.runs)
             results.append(
                 AgentRuntimeStats(
                     agent_key=agent_key,
@@ -248,6 +262,28 @@ class LangfuseRuntimeMetrics:
                 )
             )
         return results
+
+    async def _fetch_agent_p50(self, project_id: str, agent_key: str, period: Period) -> int | None:
+        """The exact p50 latency over all of `agent_key`'s runs in `period`
+        (one row: no dimensions, so no row-limit bisection), or `None` when
+        the query fails or returns no value -- the caller then falls back to
+        the weighted-mean approximation. Never raises, so one Agent's failed
+        query cannot cancel the others'."""
+        query = self._metrics_query(
+            view="traces",
+            dimensions=[],
+            metrics=[{"measure": "latency", "aggregation": "p50"}],
+            filters=self._base_filters(project_id, agent_key=agent_key),
+            period=period,
+        )
+        try:
+            rows = await self._request_metrics(query)
+            if not rows:
+                return None
+            value = rows[0].get("p50_latency")
+            return None if value is None else _as_int(value)
+        except (RuntimeMetricsUnavailable, *_PARSE_ERRORS):
+            return None
 
     async def trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
         """Per-Agent, per-bucket runtime trend. Langfuse labels week/month
@@ -369,21 +405,37 @@ class LangfuseRuntimeMetrics:
         except ValueError as error:
             raise RuntimeMetricsUnavailable() from error
 
-    def _base_filters(self, project_id: str) -> list[dict[str, Any]]:
-        return [
+    def _base_filters(
+        self, project_id: str, *, agent_key: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Project and environment filters; with `agent_key`, also narrowed
+        to that Agent's `agent:` tag (filters are ANDed)."""
+        filters: list[dict[str, Any]] = [
             {
                 "column": "tags",
                 "operator": "any of",
                 "value": [f"{_PROJECT_PREFIX}{project_id}"],
                 "type": "arrayOptions",
             },
+        ]
+        if agent_key is not None:
+            filters.append(
+                {
+                    "column": "tags",
+                    "operator": "any of",
+                    "value": [f"{_AGENT_PREFIX}{agent_key}"],
+                    "type": "arrayOptions",
+                }
+            )
+        filters.append(
             {
                 "column": "environment",
                 "operator": "=",
                 "value": self._environment,
                 "type": "string",
-            },
-        ]
+            }
+        )
+        return filters
 
     def _metrics_query(
         self,
@@ -395,7 +447,14 @@ class LangfuseRuntimeMetrics:
         period: Period,
         time_granularity: str | None = None,
     ) -> dict[str, Any]:
-        from_ts, to_ts = period.utc_bounds()
+        from_ts, end_exclusive = period.utc_bounds()
+        # Langfuse applies `fromTimestamp` as `>=` but `toTimestamp` as `<=`
+        # (inclusive; QueryBuilder, verified in the Langfuse source
+        # 2026-10-27). Timestamps are millisecond precision, so the last
+        # included instant is 1 ms before the exclusive day boundary -- a
+        # trace at exactly 00:00:00.000 is then counted in one adjacent
+        # period/half only.
+        to_ts = end_exclusive - _TIMESTAMP_RESOLUTION
         query: dict[str, Any] = {
             "view": view,
             "dimensions": [{"field": field} for field in dimensions],

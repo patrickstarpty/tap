@@ -7,6 +7,14 @@ MySQL-backed data is always queried live; this decorator wraps whichever
 Successful results are cached for `ttl_seconds`. A `RuntimeMetricsUnavailable`
 is negative-cached for `failure_ttl_seconds` (default 30) so an outage does not
 retry the inner adapter on every view; other exceptions are never stored.
+
+Concurrent callers for the same key share one in-flight fetch (the team tab
+issues several views at once against a cold cache). The shared fetch is bounded
+only by the per-fetch cap (`fetch_timeout_seconds`); each caller waits at most
+its own remaining view budget. A caller that runs out of budget gets
+`RuntimeMetricsUnavailable` without negative-caching anything -- its budget,
+not the backend, ran out -- and when the last waiting caller gives up the
+shared fetch is cancelled.
 """
 
 from __future__ import annotations
@@ -46,6 +54,14 @@ class _CacheEntry:
     expires_at: float
 
 
+@dataclass(slots=True)
+class _Flight:
+    """One shared fetch and how many callers are still waiting on it."""
+
+    task: asyncio.Task[object]
+    waiters: int = 0
+
+
 def _period_key(period: Period | None) -> tuple[int, int, int, int, int, int] | None:
     if period is None:
         return None
@@ -82,6 +98,7 @@ class CachedRuntimeMetrics:
         self._now = now
         self._entries: dict[_CacheKey, _CacheEntry] = {}
         self._failures: dict[_CacheKey, tuple[float, RuntimeMetricsUnavailable]] = {}
+        self._inflight: dict[_CacheKey, _Flight] = {}
 
     async def _cached(
         self,
@@ -101,18 +118,32 @@ class CachedRuntimeMetrics:
             # The caller's view deadline is already spent: this key was never
             # tried, so it is neither fetched nor negative-cached.
             raise RuntimeMetricsUnavailable("view deadline exhausted")
+        flight = self._inflight.get(key)
+        if flight is None:
+            flight = _Flight(task=asyncio.ensure_future(self._fetch_and_store(key, fetch)))
+            self._inflight[key] = flight
+        flight.waiters += 1
         try:
-            # Bounded here by min(per-fetch cap, the caller's remaining view
-            # deadline): if the service's own timeout fired first it would
-            # cancel this fetch before it could raise, and a hanging backend
-            # would never be negative-cached.
-            limits = [
-                limit
-                for limit in (self._fetch_timeout_seconds, timeout_seconds)
-                if limit is not None
-            ]
+            # `shield`: one caller's budget running out (or its cancellation)
+            # must not cancel the fetch other callers still wait on.
+            async with asyncio.timeout(timeout_seconds):
+                return await asyncio.shield(flight.task)  # type: ignore[arg-type, return-value]
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable("view deadline exhausted") from error
+        finally:
+            flight.waiters -= 1
+            if flight.waiters == 0 and not flight.task.done():
+                flight.task.cancel()
+                if self._inflight.get(key) is flight:
+                    del self._inflight[key]
+
+    async def _fetch_and_store(self, key: _CacheKey, fetch: Callable[[], Awaitable[_T]]) -> _T:
+        """The shared fetch behind `_cached`, bounded by the per-fetch cap
+        only. Hitting that cap (or any other `RuntimeMetricsUnavailable`) is
+        a backend failure and is negative-cached."""
+        try:
             try:
-                async with asyncio.timeout(min(limits) if limits else None):
+                async with asyncio.timeout(self._fetch_timeout_seconds):
                     value = await fetch()
             except TimeoutError as error:
                 raise RuntimeMetricsUnavailable("runtime metrics query timed out") from error
@@ -120,6 +151,10 @@ class CachedRuntimeMetrics:
             if self._failure_ttl_seconds > 0:
                 self._failures[key] = (self._clock() + self._failure_ttl_seconds, exc)
             raise
+        finally:
+            flight = self._inflight.get(key)
+            if flight is not None and flight.task is asyncio.current_task():
+                del self._inflight[key]
         self._entries[key] = _CacheEntry(
             value=value, computed_at=self._now(), expires_at=self._clock() + self._ttl_seconds
         )
