@@ -1107,7 +1107,12 @@ describe("Tap product workspace interactions", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Tapper", "Test Management"]);
+    ).toEqual([
+      "Tapper",
+      "Test Management",
+      "Low Code Automation",
+      "Test Insights",
+    ]);
     const tapperSidebar = screen.getByRole("complementary", {
       name: "Tapper tools",
     });

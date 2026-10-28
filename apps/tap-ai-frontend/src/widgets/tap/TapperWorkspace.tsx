@@ -2684,9 +2684,15 @@ export function TapperWorkspace() {
 
   const selectModule = (module: ProductModule) => {
     if (
-      !["tapper", "test-management", "agents", "skills", "library"].includes(
-        module,
-      )
+      ![
+        "tapper",
+        "test-management",
+        "low-code",
+        "test-insights",
+        "agents",
+        "skills",
+        "library",
+      ].includes(module)
     )
       return;
     if (module === "tapper") {
@@ -3426,6 +3432,13 @@ export function TapperWorkspace() {
         ) : activeModule === "test-management" ? (
           <p role="status">
             Test plans are available when the TAP AI API is ready.
+          </p>
+        ) : activeModule === "low-code" || activeModule === "test-insights" ? (
+          <p role="status">
+            {copy.navigation.moduleOpensInTap.replace(
+              "{module}",
+              copy.navigation[activeModule],
+            )}
           </p>
         ) : null}
       </main>

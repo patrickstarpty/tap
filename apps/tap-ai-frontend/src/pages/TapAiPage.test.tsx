@@ -11,17 +11,38 @@ import { renderKnowledgeApp } from "../features/knowledge/testing/renderKnowledg
 import { createTestQueryClient } from "../shared/testing/renderApp";
 import { TapAiPage } from "./TapAiPage";
 
-it("shows only TAP AI product modules", () => {
+it("shows the TAP brand and every TAP product module with Tapper first", () => {
   renderKnowledgeApp(<TapAiPage />, {
     api: fakeKnowledgeClient(),
   });
   const product = screen.getByRole("navigation", { name: "Product" });
-  expect(screen.getByRole("img", { name: "TAP AI" })).toBeVisible();
+  expect(screen.getByRole("img", { name: "TAP platform" })).toBeVisible();
   expect(
     within(product)
       .getAllByRole("button")
       .map((button) => button.getAttribute("aria-label")),
-  ).toEqual(["Tapper", "Test Management"]);
+  ).toEqual([
+    "Tapper",
+    "Test Management",
+    "Low Code Automation",
+    "Test Insights",
+  ]);
+});
+
+it("points the non-AI modules at the TAP workspace", async () => {
+  renderKnowledgeApp(<TapAiPage />, {
+    api: fakeKnowledgeClient(),
+  });
+  await userEvent.click(screen.getByRole("button", { name: "Test Insights" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Test Insights opens in the TAP workspace.",
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Low Code Automation" }),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Low Code Automation opens in the TAP workspace.",
+  );
 });
 
 it("does not expose the legacy TAP automation and analytics workspace", async () => {
@@ -667,7 +688,7 @@ describe("TAP AI page (durable Conversation API)", () => {
   it("shows TAP AI and Tapper workspace identities", () => {
     renderKnowledgeApp(<TapAiPage />, { api: fakeKnowledgeClient() });
 
-    expect(screen.getByLabelText("TAP AI")).toHaveTextContent(/^TAP AI$/);
+    expect(screen.getByLabelText("TAP platform")).toHaveTextContent(/^TAP$/);
     const entry = screen.getByRole("button", { name: "Tapper" });
     expect(
       entry.querySelector('img[src*="tapper-owl-avatar-color.svg"]'),
@@ -689,7 +710,12 @@ describe("TAP AI page (durable Conversation API)", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Tapper", "Test Management"]);
+    ).toEqual([
+      "Tapper",
+      "Test Management",
+      "Low Code Automation",
+      "Test Insights",
+    ]);
     expect(
       within(screen.getByRole("navigation", { name: "Tapper tools" }))
         .getAllByRole("button")

@@ -26,7 +26,13 @@ export function isModelId(value: unknown): value is ModelId {
 }
 
 export type ProductModule =
-  "tapper" | "agents" | "skills" | "library" | "test-management";
+  | "tapper"
+  | "agents"
+  | "skills"
+  | "library"
+  | "test-management"
+  | "low-code"
+  | "test-insights";
 
 export type TapperSurface = "chat" | "agents" | "skills" | "library";
 

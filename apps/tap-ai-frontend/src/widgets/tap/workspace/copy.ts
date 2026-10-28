@@ -6,6 +6,7 @@ export interface WorkspaceCopy {
     zh: string;
   };
   navigation: Record<ProductModule, string> & {
+    moduleOpensInTap: string;
     collapseSidebar: string;
     closeSidebar: string;
     expandSidebar: string;
@@ -386,11 +387,47 @@ export interface WorkspaceCopy {
       servedAvg: string;
       ownersAvg: string;
     };
-    kpiCaptions: {
-      runs: string;
-      cost: string;
-      latency: string;
-      active: string;
+    kpi: {
+      idle: string;
+      perDay: string;
+      failureRate: string;
+      perRun: string;
+      previous: string;
+      vsPrevious: string;
+      noBaseline: string;
+      trendLabel: string;
+    };
+    trend: {
+      byAgent: string;
+      metricLabel: string;
+      metrics: {
+        runs: string;
+        failures: string;
+        cost: string;
+        latency: string;
+      };
+      others: string;
+      total: string;
+      periodTotal: string;
+      peak: string;
+      legendLabel: string;
+      empty: string;
+    };
+    heatmap: {
+      heading: string;
+      subtitle: string;
+      label: string;
+      roleDescription: string;
+      hint: string;
+      less: string;
+      more: string;
+      total: string;
+      perDay: string;
+      perBucket: string;
+      activeDays: string;
+      activeBuckets: string;
+      busiestDay: string;
+      busiestBucket: string;
     };
     status: { active: string; idle: string; disabled: string };
     platformOwner: string;
@@ -462,6 +499,19 @@ export interface WorkspaceCopy {
       pendingFeedback: string;
       noPeople: string;
       noMatch: string;
+      rank: string;
+      sortLabel: string;
+      sortDefault: string;
+      sortAscending: string;
+      sortDescending: string;
+      peopleViewLabel: string;
+      viewRanking: string;
+      viewDetails: string;
+      ownsChip: string;
+      usesChip: string;
+      maintenanceChip: string;
+      servedMore: string;
+      last30Column: string;
       periodActivity: { column: string; ran: string; noRuns: string };
       columns: {
         name: string;
@@ -681,6 +731,9 @@ export const WORKSPACE_COPY = {
       skills: "Skills",
       library: "Library",
       "test-management": "Test Management",
+      "low-code": "Low Code Automation",
+      "test-insights": "Test Insights",
+      moduleOpensInTap: "{module} opens in the TAP workspace.",
       collapseSidebar: "Collapse sidebar",
       closeSidebar: "Close sidebar",
       expandSidebar: "Expand sidebar",
@@ -1096,11 +1149,47 @@ export const WORKSPACE_COPY = {
         servedAvg: "Agents used per caller",
         ownersAvg: "Agents per owner",
       },
-      kpiCaptions: {
-        runs: "Runs in the selected period",
-        cost: "Model spend in the selected period",
-        latency: "Time spent across all runs",
-        active: "Ran in the period · {total} Agents in total",
+      kpi: {
+        idle: "{value} idle",
+        perDay: "{value} / day",
+        failureRate: "{value} failed",
+        perRun: "{value} / run",
+        previous: "Previous period {from} – {to}: {value}",
+        vsPrevious: "vs last period",
+        noBaseline: "no baseline",
+        trendLabel: "trend",
+      },
+      trend: {
+        byAgent: "By Agent · the 5 busiest and the rest",
+        metricLabel: "Trend metric",
+        metrics: {
+          runs: "Runs",
+          failures: "Failures",
+          cost: "Cost",
+          latency: "Total latency",
+        },
+        others: "{count} others",
+        total: "Total",
+        periodTotal: "this period",
+        peak: "Peak {value} · {date}",
+        legendLabel: "Show or hide Agents",
+        empty: "No runs in this period",
+      },
+      heatmap: {
+        heading: "Activity",
+        subtitle: "Runs per day",
+        label: "Runs per day",
+        roleDescription: "heatmap",
+        hint: "Use the arrow keys: up and down move a day, left and right a week.",
+        less: "Less",
+        more: "More",
+        total: "Total runs",
+        perDay: "Daily average",
+        perBucket: "Average per bucket",
+        activeDays: "Days with runs",
+        activeBuckets: "Buckets with runs",
+        busiestDay: "Busiest day",
+        busiestBucket: "Busiest bucket",
       },
       status: { active: "Active", idle: "Idle", disabled: "Disabled" },
       platformOwner: "Platform-maintained",
@@ -1177,6 +1266,19 @@ export const WORKSPACE_COPY = {
         pendingFeedback: "Pending feedback",
         noPeople: "No people in this period",
         noMatch: "No matching Agents",
+        rank: "Rank",
+        sortLabel: "Sort",
+        sortDefault: "Default (runs)",
+        sortAscending: "Ascending",
+        sortDescending: "Descending",
+        peopleViewLabel: "People view",
+        viewRanking: "Ranking",
+        viewDetails: "Details",
+        ownsChip: "Owns {count}",
+        usesChip: "Uses {count}",
+        maintenanceChip: "{count} maintenance",
+        servedMore: "+{count}",
+        last30Column: "Last 30 days",
         periodActivity: {
           column: "This period",
           ran: "Ran this period",
@@ -1410,6 +1512,9 @@ export const WORKSPACE_COPY = {
       skills: "技能",
       library: "知识库",
       "test-management": "测试管理",
+      "low-code": "低代码自动化",
+      "test-insights": "Test Insights",
+      moduleOpensInTap: "{module} 在 TAP 工作区中打开。",
       collapseSidebar: "收起侧边栏",
       closeSidebar: "关闭侧边栏",
       expandSidebar: "展开侧边栏",
@@ -1803,11 +1908,47 @@ export const WORKSPACE_COPY = {
         servedAvg: "每位使用者用到的 Agent 数",
         ownersAvg: "每位负责人管理 Agent 数",
       },
-      kpiCaptions: {
-        runs: "所选周期内的运行总数",
-        cost: "所选周期内的模型费用",
-        latency: "所有运行的耗时之和",
-        active: "周期内有运行 · 共 {total} 个 Agent",
+      kpi: {
+        idle: "闲置 {value}",
+        perDay: "日均 {value}",
+        failureRate: "失败率 {value}",
+        perRun: "每次 {value}",
+        previous: "上一周期 {from} – {to}：{value}",
+        vsPrevious: "较上期",
+        noBaseline: "无可比基线",
+        trendLabel: "趋势",
+      },
+      trend: {
+        byAgent: "按 Agent 拆分 · 运行最多的 5 个与其他",
+        metricLabel: "趋势指标",
+        metrics: {
+          runs: "运行次数",
+          failures: "失败",
+          cost: "成本",
+          latency: "总耗时",
+        },
+        others: "其他 {count} 个",
+        total: "合计",
+        periodTotal: "本周期合计",
+        peak: "峰值 {value} · {date}",
+        legendLabel: "显示或隐藏 Agent",
+        empty: "本周期没有运行",
+      },
+      heatmap: {
+        heading: "活跃日历",
+        subtitle: "每天的运行次数",
+        label: "每日运行次数",
+        roleDescription: "热力图",
+        hint: "用方向键查看：上下切换一天，左右切换一周。",
+        less: "少",
+        more: "多",
+        total: "总运行",
+        perDay: "日均",
+        perBucket: "每段平均",
+        activeDays: "有运行的天数",
+        activeBuckets: "有运行的时段",
+        busiestDay: "最忙的一天",
+        busiestBucket: "最忙的时段",
       },
       status: { active: "活跃", idle: "闲置", disabled: "已停用" },
       platformOwner: "平台维护",
@@ -1883,6 +2024,19 @@ export const WORKSPACE_COPY = {
         pendingFeedback: "待处理反馈",
         noPeople: "该周期内没有人员",
         noMatch: "没有符合条件的 Agent",
+        rank: "排名",
+        sortLabel: "排序",
+        sortDefault: "默认（运行次数）",
+        sortAscending: "升序",
+        sortDescending: "降序",
+        peopleViewLabel: "人员视图",
+        viewRanking: "排行",
+        viewDetails: "明细",
+        ownsChip: "负责 {count}",
+        usesChip: "用到 {count}",
+        maintenanceChip: "维护 {count}",
+        servedMore: "+{count}",
+        last30Column: "近 30 天",
         periodActivity: {
           column: "本期",
           ran: "本期运行",
