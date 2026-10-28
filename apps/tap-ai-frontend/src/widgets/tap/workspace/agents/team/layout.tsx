@@ -11,7 +11,8 @@ export const defaultHeader: RenderHeader = (toolbar) => (
   <div className="tap-team-toolbar">{toolbar}</div>
 );
 
-/** Loading placeholder shaped like the page it stands in for. */
+/** Loading placeholder shaped like the page it stands in for: headline
+ * cards, the chart row, then leaderboard rows. */
 export function TeamSkeleton({
   copy,
   kpis = true,
@@ -25,19 +26,26 @@ export function TeamSkeleton({
     <div role="status" className="tap-team-skeleton">
       <span className="tap-team-sr-only">{copy.agentTeam.loading}</span>
       {kpis ? (
-        <div className="tap-team-skeleton-kpis" aria-hidden="true">
-          {Array.from({ length: 4 }, (_, i) => (
-            <span key={i} className="tap-team-skeleton-block" />
-          ))}
-        </div>
+        <>
+          <div className="tap-team-skeleton-kpis" aria-hidden="true">
+            {Array.from({ length: 5 }, (_, i) => (
+              <span key={i} className="tap-team-skeleton-block" />
+            ))}
+          </div>
+          <div className="tap-team-skeleton-charts" aria-hidden="true">
+            <span className="tap-team-skeleton-chart" />
+            <span className="tap-team-skeleton-chart" />
+          </div>
+        </>
       ) : null}
       <div className="tap-team-skeleton-cards" aria-hidden="true">
         {Array.from({ length: cards }, (_, i) => (
           <span key={i} className="tap-team-skeleton-card">
             <span className="tap-team-skeleton-line" data-w="40" />
-            <span className="tap-team-skeleton-line" data-w="70" />
+            <span className="tap-team-skeleton-line" />
+            <span className="tap-team-skeleton-line" />
             <span className="tap-team-skeleton-line" data-w="100" />
-            <span className="tap-team-skeleton-line" data-w="55" />
+            <span className="tap-team-skeleton-line" />
           </span>
         ))}
       </div>

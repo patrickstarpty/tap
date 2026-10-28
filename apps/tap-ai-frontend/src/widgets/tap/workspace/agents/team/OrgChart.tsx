@@ -1,28 +1,43 @@
 import { useState, type KeyboardEvent } from "react";
 
-import type { AgentTeamOrgChartView } from "../../../../../features/knowledge/api/agentTeam";
+import type {
+  AgentTeamMemberRow,
+  AgentTeamOrgChartView,
+} from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 import { avatarTone, initialOf } from "./avatar";
+import { formatCompact } from "./format";
+
+/** What a node shows besides its name. */
+export interface OrgAgentStat {
+  name: string;
+  runs: number | null;
+  status: AgentTeamMemberRow["status"];
+}
 
 export interface OrgChartProps {
   chart: AgentTeamOrgChartView["data"];
-  agentNames: Record<string, string>;
+  agentStats: Record<string, OrgAgentStat>;
+  /** Calls each person made in the period (null: run data unknown). */
+  personRuns?: Record<string, number | null>;
   copy: WorkspaceCopy;
+  locale?: string;
   onOpenMember: (agentKey: string) => void;
 }
 
 const PAD = 16;
-const COL_W = 204;
+const COL_W = 212;
 const COL_GAP = 28;
-const HEAD_H = 46;
+const HEAD_H = 44;
 const TRUNK_X = 14;
-const INDENT = 30;
-const NODE_H = 36;
-const NODE_GAP = 10;
-const PILL_W = 156;
-const PILL_H = 34;
+const INDENT = 28;
+const NODE_H = 34;
+const NODE_GAP = 8;
+const PILL_W = 164;
+const PILL_H = 32;
 const PILL_GAP = 10;
 const BAND_GAP = 44;
+const COUNT_W = 34;
 
 function activate(action: () => void) {
   return (event: KeyboardEvent) => {
@@ -53,8 +68,10 @@ interface Point {
  * group); usage is drawn only for the person the reader selects. */
 export function OrgChart({
   chart,
-  agentNames,
+  agentStats,
+  personRuns = {},
   copy,
+  locale = "en",
   onOpenMember,
 }: OrgChartProps) {
   const labels = copy.agentTeam.team;
@@ -63,8 +80,10 @@ export function OrgChart({
     return <p className="tap-team-empty">{labels.orgChartEmpty}</p>;
 
   const agentLabel = (key: string) =>
-    agentNames[key] ??
+    agentStats[key]?.name ??
     (key === "tapper_default" ? labels.kinds.tapper_default : key);
+  const countText = (value: number | null | undefined) =>
+    value === null || value === undefined ? "" : formatCompact(value, locale);
 
   // Group agents under their owner; unowned (built-in, Tapper default) go to
   // the platform-maintained group.
@@ -160,7 +179,8 @@ export function OrgChart({
   ) => {
     const toggle = () => setSelected(selected === id ? null : id);
     const tone = avatarTone(id);
-    const r = pill ? 11 : 13;
+    const r = pill ? 10 : 12;
+    const count = countText(personRuns[id]);
     return (
       <g
         key={id}
@@ -199,11 +219,23 @@ export function OrgChart({
           x={x + 16 + r * 2}
           y={y + h / 2}
           dominantBaseline="central"
-          fontSize={13}
+          fontSize={pill ? 12.5 : 13}
           fontWeight={pill ? 500 : 600}
         >
-          {fit(id, w - 28 - r * 2, 13)}
+          {fit(id, w - 28 - r * 2 - (count === "" ? 0 : COUNT_W), 13)}
         </text>
+        {count === "" ? null : (
+          <text
+            className="tap-org-count"
+            x={x + w - 12}
+            y={y + h / 2}
+            textAnchor="end"
+            dominantBaseline="central"
+            fontSize={11.5}
+          >
+            {count}
+          </text>
+        )}
       </g>
     );
   };
@@ -352,6 +384,8 @@ export function OrgChart({
             const label = agentLabel(key);
             const tone = avatarTone(label);
             const w = COL_W - INDENT;
+            const stat = agentStats[key];
+            const count = countText(stat?.runs);
             return (
               <g
                 key={key}
@@ -370,12 +404,12 @@ export function OrgChart({
                 onKeyDown={activate(open)}
               >
                 <title>{label}</title>
-                <rect x={box.x} y={box.y} width={w} height={NODE_H} rx={9} />
+                <rect x={box.x} y={box.y} width={w} height={NODE_H} rx={8} />
                 <rect
                   className="tap-org-avatar"
                   data-tone={tone}
-                  x={box.x + 8}
-                  y={box.y + 8}
+                  x={box.x + 7}
+                  y={box.y + 7}
                   width={20}
                   height={20}
                   rx={6}
@@ -383,7 +417,7 @@ export function OrgChart({
                 <text
                   className="tap-org-avatar-text"
                   data-tone={tone}
-                  x={box.x + 18}
+                  x={box.x + 17}
                   y={box.y + NODE_H / 2}
                   textAnchor="middle"
                   dominantBaseline="central"
@@ -391,15 +425,36 @@ export function OrgChart({
                 >
                   {initialOf(label)}
                 </text>
+                {stat?.status === null || stat === undefined ? null : (
+                  <circle
+                    className="tap-org-status"
+                    data-status={stat.status}
+                    cx={box.x + 26}
+                    cy={box.y + 26}
+                    r={3.5}
+                  />
+                )}
                 <text
                   className="tap-org-label"
-                  x={box.x + 36}
+                  x={box.x + 35}
                   y={box.y + NODE_H / 2}
                   dominantBaseline="central"
                   fontSize={12.5}
                 >
-                  {fit(label, w - 46, 12.5)}
+                  {fit(label, w - 44 - (count === "" ? 0 : COUNT_W), 12.5)}
                 </text>
+                {count === "" ? null : (
+                  <text
+                    className="tap-org-count"
+                    x={box.x + w - 10}
+                    y={box.y + NODE_H / 2}
+                    textAnchor="end"
+                    dominantBaseline="central"
+                    fontSize={11.5}
+                  >
+                    {count}
+                  </text>
+                )}
               </g>
             );
           })}

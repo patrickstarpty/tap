@@ -1,17 +1,23 @@
 /* Agent team (My Agents / Team / Report) and the Agent profile drawer.
-   Built on the house tokens in app/styles.css and the Library patterns
-   (underline section tabs, white filter bars, 12–14px radius surfaces). */
+   Analytics surfaces on the house tokens in app/styles.css: white panels,
+   1px --tap-line borders, 12px radius, one soft shadow, 8px spacing grid.
+   The data carries the colour; chrome stays quiet. */
 
-/* ---------- Page tab bar ---------- */
+/* ---------- Page tab bar (sticky, carries period + freshness) ---------- */
 
 .tap-agents-tabbar {
   position: sticky;
-  z-index: 5;
+  z-index: 6;
   top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
   border-bottom: 1px solid var(--tap-line);
-  background: rgb(250 249 246 / 94%);
+  background: rgb(250 249 246 / 92%);
   padding: 0 clamp(26px, 4vw, 62px);
-  backdrop-filter: saturate(1.2) blur(6px);
+  backdrop-filter: saturate(1.2) blur(8px);
 }
 
 .tap-agents-tabbar .tap-agents-tabs {
@@ -20,7 +26,7 @@
 }
 
 .tap-agents-tabbar .tap-agents-tabs button {
-  min-height: 48px;
+  min-height: 52px;
   font-size: 14px;
 }
 
@@ -32,6 +38,16 @@
   outline-offset: -3px;
 }
 
+.tap-agents-toolbar-slot {
+  display: flex;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.tap-agents-toolbar-slot:empty {
+  display: none;
+}
+
 /* The My Agents / Team / Report panels sit in the same page container and
    heading style as the Configuration tab (`tap-module`). */
 .tap-team-panel {
@@ -39,13 +55,13 @@
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding-top: 30px;
+  padding-top: 32px;
 }
 
 .tap-team-panel .tap-team-panel-heading {
   flex-wrap: wrap;
   align-items: flex-end;
-  row-gap: 14px;
+  row-gap: 16px;
   margin-bottom: 24px;
 }
 
@@ -53,19 +69,19 @@
   min-width: min(100%, 320px);
 }
 
-/* ---------- Toolbar: freshness + period, right-aligned ---------- */
+/* ---------- Toolbar: freshness + period ---------- */
 
 .tap-team-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px 14px;
-  margin-left: auto;
+  gap: 8px 16px;
+  padding: 8px 0;
 }
 
 .tap-team-tab > .tap-team-toolbar {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .tap-team-freshness {
@@ -82,7 +98,7 @@
 .tap-team-updated {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: var(--tap-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -91,21 +107,52 @@
 }
 
 .tap-team-updated-dot {
-  width: 6px;
-  height: 6px;
+  position: relative;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #3f9a75;
-  box-shadow: 0 0 0 3px rgb(63 154 117 / 14%);
+  background: #2f8f66;
+}
+
+.tap-team-updated-dot::after {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: currentColor;
+  color: #2f8f66;
+  content: "";
+  opacity: 0.18;
+  animation: tap-team-live 2.4s ease-out infinite;
+}
+
+@keyframes tap-team-live {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.35;
+  }
+
+  70%,
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
 }
 
 .tap-team-freshness[data-status="syncing"] .tap-team-updated-dot {
   background: #c48a17;
-  box-shadow: 0 0 0 3px rgb(196 138 23 / 16%);
+}
+
+.tap-team-freshness[data-status="syncing"] .tap-team-updated-dot::after {
+  color: #c48a17;
 }
 
 .tap-team-freshness[data-status="unavailable"] .tap-team-updated-dot {
   background: #b33e38;
-  box-shadow: 0 0 0 3px rgb(179 62 56 / 14%);
+}
+
+.tap-team-freshness[data-status="unavailable"] .tap-team-updated-dot::after {
+  animation: none;
+  color: #b33e38;
 }
 
 .tap-team-runtime-pill {
@@ -134,7 +181,7 @@
   line-height: 1.35;
 }
 
-/* ---------- Period picker and filter selects ---------- */
+/* ---------- Period picker and selects ---------- */
 
 .tap-team-period {
   display: flex;
@@ -148,7 +195,7 @@
 .tap-team-filters label {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: var(--tap-muted);
   font-size: 12px;
   font-weight: 600;
@@ -157,9 +204,9 @@
 .tap-team-filters select,
 .tap-team-period select,
 .tap-team-period input {
-  min-height: 34px;
+  min-height: 32px;
   border: 1px solid var(--tap-line);
-  border-radius: 9px;
+  border-radius: 8px;
   background-color: #fff;
   padding: 0 12px;
   color: var(--tap-ink);
@@ -167,6 +214,7 @@
   font-size: 13px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 0 rgb(35 43 43 / 3%);
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
@@ -185,7 +233,7 @@
 .tap-team-filters select:hover,
 .tap-team-period select:hover,
 .tap-team-period input:hover {
-  border-color: var(--tap-accent-line);
+  border-color: var(--tap-line-strong);
 }
 
 .tap-team-filters select:focus-visible,
@@ -204,74 +252,176 @@
   text-align: right;
 }
 
-/* ---------- KPI band ---------- */
+/* ---------- KPI insight cards ---------- */
 
 .tap-team-kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
   margin: 0;
-  border: 1px solid var(--tap-line);
-  border-radius: 14px;
-  background: #fff;
-  overflow: hidden;
 }
 
 .tap-team-kpi {
+  position: relative;
+  display: grid;
   min-width: 0;
-  padding: 18px 22px 20px;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px 16px 0;
+  box-shadow: var(--tap-shadow-card);
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.tap-team-kpi + .tap-team-kpi {
-  border-left: 1px solid var(--tap-line);
+.tap-team-kpi:hover {
+  border-color: var(--tap-line-strong);
 }
 
 .tap-team-kpi dt {
+  overflow: hidden;
   color: var(--tap-muted);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tap-team-kpi dd {
+  display: grid;
   margin: 0;
 }
 
 .tap-team-kpi-value {
-  display: block;
-  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 4px;
+  margin-top: 8px;
   color: var(--tap-ink);
   font-size: 28px;
-  font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: -0.025em;
-  line-height: 1.1;
+  line-height: 1.15;
   white-space: nowrap;
 }
 
-.tap-team-kpi-caption {
-  display: block;
-  margin-top: 8px;
-  color: var(--tap-muted);
-  font-size: 12px;
-  line-height: 1.4;
+.tap-team-kpi-value .tap-team-runtime-mark {
+  flex-basis: 100%;
+  white-space: normal;
 }
 
+.tap-team-kpi-suffix {
+  color: #8b928f;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.tap-team-kpi-caption {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  max-width: 56%;
+  overflow: hidden;
+  color: #7d8582;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-kpi-delta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #7d8582;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.tap-team-kpi-delta > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tap-team-kpi-delta-pending {
+  width: 64px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--tap-soft);
+}
+
+.tap-team-kpi-spark {
+  display: block;
+  margin: 12px -16px 0;
+}
+
+.tap-team-kpi-spark .tap-team-sparkline-empty {
+  height: 36px;
+  margin: 0 16px;
+}
+
+/* Delta badge: arrow + percent in a soft tint. */
+.tap-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  background: var(--tap-soft);
+  padding: 2px 7px;
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.tap-delta-arrow {
+  font-size: 8px;
+}
+
+.tap-delta[data-tone="good"] {
+  background: var(--tap-good-soft);
+  color: var(--tap-good);
+}
+
+.tap-delta[data-tone="bad"] {
+  background: var(--tap-bad-soft);
+  color: var(--tap-bad);
+}
+
+.tap-delta[data-tone="none"] {
+  background: transparent;
+  color: #8b928f;
+}
+
+/* Secondary point-in-time counts, one quiet line. */
 .tap-team-stats {
   display: flex;
   flex-wrap: wrap;
-  row-gap: 8px;
-  margin: 12px 0 0;
-  padding: 2px 0;
+  align-items: center;
+  gap: 8px 0;
+  margin: 16px 0 0;
+  padding: 0 4px;
 }
 
 .tap-team-stats > div {
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
-  padding: 0 18px;
+  padding: 0 16px;
 }
 
 .tap-team-stats > div:first-child {
-  padding-left: 4px;
+  padding-left: 0;
 }
 
 .tap-team-stats > div + div {
@@ -286,7 +436,7 @@
 .tap-team-stats dd {
   margin: 0;
   color: var(--tap-ink);
-  font-size: 14px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
 }
@@ -296,6 +446,581 @@
   margin-left: 6px;
 }
 
+/* ---------- Chart panels ---------- */
+
+.tap-team-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr);
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.tap-team-panel-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px 20px 16px;
+  box-shadow: var(--tap-shadow-card);
+}
+
+.tap-team-panel-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.tap-team-panel-card-head h3 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.tap-team-panel-card-head p {
+  margin: 2px 0 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-team-tab[data-refreshing="true"] .tap-team-panel-card,
+.tap-team-tab[data-refreshing="true"] .tap-team-kpi-spark,
+.tap-team-tab[data-refreshing="true"] .tap-team-table,
+.tap-team-tab[data-refreshing="true"] .tap-team-cards {
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.tap-team-mix-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-top: 12px;
+}
+
+.tap-team-mix-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+
+.tap-team-mix-total strong {
+  color: var(--tap-ink);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tap-team-mix-total span,
+.tap-team-mix-peak {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Legend chips toggle a series; the swatch mirrors the bar mark. */
+.tap-team-legend-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-team-legend-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  min-height: 28px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 10px;
+  color: var(--tap-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.tap-team-legend-chips button:hover {
+  border-color: var(--tap-line-strong);
+  background: var(--tap-canvas);
+}
+
+.tap-team-legend-chips button[aria-pressed="false"] {
+  background: var(--tap-canvas);
+  color: #8b928f;
+}
+
+.tap-team-legend-chips button[aria-pressed="false"] .tap-chart-swatch {
+  background: transparent !important;
+  box-shadow: inset 0 0 0 1.5px var(--tap-line-strong);
+}
+
+.tap-team-legend-chips button[aria-pressed="false"] .tap-team-legend-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--tap-line-strong);
+}
+
+.tap-team-legend-chips button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 1px;
+}
+
+.tap-team-legend-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-legend-value {
+  color: var(--tap-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-chart-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.tap-team-mix-plot,
+.tap-team-trend-plot {
+  position: relative;
+  min-width: 0;
+}
+
+.tap-team-mix-svg,
+.tap-team-trend-svg {
+  display: block;
+  overflow: visible;
+  border-radius: 6px;
+}
+
+.tap-team-mix-svg:focus-visible,
+.tap-team-trend-svg:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 4px;
+}
+
+.tap-chart-grid line {
+  stroke: var(--tap-grid);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.tap-chart-grid line[data-baseline="true"] {
+  stroke: var(--tap-line-strong);
+}
+
+.tap-chart-tick {
+  fill: #7d8582;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-chart-crosshair {
+  stroke: var(--tap-ink);
+  stroke-opacity: 0.35;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.tap-chart-dot {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.tap-chart-band {
+  fill: var(--tap-soft);
+  opacity: 0.9;
+}
+
+.tap-chart-column path {
+  transition: opacity 0.12s ease;
+}
+
+.tap-team-mix-svg[data-hovering="true"]
+  .tap-chart-column:not([data-active])
+  path {
+  opacity: 0.45;
+}
+
+.tap-team-chart-overlay {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 999px;
+  background: #fff;
+  padding: 4px 12px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.tap-team-chart-empty {
+  display: grid;
+  flex: 1;
+  margin: 16px 0 0;
+  border: 1px dashed var(--tap-line);
+  border-radius: 10px;
+  min-height: 160px;
+  color: var(--tap-muted);
+  font-size: 20px;
+  place-content: center;
+  text-align: center;
+}
+
+.tap-team-chart-skeleton {
+  flex: 1;
+  min-height: 220px;
+  margin-top: 16px;
+  border-radius: 10px;
+  background: linear-gradient(
+    90deg,
+    var(--tap-soft) 0%,
+    #faf9f6 45%,
+    var(--tap-soft) 90%
+  );
+  background-size: 220% 100%;
+  animation: tap-team-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Floating chart readout: values lead, series keyed by a short line. */
+.tap-chart-tooltip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  min-width: 168px;
+  max-width: 280px;
+  border: 1px solid var(--tap-line);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 97%);
+  padding: 8px 10px;
+  box-shadow: var(--tap-shadow-pop);
+  pointer-events: none;
+  transform: translateX(14px);
+}
+
+.tap-chart-tooltip[data-side="left"] {
+  transform: translateX(calc(-100% - 14px));
+}
+
+.tap-chart-tooltip-title {
+  margin: 0 0 6px;
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tap-chart-tooltip-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.tap-chart-tooltip-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--tap-ink);
+  font-size: 12px;
+}
+
+.tap-chart-tooltip-row strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tap-chart-tooltip-label {
+  overflow: hidden;
+  color: #4b5452;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-chart-tooltip-row[data-muted="true"] {
+  opacity: 0.45;
+}
+
+.tap-chart-tooltip-row[data-strong="true"] {
+  margin-top: 2px;
+  border-top: 1px solid var(--tap-line);
+  padding-top: 6px;
+}
+
+.tap-chart-key {
+  display: block;
+  width: 12px;
+  height: 2.5px;
+  border-radius: 2px;
+}
+
+.tap-chart-key[data-blank="true"] {
+  background: transparent;
+}
+
+.tap-chart-tooltip-footer {
+  margin: 6px 0 0;
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+/* ---------- Activity heatmap ---------- */
+
+.tap-team-heatmap-card {
+  gap: 0;
+}
+
+.tap-team-heatmap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.tap-team-heatmap-body {
+  display: grid;
+  gap: 12px;
+}
+
+.tap-team-heatmap-frame {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+}
+
+.tap-team-heatmap-frame[data-daily="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tap-team-heat-months {
+  display: grid;
+  grid-template-columns: repeat(var(--heat-columns), minmax(0, 1fr));
+  gap: 4px;
+  max-width: calc(var(--heat-columns) * 40px);
+  color: #7d8582;
+  font-size: 11px;
+}
+
+.tap-team-heat-months span {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.tap-team-heat-weekdays {
+  display: grid;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  color: #7d8582;
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.tap-team-heat-weekdays span {
+  display: flex;
+  align-items: center;
+}
+
+.tap-team-heat-grid {
+  position: relative;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, auto);
+  gap: 4px;
+  max-width: calc(var(--heat-columns) * 40px);
+  border-radius: 4px;
+}
+
+.tap-team-heatmap-frame[data-daily="false"] .tap-team-heat-grid {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(var(--heat-columns), minmax(0, 1fr));
+  grid-template-rows: none;
+}
+
+.tap-team-heat-grid:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 4px;
+}
+
+.tap-team-heat-cell {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 4px;
+  background: var(--tap-heat-0);
+  box-shadow: inset 0 0 0 1px rgb(35 43 43 / 4%);
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease;
+}
+
+.tap-team-heat-cell[data-level="1"] {
+  background: var(--tap-heat-1);
+}
+
+.tap-team-heat-cell[data-level="2"] {
+  background: var(--tap-heat-2);
+}
+
+.tap-team-heat-cell[data-level="3"] {
+  background: var(--tap-heat-3);
+}
+
+.tap-team-heat-cell[data-level="4"] {
+  background: var(--tap-heat-4);
+}
+
+.tap-team-heat-cell[data-outside="true"] {
+  background: transparent;
+  box-shadow: none;
+}
+
+.tap-team-heat-cell[data-active="true"] {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 3.5px var(--tap-ink);
+}
+
+.tap-team-heat-tip {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 97%);
+  padding: 6px 9px;
+  box-shadow: var(--tap-shadow-pop);
+  font-size: 11.5px;
+  pointer-events: none;
+  transform: translate(14px, -30%);
+  white-space: nowrap;
+}
+
+.tap-team-heat-tip[data-side="left"] {
+  transform: translate(calc(-100% - 14px), -30%);
+}
+
+.tap-team-heat-tip strong {
+  color: var(--tap-ink);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-heat-tip span {
+  color: var(--tap-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #7d8582;
+  font-size: 11px;
+}
+
+.tap-team-heat-legend i {
+  width: 11px;
+  border-radius: 3px;
+}
+
+.tap-team-heat-legend span:first-child {
+  margin-right: 4px;
+}
+
+.tap-team-heat-legend span:last-child {
+  margin-left: 4px;
+}
+
+.tap-team-heat-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: auto 0 0;
+  border-top: 1px solid var(--tap-line);
+  padding-top: 16px;
+}
+
+.tap-team-heatmap[data-layout="side"] {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.tap-team-heatmap[data-layout="side"] .tap-team-heatmap-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.tap-team-heatmap[data-compact="true"] .tap-team-heat-grid,
+.tap-team-heatmap[data-compact="true"] .tap-team-heat-months {
+  max-width: calc(var(--heat-columns) * 22px);
+}
+
+.tap-team-heatmap[data-layout="side"] .tap-team-heat-grid,
+.tap-team-heatmap[data-layout="side"] .tap-team-heat-months {
+  max-width: calc(var(--heat-columns) * 48px);
+}
+
+.tap-team-heatmap[data-layout="side"] .tap-team-heat-stats {
+  flex: none;
+  grid-template-columns: minmax(0, 1fr);
+  width: 128px;
+  margin: 20px 0 0;
+  border-top: 0;
+  border-left: 1px solid var(--tap-line);
+  padding: 0 0 0 16px;
+}
+
+.tap-team-heat-stats dt {
+  color: var(--tap-muted);
+  font-size: 11.5px;
+}
+
+.tap-team-heat-stats dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  margin: 2px 0 0;
+  color: var(--tap-ink);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tap-team-heat-stats small {
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
 /* ---------- Sections ---------- */
 
 .tap-team-section {
@@ -303,22 +1028,21 @@
 }
 
 .tap-team-section--first {
-  margin-top: 0;
+  margin-top: 4px;
 }
 
 .tap-team-section-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .tap-team-section-head h3 {
   margin: 0;
   color: var(--tap-ink);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: -0.01em;
 }
 
@@ -327,9 +1051,9 @@
   background: var(--tap-soft);
   padding: 1px 8px;
   color: var(--tap-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .tap-team-section-count[data-tone="accent"] {
@@ -337,19 +1061,23 @@
   color: var(--tap-accent-dark);
 }
 
+.tap-team-section-tools {
+  margin-left: auto;
+}
+
 .tap-team-refreshing {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   margin: 0 0 0 auto;
   color: var(--tap-muted);
   font-size: 12px;
 }
 
 .tap-team-refreshing::before {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--tap-accent-line);
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--tap-line-strong);
   border-top-color: var(--tap-accent);
   border-radius: 50%;
   content: "";
@@ -362,14 +1090,20 @@
   }
 }
 
-/* ---------- Filter bar ---------- */
+/* ---------- Filter bar and segmented controls ---------- */
 
 .tap-team-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 16px;
+  gap: 8px 16px;
   margin-bottom: 16px;
+}
+
+.tap-team-filters-divider {
+  align-self: stretch;
+  width: 1px;
+  background: var(--tap-line);
 }
 
 .tap-team-segmented {
@@ -377,8 +1111,8 @@
   gap: 2px;
   margin-left: auto;
   border: 1px solid var(--tap-line);
-  border-radius: 10px;
-  background: #fff;
+  border-radius: 9px;
+  background: var(--tap-soft);
   padding: 2px;
 }
 
@@ -386,16 +1120,20 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 26px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
-  padding: 0 12px;
+  padding: 0 10px;
   color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .tap-team-segmented button:hover {
@@ -403,16 +1141,49 @@
 }
 
 .tap-team-segmented button[aria-pressed="true"] {
-  background: var(--tap-soft);
+  background: #fff;
   color: var(--tap-ink);
+  box-shadow:
+    0 1px 2px rgb(35 43 43 / 8%),
+    0 0 0 1px rgb(35 43 43 / 4%);
 }
 
 .tap-team-segmented button:focus-visible {
   outline: 2px solid var(--tap-focus);
-  outline-offset: 0;
+  outline-offset: 1px;
 }
 
-/* ---------- Avatars and status ---------- */
+.tap-team-segmented--quiet {
+  margin-left: 0;
+}
+
+.tap-team-icon-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--tap-ink);
+  cursor: pointer;
+  place-items: center;
+}
+
+.tap-team-icon-button:hover:not(:disabled) {
+  border-color: var(--tap-line-strong);
+}
+
+.tap-team-icon-button:disabled {
+  color: var(--tap-line-strong);
+  cursor: default;
+}
+
+.tap-team-icon-button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 1px;
+}
+
+/* ---------- Avatars, status, meters, stacks, chips ---------- */
 
 .tap-team-avatar {
   display: inline-grid;
@@ -426,6 +1197,13 @@
   font-weight: 650;
   line-height: 1;
   place-items: center;
+}
+
+.tap-team-avatar[data-size="xs"] {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
 }
 
 .tap-team-avatar[data-size="sm"] {
@@ -488,8 +1266,8 @@
 .tap-team-status-dot {
   display: inline-block;
   flex: none;
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   margin-right: 6px;
   border-radius: 50%;
   background: #9aa19e;
@@ -504,278 +1282,133 @@
   background: #c48a17;
 }
 
-/* ---------- Roster cards (employee badges) ---------- */
-
-.tap-team-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 1fr));
-  gap: 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.tap-team-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-  border: 1px solid var(--tap-line);
-  border-radius: 14px;
-  background: #fff;
-  padding: 18px 18px 14px;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    border-color 0.18s ease;
-}
-
-.tap-team-card:hover {
-  border-color: var(--tap-line-strong);
-  box-shadow: 0 12px 28px -16px rgb(35 43 43 / 30%);
-  transform: translateY(-2px);
-}
-
-.tap-team-card:has(.tap-team-card-name:focus-visible) {
-  outline: 3px solid var(--tap-focus);
-  outline-offset: 2px;
-}
-
-.tap-team-card[data-status="disabled"] {
-  background: #fcfcfa;
-}
-
-.tap-team-card[data-status="disabled"] .tap-team-avatar {
-  filter: grayscale(1);
-  opacity: 0.7;
-}
-
-.tap-team-card-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.tap-team-card-id {
-  min-width: 0;
-}
-
-.tap-team-card-id p {
-  margin: 2px 0 0;
-  overflow: hidden;
-  color: var(--tap-muted);
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tap-team-card-id p[data-empty="true"],
-.tap-profile-title[data-empty="true"] {
-  color: #8b928f;
-  font-style: italic;
-}
-
-.tap-team-card-name {
-  max-width: 100%;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--tap-ink);
-  cursor: pointer;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The name button covers the whole card: one target, no nested controls. */
-.tap-team-card .tap-team-card-name::after {
-  position: absolute;
-  z-index: 1;
-  border-radius: inherit;
-  content: "";
-  inset: 0;
-}
-
-.tap-team-card .tap-team-card-name:focus-visible {
-  outline: 0;
-}
-
-.tap-team-card:hover .tap-team-card-name {
-  color: var(--tap-accent-dark);
-}
-
-.tap-team-card-status {
-  margin: 0;
-}
-
-.tap-team-card-status dd {
+.tap-team-status-pill {
   display: inline-flex;
   align-items: center;
-  margin: 0;
   border-radius: 999px;
   background: var(--tap-soft);
-  padding: 3px 9px;
-  color: var(--tap-muted);
-  font-size: 11.5px;
-  font-weight: 650;
+  padding: 2px 9px 2px 8px;
+  color: #4b5452;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
   white-space: nowrap;
 }
 
-.tap-team-card[data-status="active"] .tap-team-card-status dd {
+.tap-team-status-pill .tap-team-status-dot {
+  margin-right: 6px;
+  vertical-align: 0;
+}
+
+.tap-team-status-pill[data-status="active"] {
   background: #e8f5ef;
   color: #216247;
 }
 
-.tap-team-card[data-status="idle"] .tap-team-card-status dd {
+.tap-team-status-pill[data-status="idle"] {
   background: #fff5dc;
   color: #805a0e;
 }
 
-.tap-team-card-status .tap-team-runtime-mark {
-  display: none;
-}
-
-.tap-team-card-meta {
-  display: grid;
+.tap-team-meter {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
-.tap-team-card-meta > div {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
-  align-items: baseline;
-  gap: 8px;
+.tap-team-meter svg {
+  flex: none;
 }
 
-.tap-team-card-meta dt {
+.tap-team-meter-track {
+  fill: none;
+  stroke: var(--tap-soft);
+  stroke-width: 3;
+}
+
+.tap-team-meter-fill {
+  fill: none;
+  stroke: #2f8f66;
+  stroke-linecap: round;
+  stroke-width: 3;
+}
+
+.tap-team-meter-fill[data-level="mid"] {
+  stroke: #c48a17;
+}
+
+.tap-team-meter-fill[data-level="low"] {
+  stroke: var(--tap-bad);
+}
+
+.tap-team-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.tap-team-stack-faces {
+  display: inline-flex;
+  align-items: center;
+}
+
+.tap-team-stack-faces > * + * {
+  margin-left: -6px;
+}
+
+.tap-team-stack-faces .tap-team-avatar {
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.tap-team-stack-more {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #fff;
+  padding: 0 5px;
+  box-shadow:
+    0 0 0 2px #fff,
+    inset 0 0 0 1px var(--tap-line);
   color: var(--tap-muted);
-  font-size: 12px;
-}
-
-.tap-team-card-meta dd {
-  margin: 0;
-  overflow: hidden;
-  color: var(--tap-ink);
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tap-team-card .tap-team-runtime-mark {
-  display: inline;
-  margin-left: 6px;
   font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  place-items: center;
 }
 
-/* The card sparkline covers the last 30 days, not the selected period. */
-.tap-team-card-spark {
-  display: grid;
+.tap-team-muted {
+  color: #8b928f;
+}
+
+.tap-team-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
-.tap-team-sparkline-caption {
+.tap-team-chip {
+  border-radius: 6px;
+  background: var(--tap-soft);
+  padding: 1px 7px;
   color: var(--tap-muted);
   font-size: 11px;
-}
-
-.tap-team-sparkline {
-  display: block;
-  width: 100%;
-  height: 40px;
-  overflow: visible;
-}
-
-.tap-team-sparkline-empty {
-  display: block;
-  height: 40px;
-  border-bottom: 1px dashed var(--tap-line-strong);
-  opacity: 0.6;
-}
-
-.tap-team-card-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0;
-  border-radius: 10px;
-  background: var(--tap-canvas);
-  padding: 10px 4px;
-}
-
-.tap-team-card-stats > div {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  min-width: 0;
-  padding: 0 10px;
-}
-
-.tap-team-card-stats > div + div {
-  border-left: 1px solid var(--tap-line);
-}
-
-.tap-team-card-stats dt {
-  color: var(--tap-muted);
-  font-size: 11px;
-  line-height: 1.3;
-}
-
-.tap-team-card-stats dd {
-  margin: 3px 0 0;
-  color: var(--tap-ink);
-  font-size: 16px;
   font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.tap-team-card-stats .tap-team-runtime-mark {
-  display: block;
-  margin: 2px 0 0;
-}
-
-.tap-team-card-foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0;
-  border-top: 1px solid var(--tap-soft);
-  padding-top: 11px;
-}
-
-.tap-team-card-foot > div {
-  min-width: 0;
-}
-
-.tap-team-card-foot > div + div {
-  text-align: right;
-}
-
-.tap-team-card-foot dt {
-  color: var(--tap-muted);
-  font-size: 11px;
-}
-
-.tap-team-card-foot dd {
-  margin: 2px 0 0;
-  color: var(--tap-ink);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+  font-weight: 600;
   white-space: nowrap;
 }
 
-/* ---------- Tables (roster, people, report) ---------- */
+.tap-team-relative {
+  color: var(--tap-ink);
+  cursor: default;
+  text-decoration: underline dotted var(--tap-line-strong);
+  text-underline-offset: 3px;
+}
+
+/* ---------- Tables (leaderboard, people, report) ---------- */
 
 .tap-team-table-scroll {
-  max-width: 100%;
-  overflow-x: auto;
+  min-width: 0;
 }
 
 .tap-team-table .ant-table {
@@ -788,15 +1421,17 @@
   border-radius: 12px;
   background: #fff;
   overflow: hidden;
+  box-shadow: var(--tap-shadow-card);
 }
 
 .tap-team-table .ant-table-thead > tr > th {
   border-bottom: 1px solid var(--tap-line);
-  background: var(--tap-canvas);
-  padding: 10px 14px;
+  background: #fbfaf8;
+  padding: 10px 8px;
   color: var(--tap-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 650;
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
@@ -805,9 +1440,10 @@
 }
 
 .tap-team-table .ant-table-tbody > tr > td {
-  border-bottom: 1px solid var(--tap-soft);
-  padding: 11px 14px;
+  border-bottom: 1px solid #f0efeb;
+  padding: 10px 8px;
   color: var(--tap-ink);
+  font-size: 13px;
 }
 
 .tap-team-table .ant-table-tbody > tr:last-child > td {
@@ -815,7 +1451,7 @@
 }
 
 .tap-team-table .ant-table-tbody > tr.ant-table-row:hover > td {
-  background: #fcfbf8;
+  background: #fbfaf7;
 }
 
 .tap-team-table .ant-table-tbody > tr > td.ant-table-column-sort {
@@ -826,7 +1462,7 @@
   background: var(--tap-soft);
 }
 
-/* Sort icons only when they mean something: on hover or when active. */
+/* Sort icons only when they mean something: on hover or the sorted column. */
 .tap-team-table .ant-table-column-sorter {
   color: var(--tap-line-strong);
   opacity: 0;
@@ -852,53 +1488,522 @@
 }
 
 .tap-team-table .ant-table-thead .ant-table-cell-fix-left {
-  background: var(--tap-canvas);
+  background: #fbfaf8;
 }
 
 .tap-team-table .tap-team-col-name {
-  font-weight: 600;
+  min-width: 170px;
+}
+
+/* First and last cells keep the card's inner padding. */
+.tap-team-table .ant-table-thead > tr > th:first-child,
+.tap-team-table .ant-table-tbody > tr > td:first-child {
+  padding-left: 14px;
+}
+
+.tap-team-table .ant-table-thead > tr > th:last-child,
+.tap-team-table .ant-table-tbody > tr > td:last-child {
+  padding-right: 14px;
 }
 
 .tap-team-table .tap-team-card-name {
-  color: var(--tap-accent-dark);
-  font-size: 13px;
-  font-weight: 650;
+  max-width: 168px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tap-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tap-team-table .tap-team-card-name:hover {
+  color: var(--tap-accent);
   text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tap-team-table .tap-team-card-name:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
 }
 
 .tap-team-num {
   font-variant-numeric: tabular-nums;
 }
 
+/* During an outage each cell reads "—" over the notice, kept on one line. */
 .tap-team-table .tap-team-runtime-mark {
-  display: inline;
-  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.tap-team-runs-value:only-child {
+  grid-column: 1 / -1;
+  text-align: left;
 }
 
 /* Status, numbers, durations and dates read as one unit ("17 m 41 s",
-   "本期运行"); the roster scrolls sideways instead of breaking them. */
+   "2026/10/23 07:59"). */
 .tap-team-nowrap {
   white-space: nowrap;
+}
+
+/* Leaderboard cells */
+.tap-team-cell-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.tap-team-rank {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: #8b928f;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  place-items: center;
+}
+
+.tap-team-rank[data-top="true"] {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+.tap-team-agent-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tap-team-agent-id {
+  display: grid;
+  min-width: 0;
+}
+
+.tap-team-agent-title {
+  overflow: hidden;
+  max-width: 168px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-agent-title[data-empty="true"] {
+  color: #8b928f;
+  font-style: italic;
+}
+
+.tap-team-owner[data-platform="true"] {
+  color: var(--tap-muted);
+}
+
+.tap-team-runs {
+  display: grid;
+  grid-template-columns: 36px 56px;
+  align-items: center;
+  gap: 8px;
+}
+
+.tap-team-runs-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: right;
+}
+
+.tap-team-runs-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tap-soft);
+  overflow: hidden;
+}
+
+.tap-team-runs-bar > span {
+  display: block;
+  min-width: 2px;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #f3a464, var(--tap-brand));
+}
+
+.tap-team-col-spark {
+  width: 80px;
+}
+
+.tap-team-col-spark .tap-team-sparkline-box {
+  width: 64px;
+}
+
+.tap-team-row--disabled td {
+  color: #8b928f;
+}
+
+.tap-team-row--disabled .tap-team-avatar {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+
+/* ---------- Sparklines ---------- */
+
+.tap-team-sparkline-box {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.tap-team-sparkline {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.tap-team-sparkline-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #fff;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.tap-team-sparkline-empty {
+  display: block;
+  height: 26px;
+  border-bottom: 1px dashed var(--tap-line);
+}
+
+.tap-team-sparkline-caption {
+  color: #8b928f;
+  font-size: 11px;
+}
+
+/* ---------- Roster cards (compact) ---------- */
+
+.tap-team-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-team-cards > .tap-team-card {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+  box-shadow: var(--tap-shadow-card);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.tap-team-cards > .tap-team-card:hover {
+  border-color: var(--tap-line-strong);
+  box-shadow: 0 10px 28px -18px rgb(35 43 43 / 40%);
+  transform: translateY(-1px);
+}
+
+.tap-team-cards > .tap-team-card:focus-within {
+  border-color: var(--tap-accent-line);
+}
+
+.tap-team-cards > .tap-team-card[data-status="disabled"] {
+  background: #fcfcfa;
+}
+
+.tap-team-cards > .tap-team-card[data-status="disabled"] .tap-team-avatar {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+
+.tap-team-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.tap-team-card-id {
+  min-width: 0;
+}
+
+.tap-team-card-id p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-card-id p[data-empty="true"],
+.tap-profile-title[data-empty="true"] {
+  color: #8b928f;
+  font-style: italic;
+}
+
+.tap-team-cards .tap-team-card-name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tap-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 650;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name button covers the whole card: one target, no nesting. */
+.tap-team-cards .tap-team-card-name::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: 12px;
+  content: "";
+}
+
+.tap-team-cards .tap-team-card-name:focus-visible {
+  outline: 0;
+}
+
+.tap-team-cards .tap-team-card-name:focus-visible::after {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-team-card-status {
+  margin: 0;
+}
+
+.tap-team-card-status dd {
+  margin: 0;
+}
+
+.tap-team-card-status .tap-team-runtime-mark {
+  text-align: right;
+}
+
+.tap-team-card-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+}
+
+.tap-team-card-hero dl {
+  margin: 0;
+}
+
+.tap-team-card-hero dt,
+.tap-team-card-stats dt,
+.tap-team-card-meta dt {
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-card-hero dd {
+  margin: 2px 0 0;
+  color: var(--tap-ink);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.tap-team-card-hero .tap-team-runtime-mark {
+  letter-spacing: 0;
+}
+
+.tap-team-card-spark {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tap-team-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid #f0efeb;
+  border-bottom: 1px solid #f0efeb;
+  padding: 12px 0;
+}
+
+.tap-team-card-stats > div {
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.tap-team-card-stats > div:first-child {
+  padding-left: 0;
+}
+
+.tap-team-card-stats > div + div {
+  border-left: 1px solid #f0efeb;
+}
+
+.tap-team-card-stats dd {
+  margin: 4px 0 0;
+  color: var(--tap-ink);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tap-team-card-stats .tap-team-runtime-mark {
+  white-space: normal;
+}
+
+.tap-team-card-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0;
+}
+
+.tap-team-card-meta dd {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-card .tap-team-runtime-mark {
+  white-space: normal;
+}
+
+/* ---------- People ranking ---------- */
+
+.tap-team-people-ranking {
+  display: grid;
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 4px 0;
+  box-shadow: var(--tap-shadow-card);
+  list-style: none;
+}
+
+.tap-team-people-ranking li {
+  display: grid;
+  grid-template-columns:
+    28px 28px minmax(180px, 1.1fr) minmax(120px, 1.6fr)
+    minmax(72px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  transition: background-color 0.12s ease;
+}
+
+.tap-team-people-ranking li + li {
+  border-top: 1px solid #f3f2ee;
+}
+
+.tap-team-people-ranking li:hover {
+  background: #fbfaf7;
+}
+
+.tap-team-people-ranking .tap-team-rank {
+  justify-self: center;
+}
+
+.tap-team-people-id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.tap-team-people-id strong {
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-people-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--tap-soft);
+  overflow: hidden;
+}
+
+.tap-team-people-bar > span {
+  display: block;
+  min-width: 2px;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #b5c3cb, #6a7f8c);
+}
+
+.tap-team-people-value .tap-team-runtime-mark {
+  white-space: nowrap;
+}
+
+.tap-team-people-value {
+  color: var(--tap-ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: right;
 }
 
 /* ---------- Org chart ---------- */
 
 .tap-org-chart {
   border: 1px solid var(--tap-line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: #fff;
-  padding: 14px 6px 6px;
+  overflow: hidden;
+  box-shadow: var(--tap-shadow-card);
 }
 
 .tap-org-chart-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 18px;
-  margin: 0 12px 6px;
+  gap: 8px 20px;
+  border-bottom: 1px solid var(--tap-line);
+  padding: 12px 18px;
   color: var(--tap-muted);
   font-size: 12px;
 }
@@ -906,13 +2011,11 @@
 .tap-org-chart-legend > span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .tap-org-chart-legend svg {
-  flex: none;
-  width: 28px;
-  height: 8px;
+  overflow: visible;
 }
 
 .tap-org-chart-legend .tap-org-chart-hint {
@@ -921,8 +2024,15 @@
 }
 
 .tap-org-chart-canvas {
-  max-width: 100%;
   overflow-x: auto;
+  background-color: #fcfcfa;
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgb(35 43 43 / 7%) 1px,
+    transparent 0
+  );
+  background-size: 16px 16px;
+  padding: 8px;
 }
 
 .tap-org-chart-canvas > svg {
@@ -948,7 +2058,7 @@
 
 .tap-org-trunk {
   fill: none;
-  stroke: var(--tap-accent-line);
+  stroke: #efc7a7;
   stroke-width: 1.5;
 }
 
@@ -959,24 +2069,21 @@
 .tap-org-node {
   cursor: pointer;
   outline: none;
-  transition: opacity 0.18s ease;
+  transition: opacity 0.15s ease;
 }
 
 .tap-org-node > rect:first-of-type {
   fill: #fff;
   stroke: var(--tap-line);
+  stroke-width: 1;
+  filter: drop-shadow(0 1px 1px rgb(35 43 43 / 5%));
   transition:
     stroke 0.15s ease,
     fill 0.15s ease;
 }
 
-.tap-org-person > rect:first-of-type {
-  stroke: var(--tap-line-strong);
-}
-
 .tap-org-node:hover > rect:first-of-type {
-  stroke: var(--tap-accent-line);
-  fill: #fffaf5;
+  stroke: var(--tap-line-strong);
 }
 
 .tap-org-person[aria-pressed="true"] > rect:first-of-type {
@@ -993,7 +2100,7 @@
 
 .tap-org-node:focus-visible > rect:first-of-type {
   stroke: var(--tap-focus);
-  stroke-width: 2.5;
+  stroke-width: 2;
 }
 
 .tap-org-label {
@@ -1001,8 +2108,30 @@
   pointer-events: none;
 }
 
+.tap-org-count {
+  fill: #7d8582;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.tap-org-status {
+  fill: #9aa19e;
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.tap-org-status[data-status="active"] {
+  fill: #2f8f66;
+}
+
+.tap-org-status[data-status="idle"] {
+  fill: #c48a17;
+}
+
 .tap-org-platform rect {
   fill: var(--tap-soft);
+  stroke: var(--tap-line);
 }
 
 .tap-org-platform text {
@@ -1011,139 +2140,23 @@
 
 .tap-org-band-label {
   fill: var(--tap-muted);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
 }
 
 .tap-org-chart [data-dimmed="true"] {
-  opacity: 0.22;
+  opacity: 0.25;
 }
 
-/* ---------- Trend chart ---------- */
+/* ---------- Trend chart (profile, report) ---------- */
 
 .tap-team-trend {
-  max-width: 100%;
-}
-
-.tap-team-trend-body {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-}
-
-.tap-team-trend-yaxis {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  height: 168px;
-  padding: 3px 0 0;
-  color: var(--tap-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  text-align: right;
-}
-
-.tap-team-trend-yaxis > * {
-  white-space: nowrap;
-}
-
-.tap-team-trend-yaxis > :last-child {
-  transform: translateY(-2px);
-}
-
-.tap-team-trend-plot {
-  position: relative;
   min-width: 0;
-}
-
-.tap-team-trend-svg {
-  display: block;
-  width: 100%;
-  height: 168px;
-  overflow: visible;
-}
-
-.tap-team-trend-svg:focus-visible {
-  outline: 2px solid var(--tap-focus);
-  outline-offset: 4px;
-  border-radius: 4px;
-}
-
-.tap-team-trend-dot {
-  position: absolute;
-  width: 9px;
-  height: 9px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px rgb(35 43 43 / 8%);
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-}
-
-.tap-team-trend-readout {
-  position: absolute;
-  z-index: 2;
-  top: 2px;
-  display: grid;
-  gap: 3px;
-  border: 1px solid var(--tap-line);
-  border-radius: 9px;
-  background: rgb(255 255 255 / 97%);
-  padding: 7px 10px;
-  box-shadow: 0 10px 24px -14px rgb(35 43 43 / 40%);
-  color: var(--tap-ink);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  transform: translateX(10px);
-  white-space: nowrap;
-}
-
-.tap-team-trend-readout[data-side="left"] {
-  transform: translateX(calc(-100% - 10px));
-}
-
-.tap-team-trend-readout[data-visible="false"] {
-  border: 0;
-  padding: 0;
-  box-shadow: none;
-  opacity: 0;
-}
-
-.tap-team-trend-readout span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.tap-team-trend-axis {
-  position: relative;
-  height: 20px;
-  margin-top: 6px;
-  color: var(--tap-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.tap-team-trend-axis span {
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
-.tap-team-trend-axis span[data-edge="start"] {
-  transform: none;
-}
-
-.tap-team-trend-axis span[data-edge="end"] {
-  transform: translateX(-100%);
 }
 
 .tap-team-trend-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 6px 16px;
   margin: 8px 0 0;
   padding: 0;
   color: var(--tap-muted);
@@ -1154,15 +2167,7 @@
 .tap-team-trend-legend li {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-}
-
-.tap-team-trend-swatch {
-  display: inline-block;
-  flex: none;
-  width: 14px;
-  height: 3px;
-  border-radius: 2px;
+  gap: 8px;
 }
 
 .tap-team-trend-unavailable {
@@ -1177,7 +2182,7 @@
   border: 1px dashed var(--tap-line-strong);
   border-radius: 12px;
   background: rgb(255 255 255 / 55%);
-  padding: 28px;
+  padding: 24px;
   color: var(--tap-muted);
   text-align: center;
 }
@@ -1186,18 +2191,18 @@
   border-style: solid;
   border-color: var(--tap-line);
   background: #fff;
-  padding: 18px;
+  padding: 16px;
   font-size: 13px;
 }
 
 .tap-team-empty-state {
   display: grid;
   justify-items: center;
-  gap: 14px;
+  gap: 16px;
   border: 1px dashed var(--tap-line-strong);
-  border-radius: 14px;
+  border-radius: 12px;
   background: #fff;
-  padding: 44px 24px 40px;
+  padding: 40px 24px;
   text-align: center;
 }
 
@@ -1234,24 +2239,33 @@
 
 .tap-team-skeleton {
   display: grid;
-  gap: 20px;
+  gap: 16px;
 }
 
 .tap-team-skeleton-kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tap-team-skeleton-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr);
+  gap: 16px;
 }
 
 .tap-team-skeleton-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 1fr));
-  gap: 16px;
+  gap: 1px;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: var(--tap-line);
+  overflow: hidden;
 }
 
 .tap-team-skeleton-block,
-.tap-team-skeleton-card,
-.tap-team-skeleton-line {
+.tap-team-skeleton-line,
+.tap-team-skeleton-chart {
   display: block;
   background: linear-gradient(
     90deg,
@@ -1264,20 +2278,24 @@
 }
 
 .tap-team-skeleton-block {
-  height: 104px;
-  border-radius: 14px;
+  height: 128px;
+  border-radius: 12px;
+}
+
+.tap-team-skeleton-chart {
+  height: 300px;
+  border-radius: 12px;
 }
 
 .tap-team-skeleton-card {
   display: grid;
-  align-content: start;
-  gap: 14px;
-  height: 236px;
-  border: 1px solid var(--tap-line);
-  border-radius: 14px;
+  grid-template-columns:
+    28px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr)
+    minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
   background: #fff;
-  padding: 20px;
-  animation: none;
+  padding: 14px 16px;
 }
 
 .tap-team-skeleton-line {
@@ -1286,22 +2304,12 @@
 }
 
 .tap-team-skeleton-line[data-w="40"] {
-  width: 40%;
-  height: 14px;
-}
-
-.tap-team-skeleton-line[data-w="70"] {
-  width: 70%;
-}
-
-.tap-team-skeleton-line[data-w="100"] {
-  width: 100%;
-  height: 40px;
+  height: 28px;
   border-radius: 8px;
 }
 
-.tap-team-skeleton-line[data-w="55"] {
-  width: 55%;
+.tap-team-skeleton-line[data-w="100"] {
+  height: 6px;
 }
 
 @keyframes tap-team-shimmer {
@@ -1317,13 +2325,16 @@
 @media (prefers-reduced-motion: reduce) {
   .tap-team-skeleton-block,
   .tap-team-skeleton-line,
+  .tap-team-skeleton-chart,
+  .tap-team-chart-skeleton,
   .tap-team-refreshing::before,
+  .tap-team-updated-dot::after,
   .tap-agent-profile-drawer {
     animation: none;
   }
 
-  .tap-team-card,
-  .tap-team-card:hover {
+  .tap-team-cards > .tap-team-card,
+  .tap-team-cards > .tap-team-card:hover {
     transform: none;
     transition: none;
   }
@@ -1342,10 +2353,18 @@
 
 .tap-team-feedback-list {
   display: grid;
-  gap: 10px;
   margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
   padding: 0;
+  overflow: hidden;
+  box-shadow: var(--tap-shadow-card);
   list-style: none;
+}
+
+.tap-team-feedback-list li + li {
+  border-top: 1px solid #f0efeb;
 }
 
 .tap-team-feedback-card {
@@ -1354,22 +2373,23 @@
   align-items: start;
   gap: 12px;
   width: 100%;
-  border: 1px solid var(--tap-line);
-  border-radius: 12px;
-  background: #fff;
+  border: 0;
+  background: transparent;
   padding: 14px 16px;
   color: var(--tap-ink);
   cursor: pointer;
   font: inherit;
   text-align: left;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  transition: background-color 0.12s ease;
 }
 
 .tap-team-feedback-card:hover {
-  border-color: var(--tap-accent-line);
-  box-shadow: 0 10px 24px -18px rgb(35 43 43 / 40%);
+  background: #fbfaf7;
+}
+
+.tap-team-feedback-card:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: -2px;
 }
 
 .tap-team-feedback-main {
@@ -1388,7 +2408,7 @@
 
 .tap-team-feedback-head strong {
   color: var(--tap-ink);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 650;
 }
 
@@ -1451,7 +2471,7 @@
 .tap-agent-profile-drawer {
   display: flex;
   flex-direction: column;
-  width: min(600px, 100vw);
+  width: min(640px, 100vw);
   height: 100dvh;
   max-height: 100dvh;
   background: var(--tap-canvas);
@@ -1482,7 +2502,7 @@
   align-items: center;
   gap: 16px;
   background: #fff;
-  padding: 24px 24px 14px;
+  padding: 24px 24px 12px;
 }
 
 .tap-profile-id {
@@ -1501,7 +2521,7 @@
 }
 
 .tap-profile-title {
-  margin: 3px 0 0;
+  margin: 2px 0 0;
   color: var(--tap-muted);
   font-size: 13px;
 }
@@ -1510,38 +2530,35 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  margin: 10px 0 0;
+  gap: 6px 8px;
+  margin: 8px 0 0;
   font-size: 12px;
 }
 
-.tap-profile-status {
+.tap-profile-meta .tap-team-runtime-mark {
+  display: inline;
+}
+
+.tap-profile-owner,
+.tap-profile-kind {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   border-radius: 999px;
   background: var(--tap-soft);
-  padding: 2px 9px;
-  color: var(--tap-muted);
-  font-weight: 650;
+  padding: 2px 9px 2px 3px;
+  color: #4b5452;
+  font-weight: 600;
 }
 
-.tap-profile-status:has([data-status="active"]) {
-  background: #e8f5ef;
-  color: #216247;
+.tap-profile-kind {
+  padding-left: 9px;
 }
 
-.tap-profile-status:has([data-status="idle"]) {
-  background: #fff5dc;
-  color: #805a0e;
-}
-
-.tap-profile-status .tap-team-runtime-mark {
-  display: inline;
-  margin-left: 6px;
-}
-
-.tap-profile-owner {
-  color: var(--tap-muted);
+.tap-profile-owner .tap-team-avatar {
+  width: 18px;
+  height: 18px;
+  font-size: 9px;
 }
 
 .tap-profile-close {
@@ -1550,7 +2567,7 @@
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--tap-muted);
   cursor: pointer;
@@ -1564,7 +2581,7 @@
 
 .tap-profile-freshness {
   background: #fff;
-  padding: 0 24px 6px 92px;
+  padding: 0 24px 8px 92px;
 }
 
 .tap-profile-tabs {
@@ -1626,7 +2643,7 @@
   display: grid;
   flex: 1;
   align-content: start;
-  gap: 14px;
+  gap: 16px;
   min-height: 0;
   overflow-y: auto;
   padding: 20px 24px 32px;
@@ -1637,11 +2654,12 @@
   border: 1px solid var(--tap-line);
   border-radius: 12px;
   background: #fff;
-  padding: 16px 18px;
+  padding: 16px;
+  box-shadow: var(--tap-shadow-card);
 }
 
 .tap-profile-card > h3 {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   color: var(--tap-ink);
   font-size: 13.5px;
   font-weight: 650;
@@ -1702,10 +2720,18 @@
 
 .tap-profile-served li {
   display: grid;
-  grid-template-columns: auto minmax(0, 150px) minmax(0, 1fr) 44px;
+  grid-template-columns: 20px auto minmax(0, 140px) minmax(0, 1fr) 48px;
   align-items: center;
   gap: 10px;
   font-size: 13px;
+}
+
+.tap-profile-served-rank {
+  color: #8b928f;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: center;
 }
 
 .tap-profile-served-name {
@@ -1716,43 +2742,110 @@
 }
 
 .tap-profile-served-bar {
-  height: 6px;
-  border-radius: 3px;
+  height: 8px;
+  border-radius: 4px;
   background: var(--tap-soft);
   overflow: hidden;
 }
 
 .tap-profile-served-bar > span {
   display: block;
+  min-width: 2px;
   height: 100%;
-  border-radius: 3px;
-  background: var(--tap-brand);
-  opacity: 0.55;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f3a464, var(--tap-brand));
 }
 
 .tap-profile-served-runs {
   color: var(--tap-ink);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 650;
   text-align: right;
+}
+
+/* Metric tiles with mini sparklines. */
+.tap-profile-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.tap-profile-tile {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 10px 0;
+  overflow: hidden;
+  box-shadow: var(--tap-shadow-card);
+}
+
+.tap-profile-tile dt {
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-profile-tile dd {
+  display: grid;
+  margin: 4px 0 0;
+}
+
+.tap-profile-tile-value {
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-profile-tile-value .tap-team-runtime-mark {
+  white-space: normal;
+}
+
+.tap-profile-tile-spark {
+  display: block;
+  margin: 8px -10px 0;
+}
+
+.tap-profile-tile-spark .tap-team-sparkline-empty {
+  height: 24px;
+  margin: 0 10px;
+}
+
+.tap-profile-tile .tap-team-meter {
+  font-size: 17px;
 }
 
 .tap-team-profile-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin: 0;
-}
-
-.tap-team-profile-metrics[data-columns="3"] {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
 }
 
 .tap-team-profile-metrics > div {
   min-width: 0;
-  border-radius: 10px;
-  background: var(--tap-canvas);
-  padding: 10px 12px;
+  padding: 4px 12px;
+}
+
+.tap-team-profile-metrics > div:nth-child(3n + 1) {
+  padding-left: 0;
+}
+
+.tap-team-profile-metrics > div:not(:nth-child(3n + 1)) {
+  border-left: 1px solid #f0efeb;
+}
+
+.tap-team-profile-metrics > div:nth-child(n + 4) {
+  margin-top: 8px;
 }
 
 .tap-team-profile-metrics dt {
@@ -1766,7 +2859,7 @@
 .tap-team-profile-metrics dd {
   margin: 4px 0 0;
   color: var(--tap-ink);
-  font-size: 16px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
   white-space: nowrap;
@@ -1776,25 +2869,27 @@
   white-space: normal;
 }
 
+/* Maintenance timeline: one icon per kind on a hairline rail. */
 .tap-team-history {
   margin: 0;
   border: 1px solid var(--tap-line);
   border-radius: 12px;
   background: #fff;
-  padding: 18px 18px 4px;
+  padding: 16px 16px 0;
+  box-shadow: var(--tap-shadow-card);
   list-style: none;
 }
 
 .tap-team-history li {
   position: relative;
-  padding: 0 0 18px 24px;
+  padding: 0 0 18px 40px;
 }
 
 .tap-team-history li::before {
   position: absolute;
-  top: 14px;
-  bottom: 0;
-  left: 5px;
+  top: 28px;
+  bottom: 2px;
+  left: 13px;
   width: 1px;
   background: var(--tap-line);
   content: "";
@@ -1804,24 +2899,38 @@
   display: none;
 }
 
-.tap-team-history-dot {
+.tap-team-history-icon {
   position: absolute;
-  top: 4px;
+  top: 0;
   left: 0;
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--tap-accent-line);
-  border-radius: 50%;
-  background: #fff;
+  display: grid;
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent);
+  place-items: center;
 }
 
-.tap-team-history li[data-kind="feedback_resolved"] .tap-team-history-dot,
-.tap-team-history li[data-kind="enabled"] .tap-team-history-dot {
-  border-color: #8cc9ad;
+.tap-team-history li[data-kind="feedback_resolved"] .tap-team-history-icon,
+.tap-team-history li[data-kind="enabled"] .tap-team-history-icon {
+  background: #e8f5ef;
+  color: #216247;
 }
 
-.tap-team-history li[data-kind="disabled"] .tap-team-history-dot {
-  border-color: var(--tap-line-strong);
+.tap-team-history li[data-kind="disabled"] .tap-team-history-icon {
+  background: var(--tap-soft);
+  color: var(--tap-muted);
+}
+
+.tap-team-history li[data-kind="skill_upgraded"] .tap-team-history-icon {
+  background: #e8f0fb;
+  color: #235fa8;
+}
+
+.tap-team-history li[data-kind="owner_transferred"] .tap-team-history-icon {
+  background: #efedfb;
+  color: #4e3fb3;
 }
 
 .tap-team-history-head {
@@ -1829,6 +2938,8 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 10px;
+  min-height: 27px;
+  padding-top: 4px;
 }
 
 .tap-team-history-head strong {
@@ -1850,7 +2961,7 @@
 }
 
 .tap-team-history li > p {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   border-radius: 8px;
   background: var(--tap-canvas);
   padding: 8px 10px;
@@ -1949,16 +3060,21 @@
 }
 
 .tap-team-report-controls {
+  position: sticky;
+  z-index: 4;
+  top: 61px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   border: 1px solid var(--tap-line);
   border-radius: 12px;
-  background: #fff;
-  padding: 10px 12px;
+  background: rgb(255 255 255 / 94%);
+  padding: 8px 12px;
+  box-shadow: var(--tap-shadow-card);
+  backdrop-filter: blur(8px);
 }
 
 .tap-team-report-controls .tap-team-period {
@@ -1988,10 +3104,10 @@
 
 .tap-team-report-sheet {
   border: 1px solid var(--tap-line);
-  border-radius: 16px;
+  border-radius: 12px;
   background: #fff;
   padding: 32px 36px 36px;
-  box-shadow: 0 1px 2px rgb(35 43 43 / 4%);
+  box-shadow: var(--tap-shadow-card);
 }
 
 .tap-team-report-header {
@@ -2036,12 +3152,20 @@
 .tap-team-report-grid {
   display: grid;
   grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
-  gap: 36px;
-  margin-top: 26px;
+  gap: 32px;
+  margin-top: 24px;
 }
 
-.tap-team-report-grid > .tap-team-report-section {
+.tap-team-report-grid > .tap-team-report-section,
+.tap-team-report-side > .tap-team-report-section:first-child {
   margin-top: 0;
+}
+
+.tap-team-report-side {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-width: 0;
 }
 
 .tap-team-report-section {
@@ -2064,8 +3188,8 @@
 
 .tap-team-report-table th,
 .tap-team-report-table td {
-  border-bottom: 1px solid var(--tap-soft);
-  padding: 8px 10px;
+  border-bottom: 1px solid #f0efeb;
+  padding: 9px 10px;
   text-align: right;
   white-space: nowrap;
 }
@@ -2073,7 +3197,7 @@
 .tap-team-report-table thead th {
   border-bottom: 1px solid var(--tap-line-strong);
   color: var(--tap-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 650;
 }
 
@@ -2093,33 +3217,48 @@
   padding-right: 0;
 }
 
+.tap-team-report-table tbody tr:hover {
+  background: #fbfaf7;
+}
+
 .tap-team-change-chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   border-radius: 6px;
   background: var(--tap-soft);
   padding: 2px 8px;
   color: var(--tap-muted);
   font-size: 12px;
+  font-weight: 600;
 }
 
-.tap-team-change[data-trend="up"] .tap-team-change-chip {
-  background: var(--tap-accent-soft);
-  color: var(--tap-accent-dark);
+.tap-team-change[data-trend="good"] .tap-team-change-chip {
+  background: var(--tap-good-soft);
+  color: var(--tap-good);
 }
 
-.tap-team-change[data-trend="down"] .tap-team-change-chip {
-  background: #e9f0f3;
-  color: #3d5763;
+.tap-team-change[data-trend="bad"] .tap-team-change-chip {
+  background: var(--tap-bad-soft);
+  color: var(--tap-bad);
 }
 
 .tap-team-change[data-trend="none"] {
-  color: var(--tap-muted);
+  color: #8b928f;
+}
+
+.tap-team-report .tap-team-heatmap {
+  margin-top: 0;
 }
 
 .tap-team-report .tap-team-table-scroll,
 .tap-team-report .ant-table-wrapper {
   max-width: 100%;
   overflow-x: auto;
+}
+
+.tap-team-report .tap-team-table .ant-table-container {
+  box-shadow: none;
 }
 
 .tap-team-report .tap-team-table .ant-table-tbody > tr > td {
@@ -2139,21 +3278,47 @@
 
 /* ---------- Narrow layouts ---------- */
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .tap-team-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tap-team-charts,
+  .tap-team-skeleton-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-team-heat-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .tap-team-report-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tap-profile-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .tap-team-kpis,
+  .tap-team-skeleton-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .tap-team-kpi:nth-child(3) {
-    border-left: 0;
+  .tap-team-heat-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .tap-team-kpi:nth-child(n + 3) {
-    border-top: 1px solid var(--tap-line);
+  .tap-team-people-ranking li {
+    grid-template-columns: 24px 28px minmax(0, 1fr) 56px;
   }
 
-  .tap-team-report-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .tap-team-people-bar {
+    display: none;
   }
 }
 
@@ -2161,6 +3326,10 @@
   .tap-team-toolbar,
   .tap-team-period {
     justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .tap-agents-toolbar-slot {
     margin-left: 0;
   }
 
@@ -2174,6 +3343,10 @@
 
   .tap-profile-freshness {
     padding-left: 24px;
+  }
+
+  .tap-profile-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2281,22 +3454,28 @@
   }
 
   .tap-team-trend-svg {
-    height: 150px;
+    width: 100%;
+    height: auto;
   }
 
-  .tap-team-trend-yaxis {
-    height: 150px;
+  .tap-chart-tick,
+  .tap-team-trend-legend,
+  .tap-team-heat-legend,
+  .tap-team-heat-months,
+  .tap-team-heat-weekdays {
     font-size: 9px;
   }
 
-  .tap-team-trend-axis,
-  .tap-team-trend-legend {
-    font-size: 9px;
-  }
-
-  .tap-team-trend-readout,
-  .tap-team-trend-dot {
+  .tap-chart-tooltip,
+  .tap-chart-crosshair,
+  .tap-chart-dot,
+  .tap-team-heat-tip {
     display: none;
+  }
+
+  .tap-team-heat-grid,
+  .tap-team-heat-months {
+    max-width: calc(var(--heat-columns) * 18px);
   }
 
   .tap-team-report-header,

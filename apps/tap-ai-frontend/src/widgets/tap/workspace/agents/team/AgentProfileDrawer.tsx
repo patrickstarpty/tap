@@ -16,7 +16,7 @@ import { AccessibleDialog } from "../../AccessibleDialog";
 import { Avatar } from "./avatar";
 import type { WorkspaceCopy } from "../../copy";
 import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
-import { TrendChart } from "./charts";
+import { Sparkline, TrendChart, type SparkTone } from "./charts";
 import {
   EMPTY,
   formatCost,
@@ -28,11 +28,13 @@ import {
 } from "./format";
 import {
   RunValue,
-  SatisfactionValue,
+  SatisfactionMeter,
+  StatusPill,
   StatusValue,
   ownerName,
   type CellContext,
 } from "./memberCells";
+import { downsample, memberSeries } from "./series";
 import { LoadError, TeamSkeleton } from "./layout";
 import { RuntimeBadge, RuntimeMark } from "./RuntimeBadge";
 import { handleTablistKey } from "./tabs";
@@ -129,14 +131,23 @@ export function AgentProfileDrawer({
                 {row.jobTitle ?? text.team.noJobTitle}
               </p>
               <p className="tap-profile-meta">
-                <span className="tap-profile-status">
-                  <StatusValue row={row} ctx={ctx} />
-                </span>
+                <StatusPill row={row} ctx={ctx} />
                 <span className="tap-profile-owner">
+                  <Avatar
+                    name={
+                      row.kind === "custom"
+                        ? (row.ownerActorId ?? labels.noOwner)
+                        : ownerName(row, copy)
+                    }
+                    size="xs"
+                  />
                   {text.team.ownerLabel} ·{" "}
                   {row.kind === "custom"
                     ? (row.ownerActorId ?? labels.noOwner)
                     : ownerName(row, copy)}
+                </span>
+                <span className="tap-profile-kind">
+                  {text.team.kinds[row.kind]}
                 </span>
               </p>
             </>
@@ -324,9 +335,10 @@ function BasicPanel({
             <p className="tap-profile-muted">{labels.noServed}</p>
           ) : (
             <ul className="tap-profile-served">
-              {detail.served.map((person) => (
+              {detail.served.map((person, index) => (
                 <li key={person.actorId}>
-                  <Avatar name={person.actorId} size="sm" />
+                  <span className="tap-profile-served-rank">{index + 1}</span>
+                  <Avatar name={person.actorId} size="xs" />
                   <span className="tap-profile-served-name">
                     {person.actorId}
                   </span>
@@ -364,15 +376,66 @@ function WorkloadPanel({
   const locale = ctx.locale;
   const count = (value: number | null) =>
     value === null ? null : formatCount(value, locale);
-  const primary: [string, ReactNode][] = [
-    [
-      text.metrics.runs,
-      <RunValue key="runs" value={count(row.runs)} ctx={ctx} />,
-    ],
-    [
-      text.metrics.failures,
-      <RunValue key="failures" value={count(row.failures)} ctx={ctx} />,
-    ],
+  const duration = (value: number | null) =>
+    value === null ? null : formatDuration(value, locale, text.durationUnits);
+  // Unknown run data is not a flat zero line.
+  const unavailable = ctx.runtimeStatus === "unavailable" || row.runs === null;
+  const runs = memberSeries(row, axis, "runs");
+  const latency = memberSeries(row, axis, "latency");
+  const spark = (values: number[]) =>
+    unavailable ? null : downsample(values, 14);
+  const tiles: {
+    id: string;
+    label: string;
+    value: ReactNode;
+    spark: number[] | null;
+    tone: SparkTone;
+  }[] = [
+    {
+      id: "runs",
+      label: text.metrics.runs,
+      value: <RunValue value={count(row.runs)} ctx={ctx} />,
+      spark: spark(runs),
+      tone: "brand",
+    },
+    {
+      id: "failures",
+      label: text.metrics.failures,
+      value: <RunValue value={count(row.failures)} ctx={ctx} />,
+      spark: spark(memberSeries(row, axis, "failures")),
+      tone: "slate",
+    },
+    {
+      id: "p50",
+      label: text.team.columns.latencyP50,
+      value: <RunValue value={duration(row.latencyP50Ms)} ctx={ctx} />,
+      // Average time per run per bucket shows the shape of latency.
+      spark: spark(
+        latency.map((total, i) => (runs[i] > 0 ? total / runs[i] : 0)),
+      ),
+      tone: "slate",
+    },
+    {
+      id: "cost",
+      label: text.metrics.cost,
+      value: (
+        <RunValue
+          value={row.costUsd === null ? null : formatCost(row.costUsd, locale)}
+          ctx={ctx}
+        />
+      ),
+      spark: spark(memberSeries(row, axis, "cost")),
+      tone: "slate",
+    },
+    {
+      id: "satisfaction",
+      label: text.metrics.satisfaction,
+      value: <SatisfactionMeter row={row} ctx={ctx} />,
+      spark: null,
+      tone: "brand",
+    },
+  ];
+  const runMetrics: [string, ReactNode][] = [
     [
       labels.abstained,
       <RunValue key="ab" value={count(row.abstained)} ctx={ctx} />,
@@ -383,42 +446,10 @@ function WorkloadPanel({
     ],
     [
       text.team.columns.latencyTotal,
-      <RunValue
-        key="lt"
-        value={
-          row.latencyTotalMs === null
-            ? null
-            : formatDuration(row.latencyTotalMs, locale, text.durationUnits)
-        }
-        ctx={ctx}
-      />,
-    ],
-    [
-      text.team.columns.latencyP50,
-      <RunValue
-        key="lp"
-        value={
-          row.latencyP50Ms === null
-            ? null
-            : formatDuration(row.latencyP50Ms, locale, text.durationUnits)
-        }
-        ctx={ctx}
-      />,
-    ],
-    [
-      text.metrics.cost,
-      <RunValue
-        key="cost"
-        value={row.costUsd === null ? null : formatCost(row.costUsd, locale)}
-        ctx={ctx}
-      />,
-    ],
-    [
-      text.metrics.satisfaction,
-      <SatisfactionValue key="sat" row={row} ctx={ctx} />,
+      <RunValue key="lt" value={duration(row.latencyTotalMs)} ctx={ctx} />,
     ],
   ];
-  const secondary: [string, ReactNode][] = [
+  const callMetrics: [string, ReactNode][] = [
     [
       labels.generationCalls,
       <RunValue key="g" value={count(row.generationCalls)} ctx={ctx} />,
@@ -451,10 +482,33 @@ function WorkloadPanel({
       ),
     },
   ];
-  // Unknown run data is not a flat zero line.
-  const unavailable = ctx.runtimeStatus === "unavailable" || row.runs === null;
   return (
     <>
+      <dl className="tap-profile-tiles">
+        {tiles.map((tile) => (
+          <div key={tile.id} className="tap-profile-tile">
+            <dt>{tile.label}</dt>
+            <dd>
+              <span className="tap-profile-tile-value">{tile.value}</span>
+              <span className="tap-profile-tile-spark">
+                {tile.spark === null ? (
+                  <span
+                    className="tap-team-sparkline-empty"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Sparkline
+                    points={tile.spark}
+                    label={`${tile.label} ${text.kpi.trendLabel}`}
+                    tone={tile.tone}
+                    height={28}
+                  />
+                )}
+              </span>
+            </dd>
+          </div>
+        ))}
+      </dl>
       <section className="tap-profile-card">
         <h3>{text.team.trendHeading}</h3>
         {unavailable ? (
@@ -468,13 +522,14 @@ function WorkloadPanel({
             unit={labels.runsUnit}
             locale={locale}
             hint={text.team.chartHint}
+            height={150}
           />
         )}
       </section>
       <section className="tap-profile-card">
         <h3>{labels.primaryMetrics}</h3>
         <dl className="tap-team-profile-metrics">
-          {primary.map(([label, value]) => (
+          {runMetrics.map(([label, value]) => (
             <div key={label}>
               <dt>{label}</dt>
               <dd>{value}</dd>
@@ -484,8 +539,8 @@ function WorkloadPanel({
       </section>
       <section className="tap-profile-card">
         <h3>{labels.secondaryMetrics}</h3>
-        <dl className="tap-team-profile-metrics" data-columns="3">
-          {secondary.map(([label, value]) => (
+        <dl className="tap-team-profile-metrics">
+          {callMetrics.map(([label, value]) => (
             <div key={label}>
               <dt>{label}</dt>
               <dd>{value}</dd>
@@ -537,7 +592,9 @@ function HistoryPanel({
         <ol className="tap-team-history">
           {events.map((event) => (
             <li key={event.eventId} data-kind={event.kind}>
-              <span className="tap-team-history-dot" aria-hidden="true" />
+              <span className="tap-team-history-icon" aria-hidden="true">
+                <HistoryIcon kind={event.kind} />
+              </span>
               <div className="tap-team-history-head">
                 <strong>{labels.maintenanceKinds[event.kind]}</strong>
                 <span>{event.actorId}</span>
@@ -825,5 +882,30 @@ function SettingsPanel({
         </div>
       </section>
     </>
+  );
+}
+
+/** One glyph per maintenance kind, so the timeline scans at a glance. */
+function HistoryIcon({ kind }: { kind: AgentTeamHistoryEvent["kind"] }) {
+  const paths: Record<AgentTeamHistoryEvent["kind"], string> = {
+    revised: "M9.5 2.5l2 2L5 11H3V9l6.5-6.5z",
+    skill_upgraded: "M7 11.5V3M3.5 6.5L7 3l3.5 3.5M3 12h8",
+    disabled: "M7 12.5A5.5 5.5 0 1 0 7 1.5a5.5 5.5 0 0 0 0 11zM3.2 3.2l7.6 7.6",
+    enabled:
+      "M7 12.5A5.5 5.5 0 1 0 7 1.5a5.5 5.5 0 0 0 0 11zM4.5 7.2l1.7 1.7 3.3-3.4",
+    feedback_resolved: "M2.5 3.5h9v5.5h-5L4 11V9H2.5zM5 6.4l1.4 1.3 2.6-2.6",
+    owner_transferred: "M2.5 5h8M8.5 3l2 2-2 2M11.5 9h-8M5.5 7l-2 2 2 2",
+  };
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14">
+      <path
+        d={paths[kind]}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

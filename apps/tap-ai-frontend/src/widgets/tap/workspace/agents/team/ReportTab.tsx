@@ -12,6 +12,7 @@ import {
 import type { WorkspaceCopy } from "../../copy";
 import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
 import { TrendChart, type TrendSeries } from "./charts";
+import { ARROWS, deltaOf, deltaTone, type Polarity } from "./delta";
 import {
   EMPTY,
   formatCost,
@@ -20,6 +21,7 @@ import {
   formatDuration,
   teamLocale,
 } from "./format";
+import { ActivityHeatmap } from "./Heatmap";
 import { LoadError, TeamSkeleton } from "./layout";
 import { RunValue, type CellContext } from "./memberCells";
 import { PeopleTable } from "./PeopleTable";
@@ -85,6 +87,8 @@ interface Metric {
   comparable?: false;
   /** Derived from run data: marked by the runtime status. */
   runtime?: true;
+  /** Whether a rise is good news; colours the change. */
+  polarity?: Polarity;
 }
 
 /** Downloads the CSV zip as a blob so failures can be reported inline. */
@@ -102,30 +106,27 @@ async function downloadExport(projectId: string, period: TeamPeriod) {
   }
 }
 
-/** Direction of a comparable change, for the soft cell tint. */
-function changeTrend(metric: Metric): "up" | "down" | "flat" | "none" {
-  const { current, previous } = metric;
+/** Tone of a comparable change: better, worse or neutral news. */
+function changeTone(metric: Metric): "good" | "bad" | "neutral" | "none" {
   if (metric.comparable === false) return "none";
-  if (current === null || previous === null || previous === 0) return "none";
-  return current > previous ? "up" : current < previous ? "down" : "flat";
+  return deltaTone(
+    deltaOf(metric.current, metric.previous),
+    metric.polarity ?? "neutral",
+  );
 }
 
 function ChangeCell({ metric }: { metric: Metric }) {
-  const { current, previous, format } = metric;
   if (metric.comparable === false) return <>{EMPTY}</>;
-  if (current === null || previous === null || previous === 0)
-    return <>{EMPTY}</>;
-  const delta = current - previous;
-  const percent = Math.round((delta / previous) * 100);
-  const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "▬";
-  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  const delta = deltaOf(metric.current, metric.previous);
+  if (delta === null) return <>{EMPTY}</>;
+  const sign = delta.diff > 0 ? "+" : delta.diff < 0 ? "−" : "";
   // The percent's sign follows the rounded value so it never reads "−0%".
-  const percentSign = percent > 0 ? "+" : percent < 0 ? "−" : "";
+  const percentSign = delta.percent > 0 ? "+" : delta.percent < 0 ? "−" : "";
   return (
     <span className="tap-team-change-chip">
-      {arrow} {sign}
-      {format(Math.abs(delta))} ({percentSign}
-      {Math.abs(percent)}%)
+      {ARROWS[delta.direction]} {sign}
+      {metric.format(Math.abs(delta.diff))} ({percentSign}
+      {Math.abs(delta.percent)}%)
     </span>
   );
 }
@@ -137,8 +138,8 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
   // Independent of the other tabs: the report defaults to last month.
   const [selection, setSelection] =
     useState<PeriodSelection>(lastMonthSelection);
-  const { period, invalid: rangeInvalid } = useValidPeriod(selection);
-  const report = useTeamReport(projectId, period, selection.preset);
+  const { period, invalid: rangeInvalid, preset } = useValidPeriod(selection);
+  const report = useTeamReport(projectId, period, preset);
   const view: AgentTeamReportView | undefined = report.data;
   // keepPreviousData shows the last report while a new period loads; say so
   // and export only what is on screen.
@@ -228,6 +229,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       previous: ps.active,
       format: count,
       runtime: true,
+      polarity: "up-good",
     },
     {
       label: text.metrics.idle,
@@ -243,6 +245,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       previous: ps.runs,
       format: count,
       runtime: true,
+      polarity: "up-good",
     },
     {
       label: text.metrics.latency,
@@ -257,6 +260,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       previous: num(ps.costUsd),
       format: cost,
       runtime: true,
+      polarity: "up-bad",
     },
     {
       label: text.metrics.maintenance,
@@ -272,6 +276,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
       previous: ps.servedAvg as number | null,
       format: count,
       runtime: true,
+      polarity: "up-good",
     },
     {
       label: text.metrics.ownersAvg,
@@ -364,7 +369,7 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
                     </td>
                     <td
                       className="tap-team-change"
-                      data-trend={changeTrend(metric)}
+                      data-trend={changeTone(metric)}
                     >
                       <ChangeCell metric={metric} />
                     </td>
@@ -373,26 +378,41 @@ export function ReportTab({ projectId, copy }: ReportTabProps) {
               </tbody>
             </table>
           </section>
-          <section className="tap-team-report-section">
-            <h3>{labels.trendHeading}</h3>
-            {view.runtimeStatus === "unavailable" ? (
-              <p>
-                {EMPTY}
-                <RuntimeMark status="unavailable" copy={copy} />
-              </p>
-            ) : trend.length === 0 ? (
-              <p className="tap-team-empty tap-team-empty--quiet">
-                {labels.noTrend}
-              </p>
-            ) : (
-              <TrendChart
-                series={trend}
-                unit={text.profile.runsUnit}
+          <div className="tap-team-report-side">
+            <section className="tap-team-report-section">
+              <h3>{labels.trendHeading}</h3>
+              {view.runtimeStatus === "unavailable" ? (
+                <p>
+                  {EMPTY}
+                  <RuntimeMark status="unavailable" copy={copy} />
+                </p>
+              ) : trend.length === 0 ? (
+                <p className="tap-team-empty tap-team-empty--quiet">
+                  {labels.noTrend}
+                </p>
+              ) : (
+                <TrendChart
+                  series={trend}
+                  unit={text.profile.runsUnit}
+                  locale={locale}
+                  hint={text.team.chartHint}
+                  height={140}
+                />
+              )}
+            </section>
+            <section className="tap-team-report-section">
+              <h3>{text.heatmap.heading}</h3>
+              <ActivityHeatmap
+                members={current.members}
+                period={view.period}
+                granularity={view.granularity}
+                copy={copy}
                 locale={locale}
-                hint={text.team.chartHint}
+                runtimeStatus={view.runtimeStatus}
+                compact
               />
-            )}
-          </section>
+            </section>
+          </div>
         </div>
         <section className="tap-team-report-section">
           <h3>{text.team.rosterHeading}</h3>

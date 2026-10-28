@@ -330,6 +330,30 @@ describe("AgentsPage", () => {
     expect(screen.getByText("Agents", { selector: "dt" })).toBeVisible();
   });
 
+  it("keeps the period in the sticky tab bar and compares by its preset", async () => {
+    mockSummary();
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        configTab={<p>config content</p>}
+      />,
+    );
+    const picker = screen.getByLabelText("Period");
+    expect(picker.closest(".tap-agents-tabbar")).not.toBeNull();
+    expect(
+      screen
+        .getByText("Data updated at 08:00 (UTC)")
+        .closest(".tap-agents-tabbar"),
+    ).not.toBeNull();
+    expect(vi.mocked(useTeamReport).mock.calls.at(-1)?.[2]).toBe("last30");
+    await userEvent.selectOptions(picker, "thisMonth");
+    expect(vi.mocked(useTeamReport).mock.calls.at(-1)?.[2]).toBe("thisMonth");
+    // The report tab has its own controls: nothing in the tab bar.
+    await userEvent.click(screen.getByRole("tab", { name: "Report" }));
+    expect(screen.queryByText("Data updated at 08:00 (UTC)")).toBeNull();
+  });
+
   it("heads each analytics panel like the Configuration tab", async () => {
     mockSummary();
     render(

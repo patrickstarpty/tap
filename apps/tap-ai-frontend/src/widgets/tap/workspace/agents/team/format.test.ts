@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { WORKSPACE_COPY } from "../../copy";
-import { formatCost, formatDuration } from "./format";
+import { formatCost, formatDuration, formatRelative } from "./format";
 
 const en = WORKSPACE_COPY.en.agentTeam.durationUnits;
 const zh = WORKSPACE_COPY.zh.agentTeam.durationUnits;
@@ -34,5 +34,22 @@ describe("formatCost", () => {
     expect(formatCost("0", "zh-CN")).toBe("US$0.00");
     expect(formatCost("1.0507", "zh-CN")).toBe("US$1.0507");
     expect(formatCost("0.0042", "en")).toBe("$0.0042");
+  });
+});
+
+describe("formatRelative", () => {
+  const now = Date.parse("2026-10-28T12:00:00Z");
+  it("reads recent times relative to now", () => {
+    expect(formatRelative("2026-10-28T11:57:00Z", "en", now)).toBe(
+      "3 minutes ago",
+    );
+    expect(formatRelative("2026-10-26T12:00:00Z", "en", now)).toBe(
+      "2 days ago",
+    );
+    expect(formatRelative("2026-10-28T11:59:40Z", "en", now)).toBe("now");
+    expect(formatRelative("2026-10-28T09:00:00Z", "zh-CN", now)).toBe(
+      "3小时前",
+    );
+    expect(formatRelative(null, "en", now)).toBe("—");
   });
 });

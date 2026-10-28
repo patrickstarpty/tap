@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { resolvePeriod } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
@@ -80,7 +81,10 @@ export function AgentsPage({
   }));
   // An inverted or half-typed custom range never queries; the last valid
   // period's view stays on screen under the inline message.
-  const { period } = useValidPeriod(selection);
+  const { period, preset } = useValidPeriod(selection);
+  // The tab bar carries the period picker and freshness, so they stay in
+  // view (sticky) while the analytics scroll.
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
 
   const [profileKey, setProfileKey] = useState<string | null>(null);
   const [profileTab, setProfileTab] = useState<ProfileTab | undefined>();
@@ -149,14 +153,26 @@ export function AgentsPage({
       )}
     </header>
   );
-  // Freshness (from the tab's data) and the period share the heading row.
-  const withPicker: RenderHeader = (freshness) =>
-    heading(
-      <>
-        {freshness}
-        <PeriodPicker copy={copy} value={selection} onChange={setSelection} />
-      </>,
-    );
+  // Freshness (from the tab's data) and the period sit in the sticky tab
+  // bar; the heading keeps the title.
+  const withPicker: RenderHeader = (freshness) => (
+    <>
+      {heading(null)}
+      {toolbarSlot === null
+        ? null
+        : createPortal(
+            <div className="tap-team-toolbar">
+              {freshness}
+              <PeriodPicker
+                copy={copy}
+                value={selection}
+                onChange={setSelection}
+              />
+            </div>,
+            toolbarSlot,
+          )}
+    </>
+  );
 
   return (
     <section className="tap-agents-page">
@@ -185,6 +201,7 @@ export function AgentsPage({
             </button>
           ))}
         </div>
+        <div ref={setToolbarSlot} className="tap-agents-toolbar-slot" />
       </div>
       <div
         role="tabpanel"
@@ -222,6 +239,7 @@ export function AgentsPage({
                 projectId={projectId}
                 copy={copy}
                 period={period}
+                preset={preset}
                 renderHeader={withPicker}
                 onOpenMember={openMember}
                 onCreateAgent={() => select("config")}
