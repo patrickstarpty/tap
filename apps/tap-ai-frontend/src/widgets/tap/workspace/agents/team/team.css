@@ -1,8 +1,35 @@
-.tap-agents-page [role="tablist"] {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 12px;
-  padding: 0 clamp(12px, 3vw, 48px);
+/* Agent team (My Agents / Team / Report) and the Agent profile drawer.
+   Built on the house tokens in app/styles.css and the Library patterns
+   (underline section tabs, white filter bars, 12–14px radius surfaces). */
+
+/* ---------- Page tab bar ---------- */
+
+.tap-agents-tabbar {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  border-bottom: 1px solid var(--tap-line);
+  background: rgb(250 249 246 / 94%);
+  padding: 0 clamp(26px, 4vw, 62px);
+  backdrop-filter: saturate(1.2) blur(6px);
+}
+
+.tap-agents-tabbar .tap-agents-tabs {
+  gap: 28px;
+  border-bottom: 0;
+}
+
+.tap-agents-tabbar .tap-agents-tabs button {
+  min-height: 48px;
+  font-size: 14px;
+}
+
+.tap-agents-tabbar .tap-agents-tabs button:not([aria-selected="true"]):hover {
+  color: var(--tap-ink);
+}
+
+.tap-agents-tabbar .tap-agents-tabs button:focus-visible {
+  outline-offset: -3px;
 }
 
 /* The My Agents / Team / Report panels sit in the same page container and
@@ -12,331 +39,866 @@
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding-top: 20px;
+  padding-top: 30px;
 }
 
-.tap-team-panel .tap-module-heading {
-  margin-bottom: 20px;
+.tap-team-panel .tap-team-panel-heading {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  row-gap: 14px;
+  margin-bottom: 24px;
 }
 
-.tap-team-section {
-  margin-top: 28px;
+.tap-team-panel-heading > div:first-child {
+  min-width: min(100%, 320px);
 }
 
-.tap-team-section > h3 {
-  margin: 0 0 12px;
-  color: var(--tap-ink);
-  font-size: 16px;
-  font-weight: 600;
+/* ---------- Toolbar: freshness + period, right-aligned ---------- */
+
+.tap-team-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 14px;
+  margin-left: auto;
 }
 
-.tap-team-table-scroll {
-  max-width: 100%;
-  overflow-x: auto;
+.tap-team-tab > .tap-team-toolbar {
+  margin-bottom: 18px;
 }
 
-.tap-team-refreshing {
-  margin: 0 0 8px;
+.tap-team-freshness {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tap-team-freshness p {
+  margin: 0;
+}
+
+.tap-team-updated {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--tap-muted);
-  font-size: 0.85em;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
 }
 
-.tap-agents-page [role="tab"] {
-  padding: 6px 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
+.tap-team-updated-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3f9a75;
+  box-shadow: 0 0 0 3px rgb(63 154 117 / 14%);
 }
 
-.tap-agents-page [role="tab"][aria-selected="true"] {
-  border-bottom-color: currentColor;
-  font-weight: 600;
+.tap-team-freshness[data-status="syncing"] .tap-team-updated-dot {
+  background: #c48a17;
+  box-shadow: 0 0 0 3px rgb(196 138 23 / 16%);
 }
+
+.tap-team-freshness[data-status="unavailable"] .tap-team-updated-dot {
+  background: #b33e38;
+  box-shadow: 0 0 0 3px rgb(179 62 56 / 14%);
+}
+
+.tap-team-runtime-pill {
+  border-radius: 999px;
+  background: #fff5dc;
+  padding: 3px 10px;
+  color: #805a0e;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tap-team-freshness[data-status="unavailable"] .tap-team-runtime-pill {
+  background: #feeceb;
+  color: #9c2f2a;
+}
+
+/* Inline marker next to a run-derived value. */
+.tap-team-runtime-mark {
+  display: block;
+  margin-top: 2px;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.35;
+}
+
+/* ---------- Period picker and filter selects ---------- */
 
 .tap-team-period {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.tap-team-period label {
-  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
-.tap-team-freshness {
-  opacity: 0.7;
-  font-size: 0.85em;
-}
-
-.tap-team-runtime-mark {
-  display: block;
-  color: var(--tap-muted);
-  font-size: 0.8em;
-}
-
-.tap-team-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
-  margin: 12px 0;
-}
-
-.tap-team-summary > div {
-  padding: 8px 12px;
-  border: 1px solid var(--tap-line);
-  border-radius: 8px;
-}
-
-.tap-team-summary dt {
-  color: var(--tap-muted);
-  font-size: 0.8em;
-}
-
-.tap-team-summary dd {
-  margin: 0;
-  color: var(--tap-ink);
-  font-size: 1.25em;
-  font-weight: 600;
-}
-
-.tap-team-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
+.tap-team-period label,
 .tap-team-filters label {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   color: var(--tap-muted);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .tap-team-filters select,
 .tap-team-period select,
 .tap-team-period input {
-  min-height: 32px;
-  border: 1px solid var(--tap-line-strong);
-  border-radius: 8px;
-  background: #fff;
-  padding: 0 10px;
+  min-height: 34px;
+  border: 1px solid var(--tap-line);
+  border-radius: 9px;
+  background-color: #fff;
+  padding: 0 12px;
   color: var(--tap-ink);
   font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.tap-team-segmented {
-  display: inline-flex;
-  margin-left: auto;
-  border: 1px solid var(--tap-line-strong);
-  border-radius: 8px;
+.tap-team-filters select,
+.tap-team-period select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23626b68' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 11px center;
+  background-repeat: no-repeat;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+.tap-team-filters select:hover,
+.tap-team-period select:hover,
+.tap-team-period input:hover {
+  border-color: var(--tap-accent-line);
+}
+
+.tap-team-filters select:focus-visible,
+.tap-team-period select:focus-visible,
+.tap-team-period input:focus-visible {
+  border-color: var(--tap-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(169 71 11 / 14%);
+}
+
+.tap-team-period [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+  color: #b33e38;
+  font-size: 12px;
+  text-align: right;
+}
+
+/* ---------- KPI band ---------- */
+
+.tap-team-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 14px;
   background: #fff;
   overflow: hidden;
 }
 
+.tap-team-kpi {
+  min-width: 0;
+  padding: 18px 22px 20px;
+}
+
+.tap-team-kpi + .tap-team-kpi {
+  border-left: 1px solid var(--tap-line);
+}
+
+.tap-team-kpi dt {
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tap-team-kpi dd {
+  margin: 0;
+}
+
+.tap-team-kpi-value {
+  display: block;
+  margin-top: 10px;
+  color: var(--tap-ink);
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.tap-team-kpi-caption {
+  display: block;
+  margin-top: 8px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tap-team-stats {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  margin: 12px 0 0;
+  padding: 2px 0;
+}
+
+.tap-team-stats > div {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 18px;
+}
+
+.tap-team-stats > div:first-child {
+  padding-left: 4px;
+}
+
+.tap-team-stats > div + div {
+  border-left: 1px solid var(--tap-line);
+}
+
+.tap-team-stats dt {
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-team-stats dd {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.tap-team-stats .tap-team-runtime-mark {
+  display: inline;
+  margin-left: 6px;
+}
+
+/* ---------- Sections ---------- */
+
+.tap-team-section {
+  margin-top: 40px;
+}
+
+.tap-team-section--first {
+  margin-top: 0;
+}
+
+.tap-team-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  margin-bottom: 14px;
+}
+
+.tap-team-section-head h3 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tap-team-section-count {
+  border-radius: 999px;
+  background: var(--tap-soft);
+  padding: 1px 8px;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.tap-team-section-count[data-tone="accent"] {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+.tap-team-refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 0 auto;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-team-refreshing::before {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--tap-accent-line);
+  border-top-color: var(--tap-accent);
+  border-radius: 50%;
+  content: "";
+  animation: tap-team-spin 0.8s linear infinite;
+}
+
+@keyframes tap-team-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Filter bar ---------- */
+
+.tap-team-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 16px;
+}
+
+.tap-team-segmented {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  border: 1px solid var(--tap-line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 2px;
+}
+
 .tap-team-segmented button {
-  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
   border: 0;
+  border-radius: 8px;
   background: transparent;
-  padding: 0 14px;
+  padding: 0 12px;
   color: var(--tap-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
-.tap-team-segmented button + button {
-  border-left: 1px solid var(--tap-line-strong);
+.tap-team-segmented button:hover {
+  color: var(--tap-ink);
 }
 
 .tap-team-segmented button[aria-pressed="true"] {
-  background: var(--tap-accent-soft);
-  color: var(--tap-accent-dark);
-  font-weight: 600;
+  background: var(--tap-soft);
+  color: var(--tap-ink);
 }
 
 .tap-team-segmented button:focus-visible {
-  outline: 2px solid var(--tap-brand);
-  outline-offset: -2px;
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 0;
 }
 
-.tap-team-feedback {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+/* ---------- Avatars and status ---------- */
+
+.tap-team-avatar {
+  display: inline-grid;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #fde9d8;
+  color: #a9470b;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1;
+  place-items: center;
 }
 
-.tap-team-feedback > li {
-  padding: 12px 14px;
-  border: 1px solid var(--tap-line);
+.tap-team-avatar[data-size="sm"] {
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
-  background: var(--tap-surface, #fff);
+  font-size: 12px;
 }
 
-.tap-team-feedback > li > button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--tap-accent);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  text-align: left;
+.tap-team-avatar[data-size="lg"] {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  font-size: 21px;
 }
 
-.tap-team-feedback > li > p {
-  margin: 6px 0 0;
-  color: var(--tap-muted);
+.tap-team-avatar[data-tone="1"],
+.tap-org-avatar[data-tone="1"] {
+  background: #dcefec;
+  color: #1f6b63;
+  fill: #dcefec;
 }
+
+.tap-team-avatar[data-tone="2"],
+.tap-org-avatar[data-tone="2"] {
+  background: #e5e9ed;
+  color: #44525d;
+  fill: #e5e9ed;
+}
+
+.tap-team-avatar[data-tone="3"],
+.tap-org-avatar[data-tone="3"] {
+  background: #f4ead3;
+  color: #7a5a14;
+  fill: #f4ead3;
+}
+
+.tap-org-avatar[data-tone="0"] {
+  fill: #fde9d8;
+}
+
+.tap-org-avatar-text {
+  fill: #a9470b;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.tap-org-avatar-text[data-tone="1"] {
+  fill: #1f6b63;
+}
+
+.tap-org-avatar-text[data-tone="2"] {
+  fill: #44525d;
+}
+
+.tap-org-avatar-text[data-tone="3"] {
+  fill: #7a5a14;
+}
+
+.tap-team-status-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #9aa19e;
+  vertical-align: 1px;
+}
+
+.tap-team-status-dot[data-status="active"] {
+  background: #2f8f66;
+}
+
+.tap-team-status-dot[data-status="idle"] {
+  background: #c48a17;
+}
+
+/* ---------- Roster cards (employee badges) ---------- */
 
 .tap-team-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 1fr));
+  gap: 16px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .tap-team-card {
-  padding: 12px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
   border: 1px solid var(--tap-line);
-  border-radius: 8px;
-  background: var(--tap-surface);
+  border-radius: 14px;
+  background: #fff;
+  padding: 18px 18px 14px;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
 }
 
-.tap-team-card-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.tap-team-card:hover {
+  border-color: var(--tap-line-strong);
+  box-shadow: 0 12px 28px -16px rgb(35 43 43 / 30%);
+  transform: translateY(-2px);
 }
 
-.tap-team-card-head p {
-  margin: 0;
-  color: var(--tap-muted);
-}
-
-.tap-team-card-name {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--tap-accent);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.tap-team-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--tap-brand);
-  color: #fff;
-  font-weight: 600;
-}
-
-.tap-team-card dl {
-  margin: 10px 0 0;
-}
-
-.tap-team-card dl > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 2px 0;
-}
-
-.tap-team-card dt {
-  color: var(--tap-muted);
-}
-
-.tap-team-card dd {
-  margin: 0;
-  text-align: right;
-}
-
-.tap-team-trend {
-  max-width: 100%;
-}
-
-.tap-team-trend-svg {
-  display: block;
-  width: 100%;
-  height: 160px;
-}
-
-.tap-team-trend-svg:focus-visible {
-  outline: 2px solid var(--tap-brand);
+.tap-team-card:has(.tap-team-card-name:focus-visible) {
+  outline: 3px solid var(--tap-focus);
   outline-offset: 2px;
 }
 
-.tap-team-trend-axis {
-  display: flex;
-  justify-content: space-between;
+.tap-team-card[data-status="disabled"] {
+  background: #fcfcfa;
+}
+
+.tap-team-card[data-status="disabled"] .tap-team-avatar {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+
+.tap-team-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.tap-team-card-id {
+  min-width: 0;
+}
+
+.tap-team-card-id p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-card-id p[data-empty="true"],
+.tap-profile-title[data-empty="true"] {
+  color: #8b928f;
+  font-style: italic;
+}
+
+.tap-team-card-name {
+  max-width: 100%;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tap-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name button covers the whole card: one target, no nested controls. */
+.tap-team-card .tap-team-card-name::after {
+  position: absolute;
+  z-index: 1;
+  border-radius: inherit;
+  content: "";
+  inset: 0;
+}
+
+.tap-team-card .tap-team-card-name:focus-visible {
+  outline: 0;
+}
+
+.tap-team-card:hover .tap-team-card-name {
+  color: var(--tap-accent-dark);
+}
+
+.tap-team-card-status {
+  margin: 0;
+}
+
+.tap-team-card-status dd {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--tap-soft);
+  padding: 3px 9px;
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tap-team-card[data-status="active"] .tap-team-card-status dd {
+  background: #e8f5ef;
+  color: #216247;
+}
+
+.tap-team-card[data-status="idle"] .tap-team-card-status dd {
+  background: #fff5dc;
+  color: #805a0e;
+}
+
+.tap-team-card-status .tap-team-runtime-mark {
+  display: none;
+}
+
+.tap-team-card-meta {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.tap-team-card-meta > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.tap-team-card-meta dt {
   color: var(--tap-muted);
   font-size: 12px;
 }
 
-.tap-team-trend-readout {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 6px 0 4px;
-  min-height: 1.4em;
+.tap-team-card-meta dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-card .tap-team-runtime-mark {
+  display: inline;
+  margin-left: 6px;
+  font-size: 10.5px;
+}
+
+/* The card sparkline covers the last 30 days, not the selected period. */
+.tap-team-card-spark {
+  display: grid;
+  gap: 4px;
+}
+
+.tap-team-sparkline-caption {
   color: var(--tap-muted);
-  font-size: 0.85em;
+  font-size: 11px;
 }
 
-.tap-team-empty {
-  padding: 24px;
-  border: 1px dashed var(--tap-line-strong);
-  border-radius: 8px;
-  text-align: center;
+.tap-team-sparkline {
+  display: block;
+  width: 100%;
+  height: 40px;
+  overflow: visible;
 }
 
-.tap-org-chart {
+.tap-team-sparkline-empty {
+  display: block;
+  height: 40px;
+  border-bottom: 1px dashed var(--tap-line-strong);
+  opacity: 0.6;
+}
+
+.tap-team-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-radius: 10px;
+  background: var(--tap-canvas);
+  padding: 10px 4px;
+}
+
+.tap-team-card-stats > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.tap-team-card-stats > div + div {
+  border-left: 1px solid var(--tap-line);
+}
+
+.tap-team-card-stats dt {
+  color: var(--tap-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.tap-team-card-stats dd {
+  margin: 3px 0 0;
+  color: var(--tap-ink);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.tap-team-card-stats .tap-team-runtime-mark {
+  display: block;
+  margin: 2px 0 0;
+}
+
+.tap-team-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  border-top: 1px solid var(--tap-soft);
+  padding-top: 11px;
+}
+
+.tap-team-card-foot > div {
+  min-width: 0;
+}
+
+.tap-team-card-foot > div + div {
+  text-align: right;
+}
+
+.tap-team-card-foot dt {
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-team-card-foot dd {
+  margin: 2px 0 0;
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- Tables (roster, people, report) ---------- */
+
+.tap-team-table-scroll {
   max-width: 100%;
   overflow-x: auto;
 }
 
-.tap-org-chart svg {
-  display: block;
-  width: 100%;
-  min-width: 480px;
-  height: auto;
+.tap-team-table .ant-table {
+  background: transparent;
+  font-size: 13px;
 }
 
-.tap-org-chart [role="button"] {
-  cursor: pointer;
-  outline: none;
+.tap-team-table .ant-table-container {
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
 }
 
-.tap-org-chart [role="button"]:focus-visible rect {
-  stroke: var(--tap-brand);
-  stroke-width: 2;
+.tap-team-table .ant-table-thead > tr > th {
+  border-bottom: 1px solid var(--tap-line);
+  background: var(--tap-canvas);
+  padding: 10px 14px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
 }
 
-.tap-org-chart [data-dimmed="true"] {
-  opacity: 0.2;
+.tap-team-table .ant-table-thead > tr > th::before {
+  display: none;
+}
+
+.tap-team-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--tap-soft);
+  padding: 11px 14px;
+  color: var(--tap-ink);
+}
+
+.tap-team-table .ant-table-tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.tap-team-table .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: #fcfbf8;
+}
+
+.tap-team-table .ant-table-tbody > tr > td.ant-table-column-sort {
+  background: transparent;
+}
+
+.tap-team-table .ant-table-thead > tr > th.ant-table-column-has-sorters:hover {
+  background: var(--tap-soft);
+}
+
+/* Sort icons only when they mean something: on hover or when active. */
+.tap-team-table .ant-table-column-sorter {
+  color: var(--tap-line-strong);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.tap-team-table th:hover .ant-table-column-sorter,
+.tap-team-table th:focus-within .ant-table-column-sorter,
+.tap-team-table th.ant-table-column-sort .ant-table-column-sorter {
+  opacity: 1;
+}
+
+.tap-team-table .ant-table-column-sorter .active {
+  color: var(--tap-accent);
+}
+
+.tap-team-table .ant-table-thead > tr > th.ant-table-column-sort {
+  color: var(--tap-ink);
+}
+
+.tap-team-table .ant-table-cell-fix-left {
+  background: #fff;
+}
+
+.tap-team-table .ant-table-thead .ant-table-cell-fix-left {
+  background: var(--tap-canvas);
+}
+
+.tap-team-table .tap-team-col-name {
+  font-weight: 600;
+}
+
+.tap-team-table .tap-team-card-name {
+  color: var(--tap-accent-dark);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.tap-team-table .tap-team-card-name:hover {
+  text-decoration: underline;
+}
+
+.tap-team-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-table .tap-team-runtime-mark {
+  display: inline;
+  margin-left: 6px;
+}
+
+/* Status, numbers, durations and dates read as one unit ("17 m 41 s",
+   "本期运行"); the roster scrolls sideways instead of breaking them. */
+.tap-team-nowrap {
+  white-space: nowrap;
+}
+
+/* ---------- Org chart ---------- */
+
+.tap-org-chart {
+  border: 1px solid var(--tap-line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px 6px 6px;
 }
 
 .tap-org-chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 8px;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 0 12px 6px;
   color: var(--tap-muted);
   font-size: 12px;
 }
@@ -350,76 +912,421 @@
 .tap-org-chart-legend svg {
   flex: none;
   width: 28px;
-  min-width: 0;
   height: 8px;
 }
 
-.tap-team-report-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
+.tap-org-chart-legend .tap-org-chart-hint {
+  margin-left: auto;
+  color: #8b928f;
 }
 
-.tap-team-report-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.tap-team-report {
-  page: tap-team-report;
-}
-
-.tap-team-report-header {
-  margin: 8px 0 4px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--tap-line);
-}
-
-.tap-team-report-header h2 {
-  margin: 0 0 6px;
-  color: var(--tap-ink);
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.tap-team-report-header p {
-  margin: 0;
-  color: var(--tap-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.tap-team-report .tap-team-table-scroll,
-.tap-team-report .ant-table-wrapper {
+.tap-org-chart-canvas {
   max-width: 100%;
   overflow-x: auto;
 }
 
-.tap-team-report-section > h3 {
-  margin: 0 0 10px;
-  color: var(--tap-ink);
-  font-size: 16px;
-  font-weight: 600;
+.tap-org-chart-canvas > svg {
+  display: block;
 }
 
-.tap-team-report-section {
-  margin-top: 20px;
+.tap-org-edge[data-kind="owns"] {
+  stroke: var(--tap-brand);
+  stroke-width: 1.5;
 }
 
-.tap-team-report-table {
+.tap-org-edge[data-kind="serves"] {
+  stroke: var(--tap-accent);
+  stroke-dasharray: 4 4;
+  stroke-width: 1.25;
+}
+
+/* Usage is shown only for the selected person. */
+.tap-org-chart[data-selected="false"] [data-edge-kind="serves"],
+.tap-org-chart [data-edge-kind="serves"][data-dimmed="true"] {
+  display: none;
+}
+
+.tap-org-trunk {
+  fill: none;
+  stroke: var(--tap-accent-line);
+  stroke-width: 1.5;
+}
+
+.tap-org-trunk[data-platform="true"] {
+  stroke: var(--tap-line-strong);
+}
+
+.tap-org-node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.18s ease;
+}
+
+.tap-org-node > rect:first-of-type {
+  fill: #fff;
+  stroke: var(--tap-line);
+  transition:
+    stroke 0.15s ease,
+    fill 0.15s ease;
+}
+
+.tap-org-person > rect:first-of-type {
+  stroke: var(--tap-line-strong);
+}
+
+.tap-org-node:hover > rect:first-of-type {
+  stroke: var(--tap-accent-line);
+  fill: #fffaf5;
+}
+
+.tap-org-person[aria-pressed="true"] > rect:first-of-type {
+  fill: var(--tap-accent-soft);
+  stroke: var(--tap-accent);
+  stroke-width: 1.5;
+}
+
+.tap-org-agent[data-related="true"] > rect:first-of-type {
+  fill: #fffaf5;
+  stroke: var(--tap-brand);
+  stroke-width: 1.5;
+}
+
+.tap-org-node:focus-visible > rect:first-of-type {
+  stroke: var(--tap-focus);
+  stroke-width: 2.5;
+}
+
+.tap-org-label {
+  fill: var(--tap-ink);
+  pointer-events: none;
+}
+
+.tap-org-platform rect {
+  fill: var(--tap-soft);
+}
+
+.tap-org-platform text {
+  fill: var(--tap-muted);
+}
+
+.tap-org-band-label {
+  fill: var(--tap-muted);
+  letter-spacing: 0.04em;
+}
+
+.tap-org-chart [data-dimmed="true"] {
+  opacity: 0.22;
+}
+
+/* ---------- Trend chart ---------- */
+
+.tap-team-trend {
+  max-width: 100%;
+}
+
+.tap-team-trend-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.tap-team-trend-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 168px;
+  padding: 3px 0 0;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+}
+
+.tap-team-trend-yaxis > * {
+  white-space: nowrap;
+}
+
+.tap-team-trend-yaxis > :last-child {
+  transform: translateY(-2px);
+}
+
+.tap-team-trend-plot {
+  position: relative;
+  min-width: 0;
+}
+
+.tap-team-trend-svg {
+  display: block;
   width: 100%;
-  border-collapse: collapse;
+  height: 168px;
+  overflow: visible;
 }
 
-.tap-team-report-table th,
-.tap-team-report-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--tap-line-strong);
-  text-align: left;
+.tap-team-trend-svg:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.tap-team-trend-dot {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(35 43 43 / 8%);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.tap-team-trend-readout {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--tap-line);
+  border-radius: 9px;
+  background: rgb(255 255 255 / 97%);
+  padding: 7px 10px;
+  box-shadow: 0 10px 24px -14px rgb(35 43 43 / 40%);
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transform: translateX(10px);
+  white-space: nowrap;
+}
+
+.tap-team-trend-readout[data-side="left"] {
+  transform: translateX(calc(-100% - 10px));
+}
+
+.tap-team-trend-readout[data-visible="false"] {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  opacity: 0;
+}
+
+.tap-team-trend-readout span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tap-team-trend-axis {
+  position: relative;
+  height: 20px;
+  margin-top: 6px;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-trend-axis span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.tap-team-trend-axis span[data-edge="start"] {
+  transform: none;
+}
+
+.tap-team-trend-axis span[data-edge="end"] {
+  transform: translateX(-100%);
+}
+
+.tap-team-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 8px 0 0;
+  padding: 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+.tap-team-trend-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tap-team-trend-swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.tap-team-trend-unavailable {
+  margin: 0;
+  color: var(--tap-muted);
+}
+
+/* ---------- Empty, error and loading states ---------- */
+
+.tap-team-empty {
+  margin: 0;
+  border: 1px dashed var(--tap-line-strong);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 55%);
+  padding: 28px;
+  color: var(--tap-muted);
+  text-align: center;
+}
+
+.tap-team-empty--quiet {
+  border-style: solid;
+  border-color: var(--tap-line);
+  background: #fff;
+  padding: 18px;
+  font-size: 13px;
+}
+
+.tap-team-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  border: 1px dashed var(--tap-line-strong);
+  border-radius: 14px;
+  background: #fff;
+  padding: 44px 24px 40px;
+  text-align: center;
+}
+
+.tap-team-empty-state p {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 14px;
+}
+
+.tap-team-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #f1cdc9;
+  border-radius: 10px;
+  background: #fdf4f3;
+  padding: 10px 14px;
+  color: #9c2f2a;
+  font-size: 13px;
+}
+
+.tap-team-error p {
+  margin: 0;
+}
+
+.tap-team-inline-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: #b33e38;
+  font-size: 12.5px;
+  text-align: right;
+}
+
+.tap-team-skeleton {
+  display: grid;
+  gap: 20px;
+}
+
+.tap-team-skeleton-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tap-team-skeleton-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 1fr));
+  gap: 16px;
+}
+
+.tap-team-skeleton-block,
+.tap-team-skeleton-card,
+.tap-team-skeleton-line {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--tap-soft) 0%,
+    #faf9f6 45%,
+    var(--tap-soft) 90%
+  );
+  background-size: 220% 100%;
+  animation: tap-team-shimmer 1.4s ease-in-out infinite;
+}
+
+.tap-team-skeleton-block {
+  height: 104px;
+  border-radius: 14px;
+}
+
+.tap-team-skeleton-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  height: 236px;
+  border: 1px solid var(--tap-line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 20px;
+  animation: none;
+}
+
+.tap-team-skeleton-line {
+  height: 10px;
+  border-radius: 5px;
+}
+
+.tap-team-skeleton-line[data-w="40"] {
+  width: 40%;
+  height: 14px;
+}
+
+.tap-team-skeleton-line[data-w="70"] {
+  width: 70%;
+}
+
+.tap-team-skeleton-line[data-w="100"] {
+  width: 100%;
+  height: 40px;
+  border-radius: 8px;
+}
+
+.tap-team-skeleton-line[data-w="55"] {
+  width: 55%;
+}
+
+@keyframes tap-team-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tap-team-skeleton-block,
+  .tap-team-skeleton-line,
+  .tap-team-refreshing::before,
+  .tap-agent-profile-drawer {
+    animation: none;
+  }
+
+  .tap-team-card,
+  .tap-team-card:hover {
+    transform: none;
+    transition: none;
+  }
 }
 
 .tap-team-sr-only {
@@ -431,10 +1338,851 @@
   white-space: nowrap;
 }
 
+/* ---------- My Agents: feedback waiting for me ---------- */
+
+.tap-team-feedback-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-team-feedback-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px;
+  color: var(--tap-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.tap-team-feedback-card:hover {
+  border-color: var(--tap-accent-line);
+  box-shadow: 0 10px 24px -18px rgb(35 43 43 / 40%);
+}
+
+.tap-team-feedback-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tap-team-feedback-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.tap-team-feedback-head strong {
+  color: var(--tap-ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.tap-team-feedback-head time {
+  margin-left: auto;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-feedback-comment {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #3c4544;
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tap-team-feedback-go {
+  align-self: center;
+  color: var(--tap-line-strong);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.tap-team-feedback-card:hover .tap-team-feedback-go {
+  color: var(--tap-accent);
+}
+
+.tap-team-rating {
+  border-radius: 999px;
+  background: var(--tap-soft);
+  padding: 2px 8px;
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tap-team-rating[data-rating="down"] {
+  background: #feeceb;
+  color: #9c2f2a;
+}
+
+.tap-team-rating[data-rating="up"] {
+  background: #e8f5ef;
+  color: #216247;
+}
+
+/* ---------- Profile drawer (right-side slide-over) ---------- */
+
+.tap-picker-backdrop:has(> .tap-agent-profile-drawer) {
+  background: rgb(17 24 39 / 26%);
+  padding: 0;
+  place-items: stretch end;
+}
+
+.tap-agent-profile-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  background: var(--tap-canvas);
+  box-shadow: -28px 0 64px -16px rgb(17 24 39 / 30%);
+  overflow: hidden;
+  animation: tap-profile-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.tap-agent-profile-drawer:focus {
+  outline: none;
+}
+
+@keyframes tap-profile-in {
+  from {
+    opacity: 0.6;
+    transform: translateX(32px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tap-profile-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  padding: 24px 24px 14px;
+}
+
+.tap-profile-id {
+  min-width: 0;
+}
+
+.tap-profile-id h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-profile-title {
+  margin: 3px 0 0;
+  color: var(--tap-muted);
+  font-size: 13px;
+}
+
+.tap-profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.tap-profile-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--tap-soft);
+  padding: 2px 9px;
+  color: var(--tap-muted);
+  font-weight: 650;
+}
+
+.tap-profile-status:has([data-status="active"]) {
+  background: #e8f5ef;
+  color: #216247;
+}
+
+.tap-profile-status:has([data-status="idle"]) {
+  background: #fff5dc;
+  color: #805a0e;
+}
+
+.tap-profile-status .tap-team-runtime-mark {
+  display: inline;
+  margin-left: 6px;
+}
+
+.tap-profile-owner {
+  color: var(--tap-muted);
+}
+
+.tap-profile-close {
+  display: grid;
+  align-self: start;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--tap-muted);
+  cursor: pointer;
+  place-items: center;
+}
+
+.tap-profile-close:hover {
+  background: var(--tap-soft);
+  color: var(--tap-ink);
+}
+
+.tap-profile-freshness {
+  background: #fff;
+  padding: 0 24px 6px 92px;
+}
+
+.tap-profile-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--tap-line);
+  background: #fff;
+  padding: 0 24px;
+}
+
+.tap-profile-tabs [role="tab"] {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--tap-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.tap-profile-tabs [role="tab"]:hover {
+  color: var(--tap-ink);
+}
+
+.tap-profile-tabs [role="tab"][aria-selected="true"] {
+  color: var(--tap-accent-dark);
+}
+
+.tap-profile-tabs [role="tab"][aria-selected="true"]::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--tap-accent);
+  content: "";
+}
+
+.tap-profile-tabs [role="tab"]:focus-visible {
+  outline-offset: -3px;
+}
+
+.tap-profile-tab-count {
+  border-radius: 999px;
+  background: var(--tap-accent-soft);
+  padding: 0 6px;
+  color: var(--tap-accent-dark);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-profile-body {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 32px;
+}
+
+.tap-profile-card {
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px 18px;
+}
+
+.tap-profile-card > h3 {
+  margin: 0 0 14px;
+  color: var(--tap-ink);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.tap-profile-muted {
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 12.5px;
+}
+
+.tap-team-profile-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px 28px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.tap-team-profile-facts dt {
+  color: var(--tap-muted);
+}
+
+.tap-team-profile-facts dd {
+  margin: 0;
+  color: var(--tap-ink);
+  overflow-wrap: anywhere;
+}
+
+.tap-profile-revision {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.tap-profile-revision code {
+  max-width: 240px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--tap-soft);
+  padding: 2px 7px;
+  color: var(--tap-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-profile-served {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-profile-served li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 150px) minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.tap-profile-served-name {
+  overflow: hidden;
+  color: var(--tap-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-profile-served-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tap-soft);
+  overflow: hidden;
+}
+
+.tap-profile-served-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--tap-brand);
+  opacity: 0.55;
+}
+
+.tap-profile-served-runs {
+  color: var(--tap-ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+.tap-team-profile-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.tap-team-profile-metrics[data-columns="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tap-team-profile-metrics > div {
+  min-width: 0;
+  border-radius: 10px;
+  background: var(--tap-canvas);
+  padding: 10px 12px;
+}
+
+.tap-team-profile-metrics dt {
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-team-profile-metrics dd {
+  margin: 4px 0 0;
+  color: var(--tap-ink);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tap-team-profile-metrics .tap-team-runtime-mark {
+  white-space: normal;
+}
+
+.tap-team-history {
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 18px 18px 4px;
+  list-style: none;
+}
+
+.tap-team-history li {
+  position: relative;
+  padding: 0 0 18px 24px;
+}
+
+.tap-team-history li::before {
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--tap-line);
+  content: "";
+}
+
+.tap-team-history li:last-child::before {
+  display: none;
+}
+
+.tap-team-history-dot {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--tap-accent-line);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.tap-team-history li[data-kind="feedback_resolved"] .tap-team-history-dot,
+.tap-team-history li[data-kind="enabled"] .tap-team-history-dot {
+  border-color: #8cc9ad;
+}
+
+.tap-team-history li[data-kind="disabled"] .tap-team-history-dot {
+  border-color: var(--tap-line-strong);
+}
+
+.tap-team-history-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.tap-team-history-head strong {
+  color: var(--tap-ink);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.tap-team-history-head span {
+  color: var(--tap-muted);
+  font-size: 12.5px;
+}
+
+.tap-team-history-head time {
+  margin-left: auto;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-history li > p {
+  margin: 8px 0 0;
+  border-radius: 8px;
+  background: var(--tap-canvas);
+  padding: 8px 10px;
+  color: #3c4544;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tap-team-history .tap-team-history-link {
+  height: auto;
+  margin-top: 4px;
+  padding: 0;
+  font-size: 12.5px;
+}
+
+.tap-profile-feedback {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-profile-feedback .tap-team-feedback-head strong {
+  font-size: 13.5px;
+}
+
+.tap-team-feedback-quote {
+  margin: 12px 0 14px;
+  border-left: 3px solid var(--tap-accent-line);
+  border-radius: 0 8px 8px 0;
+  background: var(--tap-canvas);
+  padding: 9px 12px;
+  color: var(--tap-ink);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.tap-profile-field {
+  display: grid;
+  gap: 7px;
+}
+
+.tap-profile-field > span {
+  color: var(--tap-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tap-profile-card > .tap-team-profile-facts + .tap-profile-field {
+  margin-top: 16px;
+}
+
+.tap-profile-counter {
+  margin: 5px 0 0;
+  color: #8b928f;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tap-profile-error {
+  margin: 8px 0 0;
+  color: #b33e38;
+  font-size: 12.5px;
+}
+
+.tap-profile-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  border-radius: 8px;
+  background: #e8f5ef;
+  padding: 8px 12px;
+  color: #216247;
+  font-size: 13px;
+}
+
+.tap-profile-success::before {
+  content: "✓";
+  font-weight: 700;
+}
+
+.tap-profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* ---------- Report ---------- */
+
+.tap-team-report {
+  page: tap-team-report;
+}
+
+.tap-team-report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.tap-team-report-controls .tap-team-period {
+  justify-content: flex-start;
+}
+
+.tap-team-report-controls .tap-team-period [role="alert"] {
+  text-align: left;
+}
+
+.tap-team-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tap-team-report-actions .ant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tap-team-report-controls .tap-team-refreshing {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.tap-team-report-sheet {
+  border: 1px solid var(--tap-line);
+  border-radius: 16px;
+  background: #fff;
+  padding: 32px 36px 36px;
+  box-shadow: 0 1px 2px rgb(35 43 43 / 4%);
+}
+
+.tap-team-report-header {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid var(--tap-line);
+  padding-bottom: 20px;
+}
+
+.tap-team-report-header h2 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.tap-team-report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 0;
+}
+
+.tap-team-report-meta p {
+  margin: 0;
+  padding-right: 16px;
+  color: var(--tap-muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.tap-team-report-meta p + p {
+  border-left: 1px solid var(--tap-line);
+  padding-left: 16px;
+}
+
+.tap-team-report-header .tap-team-freshness {
+  justify-self: start;
+}
+
+.tap-team-report-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+  gap: 36px;
+  margin-top: 26px;
+}
+
+.tap-team-report-grid > .tap-team-report-section {
+  margin-top: 0;
+}
+
+.tap-team-report-section {
+  margin-top: 32px;
+}
+
+.tap-team-report-section > h3 {
+  margin: 0 0 12px;
+  color: var(--tap-ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.tap-team-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tap-team-report-table th,
+.tap-team-report-table td {
+  border-bottom: 1px solid var(--tap-soft);
+  padding: 8px 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tap-team-report-table thead th {
+  border-bottom: 1px solid var(--tap-line-strong);
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tap-team-report-table th:first-child {
+  padding-left: 0;
+  text-align: left;
+  white-space: normal;
+}
+
+.tap-team-report-table tbody th {
+  color: var(--tap-ink);
+  font-weight: 500;
+}
+
+.tap-team-report-table td:last-child,
+.tap-team-report-table thead th:last-child {
+  padding-right: 0;
+}
+
+.tap-team-change-chip {
+  display: inline-block;
+  border-radius: 6px;
+  background: var(--tap-soft);
+  padding: 2px 8px;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-team-change[data-trend="up"] .tap-team-change-chip {
+  background: var(--tap-accent-soft);
+  color: var(--tap-accent-dark);
+}
+
+.tap-team-change[data-trend="down"] .tap-team-change-chip {
+  background: #e9f0f3;
+  color: #3d5763;
+}
+
+.tap-team-change[data-trend="none"] {
+  color: var(--tap-muted);
+}
+
+.tap-team-report .tap-team-table-scroll,
+.tap-team-report .ant-table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.tap-team-report .tap-team-table .ant-table-tbody > tr > td {
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+
+.tap-team-report .tap-team-table .ant-table-thead > tr > th {
+  padding: 8px 12px;
+}
+
+/* On screen the report roster keeps each value on one line and scrolls
+   sideways; print lets names and titles wrap to fit the page. */
+.tap-team-report .tap-team-table .ant-table-tbody > tr > td {
+  white-space: nowrap;
+}
+
+/* ---------- Narrow layouts ---------- */
+
+@media (max-width: 1100px) {
+  .tap-team-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tap-team-kpi:nth-child(3) {
+    border-left: 0;
+  }
+
+  .tap-team-kpi:nth-child(n + 3) {
+    border-top: 1px solid var(--tap-line);
+  }
+
+  .tap-team-report-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .tap-team-toolbar,
+  .tap-team-period {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .tap-team-segmented {
+    margin-left: 0;
+  }
+
+  .tap-team-report-sheet {
+    padding: 20px;
+  }
+
+  .tap-profile-freshness {
+    padding-left: 24px;
+  }
+}
+
+/* ---------- Print: the report on A4 landscape ---------- */
+
 /* Scoped to the report via a named page so no other printed page changes. */
 @page tap-team-report {
-  size: A4 portrait;
-  margin: 16mm;
+  size: A4 landscape;
+  margin: 10mm 12mm;
 }
 
 /* Applies to every printed page; only the report page is meant to be printed
@@ -447,6 +2195,7 @@
   }
 
   .tap-product-shell:has(.tap-team-report) > *:not(.tap-product-main),
+  .tap-product-shell:has(.tap-team-report) .tap-agents-tabbar,
   .tap-product-shell:has(.tap-team-report) .tap-agents-page [role="tablist"],
   .tap-product-shell:has(.tap-team-report) .tap-team-report-controls {
     display: none !important;
@@ -472,15 +2221,86 @@
     padding: 0;
   }
 
-  .tap-team-panel-heading {
-    display: none;
+  /* The page heading ("Agent team" and its description) is not part of the
+     report; the report carries its own title. */
+  .tap-product-shell:has(.tap-team-report) .tap-team-panel-heading {
+    display: none !important;
+  }
+
+  .tap-team-report {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .tap-team-report-sheet {
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .tap-team-report-header {
+    padding-bottom: 10px;
+  }
+
+  .tap-team-report-header h2 {
+    font-size: 18px;
+  }
+
+  .tap-team-report-meta p {
+    font-size: 10px;
+  }
+
+  .tap-team-report-grid {
+    grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+    gap: 24px;
+    margin-top: 14px;
+  }
+
+  .tap-team-report-section {
+    margin-top: 16px;
+  }
+
+  .tap-team-report-section > h3 {
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+
+  .tap-team-report-table {
+    font-size: 10px;
+  }
+
+  .tap-team-report-table th,
+  .tap-team-report-table td {
+    padding: 4px 6px;
+  }
+
+  .tap-team-change-chip {
+    padding: 1px 5px;
+    font-size: 9.5px;
   }
 
   .tap-team-trend-svg {
-    height: 160px;
+    height: 150px;
+  }
+
+  .tap-team-trend-yaxis {
+    height: 150px;
+    font-size: 9px;
+  }
+
+  .tap-team-trend-axis,
+  .tap-team-trend-legend {
+    font-size: 9px;
+  }
+
+  .tap-team-trend-readout,
+  .tap-team-trend-dot {
+    display: none;
   }
 
   .tap-team-report-header,
+  .tap-team-report-grid,
   .tap-team-report-table {
     break-inside: avoid;
   }
@@ -492,149 +2312,38 @@
     max-height: none !important;
   }
 
-  .tap-team-report .ant-table-content > table {
-    width: 100% !important;
-    min-width: 0 !important;
-    table-layout: auto;
-  }
-
   .tap-team-report tr {
     break-inside: avoid;
   }
 
-  /* Fit every roster column on the page: fixed layout, small type, wrapped
-     headers and long values. */
-  .tap-team-report .ant-table-wrapper {
+  /* Fit every roster column on a landscape page at a legible size: content
+     sized columns, short values kept whole, names and titles wrap. */
+  .tap-team-report .ant-table-wrapper,
+  .tap-team-report .tap-team-table-scroll {
     overflow: visible;
   }
 
   .tap-team-report .ant-table-content > table {
-    table-layout: fixed !important;
-    font-size: 7px;
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+    font-size: 9px;
   }
 
-  .tap-team-report .ant-table th,
-  .tap-team-report .ant-table td {
-    padding: 2px 3px !important;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    white-space: normal !important;
+  .tap-team-report .tap-team-table .ant-table-container {
+    border-radius: 0;
+    border-width: 0 0 1px;
   }
 
-  .tap-team-report .tap-team-table-scroll {
-    overflow: visible;
+  .tap-team-report .tap-team-table .ant-table-thead > tr > th,
+  .tap-team-report .tap-team-table .ant-table-tbody > tr > td {
+    padding: 3px 5px !important;
+    font-size: 9px;
+    overflow-wrap: break-word;
+    white-space: normal;
   }
-}
 
-/* Trend chart: y-axis max on top, date labels below, readout on its own line. */
-.tap-team-trend-ymax {
-  margin-bottom: 2px;
-  color: var(--tap-muted);
-  font-size: 12px;
-}
-
-.tap-team-trend-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin: 6px 0 0;
-  padding: 0;
-  color: var(--tap-muted);
-  font-size: 12px;
-  list-style: none;
-}
-
-.tap-team-trend-legend li {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.tap-team-trend-swatch {
-  width: 14px;
-  height: 3px;
-  border-radius: 2px;
-}
-
-.tap-team-trend-axis {
-  margin-top: 4px;
-}
-
-/* Profile drawer: two-column fact and metric grids. */
-.tap-team-profile-facts,
-.tap-team-profile-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 24px;
-  margin: 16px 0 0;
-}
-
-.tap-team-profile-facts {
-  grid-template-columns: max-content minmax(0, 1fr);
-}
-
-.tap-team-profile-facts dt {
-  color: var(--tap-muted);
-}
-
-.tap-team-profile-facts dd {
-  margin: 0;
-}
-
-.tap-team-profile-metrics > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.tap-team-profile-metrics dt {
-  color: var(--tap-muted);
-  font-size: 12px;
-}
-
-.tap-team-profile-metrics dd {
-  margin: 0;
-  color: var(--tap-ink);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.tap-team-profile-subheading {
-  margin: 24px 0 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--tap-line);
-  color: var(--tap-ink);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-/* The catalog dialog styles every tabpanel ul/dl as a card or label grid;
-   restore the chart legend and the profile grids inside it. */
-.tap-catalog-dialog [role="tabpanel"] .tap-team-trend-legend {
-  display: flex;
-  gap: 14px;
-  margin: 6px 0 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-metrics {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 24px;
-  margin-top: 18px;
-}
-
-.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-metrics dt {
-  font-weight: 400;
-}
-
-.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-metrics dd {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.tap-catalog-dialog [role="tabpanel"] .tap-team-profile-facts {
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 10px 20px;
+  .tap-team-report .ant-table .tap-team-nowrap {
+    white-space: nowrap !important;
+  }
 }

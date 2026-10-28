@@ -137,7 +137,11 @@ function install(server: Server) {
   );
 }
 
-function renderDrawer(server: Server, agentKey = "a1") {
+function renderDrawer(
+  server: Server,
+  agentKey = "a1",
+  initialTab?: "feedback",
+) {
   install(server);
   const onViewConfig = vi.fn();
   const client = new QueryClient({
@@ -152,6 +156,7 @@ function renderDrawer(server: Server, agentKey = "a1") {
         copy={copy}
         onClose={vi.fn()}
         onViewConfig={onViewConfig}
+        initialTab={initialTab}
       />
     </QueryClientProvider>,
   );
@@ -191,7 +196,11 @@ describe("AgentProfileDrawer", () => {
     renderDrawer(newServer());
     await user.click(await tab("基本信息"));
     expect(await screen.findByText("Test reviewer")).toBeTruthy();
-    expect(screen.getByText("bob · 5")).toBeTruthy();
+    // Each person served: name, then their run count.
+    expect(
+      screen.getByText("bob", { selector: ".tap-profile-served-name" })
+        .nextSibling?.nextSibling,
+    ).toHaveTextContent("5");
     await user.click(await tab("工作量"));
     expect(await screen.findByText("模型调用")).toBeTruthy();
     expect(screen.getByText("平均每次运行调用数")).toBeTruthy();
@@ -257,10 +266,7 @@ describe("AgentProfileDrawer", () => {
     const user = userEvent.setup();
     renderDrawer(newServer({ failTransfer: true }));
     await user.click(await tab("设置"));
-    await user.type(
-      await screen.findByLabelText("新负责人（actorId）"),
-      "ghost",
-    );
+    await user.type(await screen.findByLabelText("新负责人"), "ghost");
     await user.click(screen.getByRole("button", { name: "转交负责人" }));
     expect(await screen.findByText("在本项目中找不到该人员。")).toBeTruthy();
   });
@@ -338,6 +344,91 @@ describe("AgentProfileDrawer", () => {
     await screen.findByText("工具调用");
     expect(screen.getAllByText(/—/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("运行数据暂不可用").length).toBeGreaterThan(1);
+  });
+
+  it("shows the unavailable notice instead of a flat-zero chart or no one served", async () => {
+    const user = userEvent.setup();
+    renderDrawer(
+      newServer({
+        runtimeStatus: "unavailable",
+        row: member({ runs: null, failures: null, trend: [], topServed: [] }),
+      }),
+    );
+    await user.click(await tab("基本信息"));
+    expect(screen.queryByText("本周期无服务对象")).toBeNull();
+    expect(screen.getByText("服务对象").nextSibling).toHaveTextContent(
+      "—运行数据暂不可用",
+    );
+    await user.click(await tab("工作量"));
+    await screen.findByText("工具调用");
+    expect(screen.queryByRole("group", { name: /运行次数/ })).toBeNull();
+    expect(screen.queryByTestId("trend-hit")).toBeNull();
+  });
+
+  it("opens on the tab it was asked for", async () => {
+    renderDrawer(newServer(), "a1", "feedback");
+    expect(await tab("待处理反馈")).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("wrong answer")).toBeTruthy();
+  });
+
+  it("dates each pending feedback item", async () => {
+    renderDrawer(newServer(), "a1", "feedback");
+    const item = (await screen.findByText("wrong answer")).closest("li")!;
+    expect(within(item).getByText("2026/10/02 00:00")).toBeTruthy();
+  });
+
+  it("confirms a saved job title until the next edit", async () => {
+    const user = userEvent.setup();
+    renderDrawer(newServer());
+    await user.click(await tab("设置"));
+    const input = await screen.findByLabelText("岗位");
+    await user.clear(input);
+    await user.type(input, "Lead");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("已保存")).toBeTruthy();
+    await user.type(input, "!");
+    expect(screen.queryByText("已保存")).toBeNull();
+  });
+
+  it("shows the current owner and confirms a transfer", async () => {
+    const user = userEvent.setup();
+    renderDrawer(newServer());
+    await user.click(await tab("设置"));
+    expect(await screen.findByText("当前负责人")).toBeTruthy();
+    expect(screen.getByText("当前负责人").nextSibling).toHaveTextContent(
+      "alice",
+    );
+    const input = screen.getByLabelText("新负责人");
+    await user.type(input, "carol");
+    await user.click(screen.getByRole("button", { name: "转交负责人" }));
+    expect(await screen.findByText("已转交给 carol")).toBeTruthy();
+    await user.type(input, "x");
+    expect(screen.queryByText("已转交给 carol")).toBeNull();
+  });
+
+  it("moves between tabs with the arrow, Home and End keys", async () => {
+    const user = userEvent.setup();
+    renderDrawer(newServer());
+    const basic = await tab("基本信息");
+    expect(basic).toHaveAttribute("tabindex", "0");
+    expect((await tab("工作量")).getAttribute("tabindex")).toBe("-1");
+    basic.focus();
+    await user.keyboard("{ArrowRight}");
+    const workload = await tab("工作量");
+    expect(workload).toHaveFocus();
+    expect(workload).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{End}");
+    expect(await tab("设置")).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(await tab("基本信息")).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(await tab("设置")).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(await tab("基本信息")).toHaveFocus();
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAccessibleName("基本信息");
+    expect(basic.getAttribute("aria-controls")).toBe(panel.id);
+    expect(workload.hasAttribute("aria-controls")).toBe(false);
   });
 
   it("shows the status in Basics, not in Workload", async () => {

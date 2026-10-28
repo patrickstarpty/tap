@@ -10,7 +10,8 @@ export interface RuntimeBadgeProps {
   copy: WorkspaceCopy;
 }
 
-/** Run-data freshness: availability notice plus the "data updated at" line. */
+/** Run-data freshness: availability notice plus the "data updated at" line.
+ * The usual one-sync-cycle lag is a hover hint, not a permanent line. */
 export function RuntimeBadge({
   status,
   computedAt,
@@ -20,18 +21,22 @@ export function RuntimeBadge({
   const text = copy.agentTeam;
   const locale = teamLocale(copy);
   return (
-    <div className="tap-team-freshness">
+    <div className="tap-team-freshness" data-status={status}>
       {status === "unavailable" ? (
-        <p role="status">{text.runtimeUnavailable}</p>
+        <p role="status" className="tap-team-runtime-pill">
+          {text.runtimeUnavailable}
+        </p>
       ) : status === "syncing" ? (
-        <p role="status">{text.runtimeSyncing}</p>
-      ) : (
-        <p>{text.runtimeLag}</p>
-      )}
-      <p>
+        <p role="status" className="tap-team-runtime-pill">
+          {text.runtimeSyncing}
+        </p>
+      ) : null}
+      <p className="tap-team-updated" title={text.runtimeLag}>
+        <span className="tap-team-updated-dot" aria-hidden="true" />
         {text.updatedAt
           .replace("{time}", formatTime(computedAt, timezone, locale))
           .replace("{timezone}", timezone)}
+        <span className="tap-team-sr-only">{text.runtimeLag}</span>
       </p>
     </div>
   );

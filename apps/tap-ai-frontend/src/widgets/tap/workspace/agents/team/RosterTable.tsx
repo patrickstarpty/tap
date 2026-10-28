@@ -17,6 +17,12 @@ import {
   type CellContext,
 } from "./memberCells";
 
+/** Short values (status, numbers, durations, dates) never wrap mid-value;
+ * the table scrolls sideways instead. */
+const NOWRAP = "tap-team-nowrap";
+/** Numbers read down a right-aligned, tabular column. */
+const NUMERIC = "tap-team-nowrap tap-team-num";
+
 export interface RosterSort {
   sort?: string;
   order?: "asc" | "desc";
@@ -62,6 +68,9 @@ export function RosterTable({
     {
       title: cols.name,
       ...sortable("name"),
+      // The name stays in view while the metrics scroll sideways.
+      fixed: readOnly ? undefined : ("left" as const),
+      className: "tap-team-col-name",
       render: (_: unknown, row) =>
         readOnly ? (
           row.name
@@ -89,6 +98,7 @@ export function RosterTable({
       ? {
           title: labels.periodActivity.column,
           key: "period_activity",
+          className: NOWRAP,
           render: (_: unknown, row) => (
             <PeriodActivityValue row={row} ctx={ctx} />
           ),
@@ -96,21 +106,27 @@ export function RosterTable({
       : {
           title: cols.status,
           ...sortable("status"),
+          className: NOWRAP,
           render: (_: unknown, row) => <StatusValue row={row} ctx={ctx} />,
         },
     {
       title: cols.kind,
       ...sortable("kind"),
+      className: NOWRAP,
       render: (_: unknown, row) => labels.kinds[row.kind],
     },
     {
       title: cols.runs,
       ...sortable("runs"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => <RunValue value={n(row.runs)} ctx={ctx} />,
     },
     {
       title: cols.failures,
       ...sortable("failures"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => (
         <RunValue value={n(row.failures)} ctx={ctx} />
       ),
@@ -118,12 +134,18 @@ export function RosterTable({
     {
       title: cols.latencyTotal,
       ...sortable("latency_total_ms"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => (
         <RunValue
           value={
             row.latencyTotalMs === null
               ? null
-              : formatDuration(row.latencyTotalMs, ctx.locale)
+              : formatDuration(
+                  row.latencyTotalMs,
+                  ctx.locale,
+                  ctx.copy.agentTeam.durationUnits,
+                )
           }
           ctx={ctx}
         />
@@ -132,12 +154,18 @@ export function RosterTable({
     {
       title: cols.latencyP50,
       ...sortable("latency_p50_ms"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => (
         <RunValue
           value={
             row.latencyP50Ms === null
               ? null
-              : formatDuration(row.latencyP50Ms, ctx.locale)
+              : formatDuration(
+                  row.latencyP50Ms,
+                  ctx.locale,
+                  ctx.copy.agentTeam.durationUnits,
+                )
           }
           ctx={ctx}
         />
@@ -146,6 +174,8 @@ export function RosterTable({
     {
       title: cols.cost,
       ...sortable("cost_usd"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => (
         <RunValue
           value={
@@ -158,6 +188,8 @@ export function RosterTable({
     {
       title: cols.served,
       ...sortable("served_count"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => (
         <RunValue value={n(row.servedCount)} ctx={ctx} />
       ),
@@ -165,6 +197,7 @@ export function RosterTable({
     {
       title: cols.lastRun,
       ...sortable("last_run_at"),
+      className: NOWRAP,
       render: (_: unknown, row) => (
         <RunValue
           value={
@@ -179,28 +212,34 @@ export function RosterTable({
     {
       title: cols.satisfaction,
       ...sortable("satisfaction"),
+      className: NOWRAP,
       render: (_: unknown, row) => <SatisfactionValue row={row} ctx={ctx} />,
     },
     {
       title: cols.lastMaintenance,
       ...sortable("last_maintenance_at"),
+      className: NOWRAP,
       render: (_: unknown, row) =>
         formatDateTime(row.lastMaintenanceAt, ctx.timezone, ctx.locale),
     },
     {
       title: cols.pendingFeedback,
       ...sortable("pending_feedback"),
+      className: NUMERIC,
+      align: "right" as const,
       render: (_: unknown, row) => formatCount(row.pendingFeedback, ctx.locale),
     },
     {
       title: cols.joinedAt,
       ...sortable("joined_at"),
+      className: NOWRAP,
       render: (_: unknown, row) =>
         formatDate(row.joinedAt, ctx.timezone, ctx.locale),
     },
   ];
   return (
     <Table<AgentTeamMemberRow>
+      className="tap-team-table"
       size="small"
       rowKey="agentKey"
       pagination={false}

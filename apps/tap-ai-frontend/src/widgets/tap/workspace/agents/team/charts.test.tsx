@@ -34,9 +34,7 @@ describe("TrendChart", () => {
       />,
     );
     fireEvent.mouseEnter(screen.getAllByTestId("trend-hit")[1]);
-    expect(
-      screen.getByText("2026-10-02 · Runs: 7 (times)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("2026-10-02 · Runs: 7 times")).toBeInTheDocument();
   });
 
   it("reads each series by bucket key, not array position", () => {
@@ -59,7 +57,7 @@ describe("TrendChart", () => {
     expect(hits).toHaveLength(2);
     fireEvent.mouseEnter(hits[1]);
     expect(
-      screen.getByText("2026-10-02 · Failures: 1 (times)"),
+      screen.getByText("2026-10-02 · Failures: 1 times"),
     ).toBeInTheDocument();
     fireEvent.mouseEnter(hits[0]);
     expect(screen.queryByText(/Failures:/)).toBeNull();
@@ -86,21 +84,13 @@ describe("TrendChart", () => {
     await userEvent.tab();
     expect(chart).toHaveFocus();
     // Focus lands on the latest bucket.
-    expect(
-      screen.getByText("2026-10-03 · Runs: 4 (times)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("2026-10-03 · Runs: 4 times")).toBeInTheDocument();
     await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
-    expect(
-      screen.getByText("2026-10-01 · Runs: 2 (times)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("2026-10-01 · Runs: 2 times")).toBeInTheDocument();
     await userEvent.keyboard("{ArrowLeft}");
-    expect(
-      screen.getByText("2026-10-01 · Runs: 2 (times)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("2026-10-01 · Runs: 2 times")).toBeInTheDocument();
     await userEvent.keyboard("{End}");
-    expect(
-      screen.getByText("2026-10-03 · Runs: 4 (times)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("2026-10-03 · Runs: 4 times")).toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByText(/Runs: /)).toBeNull();
   });
@@ -141,6 +131,19 @@ describe("TrendChart", () => {
       />,
     );
     expect(screen.queryByRole("list", { hidden: true })).toBeNull();
+  });
+
+  it("omits an empty unit without stray spaces or parentheses", () => {
+    render(
+      <TrendChart
+        unit=""
+        series={[
+          { label: "Runs", points: [{ bucket: "2026-10-01", value: 12 }] },
+        ]}
+      />,
+    );
+    expect(screen.getByText("12", { selector: "div" })).toBeInTheDocument();
+    expect(screen.getByRole("group")).toHaveAccessibleName("Runs");
   });
 
   it("does not throw without data", () => {

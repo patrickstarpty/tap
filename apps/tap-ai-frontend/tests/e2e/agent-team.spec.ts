@@ -333,14 +333,15 @@ test("an Agent joins the team, serves two turns, gets a thumbs-down that its own
 
   // Step 6: Report tab exports a zip with the three CSV files.
   await page.getByRole("tab", { name: "Report", exact: true }).click();
-  const exportLink = page.getByRole("link", {
+  // A button that fetches the zip, so a failed export shows inline.
+  const exportButton = page.getByRole("button", {
     name: "Export CSV",
     exact: true,
   });
-  await expect(exportLink).toBeVisible();
+  await expect(exportButton).toBeEnabled();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
-    exportLink.click(),
+    exportButton.click(),
   ]);
   const path = await download.path();
   const entries = readZip(readFileSync(path));

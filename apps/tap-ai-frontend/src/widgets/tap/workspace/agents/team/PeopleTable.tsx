@@ -2,8 +2,9 @@ import { Table, type TableProps } from "antd";
 
 import type { AgentTeamPersonRow } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
-import { EMPTY, formatCount } from "./format";
-import { RuntimeMark, type RuntimeStatus } from "./RuntimeBadge";
+import { formatCount } from "./format";
+import { RunValue } from "./memberCells";
+import type { RuntimeStatus } from "./RuntimeBadge";
 
 export interface PeopleTableProps {
   rows: AgentTeamPersonRow[];
@@ -27,49 +28,58 @@ export function PeopleTable({
   readOnly = false,
 }: PeopleTableProps) {
   const cols = copy.agentTeam.team.columns;
-  const run = (value: number | null) =>
-    value === null ? (
-      <>
-        {EMPTY}
-        <RuntimeMark status={runtimeStatus} copy={copy} />
-      </>
-    ) : (
-      formatCount(value, locale)
-    );
+  const run = (value: number | null) => (
+    <RunValue
+      value={value === null ? null : formatCount(value, locale)}
+      ctx={{ copy, runtimeStatus }}
+    />
+  );
   const columnDefs: TableProps<AgentTeamPersonRow>["columns"] = [
     {
       title: cols.actor,
       dataIndex: "actorId",
       key: "actor_id",
+      fixed: readOnly ? undefined : ("left" as const),
+      className: "tap-team-col-name",
       sorter: (a, b) => a.actorId.localeCompare(b.actorId),
     },
     {
       title: cols.ownedAgents,
       key: "owned_agents",
+      align: "right" as const,
+      className: "tap-team-nowrap tap-team-num",
       sorter: (a, b) => compare(a.ownedAgents, b.ownedAgents),
       render: (_: unknown, row) => formatCount(row.ownedAgents, locale),
     },
     {
       title: cols.ownedRuns,
       key: "owned_runs",
+      align: "right" as const,
+      className: "tap-team-nowrap tap-team-num",
       sorter: (a, b) => compare(a.ownedRuns, b.ownedRuns),
       render: (_: unknown, row) => run(row.ownedRuns),
     },
     {
       title: cols.servedByAgents,
       key: "served_by_agents",
+      align: "right" as const,
+      className: "tap-team-nowrap tap-team-num",
       sorter: (a, b) => compare(a.servedByAgents, b.servedByAgents),
       render: (_: unknown, row) => run(row.servedByAgents),
     },
     {
       title: cols.calls,
       key: "runs",
+      align: "right" as const,
+      className: "tap-team-nowrap tap-team-num",
       sorter: (a, b) => compare(a.runs, b.runs),
       render: (_: unknown, row) => run(row.runs),
     },
     {
       title: cols.maintenance,
       key: "maintenance",
+      align: "right" as const,
+      className: "tap-team-nowrap tap-team-num",
       sorter: (a, b) => compare(a.maintenance, b.maintenance),
       render: (_: unknown, row) => formatCount(row.maintenance, locale),
     },
@@ -80,12 +90,14 @@ export function PeopleTable({
   return (
     <div className="tap-team-table-scroll">
       <Table<AgentTeamPersonRow>
+        className="tap-team-table"
         size="small"
         rowKey="actorId"
         pagination={false}
         dataSource={rows}
         columns={columns}
         showSorterTooltip={false}
+        scroll={readOnly ? undefined : { x: "max-content" }}
         locale={{ emptyText: copy.agentTeam.team.noPeople }}
       />
     </div>

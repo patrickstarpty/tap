@@ -113,7 +113,7 @@ function periodCalls() {
 
 function setup(
   members: unknown[],
-  runtimeStatus: "ok" | "unavailable" = "ok",
+  runtimeStatus: "ok" | "syncing" | "unavailable" = "ok",
   summary: Record<string, unknown> = {},
 ) {
   const b = { ...base, runtimeStatus };
@@ -329,23 +329,23 @@ describe("TeamTab", () => {
   it("sorts the people table by column", async () => {
     setup([row({})]);
     renderTab("en");
-    const table = screen.getByText("Person").closest("table")!;
+    // A sideways-scrolling table with a pinned first column renders its
+    // header twice (sticky header + body measure); read the body rows.
+    const title = (text: string) =>
+      screen.getAllByText(text, { selector: ".ant-table-column-title" })[0];
+    const table = screen
+      .getAllByText("Person")
+      .at(-1)!
+      .closest(".ant-table-wrapper")!;
     const names = () =>
-      within(table)
-        .getAllByRole("row")
-        .slice(1)
-        .map((r) => r.firstElementChild!.textContent);
+      [...table.querySelectorAll("tbody tr.ant-table-row")].map(
+        (r) => r.firstElementChild!.textContent,
+      );
     expect(names()).toEqual(["bob", "alice"]);
-    await userEvent.click(
-      screen.getByText("Agents owned", { selector: ".ant-table-column-title" }),
-    );
-    await userEvent.click(
-      screen.getByText("Agents owned", { selector: ".ant-table-column-title" }),
-    );
+    await userEvent.click(title("Agents owned"));
+    await userEvent.click(title("Agents owned"));
     expect(names()).toEqual(["alice", "bob"]);
-    await userEvent.click(
-      screen.getByText("Person", { selector: ".ant-table-column-title" }),
-    );
+    await userEvent.click(title("Person"));
     expect(names()).toEqual(["alice", "bob"]);
   });
 
@@ -460,6 +460,56 @@ describe("TeamTab", () => {
     }) as never);
     await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
     expect(screen.getByText("没有符合条件的 Agent")).toBeVisible();
+  });
+
+  it("annotates syncing numbers but not a legitimately empty value", () => {
+    setup([row({ lastRunAt: null })], "syncing");
+    renderTab();
+    expect(
+      screen.getByText("运行次数", { selector: "dt" }).nextSibling,
+    ).toHaveTextContent("120运行数据同步中");
+    const lastRun = screen.getByText("最近运行", {
+      selector: ".tap-team-card dt",
+    }).nextSibling;
+    expect(lastRun).toHaveTextContent(/^—$/);
+  });
+
+  it("dashes the per-caller average when run data is unavailable", () => {
+    setup([row({})], "unavailable", { servedAvg: null });
+    renderTab();
+    expect(
+      screen.getByText("每位使用者用到的 Agent 数").nextSibling,
+    ).toHaveTextContent("—运行数据暂不可用");
+  });
+
+  it("captions the card sparkline as the last 30 days", () => {
+    setup([row({})]);
+    renderTab();
+    expect(
+      screen.getByText("近 30 天趋势", { selector: ".tap-team-card *" }),
+    ).toBeVisible();
+  });
+
+  it("keeps the filters mounted when a filtered query fails", async () => {
+    setup([row({})]);
+    renderTab();
+    const initial = vi.mocked(useTeamMembers).getMockImplementation()!;
+    const refetch = vi.fn();
+    vi.mocked(useTeamMembers).mockImplementation(((...args: unknown[]) => {
+      const filters = args[2] as { status?: string | null };
+      return filters.status
+        ? { isPending: false, isError: true, data: undefined, refetch }
+        : (initial as (...a: unknown[]) => unknown)(...args);
+    }) as never);
+    await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
+    expect(screen.getByLabelText("状态")).toHaveValue("idle");
+    expect(screen.getByLabelText("负责人")).toBeVisible();
+    const alert = screen.getByRole("alert");
+    await userEvent.click(within(alert).getByRole("button", { name: "重试" }));
+    expect(refetch).toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByLabelText("状态"), "");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
   });
 
   it("guides to creating an Agent when the roster is empty", async () => {

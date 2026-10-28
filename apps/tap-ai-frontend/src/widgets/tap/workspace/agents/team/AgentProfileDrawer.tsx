@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Button, Input } from "antd";
+import { useId, useMemo, useState, type ReactNode } from "react";
 
 import {
   useMemberHistory,
@@ -12,6 +13,7 @@ import {
   type TeamPeriod,
 } from "../../../../../features/knowledge/api/agentTeam";
 import { AccessibleDialog } from "../../AccessibleDialog";
+import { Avatar } from "./avatar";
 import type { WorkspaceCopy } from "../../copy";
 import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
 import { TrendChart } from "./charts";
@@ -31,12 +33,15 @@ import {
   ownerName,
   type CellContext,
 } from "./memberCells";
-import { RuntimeBadge } from "./RuntimeBadge";
+import { LoadError, TeamSkeleton } from "./layout";
+import { RuntimeBadge, RuntimeMark } from "./RuntimeBadge";
+import { handleTablistKey } from "./tabs";
 
 const JOB_TITLE_MAX = 64;
 const NOTE_MAX = 500;
 
-type ProfileTab = "basic" | "workload" | "history" | "feedback" | "settings";
+export type ProfileTab =
+  "basic" | "workload" | "history" | "feedback" | "settings";
 
 export interface AgentProfileDrawerProps {
   projectId: string;
@@ -46,6 +51,8 @@ export interface AgentProfileDrawerProps {
   onClose: () => void;
   onViewConfig: (revisionId: string) => void;
   opener?: HTMLElement | null;
+  /** Section to open on, e.g. pending feedback from "Feedback waiting for me". */
+  initialTab?: ProfileTab;
 }
 
 function length(value: string): number {
@@ -75,11 +82,15 @@ export function AgentProfileDrawer({
   onClose,
   onViewConfig,
   opener = null,
+  initialTab = "basic",
 }: AgentProfileDrawerProps) {
   const text = copy.agentTeam;
   const labels = text.profile;
   const memberQuery = useTeamMember(projectId, agentKey, period);
-  const [tab, setTab] = useState<ProfileTab>("basic");
+  const [tab, setTab] = useState<ProfileTab>(initialTab);
+  const idPrefix = useId();
+  const tabId = (id: ProfileTab) => `${idPrefix}-tab-${id}`;
+  const panelId = `${idPrefix}-panel`;
   const view = memberQuery.data;
   const detail = view?.data;
   const row = detail?.row;
@@ -88,53 +99,122 @@ export function AgentProfileDrawer({
   if (row?.kind === "custom") tabs.push("settings");
   const active = tabs.includes(tab) ? tab : "basic";
 
+  const ctx: CellContext | null =
+    view === undefined
+      ? null
+      : {
+          copy,
+          locale: teamLocale(copy),
+          timezone: view.timezone,
+          runtimeStatus: view.runtimeStatus,
+        };
+
   return (
     <AccessibleDialog
       ariaLabel={row?.name ?? text.heading}
-      className="tap-agent-profile-drawer tap-catalog-dialog"
+      className="tap-agent-profile-drawer"
       onClose={onClose}
       opener={opener}
     >
-      <header>
-        <h2>{row?.name ?? text.heading}</h2>
-        <button type="button" onClick={onClose}>
-          {labels.close}
+      <header className="tap-profile-head">
+        {row === undefined ? null : <Avatar name={row.name} size="lg" />}
+        <div className="tap-profile-id">
+          <h2>{row?.name ?? text.heading}</h2>
+          {row === undefined || ctx === null ? null : (
+            <>
+              <p
+                className="tap-profile-title"
+                data-empty={row.jobTitle === null ? "true" : undefined}
+              >
+                {row.jobTitle ?? text.team.noJobTitle}
+              </p>
+              <p className="tap-profile-meta">
+                <span className="tap-profile-status">
+                  <StatusValue row={row} ctx={ctx} />
+                </span>
+                <span className="tap-profile-owner">
+                  {text.team.ownerLabel} ·{" "}
+                  {row.kind === "custom"
+                    ? (row.ownerActorId ?? labels.noOwner)
+                    : ownerName(row, copy)}
+                </span>
+              </p>
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          className="tap-profile-close"
+          aria-label={labels.close}
+          onClick={onClose}
+        >
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14">
+            <path
+              d="M3 3 L11 11 M11 3 L3 11"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
       </header>
       {memberQuery.isPending ? (
-        <p role="status">{text.loading}</p>
+        <div className="tap-profile-body">
+          <TeamSkeleton copy={copy} kpis={false} cards={2} />
+        </div>
       ) : memberQuery.isError ||
         view === undefined ||
         detail === undefined ||
-        row === undefined ? (
-        <div role="alert">
-          <p>{text.loadFailed}</p>
-          <button type="button" onClick={() => void memberQuery.refetch()}>
-            {text.retry}
-          </button>
+        row === undefined ||
+        ctx === null ? (
+        <div className="tap-profile-body">
+          <LoadError copy={copy} onRetry={() => void memberQuery.refetch()} />
         </div>
       ) : (
         <>
-          <RuntimeBadge
-            status={view.runtimeStatus}
-            computedAt={view.computedAt}
-            timezone={view.timezone}
-            copy={copy}
-          />
-          <div role="tablist" aria-label={labels.tablistLabel}>
+          <div className="tap-profile-freshness">
+            <RuntimeBadge
+              status={view.runtimeStatus}
+              computedAt={view.computedAt}
+              timezone={view.timezone}
+              copy={copy}
+            />
+          </div>
+          <div
+            role="tablist"
+            aria-label={labels.tablistLabel}
+            className="tap-profile-tabs"
+            onKeyDown={(event) =>
+              handleTablistKey(event, tabs, active, setTab, tabId)
+            }
+          >
             {tabs.map((id) => (
               <button
                 key={id}
+                id={tabId(id)}
                 type="button"
                 role="tab"
                 aria-selected={active === id}
+                // Only the active panel is rendered.
+                aria-controls={active === id ? panelId : undefined}
+                tabIndex={active === id ? 0 : -1}
                 onClick={() => setTab(id)}
               >
                 {labels.tabs[id]}
+                {id === "feedback" && detail.pendingFeedback.length > 0 ? (
+                  <span className="tap-profile-tab-count" aria-hidden="true">
+                    {detail.pendingFeedback.length}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
-          <div role="tabpanel">
+          <div
+            role="tabpanel"
+            id={panelId}
+            aria-labelledby={tabId(active)}
+            className="tap-profile-body"
+          >
             {active === "basic" ? (
               <BasicPanel
                 detail={detail}
@@ -149,12 +229,7 @@ export function AgentProfileDrawer({
                 row={row}
                 copy={copy}
                 axis={bucketAxis(view.period, view.granularity)}
-                ctx={{
-                  copy,
-                  locale: teamLocale(copy),
-                  timezone: view.timezone,
-                  runtimeStatus: view.runtimeStatus,
-                }}
+                ctx={ctx}
               />
             ) : null}
             {active === "history" ? (
@@ -171,6 +246,7 @@ export function AgentProfileDrawer({
                 projectId={projectId}
                 detail={detail}
                 copy={copy}
+                timezone={view.timezone}
               />
             ) : null}
             {active === "settings" ? (
@@ -207,45 +283,67 @@ function BasicPanel({
     timezone,
     runtimeStatus,
   };
+  const maxServed = Math.max(...detail.served.map((p) => p.runs), 1);
   return (
     <>
-      <dl className="tap-team-profile-facts">
-        <dt>{text.team.columns.jobTitle}</dt>
-        <dd>{row.jobTitle ?? text.team.noJobTitle}</dd>
-        <dt>{labels.joinedAt}</dt>
-        <dd>{formatDate(row.joinedAt, timezone, locale)}</dd>
-        <dt>{text.team.columns.status}</dt>
-        <dd>
-          <StatusValue row={row} ctx={ctx} />
-        </dd>
-        <dt>{text.team.ownerLabel}</dt>
-        <dd>
-          {row.kind === "custom"
-            ? (row.ownerActorId ?? labels.noOwner)
-            : ownerName(row, copy)}
-        </dd>
-        <dt>{labels.currentRevision}</dt>
-        <dd>{revisionId ?? EMPTY}</dd>
-        <dt>{labels.servedPeople}</dt>
-        <dd>
-          {detail.served.length === 0 ? (
-            labels.noServed
+      <section className="tap-profile-card">
+        <dl className="tap-team-profile-facts">
+          <dt>{labels.joinedAt}</dt>
+          <dd>{formatDate(row.joinedAt, timezone, locale)}</dd>
+          <dt>{text.team.columns.status}</dt>
+          <dd>
+            <StatusValue row={row} ctx={ctx} />
+          </dd>
+          <dt>{text.team.ownerLabel}</dt>
+          <dd>
+            {row.kind === "custom"
+              ? (row.ownerActorId ?? labels.noOwner)
+              : ownerName(row, copy)}
+          </dd>
+          <dt>{labels.currentRevision}</dt>
+          <dd className="tap-profile-revision">
+            <code>{revisionId ?? EMPTY}</code>
+            {revisionId === null ? null : (
+              <Button
+                size="small"
+                autoInsertSpace={false}
+                onClick={() => onViewConfig(revisionId)}
+              >
+                {text.viewConfig}
+              </Button>
+            )}
+          </dd>
+        </dl>
+      </section>
+      <section className="tap-profile-card">
+        <h3>{labels.servedPeople}</h3>
+        <div>
+          {runtimeStatus === "unavailable" ? (
+            <RunValue value={null} ctx={ctx} />
+          ) : detail.served.length === 0 ? (
+            <p className="tap-profile-muted">{labels.noServed}</p>
           ) : (
-            <ul>
+            <ul className="tap-profile-served">
               {detail.served.map((person) => (
                 <li key={person.actorId}>
-                  {person.actorId} · {formatCount(person.runs, locale)}
+                  <Avatar name={person.actorId} size="sm" />
+                  <span className="tap-profile-served-name">
+                    {person.actorId}
+                  </span>
+                  <span className="tap-profile-served-bar" aria-hidden="true">
+                    <span
+                      style={{ width: `${(person.runs / maxServed) * 100}%` }}
+                    />
+                  </span>
+                  <span className="tap-profile-served-runs">
+                    {formatCount(person.runs, locale)}
+                  </span>
                 </li>
               ))}
             </ul>
           )}
-        </dd>
-      </dl>
-      {revisionId === null ? null : (
-        <button type="button" onClick={() => onViewConfig(revisionId)}>
-          {text.viewConfig}
-        </button>
-      )}
+        </div>
+      </section>
     </>
   );
 }
@@ -290,7 +388,7 @@ function WorkloadPanel({
         value={
           row.latencyTotalMs === null
             ? null
-            : formatDuration(row.latencyTotalMs, locale)
+            : formatDuration(row.latencyTotalMs, locale, text.durationUnits)
         }
         ctx={ctx}
       />,
@@ -302,7 +400,7 @@ function WorkloadPanel({
         value={
           row.latencyP50Ms === null
             ? null
-            : formatDuration(row.latencyP50Ms, locale)
+            : formatDuration(row.latencyP50Ms, locale, text.durationUnits)
         }
         ctx={ctx}
       />,
@@ -353,31 +451,48 @@ function WorkloadPanel({
       ),
     },
   ];
+  // Unknown run data is not a flat zero line.
+  const unavailable = ctx.runtimeStatus === "unavailable" || row.runs === null;
   return (
     <>
-      <TrendChart
-        series={series}
-        unit={labels.runsUnit}
-        locale={locale}
-        hint={text.team.chartHint}
-      />
-      <dl className="tap-team-profile-metrics">
-        {primary.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <h3 className="tap-team-profile-subheading">{labels.secondaryMetrics}</h3>
-      <dl className="tap-team-profile-metrics">
-        {secondary.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
+      <section className="tap-profile-card">
+        <h3>{text.team.trendHeading}</h3>
+        {unavailable ? (
+          <p className="tap-team-trend-unavailable">
+            {EMPTY}
+            <RuntimeMark status="unavailable" copy={copy} />
+          </p>
+        ) : (
+          <TrendChart
+            series={series}
+            unit={labels.runsUnit}
+            locale={locale}
+            hint={text.team.chartHint}
+          />
+        )}
+      </section>
+      <section className="tap-profile-card">
+        <h3>{labels.primaryMetrics}</h3>
+        <dl className="tap-team-profile-metrics">
+          {primary.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+      <section className="tap-profile-card">
+        <h3>{labels.secondaryMetrics}</h3>
+        <dl className="tap-team-profile-metrics" data-columns="3">
+          {secondary.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
     </>
   );
 }
@@ -404,51 +519,57 @@ function HistoryPanel({
     () => (history.data?.pages ?? []).flatMap((page) => page.events),
     [history.data],
   );
-  if (agentId === null) return <p>{labels.noHistory}</p>;
-  if (history.isPending) return <p role="status">{copy.agentTeam.loading}</p>;
-  if (history.isError)
+  if (agentId === null)
     return (
-      <div role="alert">
-        <p>{copy.agentTeam.loadFailed}</p>
-        <button type="button" onClick={() => void history.refetch()}>
-          {copy.agentTeam.retry}
-        </button>
-      </div>
+      <p className="tap-team-empty tap-team-empty--quiet">{labels.noHistory}</p>
     );
+  if (history.isPending)
+    return <TeamSkeleton copy={copy} kpis={false} cards={1} />;
+  if (history.isError)
+    return <LoadError copy={copy} onRetry={() => void history.refetch()} />;
   return (
     <>
       {events.length === 0 ? (
-        <p>{labels.noHistory}</p>
+        <p className="tap-team-empty tap-team-empty--quiet">
+          {labels.noHistory}
+        </p>
       ) : (
         <ol className="tap-team-history">
           {events.map((event) => (
-            <li key={event.eventId}>
-              <time dateTime={event.occurredAt}>
-                {formatDateTime(event.occurredAt, timezone, locale)}
-              </time>{" "}
-              <strong>{labels.maintenanceKinds[event.kind]}</strong>{" "}
-              <span>{event.actorId}</span>
+            <li key={event.eventId} data-kind={event.kind}>
+              <span className="tap-team-history-dot" aria-hidden="true" />
+              <div className="tap-team-history-head">
+                <strong>{labels.maintenanceKinds[event.kind]}</strong>
+                <span>{event.actorId}</span>
+                <time dateTime={event.occurredAt}>
+                  {formatDateTime(event.occurredAt, timezone, locale)}
+                </time>
+              </div>
               {event.note ? <p>{event.note}</p> : null}
               {event.revisionId === null ? null : (
-                <button
-                  type="button"
+                <Button
+                  type="link"
+                  size="small"
+                  autoInsertSpace={false}
+                  className="tap-team-history-link"
                   onClick={() => onViewConfig(event.revisionId as string)}
                 >
                   {labels.openRevision}
-                </button>
+                </Button>
               )}
             </li>
           ))}
         </ol>
       )}
       {history.hasNextPage ? (
-        <button
-          type="button"
+        <Button
+          block
+          autoInsertSpace={false}
           disabled={history.isFetchingNextPage}
           onClick={() => void history.fetchNextPage()}
         >
           {labels.loadMore}
-        </button>
+        </Button>
       ) : null}
     </>
   );
@@ -458,12 +579,15 @@ function FeedbackPanel({
   projectId,
   detail,
   copy,
+  timezone,
 }: {
   projectId: string;
   detail: AgentTeamMemberDetail;
   copy: WorkspaceCopy;
+  timezone: string;
 }) {
   const text = copy.agentTeam;
+  const locale = teamLocale(copy);
   const labels = text.profile;
   const resolve = useResolveFeedback(projectId);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -495,30 +619,47 @@ function FeedbackPanel({
   };
   return (
     <>
-      <p>{labels.feedbackCount.replace("{count}", String(items.length))}</p>
+      <p className="tap-profile-muted">
+        {labels.feedbackCount.replace("{count}", String(items.length))}
+      </p>
       {items.length === 0 ? (
-        <p>{labels.noFeedback}</p>
+        <p className="tap-team-empty tap-team-empty--quiet">
+          {labels.noFeedback}
+        </p>
       ) : (
-        <ul className="tap-team-feedback">
+        <ul className="tap-profile-feedback">
           {items.map((item) => {
             const note = notes[item.feedbackId] ?? "";
             const tooLong = length(note) > NOTE_MAX;
             return (
-              <li key={item.feedbackId}>
-                <p>
-                  {item.actorId}
-                  {` · ${
-                    item.rating === "up"
+              <li key={item.feedbackId} className="tap-profile-card">
+                <div className="tap-team-feedback-head">
+                  <Avatar name={item.actorId} size="sm" />
+                  <strong>{item.actorId}</strong>
+                  <span
+                    className="tap-team-rating"
+                    data-rating={item.rating ?? "none"}
+                  >
+                    {item.rating === "up"
                       ? text.mine.ratingUp
                       : item.rating === "down"
                         ? text.mine.ratingDown
-                        : text.mine.ratingNone
-                  }`}
-                </p>
-                {item.comment ? <p>{item.comment}</p> : null}
-                <label>
-                  {labels.resolutionNote}
-                  <textarea
+                        : text.mine.ratingNone}
+                  </span>
+                  <time dateTime={item.updatedAt}>
+                    {formatDateTime(item.updatedAt, timezone, locale)}
+                  </time>
+                </div>
+                {item.comment ? (
+                  <blockquote className="tap-team-feedback-quote">
+                    {item.comment}
+                  </blockquote>
+                ) : null}
+                <label className="tap-profile-field">
+                  <span>{labels.resolutionNote}</span>
+                  <Input.TextArea
+                    rows={3}
+                    status={tooLong ? "error" : undefined}
                     value={note}
                     onChange={(event) =>
                       setNotes((prev) => ({
@@ -528,17 +669,25 @@ function FeedbackPanel({
                     }
                   />
                 </label>
-                {tooLong ? <p role="alert">{labels.noteTooLong}</p> : null}
-                {errors[item.feedbackId] ? (
-                  <p role="alert">{errors[item.feedbackId]}</p>
+                {tooLong ? (
+                  <p role="alert" className="tap-profile-error">
+                    {labels.noteTooLong}
+                  </p>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={tooLong || pending.has(item.feedbackId)}
-                  onClick={() => void done(item.feedbackId)}
-                >
-                  {text.markResolved}
-                </button>
+                {errors[item.feedbackId] ? (
+                  <p role="alert" className="tap-profile-error">
+                    {errors[item.feedbackId]}
+                  </p>
+                ) : null}
+                <div className="tap-profile-actions">
+                  <Button
+                    autoInsertSpace={false}
+                    disabled={tooLong || pending.has(item.feedbackId)}
+                    onClick={() => void done(item.feedbackId)}
+                  >
+                    {text.markResolved}
+                  </Button>
+                </div>
               </li>
             );
           })}
@@ -565,66 +714,115 @@ function SettingsPanel({
   const [owner, setOwner] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const [ownerError, setOwnerError] = useState<string | null>(null);
+  // Confirmation of the last successful write; cleared by the next edit.
+  const [titleSaved, setTitleSaved] = useState(false);
+  const [transferredTo, setTransferredTo] = useState<string | null>(null);
   const titleTooLong = length(title) > JOB_TITLE_MAX;
   const saveTitle = async () => {
     setTitleError(null);
+    setTitleSaved(false);
     try {
       await updateTitle.mutateAsync({
         agentId: row.agentKey,
         jobTitle: title.trim() === "" ? null : title.trim(),
       });
+      setTitleSaved(true);
     } catch (error) {
       setTitleError(errorText(error, copy));
     }
   };
   const transferOwner = async () => {
+    const next = owner.trim();
     setOwnerError(null);
+    setTransferredTo(null);
     try {
       await transfer.mutateAsync({
         agentId: row.agentKey,
-        newOwnerActorId: owner.trim(),
+        newOwnerActorId: next,
       });
       setOwner("");
+      setTransferredTo(next);
     } catch (error) {
       setOwnerError(errorText(error, copy, labels.transferFailed));
     }
   };
   return (
     <>
-      <section>
-        <label>
-          {labels.jobTitleLabel}
-          <input
+      <section className="tap-profile-card">
+        <label className="tap-profile-field">
+          <span>{labels.jobTitleLabel}</span>
+          <Input
             value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            status={titleTooLong ? "error" : undefined}
+            onChange={(event) => {
+              setTitle(event.target.value);
+              setTitleSaved(false);
+            }}
           />
         </label>
-        {titleTooLong ? <p role="alert">{labels.jobTitleTooLong}</p> : null}
-        {titleError ? <p role="alert">{titleError}</p> : null}
-        <button
-          type="button"
-          disabled={titleTooLong || updateTitle.isPending}
-          onClick={() => void saveTitle()}
-        >
-          {labels.save}
-        </button>
+        <p className="tap-profile-counter" aria-hidden="true">
+          {length(title)}/{JOB_TITLE_MAX}
+        </p>
+        {titleTooLong ? (
+          <p role="alert" className="tap-profile-error">
+            {labels.jobTitleTooLong}
+          </p>
+        ) : null}
+        {titleError ? (
+          <p role="alert" className="tap-profile-error">
+            {titleError}
+          </p>
+        ) : null}
+        {titleSaved ? (
+          <p role="status" className="tap-profile-success">
+            {labels.saved}
+          </p>
+        ) : null}
+        <div className="tap-profile-actions">
+          <Button
+            type="primary"
+            autoInsertSpace={false}
+            disabled={titleTooLong || updateTitle.isPending}
+            onClick={() => void saveTitle()}
+          >
+            {labels.save}
+          </Button>
+        </div>
       </section>
-      <section>
-        <label>
-          {labels.newOwnerLabel}
-          <input
+      <section className="tap-profile-card">
+        <dl className="tap-team-profile-facts">
+          <dt>{labels.currentOwner}</dt>
+          <dd>{row.ownerActorId ?? labels.noOwner}</dd>
+        </dl>
+        <label className="tap-profile-field">
+          <span>{labels.newOwnerLabel}</span>
+          <Input
             value={owner}
-            onChange={(event) => setOwner(event.target.value)}
+            onChange={(event) => {
+              setOwner(event.target.value);
+              setTransferredTo(null);
+            }}
           />
         </label>
-        {ownerError ? <p role="alert">{ownerError}</p> : null}
-        <button
-          type="button"
-          disabled={owner.trim() === "" || transfer.isPending}
-          onClick={() => void transferOwner()}
-        >
-          {text.transferOwner}
-        </button>
+        {ownerError ? (
+          <p role="alert" className="tap-profile-error">
+            {ownerError}
+          </p>
+        ) : null}
+        {transferredTo === null ? null : (
+          <p role="status" className="tap-profile-success">
+            {labels.transferred.replace("{owner}", transferredTo)}
+          </p>
+        )}
+        <div className="tap-profile-actions">
+          <Button
+            autoInsertSpace={false}
+            disabled={owner.trim() === "" || transfer.isPending}
+            onClick={() => void transferOwner()}
+          >
+            {text.transferOwner}
+          </Button>
+        </div>
       </section>
     </>
   );

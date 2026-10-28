@@ -80,6 +80,16 @@ export function resolvePeriod(
   }
 }
 
+/** Drops unset filters so `{ owner: null }` and `{}` (same URL) share one
+ * cache entry and one request. */
+function definedFilters(filters: MemberFilters): MemberFilters {
+  return Object.fromEntries(
+    Object.entries(filters).filter(
+      ([, value]) => value !== null && value !== undefined && value !== "",
+    ),
+  ) as MemberFilters;
+}
+
 export const agentTeamKeys = {
   all: agentTeamRootKey,
   summary: (projectId: string, period: TeamPeriod) =>
@@ -91,7 +101,7 @@ export const agentTeamKeys = {
       "members",
       period.from,
       period.to,
-      filters,
+      definedFilters(filters),
     ] as const,
   member: (projectId: string, agentKey: string, period: TeamPeriod) =>
     [
@@ -117,8 +127,15 @@ export const agentTeamKeys = {
     ] as const,
   orgChart: (projectId: string, period: TeamPeriod) =>
     ["agent-team", projectId, "org-chart", period.from, period.to] as const,
-  report: (projectId: string, period: TeamPeriod) =>
-    ["agent-team", projectId, "report", period.from, period.to] as const,
+  report: (projectId: string, period: TeamPeriod, preset?: PeriodPreset) =>
+    [
+      "agent-team",
+      projectId,
+      "report",
+      period.from,
+      period.to,
+      preset ?? null,
+    ] as const,
 };
 
 function query(params: Record<string, string | null | undefined>): string {
@@ -263,15 +280,21 @@ export function useOrgChart(projectId: string, period: TeamPeriod) {
   });
 }
 
-export function useTeamReport(projectId: string, period: TeamPeriod) {
+/** `preset` names the picker choice so the server derives the previous
+ * period per spec 6.4 instead of inferring it from the date shape. */
+export function useTeamReport(
+  projectId: string,
+  period: TeamPeriod,
+  preset?: PeriodPreset,
+) {
   return useQuery({
-    queryKey: agentTeamKeys.report(projectId, period),
+    queryKey: agentTeamKeys.report(projectId, period, preset),
     placeholderData: keepPreviousData,
     queryFn: () =>
       requestJson<AgentTeamReportView>(
         projectAiPath(
           projectId,
-          `/agent-team/report${query(periodQuery(period))}`,
+          `/agent-team/report${query({ ...periodQuery(period), preset })}`,
         ),
       ),
     staleTime: STALE_MS,

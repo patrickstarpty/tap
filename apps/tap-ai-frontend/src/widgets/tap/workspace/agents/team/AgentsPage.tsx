@@ -1,7 +1,6 @@
 import {
   Fragment,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -10,10 +9,16 @@ import {
 
 import { resolvePeriod } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
-import { AgentProfileDrawer } from "./AgentProfileDrawer";
+import { AgentProfileDrawer, type ProfileTab } from "./AgentProfileDrawer";
 import { MyAgentsTab } from "./MyAgentsTab";
-import { PeriodPicker, type PeriodSelection } from "./PeriodPicker";
+import {
+  PeriodPicker,
+  useValidPeriod,
+  type PeriodSelection,
+} from "./PeriodPicker";
 import { ReportTab } from "./ReportTab";
+import type { RenderHeader } from "./layout";
+import { handleTablistKey } from "./tabs";
 import { TeamTab } from "./TeamTab";
 import "./team.css";
 
@@ -52,6 +57,8 @@ function writeUrlTab(tab: AgentsTab) {
   window.history.replaceState(window.history.state, "", url);
 }
 
+const tabId = (id: AgentsTab) => `agents-tab-${id}`;
+
 function todayUtc(): Date {
   return new Date();
 }
@@ -71,12 +78,12 @@ export function AgentsPage({
     preset: "last30",
     custom: resolvePeriod("last30", todayUtc()),
   }));
-  const period = useMemo(
-    () => resolvePeriod(selection.preset, todayUtc(), selection.custom),
-    [selection],
-  );
+  // An inverted or half-typed custom range never queries; the last valid
+  // period's view stays on screen under the inline message.
+  const { period } = useValidPeriod(selection);
 
   const [profileKey, setProfileKey] = useState<string | null>(null);
+  const [profileTab, setProfileTab] = useState<ProfileTab | undefined>();
   // The control that opened the profile, so closing it restores focus there.
   // Captured at the panel, so cards, table links, org-chart nodes and
   // feedback items all work without each passing an element up.
@@ -97,27 +104,32 @@ export function AgentsPage({
     consumed: boolean;
   } | null>(null);
 
-  const rangeInvalid =
-    selection.preset === "custom" &&
-    selection.custom.from > selection.custom.to;
   useEffect(() => {
     if (initialTab !== undefined) writeUrlTab(initialTab);
   }, [initialTab]);
+  // "View configuration" unmounts the card that opened the profile, so the
+  // dialog cannot hand focus back to it; land on the Configuration tab.
+  const [configFocus, setConfigFocus] = useState(0);
+  useEffect(() => {
+    if (configFocus > 0) document.getElementById(tabId("config"))?.focus();
+  }, [configFocus]);
 
   const select = (next: AgentsTab) => {
     setTab(next);
     writeUrlTab(next);
   };
 
-  const openMember = (agentKey: string) => {
+  const openMember = (agentKey: string, profileSection?: ProfileTab) => {
     setProfileOpener(lastControl.current);
     // Consumed: a later open from a non-click path must not reuse it.
     lastControl.current = null;
+    setProfileTab(profileSection);
     setProfileKey(agentKey);
     onOpenMember(agentKey);
   };
   const viewConfig = (revisionId: string) => {
     setProfileKey(null);
+    setConfigFocus((prev) => prev + 1);
     setConfigRequest((prev) => ({
       revisionId,
       nonce: (prev?.nonce ?? 0) + 1,
@@ -126,27 +138,58 @@ export function AgentsPage({
     select("config");
   };
 
+  const heading = (toolbar: ReactNode) => (
+    <header className="tap-module-heading tap-team-panel-heading">
+      <div>
+        <h1>{text.heading}</h1>
+        <p>{text.descriptions[tab === "config" ? "team" : tab]}</p>
+      </div>
+      {toolbar === null ? null : (
+        <div className="tap-team-toolbar">{toolbar}</div>
+      )}
+    </header>
+  );
+  // Freshness (from the tab's data) and the period share the heading row.
+  const withPicker: RenderHeader = (freshness) =>
+    heading(
+      <>
+        {freshness}
+        <PeriodPicker copy={copy} value={selection} onChange={setSelection} />
+      </>,
+    );
+
   return (
     <section className="tap-agents-page">
-      <div role="tablist" aria-label={text.tablistLabel}>
-        {TAB_ORDER.map((id) => (
-          <button
-            key={id}
-            id={`agents-tab-${id}`}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            aria-controls={`agents-panel-${id}`}
-            onClick={() => select(id)}
-          >
-            {text.tabs[id]}
-          </button>
-        ))}
+      <div className="tap-agents-tabbar">
+        <div
+          role="tablist"
+          aria-label={text.tablistLabel}
+          className="tap-section-tabs tap-agents-tabs"
+          onKeyDown={(event) =>
+            handleTablistKey(event, TAB_ORDER, tab, select, tabId)
+          }
+        >
+          {TAB_ORDER.map((id) => (
+            <button
+              key={id}
+              id={tabId(id)}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              // Only the selected panel is rendered.
+              aria-controls={tab === id ? `agents-panel-${id}` : undefined}
+              tabIndex={tab === id ? 0 : -1}
+              onClick={() => select(id)}
+            >
+              {text.tabs[id]}
+            </button>
+          ))}
+        </div>
       </div>
       <div
         role="tabpanel"
         id={`agents-panel-${tab}`}
-        aria-labelledby={`agents-tab-${tab}`}
+        aria-labelledby={tabId(tab)}
         onClickCapture={rememberControl}
         onKeyDownCapture={rememberControl}
       >
@@ -169,38 +212,28 @@ export function AgentsPage({
           )
         ) : (
           <div className="tap-module tap-team-panel">
-            <header className="tap-module-heading tap-team-panel-heading">
-              <div>
-                <h1>{text.heading}</h1>
-                <p>{text.descriptions[tab]}</p>
-              </div>
-            </header>
             {tab === "report" ? (
-              <ReportTab projectId={projectId} copy={copy} />
-            ) : (
               <>
-                <PeriodPicker
-                  copy={copy}
-                  value={selection}
-                  onChange={setSelection}
-                />
-                {rangeInvalid ? null : tab === "team" ? (
-                  <TeamTab
-                    projectId={projectId}
-                    copy={copy}
-                    period={period}
-                    onOpenMember={openMember}
-                    onCreateAgent={() => select("config")}
-                  />
-                ) : (
-                  <MyAgentsTab
-                    projectId={projectId}
-                    copy={copy}
-                    period={period}
-                    onOpenMember={openMember}
-                  />
-                )}
+                {heading(null)}
+                <ReportTab projectId={projectId} copy={copy} />
               </>
+            ) : tab === "team" ? (
+              <TeamTab
+                projectId={projectId}
+                copy={copy}
+                period={period}
+                renderHeader={withPicker}
+                onOpenMember={openMember}
+                onCreateAgent={() => select("config")}
+              />
+            ) : (
+              <MyAgentsTab
+                projectId={projectId}
+                copy={copy}
+                period={period}
+                renderHeader={withPicker}
+                onOpenMember={openMember}
+              />
             )}
           </div>
         )}
@@ -212,6 +245,7 @@ export function AgentsPage({
           period={period}
           copy={copy}
           opener={profileOpener}
+          initialTab={profileTab}
           onClose={() => setProfileKey(null)}
           onViewConfig={viewConfig}
         />

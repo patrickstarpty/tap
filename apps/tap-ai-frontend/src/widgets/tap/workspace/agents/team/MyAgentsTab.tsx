@@ -4,17 +4,26 @@ import {
   type TeamPeriod,
 } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
-import { formatDateTime, teamLocale } from "./format";
+import type { ProfileTab } from "./AgentProfileDrawer";
+import { Avatar } from "./avatar";
+import { EMPTY, formatDateTime, teamLocale } from "./format";
+import {
+  LoadError,
+  TeamSkeleton,
+  defaultHeader,
+  type RenderHeader,
+} from "./layout";
 import type { CellContext } from "./memberCells";
 import { RosterCards } from "./RosterCards";
-import { RuntimeBadge } from "./RuntimeBadge";
+import { RuntimeBadge, RuntimeMark } from "./RuntimeBadge";
 import { useSparklines } from "./useSparklines";
 
 export interface MyAgentsTabProps {
   projectId: string;
   copy: WorkspaceCopy;
   period: TeamPeriod;
-  onOpenMember: (agentKey: string) => void;
+  onOpenMember: (agentKey: string, tab?: ProfileTab) => void;
+  renderHeader?: RenderHeader;
 }
 
 type PendingItem = AgentTeamPersonView["data"]["pendingFeedback"][number];
@@ -24,20 +33,25 @@ export function MyAgentsTab({
   copy,
   period,
   onOpenMember,
+  renderHeader = defaultHeader,
 }: MyAgentsTabProps) {
   const text = copy.agentTeam;
   const labels = text.mine;
   const person = usePerson(projectId, "me", period);
   const { byAgentKey: sparklines } = useSparklines(projectId);
 
-  if (person.isPending) return <p role="status">{text.loading}</p>;
+  if (person.isPending)
+    return (
+      <div className="tap-team-tab">
+        {renderHeader(null)}
+        <TeamSkeleton copy={copy} kpis={false} />
+      </div>
+    );
   if (person.isError || person.data === undefined)
     return (
-      <div role="alert">
-        <p>{text.loadFailed}</p>
-        <button type="button" onClick={() => void person.refetch()}>
-          {text.retry}
-        </button>
+      <div className="tap-team-tab">
+        {renderHeader(null)}
+        <LoadError copy={copy} onRetry={() => void person.refetch()} />
       </div>
     );
 
@@ -62,41 +76,82 @@ export function MyAgentsTab({
 
   return (
     <div className="tap-team-tab">
-      <RuntimeBadge
-        status={view.runtimeStatus}
-        computedAt={view.computedAt}
-        timezone={view.timezone}
-        copy={copy}
-      />
+      {renderHeader(
+        <RuntimeBadge
+          status={view.runtimeStatus}
+          computedAt={view.computedAt}
+          timezone={view.timezone}
+          copy={copy}
+        />,
+      )}
       <section
-        className="tap-team-section"
+        className="tap-team-section tap-team-section--first"
         aria-labelledby="my-agents-feedback"
       >
-        <h3 id="my-agents-feedback">{text.pendingFeedbackMine}</h3>
+        <div className="tap-team-section-head">
+          <h3 id="my-agents-feedback">{text.pendingFeedbackMine}</h3>
+          {pendingFeedback.length === 0 ? null : (
+            <span className="tap-team-section-count" data-tone="accent">
+              {pendingFeedback.length}
+            </span>
+          )}
+        </div>
         {pendingFeedback.length === 0 ? (
-          <p className="tap-team-empty">{labels.noFeedback}</p>
+          <p className="tap-team-empty tap-team-empty--quiet">
+            {labels.noFeedback}
+          </p>
         ) : (
-          <ul className="tap-team-feedback">
-            {pendingFeedback.map((item) => (
-              <li key={item.feedbackId}>
-                <button
-                  type="button"
-                  onClick={() => onOpenMember(item.agentKey)}
-                >
-                  {names.get(item.agentKey) ?? item.agentKey}
-                  {" · "}
-                  {rating(item)}
-                  {" · "}
-                  {formatDateTime(item.updatedAt, view.timezone, locale)}
-                </button>
-                {item.comment ? <p>{item.comment}</p> : null}
-              </li>
-            ))}
+          <ul className="tap-team-feedback-list">
+            {pendingFeedback.map((item) => {
+              const name = names.get(item.agentKey) ?? item.agentKey;
+              return (
+                <li key={item.feedbackId}>
+                  <button
+                    type="button"
+                    className="tap-team-feedback-card"
+                    onClick={() => onOpenMember(item.agentKey, "feedback")}
+                  >
+                    <Avatar name={name} size="sm" />
+                    <span className="tap-team-feedback-main">
+                      <span className="tap-team-feedback-head">
+                        <strong>{name}</strong>
+                        <span
+                          className="tap-team-rating"
+                          data-rating={item.rating ?? "none"}
+                        >
+                          {rating(item)}
+                        </span>
+                        <time dateTime={item.updatedAt}>
+                          {formatDateTime(
+                            item.updatedAt,
+                            view.timezone,
+                            locale,
+                          )}
+                        </time>
+                      </span>
+                      {item.comment ? (
+                        <span className="tap-team-feedback-comment">
+                          {item.comment}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="tap-team-feedback-go" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
       <section className="tap-team-section" aria-labelledby="my-agents-owned">
-        <h3 id="my-agents-owned">{labels.ownedHeading}</h3>
+        <div className="tap-team-section-head">
+          <h3 id="my-agents-owned">{labels.ownedHeading}</h3>
+          {owned.length === 0 ? null : (
+            <span className="tap-team-section-count">{owned.length}</span>
+          )}
+        </div>
         {owned.length === 0 ? (
           <p className="tap-team-empty">{labels.noOwned}</p>
         ) : (
@@ -109,9 +164,24 @@ export function MyAgentsTab({
         )}
       </section>
       <section className="tap-team-section" aria-labelledby="my-agents-served">
-        <h3 id="my-agents-served">{labels.servedHeading}</h3>
+        <div className="tap-team-section-head">
+          <h3 id="my-agents-served">{labels.servedHeading}</h3>
+          {served.length === 0 ? null : (
+            <span className="tap-team-section-count">{served.length}</span>
+          )}
+        </div>
         {served.length === 0 ? (
-          <p className="tap-team-empty">{labels.noServed}</p>
+          <p className="tap-team-empty">
+            {view.runtimeStatus === "unavailable" ? (
+              // Who was served comes from run data: unknown, not nobody.
+              <>
+                {EMPTY}
+                <RuntimeMark status="unavailable" copy={copy} />
+              </>
+            ) : (
+              labels.noServed
+            )}
+          </p>
         ) : (
           <RosterCards
             rows={served}

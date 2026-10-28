@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  usePerson,
   useTeamMember,
   useTeamMembers,
   useOrgChart,
@@ -23,6 +24,7 @@ vi.mock(
     return {
       ...actual,
       useTeamSummary: vi.fn(),
+      usePerson: vi.fn(),
       useTeamMember: vi.fn(),
       useTeamMembers: vi.fn(),
       useTeamPeople: vi.fn(),
@@ -40,6 +42,12 @@ function mockSummary(runtimeStatus: "ok" | "unavailable" = "ok") {
     period: { from: "2026-09-24", to: "2026-10-23" },
     granularity: "day",
   };
+  vi.mocked(usePerson).mockReturnValue({
+    isPending: true,
+    isError: false,
+    refetch: vi.fn(),
+    data: undefined,
+  } as never);
   vi.mocked(useTeamReport).mockReturnValue({
     isPending: true,
     isError: false,
@@ -192,6 +200,41 @@ describe("AgentsPage", () => {
     expect(window.location.search).toContain("agentsTab=config");
   });
 
+  it("moves between tabs with the arrow, Home and End keys", async () => {
+    mockSummary();
+    render(
+      <AgentsPage
+        projectId="p1"
+        copy={WORKSPACE_COPY.en}
+        configTab={<p>config content</p>}
+      />,
+    );
+    const team = screen.getByRole("tab", { name: "Team" });
+    expect(team).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tab", { name: "Report" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
+    // Only the rendered panel is referenced.
+    expect(team.getAttribute("aria-controls")).toBe(
+      screen.getByRole("tabpanel").id,
+    );
+    expect(
+      screen.getByRole("tab", { name: "Report" }).hasAttribute("aria-controls"),
+    ).toBe(false);
+    team.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    const report = screen.getByRole("tab", { name: "Report" });
+    expect(report).toHaveFocus();
+    expect(report).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "My Agents" })).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "Configuration" })).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByText("config content")).toBeVisible();
+  });
+
   it("restores the tab from the URL", () => {
     mockSummary();
     window.history.replaceState(null, "", "/?agentsTab=report");
@@ -279,7 +322,12 @@ describe("AgentsPage", () => {
     expect(
       screen.getByText("Start date must be on or before end date"),
     ).toBeVisible();
-    expect(useTeamSummary).not.toHaveBeenCalled();
+    // No request for the inverted range; the last valid view stays.
+    const periods = vi
+      .mocked(useTeamSummary)
+      .mock.calls.map((call) => (call[1] as { from: string }).from);
+    expect(periods).not.toContain("2099-01-01");
+    expect(screen.getByText("Agents", { selector: "dt" })).toBeVisible();
   });
 
   it("heads each analytics panel like the Configuration tab", async () => {
@@ -348,5 +396,7 @@ describe("AgentsPage", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(received).toContain("rev-7");
     expect(window.location.search).toContain("agentsTab=config");
+    // The opener card is gone; focus lands on the Configuration tab.
+    expect(screen.getByRole("tab", { name: "Configuration" })).toHaveFocus();
   });
 });

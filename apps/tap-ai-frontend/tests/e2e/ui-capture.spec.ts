@@ -1137,7 +1137,7 @@ test("captures My Agents", async ({ page }) => {
 test("captures the Agent team report", async ({ page }) => {
   await openAgentTeam(page, "Report");
   await expect(
-    page.getByRole("link", { name: "Export CSV", exact: true }),
+    page.getByRole("button", { name: "Export CSV", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Loading team data...")).toHaveCount(0);
   await captureTeam(page, "09-agent-team-report");
