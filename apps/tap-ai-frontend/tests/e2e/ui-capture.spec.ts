@@ -138,7 +138,7 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto("/");
   await expect(
-    page.getByRole("img", { name: "TAP AI", exact: true }),
+    page.getByRole("img", { name: "TAP platform", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", {
@@ -1090,9 +1090,13 @@ async function openAgentTeam(page: Page, tab: string) {
 
 test("captures the Agent team cards", async ({ page }) => {
   await openAgentTeam(page, "Team");
+  // The leaderboard table is the default roster view; cards are one toggle away.
+  await page.getByRole("button", { name: "Cards", exact: true }).click();
+  // The trend legend also lists Agents; the roster is the card list.
   const roster = page
     .getByRole("list")
-    .filter({ hasText: "Claims intake reviewer" });
+    .filter({ hasText: "Claims intake reviewer" })
+    .filter({ hasText: "Disabled" });
   await expect(
     roster.getByText("Life Underwriting Analyst", { exact: true }),
   ).toBeVisible();

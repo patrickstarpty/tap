@@ -1,11 +1,18 @@
 import type { AgentTeamMemberRow } from "../../../../../features/knowledge/api/agentTeam";
 import { Avatar } from "./avatar";
-import { formatCount, formatDateTime } from "./format";
 import { Sparkline } from "./charts";
 import {
+  formatCost,
+  formatCount,
+  formatDuration,
+  memberDisplayName,
+} from "./format";
+import {
+  RelativeTime,
   RunValue,
-  SatisfactionValue,
-  StatusValue,
+  SatisfactionMeter,
+  ServedStack,
+  StatusPill,
   ownerName,
   type CellContext,
 } from "./memberCells";
@@ -17,8 +24,9 @@ export interface RosterCardsProps {
   onOpenMember: (agentKey: string) => void;
 }
 
-/** Employee-badge cards. The name button stretches over the whole card, so
- * the card is one click/focus target without nesting interactive elements. */
+/** Compact Agent cards with the leaderboard's numbers. The name button
+ * stretches over the whole card, so the card is one click/focus target
+ * without nesting interactive elements. */
 export function RosterCards({
   rows,
   ctx,
@@ -33,117 +41,125 @@ export function RosterCards({
     value === null ? null : formatCount(value, ctx.locale);
   return (
     <ul className="tap-team-cards">
-      {rows.map((row) => {
-        const lastRun =
-          row.lastRunAt === null
-            ? null
-            : formatDateTime(row.lastRunAt, ctx.timezone, ctx.locale);
-        return (
-          <li
-            key={row.agentKey}
-            className="tap-team-card"
-            data-status={row.status ?? "unknown"}
-          >
-            <div className="tap-team-card-head">
-              <Avatar name={row.name} />
-              <div className="tap-team-card-id">
-                <button
-                  type="button"
-                  className="tap-team-card-name"
-                  onClick={() => onOpenMember(row.agentKey)}
-                >
-                  {row.name}
-                </button>
-                <p data-empty={row.jobTitle === null ? "true" : undefined}>
-                  {row.jobTitle ?? labels.noJobTitle}
-                </p>
-              </div>
-              <dl className="tap-team-card-status">
-                <dt className="tap-team-sr-only">{labels.columns.status}</dt>
-                <dd>
-                  <StatusValue row={row} ctx={ctx} />
-                </dd>
-              </dl>
+      {rows.map((row) => (
+        <li
+          key={row.agentKey}
+          className="tap-team-card"
+          data-status={row.status ?? "unknown"}
+        >
+          <div className="tap-team-card-head">
+            <Avatar name={memberDisplayName(row, text)} />
+            <div className="tap-team-card-id">
+              <button
+                type="button"
+                className="tap-team-card-name"
+                onClick={() => onOpenMember(row.agentKey)}
+              >
+                {memberDisplayName(row, text)}
+              </button>
+              <p data-empty={row.jobTitle === null ? "true" : undefined}>
+                {row.jobTitle ?? labels.noJobTitle}
+              </p>
             </div>
-            <dl className="tap-team-card-meta">
-              <div>
-                <dt>{labels.ownerLabel}</dt>
-                <dd>{ownerName(row, ctx.copy)}</dd>
-              </div>
-              <div>
-                <dt>{labels.topServed}</dt>
-                <dd>
-                  {row.topServed.length === 0 ? (
-                    ctx.runtimeStatus === "unavailable" ? (
-                      <RunValue value={null} ctx={ctx} />
-                    ) : (
-                      labels.noServed
-                    )
-                  ) : (
-                    row.topServed
-                      .slice(0, 3)
-                      .map((served) => served.actorId)
-                      .join(", ")
-                  )}
-                </dd>
-              </div>
+            <dl className="tap-team-card-status">
+              <dt className="tap-team-sr-only">{labels.columns.status}</dt>
+              <dd>
+                <StatusPill row={row} ctx={ctx} />
+              </dd>
             </dl>
-            {/* The sparkline is always the last 30 days, whatever period the
-                stats below cover; the caption says so. */}
+          </div>
+          <div className="tap-team-card-hero">
+            <dl>
+              <dt>{labels.runsInPeriod}</dt>
+              <dd>
+                <RunValue value={count(row.runs)} ctx={ctx} />
+              </dd>
+            </dl>
+            {/* The sparkline is always the last 30 days, whatever period
+                the numbers cover; the caption says so. */}
             <div className="tap-team-card-spark">
-              <small className="tap-team-sparkline-caption">
-                {labels.sparklineCaption}
-              </small>
               {row.runs === null ? (
                 <span className="tap-team-sparkline-empty" aria-hidden="true" />
               ) : (
                 <Sparkline
                   points={sparklineByAgentKey.get(row.agentKey) ?? []}
-                  label={`${row.name} ${labels.runsTrend}`}
+                  label={`${memberDisplayName(row, text)} ${labels.runsTrend}`}
+                  height={34}
                 />
               )}
+              <small className="tap-team-sparkline-caption">
+                {labels.sparklineCaption}
+              </small>
             </div>
-            <dl className="tap-team-card-stats">
-              <div>
-                <dt>{labels.runsInPeriod}</dt>
-                <dd>
-                  <RunValue value={count(row.runs)} ctx={ctx} />
-                </dd>
-              </div>
-              <div>
-                <dt>{labels.columns.satisfaction}</dt>
-                <dd>
-                  <SatisfactionValue row={row} ctx={ctx} />
-                </dd>
-              </div>
-              <div>
-                <dt>{labels.columns.served}</dt>
-                <dd>
-                  <RunValue value={count(row.servedCount)} ctx={ctx} />
-                </dd>
-              </div>
-            </dl>
-            <dl className="tap-team-card-foot">
-              <div>
-                <dt>{labels.lastRun}</dt>
-                <dd>
-                  <RunValue value={lastRun} ctx={ctx} />
-                </dd>
-              </div>
-              <div>
-                <dt>{labels.lastMaintenance}</dt>
-                <dd>
-                  {formatDateTime(
-                    row.lastMaintenanceAt,
-                    ctx.timezone,
-                    ctx.locale,
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </li>
-        );
-      })}
+          </div>
+          <dl className="tap-team-card-stats">
+            <div>
+              <dt>{labels.columns.satisfaction}</dt>
+              <dd>
+                <SatisfactionMeter row={row} ctx={ctx} />
+              </dd>
+            </div>
+            <div>
+              <dt>{labels.columns.latencyP50}</dt>
+              <dd>
+                <RunValue
+                  value={
+                    row.latencyP50Ms === null
+                      ? null
+                      : formatDuration(
+                          row.latencyP50Ms,
+                          ctx.locale,
+                          text.durationUnits,
+                        )
+                  }
+                  ctx={ctx}
+                />
+              </dd>
+            </div>
+            <div>
+              <dt>{labels.columns.cost}</dt>
+              <dd>
+                <RunValue
+                  value={
+                    row.costUsd === null
+                      ? null
+                      : formatCost(row.costUsd, ctx.locale)
+                  }
+                  ctx={ctx}
+                />
+              </dd>
+            </div>
+          </dl>
+          <dl className="tap-team-card-meta">
+            <div>
+              <dt>{labels.ownerLabel}</dt>
+              <dd>{ownerName(row, ctx.copy)}</dd>
+            </div>
+            <div>
+              <dt>{labels.topServed}</dt>
+              <dd>
+                <ServedStack row={row} ctx={ctx} />
+              </dd>
+            </div>
+            <div>
+              <dt>{labels.lastRun}</dt>
+              <dd>
+                <RelativeTime value={row.lastRunAt} ctx={ctx} />
+              </dd>
+            </div>
+            <div>
+              <dt>{labels.lastMaintenance}</dt>
+              <dd>
+                <RelativeTime
+                  value={row.lastMaintenanceAt}
+                  ctx={ctx}
+                  runDerived={false}
+                />
+              </dd>
+            </div>
+          </dl>
+        </li>
+      ))}
     </ul>
   );
 }

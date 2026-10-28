@@ -17,7 +17,7 @@ export function Avatar({
   size = "md",
 }: {
   name: string;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
 }) {
   return (
     <span

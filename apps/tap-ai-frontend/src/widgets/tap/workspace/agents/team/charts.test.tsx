@@ -95,7 +95,7 @@ describe("TrendChart", () => {
     expect(screen.queryByText(/Runs: /)).toBeNull();
   });
 
-  it("labels the y-axis maximum with the unit and legends several series", () => {
+  it("rounds the y-axis to clean ticks, labels the top with the unit and legends several series", () => {
     render(
       <TrendChart
         unit="times"
@@ -112,7 +112,10 @@ describe("TrendChart", () => {
         hint="Use arrows"
       />,
     );
-    expect(screen.getByText("59 times")).toBeInTheDocument();
+    // 59 rounds up to a clean 60 with 20-step gridlines.
+    expect(screen.getByText("60 times")).toBeInTheDocument();
+    expect(screen.getByText("40")).toBeInTheDocument();
+    expect(screen.getByText("20")).toBeInTheDocument();
     const chart = screen.getByRole("group", { name: /Runs/ });
     expect(chart).toHaveAttribute("aria-roledescription", "chart");
     expect(chart).toHaveAttribute("aria-description", "Use arrows");
@@ -142,12 +145,46 @@ describe("TrendChart", () => {
         ]}
       />,
     );
-    expect(screen.getByText("12", { selector: "div" })).toBeInTheDocument();
+    // 12 rounds up to a clean 15; the top tick is the bare number.
+    expect(screen.getByText("15").textContent).toBe("15");
     expect(screen.getByRole("group")).toHaveAccessibleName("Runs");
   });
 
   it("does not throw without data", () => {
     render(<TrendChart unit="times" series={[]} />);
     expect(screen.queryAllByTestId("trend-hit")).toHaveLength(0);
+  });
+
+  it("draws a tooltip card listing every series at the hovered bucket", () => {
+    const { container } = render(
+      <TrendChart
+        unit="times"
+        series={[
+          {
+            label: "Runs",
+            points: [
+              { bucket: "2026-10-01", label: "Oct 1", value: 2 },
+              { bucket: "2026-10-02", label: "Oct 2", value: 7 },
+            ],
+          },
+          { label: "Failures", points: [{ bucket: "2026-10-02", value: 1 }] },
+        ]}
+      />,
+    );
+    fireEvent.mouseEnter(screen.getAllByTestId("trend-hit")[1]);
+    const tooltip = container.querySelector(".tap-chart-tooltip")!;
+    expect(tooltip).toHaveAttribute("aria-hidden", "true");
+    expect(tooltip).toHaveTextContent("Oct 2");
+    expect(tooltip).toHaveTextContent("Runs7 times");
+    expect(tooltip).toHaveTextContent("Failures1 times");
+    expect(container.querySelector(".tap-chart-crosshair")).not.toBeNull();
+    expect(container.querySelectorAll(".tap-chart-dot")).toHaveLength(2);
+  });
+});
+
+describe("Sparkline end dot", () => {
+  it("marks the latest point", () => {
+    const { container } = render(<Sparkline points={[1, 4]} label="x" />);
+    expect(container.querySelector(".tap-team-sparkline-dot")).not.toBeNull();
   });
 });

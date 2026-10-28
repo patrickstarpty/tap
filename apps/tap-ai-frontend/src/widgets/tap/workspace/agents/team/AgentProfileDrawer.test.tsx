@@ -1,9 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { WORKSPACE_COPY } from "../../copy";
+import { WORKSPACE_COPY, type WorkspaceCopy } from "../../copy";
 import { AgentProfileDrawer } from "./AgentProfileDrawer";
 
 const period = { from: "2026-09-24", to: "2026-10-23" };
@@ -141,6 +147,7 @@ function renderDrawer(
   server: Server,
   agentKey = "a1",
   initialTab?: "feedback",
+  drawerCopy: WorkspaceCopy = copy,
 ) {
   install(server);
   const onViewConfig = vi.fn();
@@ -153,7 +160,7 @@ function renderDrawer(
         projectId="p1"
         agentKey={agentKey}
         period={period}
-        copy={copy}
+        copy={drawerCopy}
         onClose={vi.fn()}
         onViewConfig={onViewConfig}
         initialTab={initialTab}
@@ -286,6 +293,35 @@ describe("AgentProfileDrawer", () => {
     await user.click(screen.getByRole("tab", { name: "履历" }));
     expect(await screen.findByText("暂无维护履历。")).toBeTruthy();
     expect(server.calls.some((c) => c.includes("/history"))).toBe(false);
+  });
+
+  it("names the Tapper default member by language in the header and dialog", async () => {
+    const server = () =>
+      newServer({
+        row: member({
+          agentKey: "tapper_default",
+          name: "Tapper 默认",
+          kind: "tapper_default",
+          ownerActorId: null,
+        }),
+      });
+    const en = renderDrawer(
+      server(),
+      "tapper_default",
+      undefined,
+      WORKSPACE_COPY.en,
+    );
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Tapper" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Tapper" })).toBeTruthy();
+    expect(en.onViewConfig).not.toHaveBeenCalled();
+    cleanup();
+    renderDrawer(server(), "tapper_default");
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Tapper 默认" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Tapper 默认" })).toBeTruthy();
   });
 
   it("resolves pending feedback of tapper_default", async () => {

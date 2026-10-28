@@ -1,3 +1,4 @@
+import type { AgentTeamMemberRow } from "../../../../../features/knowledge/api/agentTeam";
 import type { WorkspaceCopy } from "../../copy";
 
 export const EMPTY = "—";
@@ -5,6 +6,17 @@ export const EMPTY = "—";
 /** The codebase derives language from copy text; keep that check in one place. */
 export function teamLocale(copy: WorkspaceCopy): "en" | "zh-CN" {
   return copy.agentTeam.heading === "Agent team" ? "en" : "zh-CN";
+}
+
+/** The name a member is shown under. The server sends the Tapper default
+ * member with one fixed-language name, so it is localised here. */
+export function memberDisplayName(
+  member: Pick<AgentTeamMemberRow, "kind" | "name">,
+  text: WorkspaceCopy["agentTeam"],
+): string {
+  return member.kind === "tapper_default"
+    ? text.tapperDefaultName
+    : member.name;
 }
 
 export function formatCount(
@@ -132,4 +144,55 @@ export function formatDate(
   } catch {
     return value;
   }
+}
+
+/** "3 minutes ago" / "3 分钟前"; the absolute time belongs in a tooltip. */
+export function formatRelative(
+  value: string | null | undefined,
+  locale: string,
+  now: number = Date.now(),
+): string {
+  if (value === null || value === undefined) return EMPTY;
+  const then = Date.parse(value);
+  if (Number.isNaN(then)) return EMPTY;
+  const seconds = Math.round((then - now) / 1000);
+  const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const abs = Math.abs(seconds);
+  if (abs < 45) return format.format(0, "second");
+  if (abs < 3600) return format.format(Math.round(seconds / 60), "minute");
+  if (abs < 86_400) return format.format(Math.round(seconds / 3600), "hour");
+  if (abs < 30 * 86_400)
+    return format.format(Math.round(seconds / 86_400), "day");
+  if (abs < 365 * 86_400)
+    return format.format(Math.round(seconds / (30 * 86_400)), "month");
+  return format.format(Math.round(seconds / (365 * 86_400)), "year");
+}
+
+/** Axis ticks and other tight spots: 1.2K / 1.2万. */
+export function formatCompact(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+/** A bucket key (YYYY-MM-DD) as a short axis label, e.g. 10/12. */
+export function formatShortDate(key: string, locale: string): string {
+  const ms = Date.parse(`${key}T00:00:00Z`);
+  if (Number.isNaN(ms)) return key;
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: "UTC",
+    month: "numeric",
+    day: "numeric",
+  }).format(ms);
+}
+
+/** Short weekday for a bucket key, e.g. 周一 / Mon. */
+export function formatWeekday(key: string, locale: string): string {
+  const ms = Date.parse(`${key}T00:00:00Z`);
+  if (Number.isNaN(ms)) return "";
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: "UTC",
+    weekday: "short",
+  }).format(ms);
 }

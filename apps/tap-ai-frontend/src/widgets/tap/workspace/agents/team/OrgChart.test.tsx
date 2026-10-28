@@ -20,7 +20,8 @@ function setup(onOpen = vi.fn()) {
   const view = render(
     <OrgChart
       chart={chart}
-      agentNames={{ a1: "Reviewer" }}
+      agentStats={{ a1: { name: "Reviewer", runs: 1234, status: "active" } }}
+      personRuns={{ alice: 7, bob: null }}
       copy={copy}
       onOpenMember={onOpen}
     />,
@@ -37,7 +38,7 @@ describe("OrgChart", () => {
     expect(serves).toHaveLength(2);
     expect(owns[0]?.getAttribute("stroke-dasharray")).toBeNull();
     expect(serves[0]?.getAttribute("stroke-dasharray")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Tapper default" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tapper" })).toBeTruthy();
   });
 
   it("highlights a person's relations and toggles off", async () => {
@@ -70,7 +71,7 @@ describe("OrgChart", () => {
     expect(description("alice")).toBeNull();
     expect(description("bob")).toBe(dimmed);
     expect(description("Reviewer")).toBeNull();
-    expect(description("Tapper default")).toBe(dimmed);
+    expect(description("Tapper")).toBe(dimmed);
   });
 
   it("opens an agent from click and keyboard", async () => {
@@ -86,11 +87,30 @@ describe("OrgChart", () => {
     render(
       <OrgChart
         chart={{ people: [], agents: [], edges: [] }}
-        agentNames={{}}
+        agentStats={{}}
         copy={copy}
         onOpenMember={vi.fn()}
       />,
     );
     expect(screen.getByText(copy.agentTeam.team.orgChartEmpty)).toBeTruthy();
+  });
+
+  it("shows run counts and a status dot on each chip", () => {
+    const { container } = setup();
+    const reviewer = screen.getByRole("button", { name: "Reviewer" });
+    expect(reviewer).toHaveTextContent("1.2K");
+    expect(
+      reviewer.querySelector(".tap-org-status")?.getAttribute("data-status"),
+    ).toBe("active");
+    expect(screen.getByRole("button", { name: "alice" })).toHaveTextContent(
+      "7",
+    );
+    // Unknown counts are left out rather than shown as zero.
+    expect(
+      screen
+        .getByRole("button", { name: "bob" })
+        .querySelector(".tap-org-count"),
+    ).toBeNull();
+    expect(container.querySelectorAll(".tap-org-count")).toHaveLength(2);
   });
 });

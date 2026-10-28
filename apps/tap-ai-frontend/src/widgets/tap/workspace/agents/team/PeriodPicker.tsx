@@ -34,19 +34,28 @@ export function selectionInvalid(selection: PeriodSelection): boolean {
 export function useValidPeriod(selection: PeriodSelection): {
   period: TeamPeriod;
   invalid: boolean;
+  /** The preset that produced `period` (for the previous-period rule). */
+  preset: PeriodPreset;
 } {
   const candidate = useMemo(
     () => resolvePeriod(selection.preset, new Date(), selection.custom),
     [selection],
   );
   const invalid = selectionInvalid(selection);
-  const [lastValid, setLastValid] = useState(candidate);
+  const [lastValid, setLastValid] = useState({
+    period: candidate,
+    preset: selection.preset,
+  });
   if (
     !invalid &&
-    (lastValid.from !== candidate.from || lastValid.to !== candidate.to)
+    (lastValid.period.from !== candidate.from ||
+      lastValid.period.to !== candidate.to ||
+      lastValid.preset !== selection.preset)
   )
-    setLastValid(candidate);
-  return { period: invalid ? lastValid : candidate, invalid };
+    setLastValid({ period: candidate, preset: selection.preset });
+  return invalid
+    ? { period: lastValid.period, invalid, preset: lastValid.preset }
+    : { period: candidate, invalid, preset: selection.preset };
 }
 
 const PRESETS: PeriodPreset[] = [

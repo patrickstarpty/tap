@@ -873,3 +873,30 @@ button:focus-visible,
     justify-content: flex-start;
   }
 }
+
+/* Data visualisation tokens (Agent team analytics). Categorical slots are a
+   validated order: adjacent pairs clear the colour-blind separation target on
+   the white surface; text never wears them. "Other" is the de-emphasis grey. */
+:root {
+  --tap-series-1: #e87722;
+  --tap-series-2: #2a78d6;
+  --tap-series-3: #1baf7a;
+  --tap-series-4: #6250d6;
+  --tap-series-5: #e87ba4;
+  --tap-series-other: #b9bfba;
+  /* Sequential orange for magnitude (heatmap): light to dark, 0 = no runs. */
+  --tap-heat-0: #f1f0eb;
+  --tap-heat-1: #fde2c8;
+  --tap-heat-2: #f7b06f;
+  --tap-heat-3: #e87722;
+  --tap-heat-4: #a9470b;
+  /* Delta tints: better / worse / neutral against the previous period. */
+  --tap-good: #1f7a4d;
+  --tap-good-soft: #e7f4ec;
+  --tap-bad: #b23a33;
+  --tap-bad-soft: #fcebea;
+  --tap-grid: #eceee9;
+  --tap-shadow-card: 0 1px 2px rgb(35 43 43 / 4%), 0 1px 1px rgb(35 43 43 / 2%);
+  --tap-shadow-pop:
+    0 8px 24px -6px rgb(35 43 43 / 18%), 0 2px 6px rgb(35 43 43 / 6%);
+}

@@ -6,6 +6,7 @@ import {
   useOrgChart,
   useTeamMembers,
   useTeamPeople,
+  useTeamReport,
   useTeamSummary,
 } from "../../../../../features/knowledge/api/agentTeam";
 import { WORKSPACE_COPY } from "../../copy";
@@ -24,6 +25,7 @@ vi.mock(
       useTeamMembers: vi.fn(),
       useTeamPeople: vi.fn(),
       useOrgChart: vi.fn(),
+      useTeamReport: vi.fn(),
     };
   },
 );
@@ -111,27 +113,55 @@ function periodCalls() {
     .mock.calls.filter((call) => call[1] === period);
 }
 
+const SUMMARY = {
+  agentTotal: 4,
+  active: 2,
+  idle: 1,
+  ownersAvg: 1.5,
+  servedAvg: 2,
+  runs: 120,
+  latencyTotalMs: 3_600_000,
+  costUsd: "12.5",
+  maintenanceTotal: 7,
+};
+
+/** The report supplies the previous period behind the headline deltas. */
+function mockReport(previous: Record<string, unknown> = {}, extra = {}) {
+  vi.mocked(useTeamReport).mockReturnValue({
+    ...ready({
+      ...base,
+      data: {
+        current: { summary: SUMMARY, members: [], people: [] },
+        previous: {
+          summary: {
+            ...SUMMARY,
+            runs: 100,
+            costUsd: "10",
+            active: 2,
+            ...previous,
+          },
+          members: [],
+          people: [],
+        },
+        previousPeriod: { from: "2026-08-25", to: "2026-09-23" },
+      },
+    }),
+    isPlaceholderData: false,
+    ...extra,
+  } as never);
+}
+
 function setup(
   members: unknown[],
   runtimeStatus: "ok" | "syncing" | "unavailable" = "ok",
   summary: Record<string, unknown> = {},
 ) {
   const b = { ...base, runtimeStatus };
+  mockReport();
   vi.mocked(useTeamSummary).mockReturnValue(
     ready({
       ...b,
-      data: {
-        agentTotal: 4,
-        active: 2,
-        idle: 1,
-        ownersAvg: 1.5,
-        servedAvg: 2,
-        runs: 120,
-        latencyTotalMs: 3_600_000,
-        costUsd: "12.5",
-        maintenanceTotal: 7,
-        ...summary,
-      },
+      data: { ...SUMMARY, ...summary },
     }) as never,
   );
   vi.mocked(useTeamMembers).mockImplementation(((_id: string, per: unknown) =>
@@ -179,11 +209,17 @@ function renderTab(
       projectId="p1"
       copy={WORKSPACE_COPY[lang]}
       period={period}
+      preset="last30"
       onOpenMember={handlers.open ?? vi.fn()}
       onCreateAgent={handlers.create ?? vi.fn()}
     />,
   );
 }
+
+const showCards = (lang: "en" | "zh" = "zh") =>
+  userEvent.click(
+    screen.getByRole("button", { name: lang === "zh" ? "卡片" : "Cards" }),
+  );
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -191,7 +227,9 @@ describe("TeamTab", () => {
   it("shows the summary numbers and freshness line", () => {
     setup([row({})]);
     renderTab();
-    expect(screen.getByText("运行次数").nextSibling).toHaveTextContent("120");
+    expect(
+      screen.getByText("运行次数", { selector: "dt" }).nextSibling,
+    ).toHaveTextContent("120");
     expect(screen.getByText("Agent 数").nextSibling).toHaveTextContent("4");
     expect(
       screen.getByText("每位负责人管理 Agent 数").nextSibling,
@@ -200,21 +238,52 @@ describe("TeamTab", () => {
     expect(screen.getByText("数据更新于 08:00（UTC）")).toBeVisible();
   });
 
-  it("renders a member card with every field", () => {
+  it("renders a leaderboard row with every field", () => {
+    setup([row({ servedCount: 5 })]);
+    renderTab();
+    const tableRow = screen
+      .getByRole("button", { name: "Reviewer" })
+      .closest("tr")!;
+    expect(
+      within(tableRow).getByText("R", { selector: ".tap-team-avatar" }),
+    ).toBeVisible();
+    expect(within(tableRow).getByText("Test reviewer")).toBeVisible();
+    expect(within(tableRow).getByText("alice")).toBeVisible();
+    expect(
+      within(tableRow).getByText("活跃", { selector: ".tap-team-status-pill" }),
+    ).toBeVisible();
+    expect(within(tableRow).getByText("80%")).toBeVisible();
+    // First three people served as initials, then the rest as "+n".
+    expect(within(tableRow).getByText("u1, u2, u3")).toBeInTheDocument();
+    expect(within(tableRow).getByText("+2")).toBeVisible();
+    expect(
+      within(tableRow).getByRole("img", { name: /Reviewer/ }),
+    ).toBeVisible();
+    // Relative last run, the exact time on hover.
+    expect(within(tableRow).getByTitle("2026/10/22 10:30")).toBeVisible();
+    expect(tableRow).toHaveTextContent(/周期内运行\s*12(?!\d)/u);
+  });
+
+  it("renders a member card with every field", async () => {
     setup([row({})]);
     renderTab();
+    await showCards();
+    const card = screen
+      .getByRole("button", { name: "Reviewer" })
+      .closest("li") as HTMLElement;
     expect(
-      screen.getByText("R", { selector: ".tap-team-avatar" }),
+      within(card).getByText("R", { selector: ".tap-team-avatar" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
-    expect(screen.getByText("Test reviewer")).toBeVisible();
-    expect(screen.getByText("alice", { selector: "dd" })).toBeVisible();
-    expect(screen.getByText("活跃", { selector: "dd" })).toBeVisible();
-    expect(screen.getByRole("img", { name: /Reviewer/ })).toBeVisible();
-    expect(screen.getByText("80%")).toBeVisible();
-    expect(screen.getByText("u1, u2, u3")).toBeVisible();
-    expect(screen.getByText("2026/10/22 10:30")).toBeVisible();
-    expect(screen.getByText("2026/10/20 09:00")).toBeVisible();
+    expect(within(card).getByText("Test reviewer")).toBeVisible();
+    expect(within(card).getByText("alice", { selector: "dd" })).toBeVisible();
+    expect(
+      within(card).getByText("活跃", { selector: ".tap-team-status-pill" }),
+    ).toBeVisible();
+    expect(within(card).getByRole("img", { name: /Reviewer/ })).toBeVisible();
+    expect(within(card).getByText("80%")).toBeVisible();
+    expect(within(card).getByText("u1, u2, u3")).toBeInTheDocument();
+    expect(within(card).getByTitle("2026/10/22 10:30")).toBeVisible();
+    expect(within(card).getByTitle("2026/10/20 09:00")).toBeVisible();
   });
 
   it("labels the two averages by owner and by caller", () => {
@@ -234,16 +303,67 @@ describe("TeamTab", () => {
       }),
     ]);
     renderTab();
-    expect(screen.getByText("平台维护", { selector: "dd" })).toBeVisible();
+    expect(
+      screen.getByText("平台维护", { selector: ".tap-team-owner" }),
+    ).toBeVisible();
     expect(screen.getByText("样本不足")).toBeVisible();
   });
 
-  it("opens a member from its card", async () => {
+  it("opens a member from the leaderboard", async () => {
     setup([row({})]);
     const open = vi.fn();
     renderTab("zh", { open });
     await userEvent.click(screen.getByRole("button", { name: "Reviewer" }));
     expect(open).toHaveBeenCalledWith("a1");
+  });
+
+  it("shows the Tapper default member as Tapper on English screens", async () => {
+    const tapper = row({
+      agentKey: "tapper_default",
+      name: "Tapper 默认",
+      kind: "tapper_default",
+      ownerActorId: null,
+    });
+    setup([tapper]);
+    const open = vi.fn();
+    renderTab("en", { open });
+    expect(screen.queryByText("Tapper 默认")).toBeNull();
+    const tableRow = screen
+      .getByRole("button", { name: "Tapper" })
+      .closest("tr")!;
+    expect(
+      within(tableRow).getByText("T", { selector: ".tap-team-avatar" }),
+    ).toBeVisible();
+    expect(
+      within(tableRow).getByRole("img", { name: /^Tapper /u }),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Tapper" }));
+    expect(open).toHaveBeenCalledWith("tapper_default");
+    // The trend legend names the same member.
+    expect(
+      within(
+        screen.getByRole("list", { name: "Show or hide Agents" }),
+      ).getByRole("button", { name: /^Tapper \d/u }),
+    ).toBeVisible();
+    await showCards("en");
+    const card = screen
+      .getByRole("button", { name: "Tapper" })
+      .closest("li") as HTMLElement;
+    expect(within(card).getByRole("img", { name: /^Tapper /u })).toBeVisible();
+    expect(screen.queryByText("Tapper 默认")).toBeNull();
+  });
+
+  it("keeps the Tapper default member's Chinese name on Chinese screens", () => {
+    setup([
+      row({
+        agentKey: "tapper_default",
+        name: "Tapper 默认",
+        kind: "tapper_default",
+        ownerActorId: null,
+      }),
+    ]);
+    renderTab("zh");
+    expect(screen.getByRole("button", { name: "Tapper 默认" })).toBeVisible();
   });
 
   it("passes owner, status and kind filters to the request", async () => {
@@ -252,9 +372,18 @@ describe("TeamTab", () => {
       row({ agentKey: "a2", name: "Other", ownerActorId: "bob" }),
     ]);
     renderTab();
-    await userEvent.selectOptions(screen.getByLabelText("负责人"), "bob");
-    await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
-    await userEvent.selectOptions(screen.getByLabelText("类型"), "built_in");
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "负责人" }),
+      "bob",
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "状态" }),
+      "idle",
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "类型" }),
+      "built_in",
+    );
     const last = periodCalls().at(-1)!;
     expect(last[2]).toMatchObject({
       owner: "bob",
@@ -296,16 +425,20 @@ describe("TeamTab", () => {
       }) as never,
     );
     renderTab();
-    await userEvent.selectOptions(screen.getByLabelText("负责人"), "alice");
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "负责人" }),
+      "alice",
+    );
     expect(screen.getByRole("button", { name: "Other" })).toBeTruthy();
   });
 
-  it("switches to the table and sorts through request parameters", async () => {
+  it("sorts the leaderboard through request parameters", async () => {
     setup([row({})]);
     renderTab("en");
     const runsHeader = () =>
-      screen.getAllByText("Runs", { selector: ".ant-table-column-title" })[0];
-    await userEvent.click(screen.getByRole("button", { name: "Table" }));
+      screen.getAllByText("Runs in period", {
+        selector: ".ant-table-column-title",
+      })[0];
     await userEvent.click(runsHeader());
     expect(periodCalls().at(-1)![2]).toMatchObject({
       sort: "runs",
@@ -316,19 +449,33 @@ describe("TeamTab", () => {
       sort: "runs",
       order: "desc",
     });
-    await userEvent.click(
-      screen.getAllByText("Total latency", {
-        selector: ".ant-table-column-title",
-      })[0],
+    // Keys without a column sort from the menu, largest first for metrics.
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Sort" }),
+      "latency_total_ms",
     );
     expect(periodCalls().at(-1)![2]).toMatchObject({
       sort: "latency_total_ms",
+      order: "desc",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Descending" }));
+    expect(periodCalls().at(-1)![2]).toMatchObject({
+      sort: "latency_total_ms",
+      order: "asc",
     });
   });
 
-  it("sorts the people table by column", async () => {
+  it("ranks people by calls and sorts the details table by column", async () => {
     setup([row({})]);
     renderTab("en");
+    const ranking = screen
+      .getByText("bob", { selector: "strong" })
+      .closest("ol")!;
+    expect(
+      [...ranking.querySelectorAll("strong")].map((e) => e.textContent),
+    ).toEqual(["bob", "alice"]);
+    expect(within(ranking).getByText("Owns 3")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
     // A sideways-scrolling table with a pinned first column renders its
     // header twice (sticky header + body measure); read the body rows.
     const title = (text: string) =>
@@ -349,7 +496,7 @@ describe("TeamTab", () => {
     expect(names()).toEqual(["alice", "bob"]);
   });
 
-  it("keeps the roster and marks run data unavailable instead of zero", () => {
+  it("keeps the roster and marks run data unavailable instead of zero", async () => {
     setup(
       [
         row({
@@ -382,6 +529,7 @@ describe("TeamTab", () => {
         screen.getByText(label, { selector: "dt" }).nextSibling,
       ).toHaveTextContent("—");
     // Top served is unknown, not "none yet", during an outage.
+    await showCards();
     expect(
       screen.getByText("主要服务对象", { selector: ".tap-team-card dt" })
         .nextSibling,
@@ -391,7 +539,7 @@ describe("TeamTab", () => {
   it("keeps the filter focused and shows an inline indicator while the filtered query has no data", async () => {
     setup([row({})]);
     renderTab();
-    const select = screen.getByLabelText("负责人");
+    const select = screen.getByRole("combobox", { name: "负责人" });
     const initial = vi.mocked(useTeamMembers).getMockImplementation()!;
     // A changed filter is a new query key: no data at all until it answers.
     vi.mocked(useTeamMembers).mockImplementation(((...args: unknown[]) => {
@@ -402,10 +550,10 @@ describe("TeamTab", () => {
     }) as never);
     select.focus();
     await userEvent.selectOptions(select, "alice");
-    expect(screen.getByLabelText("负责人")).toBe(select);
+    expect(screen.getByRole("combobox", { name: "负责人" })).toBe(select);
     expect(select).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("正在加载团队数据…");
-    // The previous cards stay visible underneath the indicator.
+    // The previous rows stay visible underneath the indicator.
     expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
   });
 
@@ -416,36 +564,54 @@ describe("TeamTab", () => {
   });
 
   it.each([
-    ["Job title", "job_title"],
     ["Owner", "owner_actor_id"],
     ["Status", "status"],
-    ["Type", "kind"],
-  ])("sorts the roster table by %s through the request", async (title, key) => {
+  ])("sorts the leaderboard by %s through the request", async (title, key) => {
     setup([row({})]);
     renderTab("en");
-    await userEvent.click(screen.getByRole("button", { name: "Table" }));
     await userEvent.click(
       screen.getAllByText(title, { selector: ".ant-table-column-title" })[0],
     );
     expect(periodCalls().at(-1)![2]).toMatchObject({ sort: key, order: "asc" });
   });
 
-  it("draws the card sparkline from the last-30-days query", () => {
+  it.each([["job_title"], ["kind"]])(
+    "sorts by %s from the sort menu, A to Z first",
+    async (key) => {
+      setup([row({})]);
+      renderTab("en");
+      await userEvent.selectOptions(
+        screen.getByRole("combobox", { name: "Sort" }),
+        key,
+      );
+      expect(periodCalls().at(-1)![2]).toMatchObject({
+        sort: key,
+        order: "asc",
+      });
+    },
+  );
+
+  it("draws the 30-day trend from the last-30-days query", async () => {
     setup([row({})]);
     renderTab();
     const calls = vi.mocked(useTeamMembers).mock.calls;
     expect(calls.some((call) => call[1] !== period)).toBe(true);
     const spark = calls.find((call) => call[1] !== period)!;
     expect(spark[2]).toEqual({});
+    const points = () =>
+      screen
+        .getByRole("img", { name: /Reviewer.*近 30 天/ })
+        .querySelector("polyline")!
+        .getAttribute("points")!
+        .split(" ");
+    // One value per day of the 30-day window, empty days as zero.
+    expect(points()).toHaveLength(30);
+    await showCards();
     expect(screen.getByText("周期内运行", { selector: "dt" })).toBeVisible();
     expect(
       screen.getByText("12", { selector: ".tap-team-card dd" }),
     ).toBeVisible();
-    const polyline = screen
-      .getByRole("img", { name: /Reviewer.*近 30 天/ })
-      .querySelector("polyline")!;
-    // One value per day of the 30-day window, empty days as zero.
-    expect(polyline.getAttribute("points")!.split(" ")).toHaveLength(30);
+    expect(points()).toHaveLength(30);
   });
 
   it("says so when filters match no Agent", async () => {
@@ -458,13 +624,17 @@ describe("TeamTab", () => {
         ? ready({ ...base, data: [] })
         : (original as (...a: unknown[]) => unknown)(...args);
     }) as never);
-    await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "状态" }),
+      "idle",
+    );
     expect(screen.getByText("没有符合条件的 Agent")).toBeVisible();
   });
 
-  it("annotates syncing numbers but not a legitimately empty value", () => {
+  it("annotates syncing numbers but not a legitimately empty value", async () => {
     setup([row({ lastRunAt: null })], "syncing");
     renderTab();
+    await showCards();
     expect(
       screen.getByText("运行次数", { selector: "dt" }).nextSibling,
     ).toHaveTextContent("120运行数据同步中");
@@ -482,9 +652,10 @@ describe("TeamTab", () => {
     ).toHaveTextContent("—运行数据暂不可用");
   });
 
-  it("captions the card sparkline as the last 30 days", () => {
+  it("captions the card sparkline as the last 30 days", async () => {
     setup([row({})]);
     renderTab();
+    await showCards();
     expect(
       screen.getByText("近 30 天趋势", { selector: ".tap-team-card *" }),
     ).toBeVisible();
@@ -501,13 +672,19 @@ describe("TeamTab", () => {
         ? { isPending: false, isError: true, data: undefined, refetch }
         : (initial as (...a: unknown[]) => unknown)(...args);
     }) as never);
-    await userEvent.selectOptions(screen.getByLabelText("状态"), "idle");
-    expect(screen.getByLabelText("状态")).toHaveValue("idle");
-    expect(screen.getByLabelText("负责人")).toBeVisible();
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "状态" }),
+      "idle",
+    );
+    expect(screen.getByRole("combobox", { name: "状态" })).toHaveValue("idle");
+    expect(screen.getByRole("combobox", { name: "负责人" })).toBeVisible();
     const alert = screen.getByRole("alert");
     await userEvent.click(within(alert).getByRole("button", { name: "重试" }));
     expect(refetch).toHaveBeenCalled();
-    await userEvent.selectOptions(screen.getByLabelText("状态"), "");
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "状态" }),
+      "",
+    );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reviewer" })).toBeVisible();
   });
@@ -519,5 +696,65 @@ describe("TeamTab", () => {
     expect(screen.getByText("还没有 Agent，新建一个")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "新建 Agent" }));
     expect(create).toHaveBeenCalled();
+  });
+
+  it("compares the headline numbers with the previous period", () => {
+    setup([row({})]);
+    renderTab();
+    expect(vi.mocked(useTeamReport)).toHaveBeenCalledWith(
+      "p1",
+      period,
+      "last30",
+    );
+    const card = (label: string) =>
+      screen.getByText(label, { selector: "dt" }).nextSibling as HTMLElement;
+    // More runs is good news, more cost is not.
+    expect(card("运行次数")).toHaveTextContent("▲+20%");
+    expect(card("运行次数").querySelector(".tap-delta")).toHaveAttribute(
+      "data-tone",
+      "good",
+    );
+    expect(card("成本")).toHaveTextContent("▲+25%");
+    expect(card("成本").querySelector(".tap-delta")).toHaveAttribute(
+      "data-tone",
+      "bad",
+    );
+    expect(card("活跃")).toHaveTextContent("▬0%");
+  });
+
+  it("shows a dash when the previous period has no baseline", () => {
+    setup([row({})]);
+    mockReport({ runs: 0 });
+    renderTab();
+    const runs = screen.getByText("运行次数", { selector: "dt" })
+      .nextSibling as HTMLElement;
+    expect(runs.querySelector(".tap-delta")).toHaveTextContent(/^—$/);
+    expect(runs).toHaveTextContent("无可比基线");
+  });
+
+  it("shows no deltas until the report answers for this period", () => {
+    setup([row({})]);
+    mockReport({}, { isPlaceholderData: true });
+    renderTab();
+    expect(document.querySelector(".tap-delta")).toBeNull();
+  });
+
+  it("ranks Agents by runs and leaves Agents without runs unranked", () => {
+    setup([
+      row({ agentKey: "a1", name: "Busy", runs: 30 }),
+      row({ agentKey: "a2", name: "Tied", runs: 30 }),
+      row({ agentKey: "a3", name: "Quiet", runs: 5 }),
+      row({ agentKey: "a4", name: "Silent", runs: 0 }),
+    ]);
+    renderTab();
+    const rank = (name: string) =>
+      screen
+        .getByRole("button", { name })
+        .closest("tr")!
+        .querySelector(".tap-team-rank")!.textContent;
+    expect(rank("Busy")).toBe("排名 1");
+    expect(rank("Tied")).toBe("排名 1");
+    expect(rank("Quiet")).toBe("排名 3");
+    expect(rank("Silent")).toBe("排名 —");
   });
 });
