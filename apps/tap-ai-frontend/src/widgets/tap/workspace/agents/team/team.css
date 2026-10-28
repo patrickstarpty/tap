@@ -2797,13 +2797,12 @@
 }
 
 .tap-profile-tile-value {
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--tap-ink);
   font-size: 17px;
   font-weight: 600;
+  line-height: 1.2;
   letter-spacing: -0.015em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tap-profile-tile-value .tap-team-runtime-mark {
