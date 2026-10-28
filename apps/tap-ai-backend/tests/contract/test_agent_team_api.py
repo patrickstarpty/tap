@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -14,6 +16,7 @@ from tap.interfaces.http.dependencies import HttpServices
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
+from tap.modules.agent_team.adapters.mysql import _decode_history_cursor
 from tap.modules.agent_team.application.service import AgentTeamService
 from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, Period
 from tap.modules.agent_team.ports import (
@@ -126,6 +129,10 @@ class FakeStore:
         del agent_id, limit
         if cursor == "bad-cursor":
             raise HistoryCursorInvalid("bad cursor")
+        if cursor is not None:
+            # The real MySQL adapter's decoder, so crafted cursors exercise
+            # its validation end to end through the route's error mapping.
+            _decode_history_cursor(cursor)
         return HistoryPage(events=(), next_cursor=None)
 
     async def last_maintenance(self) -> dict[str, datetime]:
@@ -158,7 +165,7 @@ class FakeStore:
         return updated
 
     async def resolve_feedback(
-        self, feedback_id, actor_id, note, event_factory
+        self, feedback_id, actor_id, note, event_factory, *, now
     ) -> ResolvedFeedback:
         known = {item.feedback_id for item in self.pending}
         if feedback_id not in known and feedback_id not in self.resolved:
@@ -414,6 +421,33 @@ def test_resolve_feedback_returns_resolved_feedback() -> None:
     assert body["resolutionNote"] == "已跟进"
 
 
+def test_resolve_not_pending_feedback_returns_it_unchanged() -> None:
+    store = _seeded_store()
+    store.resolved["fb-up"] = ResolvedFeedback(
+        feedback_id="fb-up",
+        agent_key="agent-1",
+        turn_id="turn-up",
+        conversation_id="conv-1",
+        actor_id="caller-1",
+        rating="up",
+        comment=None,
+        updated_at=_NOW,
+        resolved_at=None,
+        resolved_by=None,
+        resolution_note=None,
+    )
+    client, store, _metrics = _app(store=store)
+
+    response = client.post(f"{BASE}/feedback/fb-up/resolve", json={"note": "ok"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["resolvedAt"] is None
+    assert body["resolvedBy"] is None
+    assert body["resolutionNote"] is None
+    assert store.events == []
+
+
 # -- errors (spec 5.1 / controller rulings) -------------------------------
 
 
@@ -486,6 +520,7 @@ def test_langfuse_down_returns_200_unavailable() -> None:
     assert body["data"]["runs"] is None
     assert body["data"]["latencyTotalMs"] is None
     assert body["data"]["costUsd"] is None
+    assert body["data"]["servedAvg"] is None
 
 
 def test_langfuse_down_leaves_member_run_fields_null() -> None:
@@ -523,6 +558,41 @@ def test_history_bad_cursor_returns_cursor_invalid() -> None:
     assert response.json()["code"] == "cursor_invalid"
 
 
+def _crafted_cursor(payload: object) -> str:
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"occurredAt": "2026-10-23T12:00:00.000000", "eventId": {"$gt": ""}},
+        {"occurredAt": "2026-10-23T12:00:00.000000", "eventId": 7},
+        {"occurredAt": "2026-10-23T12:00:00.000000+00:00", "eventId": "mevt-1"},
+        {"occurredAt": 1761220800, "eventId": "mevt-1"},
+        ["2026-10-23T12:00:00.000000", "mevt-1"],
+    ],
+)
+def test_history_crafted_cursor_returns_cursor_invalid(payload: object) -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(
+        f"{BASE}/agent-team/members/agent-1/history",
+        params={"cursor": _crafted_cursor(payload)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "cursor_invalid"
+
+
+def test_history_well_formed_cursor_is_accepted() -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+    cursor = _crafted_cursor({"occurredAt": "2026-10-23T12:00:00.000000", "eventId": "mevt-1"})
+
+    response = client.get(f"{BASE}/agent-team/members/agent-1/history", params={"cursor": cursor})
+
+    assert response.status_code == 200, response.text
+
+
 def test_history_empty_cursor_returns_cursor_invalid() -> None:
     client, _store, _metrics = _app(store=_seeded_store())
 
@@ -558,3 +628,61 @@ def test_get_person_me_resolves_to_the_caller() -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["person"]["actorId"] == VALIDATION_SCOPE.actor_id
+
+
+# -- review fixes -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("preset", "qs", "expected"),
+    [
+        ("last7", "from=2026-10-01&to=2026-10-07", {"from": "2026-09-24", "to": "2026-09-30"}),
+        ("last30", "from=2026-09-01&to=2026-09-30", {"from": "2026-08-02", "to": "2026-08-31"}),
+        ("custom", "from=2026-10-01&to=2026-10-07", {"from": "2026-09-24", "to": "2026-09-30"}),
+        (
+            "thisMonth",
+            "from=2026-03-01&to=2026-03-30",
+            {"from": "2026-02-01", "to": "2026-02-28"},
+        ),
+        (
+            "lastMonth",
+            "from=2026-09-01&to=2026-09-30",
+            {"from": "2026-08-01", "to": "2026-08-31"},
+        ),
+    ],
+)
+def test_report_previous_period_follows_preset(preset: str, qs: str, expected: dict) -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/report?{qs}&preset={preset}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["previousPeriod"] == expected
+
+
+def test_report_invalid_preset_returns_period_invalid() -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/report?{PERIOD_QS}&preset=bogus")
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "period_invalid"
+
+
+@pytest.mark.parametrize(
+    "qs",
+    [
+        "from=2026-10-01&to=9999-12-31",
+        "from=0001-01-05&to=2026-10-01",
+        "from=1999-12-31&to=2026-10-01",
+        "from=2026-10-01&to=2101-01-01",
+    ],
+)
+@pytest.mark.parametrize("path", ["summary", "report", "export"])
+def test_out_of_range_dates_return_period_invalid(qs: str, path: str) -> None:
+    client, _store, _metrics = _app(store=_seeded_store())
+
+    response = client.get(f"{BASE}/agent-team/{path}?{qs}")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "period_invalid"

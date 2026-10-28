@@ -1276,13 +1276,27 @@
             "title": "Resolutionnote"
           },
           "resolvedAt": {
-            "format": "date-time",
-            "title": "Resolvedat",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolvedat"
           },
           "resolvedBy": {
-            "title": "Resolvedby",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolvedby"
           },
           "turnId": {
             "title": "Turnid",
@@ -1400,8 +1414,15 @@
             "title": "Runs"
           },
           "servedAvg": {
-            "title": "Servedavg",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servedavg"
           }
         },
         "required": [
@@ -15225,6 +15246,31 @@
               "minLength": 1,
               "title": "Project Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Period selector that produced from/to; decides previousPeriod. Unknown values are rejected with 400 period_invalid.",
+            "in": "query",
+            "name": "preset",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Period selector that produced from/to; decides previousPeriod. Unknown values are rejected with 400 period_invalid.",
+              "enum": [
+                "last7",
+                "last30",
+                "thisMonth",
+                "lastMonth",
+                "custom"
+              ],
+              "title": "Preset"
             }
           },
           {

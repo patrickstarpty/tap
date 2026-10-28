@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import zipfile
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -253,8 +254,10 @@ def test_unavailable_runtime_leaves_columns_blank() -> None:
 
         trend_text = archive.read("trend.csv").decode("utf-8-sig")
         trend_lines = trend_text.splitlines()
-        assert trend_lines[0] == f"# granularity={_PERIOD.granularity}"
-        assert trend_lines[1] == "# runtime=unavailable"
+        # Spec 5.1: the marker is on the first line of all three files, so
+        # `trend.csv` folds it into its single granularity comment line.
+        assert trend_lines[0] == f"# granularity={_PERIOD.granularity}; runtime=unavailable"
+        assert not trend_lines[1].startswith("#")
 
 
 def test_chinese_names_round_trip() -> None:
@@ -328,4 +331,101 @@ def test_trend_first_bucket_start_is_clamped_to_period_start() -> None:
 
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         rows = archive.read("trend.csv").decode("utf-8-sig").splitlines()
-    assert rows[-1].startswith("2026-01-07,agent-1,")
+    assert rows[-1].startswith("2026-01-07,2026-01-11,agent-1,")
+
+
+def _trend_rows(period: Period, points: list[TrendPoint]) -> list[dict[str, str]]:
+    report = PeriodReport(summary=_summary(), members=(_member(),), people=(_person(),))
+    content = build_export(report, points, period=period, runtime_status="ok")
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        _, rows = _read_csv(archive, "trend.csv")
+    header = rows[0]
+    return [dict(zip(header, row, strict=True)) for row in rows[1:]]
+
+
+def _point(bucket_start: date) -> TrendPoint:
+    return TrendPoint(
+        bucket_start=bucket_start,
+        agent_key="agent-1",
+        runs=1,
+        failures=0,
+        latency_total_ms=1,
+        cost_usd=Decimal("0"),
+    )
+
+
+def test_trend_header_has_bucket_end_after_bucket_start() -> None:
+    rows = _trend_rows(_PERIOD, [_trend_point()])
+    assert list(rows[0])[:3] == ["bucket_start", "bucket_end", "agent_key"]
+
+
+def test_trend_day_bucket_end_equals_bucket_start() -> None:
+    rows = _trend_rows(_PERIOD, [_point(date(2026, 10, 5))])
+    assert (rows[0]["bucket_start"], rows[0]["bucket_end"]) == ("2026-10-05", "2026-10-05")
+
+
+def test_trend_week_bucket_end_is_inclusive_and_clamped_to_period_end() -> None:
+    period = Period(date(2026, 1, 7), date(2026, 6, 3))  # week buckets; Jun 3 is a Wednesday
+    rows = _trend_rows(
+        period, [_point(date(2026, 1, 5)), _point(date(2026, 3, 2)), _point(date(2026, 6, 1))]
+    )
+    spans = [(row["bucket_start"], row["bucket_end"]) for row in rows]
+    assert spans == [
+        ("2026-01-07", "2026-01-11"),  # truncated first week
+        ("2026-03-02", "2026-03-08"),  # full Monday-Sunday week
+        ("2026-06-01", "2026-06-03"),  # truncated last week
+    ]
+
+
+def test_trend_month_bucket_end_is_month_end_clamped_to_period_end() -> None:
+    period = Period(date(2024, 1, 15), date(2026, 2, 10))  # > 731 days -> month buckets
+    assert period.granularity == "month"
+    rows = _trend_rows(
+        period, [_point(date(2024, 1, 1)), _point(date(2024, 2, 1)), _point(date(2026, 2, 1))]
+    )
+    spans = [(row["bucket_start"], row["bucket_end"]) for row in rows]
+    assert spans == [
+        ("2024-01-15", "2024-01-31"),
+        ("2024-02-01", "2024-02-29"),  # leap year
+        ("2026-02-01", "2026-02-10"),
+    ]
+
+
+def test_text_cells_starting_with_formula_characters_are_neutralized() -> None:
+    member = _member(
+        name='=HYPERLINK("http://x","click")',
+        job_title="+cmd|calc",
+        owner_actor_id="@owner",
+    )
+    member = replace(member, top_served=(ServedActor(actor_id="-actor", runs=3),))
+    person = replace(_person(), actor_id="\tactor")
+    report = PeriodReport(summary=_summary(), members=(member,), people=(person,))
+    content = build_export(report, [], period=_PERIOD, runtime_status="ok")
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        _, rows = _read_csv(archive, "roster.csv")
+        header, row = rows[0], rows[1]
+        assert row[header.index("name")] == '\'=HYPERLINK("http://x","click")'
+        assert row[header.index("job_title")] == "'+cmd|calc"
+        assert row[header.index("owner_actor_id")] == "'@owner"
+        assert row[header.index("top_served")] == "'-actor:3"
+        # Numeric cells are untouched.
+        assert row[header.index("runs")] == "5"
+        assert row[header.index("cost_usd")] == "5.00"
+
+        _, people_rows = _read_csv(archive, "people.csv")
+        p_header, p_row = people_rows[0], people_rows[1]
+        assert p_row[p_header.index("actor_id")] == "'\tactor"
+
+
+def test_carriage_return_leading_text_cell_is_neutralized() -> None:
+    report = PeriodReport(
+        summary=_summary(), members=(_member(name="\r=1+1"),), people=(_person(),)
+    )
+    content = build_export(report, [], period=_PERIOD, runtime_status="ok")
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        roster_text = archive.read("roster.csv").decode("utf-8-sig")
+    rows = list(csv.reader(io.StringIO(roster_text)))
+    header, row = rows[0], rows[1]
+    assert row[header.index("name")] == "'\r=1+1"

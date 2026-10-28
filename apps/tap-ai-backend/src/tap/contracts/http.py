@@ -1925,7 +1925,7 @@ class AgentTeamSummary(ContractModel):
     active: int | None
     idle: int | None
     owners_avg: float
-    served_avg: float
+    served_avg: float | None
     runs: int | None
     latency_total_ms: int | None
     cost_usd: Decimal | None
@@ -1973,8 +1973,10 @@ class AgentTeamResolvedFeedback(ContractModel):
     rating: str | None
     comment: str | None
     updated_at: datetime
-    resolved_at: datetime
-    resolved_by: str
+    # Null when the feedback was not pending (plain thumbs-up or withdrawn)
+    # and was returned unchanged instead of resolved.
+    resolved_at: datetime | None
+    resolved_by: str | None
     resolution_note: str | None
 
 

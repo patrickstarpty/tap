@@ -91,3 +91,45 @@ def test_unresolvable_skill_ids_are_revised_not_upgraded():
     assert classify_revision(previous, current, {}) == "revised"
     assert classify_revision(previous, current, {"gone-1": "skill-1"}) == "revised"
     assert classify_revision(previous, current, {"gone-2": "skill-1"}) == "revised"
+
+
+def test_upgrade_with_reordered_bindings_is_skill_upgraded():
+    # The Agent form appends re-checked Skills, so upgrading A on [A1, B1]
+    # submits [B1, A2]: order is not part of the comparison.
+    previous = _revision(skill_revision_ids=("a1", "b1"))
+    current = _revision(revision_id="agent-rev-2", skill_revision_ids=("b1", "a2"))
+    skill_of = {"a1": "skill-a", "a2": "skill-a", "b1": "skill-b"}
+
+    assert classify_revision(previous, current, skill_of) == "skill_upgraded"
+
+
+def test_reordering_only_is_revised():
+    previous = _revision(skill_revision_ids=("a1", "b1"))
+    current = _revision(revision_id="agent-rev-2", skill_revision_ids=("b1", "a1"))
+    skill_of = {"a1": "skill-a", "b1": "skill-b"}
+
+    assert classify_revision(previous, current, skill_of) == "revised"
+
+
+def test_swapping_one_skill_for_another_is_revised():
+    previous = _revision(skill_revision_ids=("a1", "b1"))
+    current = _revision(revision_id="agent-rev-2", skill_revision_ids=("b1", "c1"))
+    skill_of = {"a1": "skill-a", "b1": "skill-b", "c1": "skill-c"}
+
+    assert classify_revision(previous, current, skill_of) == "revised"
+
+
+def test_removing_a_skill_while_upgrading_another_is_revised():
+    previous = _revision(skill_revision_ids=("a1", "b1"))
+    current = _revision(revision_id="agent-rev-2", skill_revision_ids=("a2",))
+    skill_of = {"a1": "skill-a", "a2": "skill-a", "b1": "skill-b"}
+
+    assert classify_revision(previous, current, skill_of) == "revised"
+
+
+def test_binding_two_revisions_of_the_same_skill_is_revised():
+    previous = _revision(skill_revision_ids=("a1", "b1"))
+    current = _revision(revision_id="agent-rev-2", skill_revision_ids=("a1", "a2"))
+    skill_of = {"a1": "skill-a", "a2": "skill-a", "b1": "skill-b"}
+
+    assert classify_revision(previous, current, skill_of) == "revised"

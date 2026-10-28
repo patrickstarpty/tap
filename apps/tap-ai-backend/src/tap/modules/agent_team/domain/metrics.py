@@ -63,11 +63,13 @@ def roster_agent_keys(
     store_agent_keys: Iterable[str],
     tapper_default_runs_in_period: int,
     tapper_default_runs_trailing_30d: int,
+    tapper_default_pending_feedback: int = 0,
     runtime_available: bool = True,
 ) -> frozenset[str]:
     """Spec 1.1: members are `store.agents()` plus `tapper_default` when it
-    ran in the selected period or the trailing 30 days; `unknown` never names
-    a roster member and is always dropped.
+    ran in the selected period or the trailing 30 days, or still has pending
+    feedback (otherwise that feedback would be unreachable); `unknown` never
+    names a roster member and is always dropped.
 
     When the runtime backend is unavailable (`runtime_available=False`),
     whether `tapper_default` ran cannot be known, so it is always included
@@ -77,6 +79,7 @@ def roster_agent_keys(
         not runtime_available
         or tapper_default_runs_in_period >= 1
         or tapper_default_runs_trailing_30d >= 1
+        or tapper_default_pending_feedback >= 1
     ):
         keys.add(TAPPER_DEFAULT_AGENT_KEY)
     return frozenset(keys)
@@ -211,7 +214,7 @@ def team_summary(
 
     Controller ruling (Task 9 review, fix round 1): `runs`/`latency_total_ms`/
     `cost_usd` are likewise `None` -- never `0`/`Decimal("0")` -- when
-    `runtime_available` is `False`.
+    `runtime_available` is `False`, and so is `served_avg` (review fix 4).
 
     Spec 2.6 (2026-10-27): `owners_avg` is Agents per owner (denominator:
     people owning at least one Agent) and `served_avg` is Agents used per
@@ -246,15 +249,16 @@ def team_summary(
         cost_usd = None
     owners = [row for row in person_rows if row.owned_agents > 0]
     owners_avg = sum(row.owned_agents for row in owners) / len(owners) if owners else 0.0
-    # `served_by_agents` is `None` on every `person_rows` entry exactly when
-    # `runtime_available` is `False` (same flag `build_person_row` used to
-    # build them); `owners_avg`/`served_avg` are not part of this ruling's
-    # `| None` widening (they stay plain `float`), so an outage's `None`s
-    # coalesce to `0` here rather than changing this field's type.
-    callers = [row for row in person_rows if (row.runs or 0) > 0]
-    served_avg = (
-        sum((row.served_by_agents or 0) for row in callers) / len(callers) if callers else 0.0
-    )
+    # `owners_avg` is a MySQL fact; `served_avg` needs Langfuse's callers and
+    # their run counts, which an outage makes unknown -> `None`, not `0`.
+    served_avg: float | None
+    if runtime_available:
+        callers = [row for row in person_rows if (row.runs or 0) > 0]
+        served_avg = (
+            sum((row.served_by_agents or 0) for row in callers) / len(callers) if callers else 0.0
+        )
+    else:
+        served_avg = None
     return TeamSummary(
         agent_total=agent_total,
         active=active,

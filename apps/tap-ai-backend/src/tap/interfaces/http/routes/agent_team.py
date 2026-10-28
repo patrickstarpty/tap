@@ -53,6 +53,7 @@ from tap.modules.agent_team.application.service import (
     TeamReport,
 )
 from tap.modules.agent_team.domain.models import (
+    PERIOD_PRESETS,
     AgentKind,
     MaintenanceEvent,
     MemberRow,
@@ -60,6 +61,7 @@ from tap.modules.agent_team.domain.models import (
     OrgChart,
     Period,
     PeriodInvalid,
+    PeriodPreset,
     PersonRow,
     TeamSummary,
     TeamView,
@@ -86,12 +88,23 @@ def _parse_period(from_: str, to: str) -> Period:
     try:
         start = date.fromisoformat(from_)
         end = date.fromisoformat(to)
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
         raise AgentTeamRejected("period_invalid", "from/to must be ISO dates") from exc
     try:
         return Period.parse(start, end)
     except PeriodInvalid as exc:
         raise AgentTeamRejected("period_invalid", str(exc)) from exc
+
+
+def _parse_preset(value: str | None) -> PeriodPreset | None:
+    """An unknown `preset` is a malformed period selector: 400
+    `period_invalid` (not FastAPI's generic 422)."""
+    if value is None:
+        return None
+    for preset in PERIOD_PRESETS:
+        if value == preset:
+            return preset
+    raise AgentTeamRejected("period_invalid", f"invalid preset {value!r}")
 
 
 def _closed_choice(value: str | None, allowed: tuple[str, ...], name: str) -> Any:
@@ -425,9 +438,21 @@ async def get_org_chart(
     responses=_ERROR_RESPONSES,
 )
 async def get_report(
-    request: Request, period: Period = Depends(_period_query)
+    request: Request,
+    period: Period = Depends(_period_query),
+    # The period selector the UI used; decides the previous period (spec
+    # 6.4). Absent -> inferred from the date shape. Plain `str` so an
+    # unknown value maps to 400 `period_invalid`, not 422.
+    preset: str | None = Query(
+        default=None,
+        description=(
+            "Period selector that produced from/to; decides previousPeriod. "
+            "Unknown values are rejected with 400 period_invalid."
+        ),
+        json_schema_extra={"enum": list(PERIOD_PRESETS)},
+    ),
 ) -> AgentTeamReportView:
-    view = await agent_team_service(request).report(period)
+    view = await agent_team_service(request).report(period, _parse_preset(preset))
     return AgentTeamReportView(**_envelope_kwargs(view), data=_team_report_dto(view.data))
 
 

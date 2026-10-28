@@ -125,6 +125,12 @@ def downgrade() -> None:
     op.drop_column("answer_feedback", "resolved_at")
 
     op.drop_constraint("fk_ai_agent_owner_actor", "ai_agent", type_="foreignkey")
+    # MySQL auto-created a backing index with the FK's name and keeps it after
+    # the FK is dropped; left behind, re-upgrading fails on "Duplicate key name".
+    if "fk_ai_agent_owner_actor" in {
+        index["name"] for index in sa.inspect(op.get_bind()).get_indexes("ai_agent")
+    }:
+        op.drop_index("fk_ai_agent_owner_actor", table_name="ai_agent")
     op.drop_column("ai_agent", "owner_assigned_at")
     op.drop_column("ai_agent", "owner_actor_id")
     op.drop_column("ai_agent", "job_title")

@@ -4,10 +4,11 @@ Builds the three-file CSV export (`roster.csv`, `people.csv`, `trend.csv`)
 `/ai/agent-team/export` returns. Each CSV starts with a UTF-8 BOM so Excel
 opens Chinese Agent/Person names without mangling them, and each carries a
 leading `# runtime=unavailable` comment line when the runtime backend could
-not be queried (`trend.csv` additionally starts with a
-`# granularity=<day|week|month>` comment line recording `period.granularity`,
-the same rule the UI's trend view uses; `# runtime=unavailable`, if present,
-follows it). Domain-level rows already carry `None` -- never `0` -- on every
+not be queried (spec 5.1: on the first line of all three files). `trend.csv`
+instead starts with one `# granularity=<day|week|month>` comment line
+recording `period.granularity` (the same rule the UI's trend view uses),
+with `; runtime=unavailable` appended on that same line during an outage.
+Domain-level rows already carry `None` -- never `0` -- on every
 run-derived field when the runtime backend is unavailable (controller ruling,
 Task 9 review fix round 1: see `domain/models.py`'s `MemberRow`/`PersonRow`/
 `TeamSummary` docstrings); this module renders `None` as an empty cell.
@@ -15,11 +16,12 @@ Task 9 review fix round 1: see `domain/models.py`'s `MemberRow`/`PersonRow`/
 
 from __future__ import annotations
 
+import calendar
 import csv
 import io
 import zipfile
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from tap.modules.agent_team.application.service import PeriodReport
 from tap.modules.agent_team.domain.models import (
@@ -83,6 +85,7 @@ _PEOPLE_HEADER: tuple[str, ...] = (
 
 _TREND_HEADER: tuple[str, ...] = (
     "bucket_start",
+    "bucket_end",
     "agent_key",
     "runs",
     "failures",
@@ -91,8 +94,22 @@ _TREND_HEADER: tuple[str, ...] = (
 )
 
 
+# Spreadsheet apps evaluate a cell starting with any of these as a formula
+# (OWASP "CSV injection"); free-text cells get a leading `'` so they render
+# as literal text. Numeric cells never start with them and are left as-is.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
 def _blank(value: object | None) -> str:
     return "" if value is None else str(value)
+
+
+def _text(value: str | None) -> str:
+    """A free-text cell (`name`, `job_title`, actor ids, `top_served`),
+    neutralized against formula injection."""
+    if value is None:
+        return ""
+    return f"'{value}" if value.startswith(_FORMULA_PREFIXES) else value
 
 
 def _iso_datetime(value: datetime | None) -> str:
@@ -108,7 +125,7 @@ def _iso_date(value: date) -> str:
 
 
 def _top_served_cell(top_served: Sequence[ServedActor]) -> str:
-    return ";".join(f"{actor.actor_id}:{actor.runs}" for actor in top_served)
+    return _text(";".join(f"{actor.actor_id}:{actor.runs}" for actor in top_served))
 
 
 def _maintenance_cell(maintenance: Mapping[MaintenanceKind, int], kind: MaintenanceKind) -> str:
@@ -124,10 +141,10 @@ def _calls_per_run_cell(value: float | None) -> str:
 def _roster_row(row: MemberRow) -> list[str]:
     cells = [
         row.agent_key,
-        row.name,
+        _text(row.name),
         row.kind,
-        _blank(row.job_title),
-        _blank(row.owner_actor_id),
+        _text(row.job_title),
+        _text(row.owner_actor_id),
         _iso_datetime(row.joined_at),
         _blank(row.status),
         _blank(row.runs),
@@ -158,7 +175,7 @@ def _roster_row(row: MemberRow) -> list[str]:
 
 def _people_row(row: PersonRow) -> list[str]:
     return [
-        row.actor_id,
+        _text(row.actor_id),
         str(row.owned_agents),
         _blank(row.owned_runs),
         _blank(row.served_by_agents),
@@ -167,11 +184,25 @@ def _people_row(row: PersonRow) -> list[str]:
     ]
 
 
-def _trend_row(point: TrendPoint, period_start: date) -> list[str]:
-    # A week/month bucket can begin before the period; label it with the
-    # period start (spec 2.1) rather than a date outside the chosen range.
+def _bucket_end(bucket_start: date, granularity: str) -> date:
+    """Inclusive last day of the (Monday-start week / calendar month) bucket
+    beginning on `bucket_start`, before clamping to the period."""
+    if granularity == "week":
+        return bucket_start + timedelta(days=6)
+    if granularity == "month":
+        last_day = calendar.monthrange(bucket_start.year, bucket_start.month)[1]
+        return bucket_start.replace(day=last_day)
+    return bucket_start
+
+
+def _trend_row(point: TrendPoint, period: Period) -> list[str]:
+    # A week/month bucket can begin before or end after the period; label it
+    # with the period bounds (spec 2.1) rather than dates outside the chosen
+    # range, so truncated first/last buckets are identifiable.
+    bucket_end = _bucket_end(point.bucket_start, period.granularity)
     return [
-        _iso_date(max(point.bucket_start, period_start)),
+        _iso_date(max(point.bucket_start, period.start)),
+        _iso_date(min(bucket_end, period.end)),
         point.agent_key,
         str(point.runs),
         str(point.failures),
@@ -202,14 +233,16 @@ def build_export(
     runtime_status: RuntimeStatus,
 ) -> bytes:
     """The export zip's bytes: `roster.csv`, `people.csv`, `trend.csv`, each
-    UTF-8-BOM-prefixed. `trend.csv` additionally starts with a
+    UTF-8-BOM-prefixed. `trend.csv` starts with a single
     `# granularity=<day|week|month>` comment line recording
     `period.granularity` (the same rule the UI's trend view uses). When
-    `runtime_status` is `"unavailable"`, every file gets a leading
-    `# runtime=unavailable` comment line (after `# granularity=` in
+    `runtime_status` is `"unavailable"`, the first line of every file
+    carries `runtime=unavailable` (`# runtime=unavailable` in
+    `roster.csv`/`people.csv`, `# granularity=<g>; runtime=unavailable` in
     `trend.csv`) -- the run-derived cells are blank because the domain rows
     already carry `None` there, not because the column was dropped."""
-    unavailable_comment = ["# runtime=unavailable"] if runtime_status == "unavailable" else []
+    unavailable = runtime_status == "unavailable"
+    unavailable_comment = ["# runtime=unavailable"] if unavailable else []
     roster_csv = _csv_bytes(
         _ROSTER_HEADER,
         (_roster_row(row) for row in report.members),
@@ -220,11 +253,13 @@ def build_export(
         (_people_row(row) for row in report.people),
         comment_lines=unavailable_comment,
     )
-    trend_comments = [f"# granularity={period.granularity}", *unavailable_comment]
+    trend_comment = f"# granularity={period.granularity}"
+    if unavailable:
+        trend_comment += "; runtime=unavailable"
     trend_csv = _csv_bytes(
         _TREND_HEADER,
-        (_trend_row(point, period.start) for point in trend),
-        comment_lines=trend_comments,
+        (_trend_row(point, period) for point in trend),
+        comment_lines=[trend_comment],
     )
 
     buffer = io.BytesIO()

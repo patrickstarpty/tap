@@ -310,6 +310,18 @@ def test_roster_always_includes_tapper_default_when_runtime_unavailable():
     assert keys == {"agent-1", TAPPER_DEFAULT_AGENT_KEY}
 
 
+def test_roster_includes_tapper_default_with_pending_feedback_only():
+    # Review fix 7: no runs anywhere, but its pending feedback must stay
+    # reachable from the roster/profile.
+    keys = roster_agent_keys(
+        store_agent_keys=["agent-1"],
+        tapper_default_runs_in_period=0,
+        tapper_default_runs_trailing_30d=0,
+        tapper_default_pending_feedback=1,
+    )
+    assert keys == {"agent-1", TAPPER_DEFAULT_AGENT_KEY}
+
+
 def _person(actor_id, *, owned, served_by, runs):
     return PersonRow(
         actor_id=actor_id,
@@ -359,7 +371,7 @@ def test_served_avg_divides_by_people_who_called_in_the_period():
     assert summary.served_avg == 2.0
 
 
-def test_served_avg_is_zero_when_runtime_unknown():
+def test_served_avg_is_none_when_runtime_unknown():
     person_rows = [
         PersonRow(
             actor_id="owner-1",
@@ -379,7 +391,8 @@ def test_served_avg_is_zero_when_runtime_unknown():
         runtime_available=False,
     )
     assert summary.owners_avg == 1.0
-    assert summary.served_avg == 0.0
+    # Review fix 4: callers are unknown during an outage -> `None`, not 0.
+    assert summary.served_avg is None
 
 
 def test_owners_avg_is_zero_for_empty_people_scope():
