@@ -9,7 +9,7 @@
 | V2.1 Agent 团队视图 | 工程完成；2026-10-28 两轮改动已合入并推送 `origin/develop`（`845d1c68`）：审查修复、分析平台式面板 v2、TAP 品牌与完整模块导航、香港语料数据重建、英文版演示文档 |
 | 演示数据 | 只用香港公开语料（8 份产品小册子、2 份理赔表、3 份合成流程文档）；真实运行 178 轮 + 仿真历史 397 次，核对 252 项一致；脚本与清理命令在 `~/tap-synthetic-2026-10-28/`（见交接文档第 2–4 节） |
 | 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；Test Case Designer、Automation Script Writer、Claims FAQ Helper 的提示词还需再修订一轮（已派 Opus，结果未提交时见 `git status`） |
-| Skills 名册设计 | 口径已和产品负责人确认（第 3 节），设计要点已在对话中提出、尚未确认；spec 未写 |
+| Skills 模块 | "Skill 名册/团队"方向已否决；改为 Skill 库 + 自动激活（第 3 节），是否连运行时一起做待定；spec 未写 |
 | 业务验证（spec 7.4） | 未完成，仍需真实使用一周 |
 
 ## 2. 真实 Agent 名册（进行中）
@@ -30,24 +30,21 @@
 
 完成后应有：`docs/guides/2026-10-28-agent-roster.md`（每个 Agent 的完整提示词、验证问题与结论、重建方法），本地 `~/tap-synthetic-2026-10-28/roster/` 的脚本、清单与备份，以及交接文档状态节的一条链接。接手检查：`git status` 看该文档是否已生成；`GET /api/v1/projects/tapper-demo/ai/agents` 应列出 11 个 Agent；团队页组织架构图应按 9 位负责人分组。确认后由本会话之外的人审查提示词质量与验证答案，再提交合入 `develop`。
 
-## 3. Skills 名册设计（待写 spec）
+## 3. Skills 模块方向（待写 spec）
 
-已确认的决定：
+2026-10-28 晚产品负责人否决了"Skill 名册／Skill 团队"方向：Skill 是独立、灵活调用的能力包，不是成员，不该套 Agent 团队的人事模型；要求参考 Skill Hub 类产品的设计。对照 SkillHub、skills-hub.ai 与 Agent Skills 标准后的结论：
 
-- 范围只做"Skill 名册与使用统计"，把 Agent 团队视图的做法搬到 Skill；安全扫描、从 URL/Git 导入、内置 Skill 包、成本分摊、按 Skill 处理反馈都不做。
-- 口径：主指标从演示库 Turn 冻结输入算——参与运行数（`skill_revision_ids` 含该 Skill 任一修订；拆成直接选用 `requested_skill_revision_ids` 与经 Agent 绑定）、使用者数、当前绑定的 Agent 数、满意度（样本 < 10 为"样本不足"）、最近使用；成本、耗时、失败只作次要指标，由同步 worker 给 `turn.request` trace 追加 `skill:<skill_id>` 标签后从 Langfuse 取，多 Skill 共享一次运行时各自全额计入、不分摊、页面注明不可相加。
+- Skill Hub 的对象是"包"（`SKILL.md` + scripts/references/assets），元数据是类别、来源出处、版本、兼容客户端、更新时间、安全扫描结果、使用量；交互是"库"（搜索、按类别/来源浏览、详情页渲染 SKILL.md 与版本历史、一条命令安装、从来源同步）；调用是"渐进式加载"（只加载名称与描述，任务匹配时才读入全文），技能对任何 Agent 可用，由模型按描述激活，不预先绑定。
+- Tapper 现在把 Skill 绑定到 Agent 修订（V1 能力 4），是为可追溯与治理；两者都可以改由"冻结本轮实际激活的 Skill 修订"和"启用/停用 + 项目可用范围"实现。绑定的副作用：新版本要逐个 Agent 升级、未绑定的 Agent 用不到、用户要手动勾选。
 
-已提出、待确认的设计要点：
+建议方向（已向产品负责人提出，待其定夺）：**Skill 库 + 自动激活**。
 
-1. 成员：自定义、导入、内置（负责人显示"平台维护"）；档案含负责人（默认创建/导入人，可转交）、来源、修订历史、适用任务、绑定它的 Agent（各自绑定的修订、是否落后）、状态（已停用／近 30 天参与运行 ≥1 为活跃／闲置）。
-2. 维护动作：`revised`、`disabled`、`enabled`、`owner_transferred`，与写操作同一事务。
-3. 架构：新后端模块 `skill_team`，复用 `agent_team` 的周期、粒度、状态、缓存、期限与降级（抽成共享工具，不改行为）；迁移 0038 给 `skill` 加 `owner_actor_id`、`owner_assigned_at`（回填创建人），新表 `skill_maintenance_event` 与 `turn_skill_usage(turn_id, skill_id, skill_revision_id, direct, created_at)`（Turn 创建时写入，从历史快照回填）；同步 worker 加 `skill:` 标签并重置游标补推。
-4. API：`/ai/skill-team/{summary, members, members/{skillId}, members/{skillId}/history, people, report, export}` 与 `POST skills/{skillId}/owner`；错误码、`runtimeStatus`、`preset`、CSV 规则与 Agent 侧一致；权限 `ai.skill_team.read`，写沿用 `ai.skills.write`。
-5. 前端：Skills 页四个标签（My Skills / Roster / Report / Configuration），复用 Agents 页的指标卡、趋势、热力图、排行表、档案抽屉、汇报页组件；组织架构图换成"负责人 → Skill → 绑定 Agent"的绑定关系图。
-6. 方案：独立 `skill_team` 模块（推荐）而非把 `agent_team` 泛化成资产团队。
-7. 验收：单元、契约、隔离 MySQL 集成、Vitest、`make demo-e2e` 旅程（导入 Skill → 绑定 Agent → 对话 → 名册出现用量 → 汇报导出）、截图；业务验证同 Agent 侧。
+- Skill 库页（取代名册）：搜索、按类别/适用任务/来源筛选；卡片显示描述、版本、来源、更新时间、周期内激活次数、状态；详情页渲染 SKILL.md、文件清单、版本历史、激活统计（被哪些 Agent/对话激活、满意度）；动作：导入（文件/zip/粘贴）、新建、出新版本、启用/停用。
+- 运行时：项目内所有启用的 Skill 对 Tapper 默认与全部 Agent 可见（名称 + 描述进入上下文），模型按任务匹配激活并读入全文；Agent 可选"常驻"或"排除"某些 Skill；用户仍可手动指定；每轮冻结实际激活的 Skill 修订；取消"有新版本/升级"流程。改动涉及 `apps/tap-ai-backend/src/tap/modules/chat/application/skill_selection.py`（现为"绑定 ∪ 手选"）与对话图。
+- 统计口径（已确认）：激活次数（自动/手动）、使用者数、满意度为主；成本、耗时为次要、不分摊（同步 worker 给 trace 加 `skill:<skill_id>` 标签）。
+- 不做：安全扫描与信任分级、外部 Hub 同步/从 URL 导入、团队/负责人/组织架构。
 
-下一步：产品负责人确认要点后，写 `docs/superpowers/specs/2026-10-28-skill-roster-design.md`（按 superpowers brainstorming 流程），再用 writing-plans 出计划，由 Opus 实施、人工审查。参考实现：`apps/tap-ai-backend/src/tap/modules/agent_team/`、`apps/tap-ai-frontend/src/widgets/tap/workspace/agents/team/`、Agent 侧 spec 与 [Agent 团队视图交接](2026-10-25-agent-team-view-handoff.md)第 2 节的代码位置表。
+**待产品负责人决定**：这一版是否把"自动激活"一起做（库 + 运行时，才是 Hub 的用法），还是先做库页面与统计、保留现有绑定。决定后在新会话按 superpowers brainstorming 流程写 `docs/superpowers/specs/2026-10-28-skill-library-design.md`，再出计划由 Opus 实施。
 
 ## 4. 环境与操作要点
 
@@ -67,6 +64,6 @@
 | Agent 名册第 3 轮提示词修订 | 下一会话 | 审查 Opus 对 Test Case Designer、Automation Script Writer、Claims FAQ Helper 的修订与重测结果，更新名册文档后提交 |
 | 名册验证暴露的产品问题 | 开发 | 1) 回答输出上限 2048 token，长回答直接失败；2) 带引用标记的表格行被 `parse_inline_answer` 删除；3) 英文问题检索不到中文流程文档（多文档时被挤出）；4) 对话请求不带 `insightsReportRefs`，`insights.query` 在对话中不可用且拒答无说明；5) 回答正文不进入对话历史，追问轮看不到上一轮生成的内容，Agent 之间无法在同一会话接力；6) 证据标签 `S1` 泄漏到正文与代码注释。建议进入路线图 V2 的 LangGraph 收尾或单独排期 |
 | 重拍团队页截图 | 下一会话 | 名册就绪后更新演示文档第 1.3 节的团队总览与组织架构图截图 |
-| Skills 名册 spec | 下一会话 | 第 3 节要点确认后写 spec、出计划、Opus 实施 |
+| Skills 模块 spec | 下一会话 | 第 3 节的决定落定后写 spec、出计划、Opus 实施 |
 | 业务验证一周 | 负责人 | spec 7.4；完成后把路线图 V2.1 改为完成 |
 | 清理验证数据 | 负责人 | `~/tap-synthetic-2026-10-28/cleanup.py synthetic|real` |
