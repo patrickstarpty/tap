@@ -8,6 +8,7 @@
 - 按业务复核结论调整的口径已合入本地 `develop`（合并提交 `206729da`），**尚未推送远端**。
 - `make demo-dev` 当前未运行。在 `.worktrees/develop` 执行 `make demo-dev` 即可，运行的就是 `206729da`。
 - 2026-10-28 晚：真实 Agent 名册与 Skills 名册设计的接手说明见 [Agents 名册与 Skills 名册交接](2026-10-28-agents-skills-handoff.md)。
+- 2026-10-28：真实 Agent 名册已在演示环境建成并用真实模型验证（删除 `Claims Guide Assistant`、重新启用 `Claims FAQ Helper`、新建 8 个 Agent），提示词、验证结论与重建方法见 [Tapper Agent 名册](2026-10-28-agent-roster.md)。
 - 2026-10-28 完成一轮实现审查、缺陷修复与 Agents 页界面重做，并用真实模型跑通完整业务流程；过程、截图与修复清单见 [Agent 团队视图业务流程演示](2026-10-28-agent-team-business-demo.md)。演示新增了 Agent `理赔指引助手`（`agent-698bbbd066a44725`，负责人已转交 `chen.jing`）与 2026-10-28 的 2 轮真实运行，不在第 2 节的验证数据清单内；核对 10-18 至 10-24 周期时不受影响。
 
 ## 2. 验证数据（2026-10-28 重建）
