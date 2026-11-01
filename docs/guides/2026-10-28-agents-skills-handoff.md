@@ -8,7 +8,7 @@
 | --- | --- |
 | V2.1 Agent 团队视图 | 工程完成；2026-10-28 两轮改动已合入并推送 `origin/develop`（`845d1c68`）：审查修复、分析平台式面板 v2、TAP 品牌与完整模块导航、香港语料数据重建、英文版演示文档 |
 | 演示数据 | 只用香港公开语料（8 份产品小册子、2 份理赔表、3 份合成流程文档）；真实运行 178 轮 + 仿真历史 397 次，核对 252 项一致；脚本与清理命令在 `~/tap-synthetic-2026-10-28/`（见交接文档第 2–4 节） |
-| 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；Test Case Designer、Automation Script Writer、Claims FAQ Helper 的提示词还需再修订一轮（已派 Opus，结果未提交时见 `git status`） |
+| 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；第 3 轮提示词修订已完成：Test Case Designer 修好；Automation Script Writer 与 Claims FAQ Helper 的剩余问题属平台与语料（见待办） |
 | Skills 模块 | 方向定为 Skill Hub（不绑定、分阶段）；spec 已写待审阅：[Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md) |
 | 业务验证（spec 7.4） | 未完成，仍需真实使用一周 |
 
@@ -61,7 +61,7 @@
 
 | 事项 | 负责 | 说明 |
 | --- | --- | --- |
-| Agent 名册第 3 轮提示词修订 | 下一会话 | 审查 Opus 对 Test Case Designer、Automation Script Writer、Claims FAQ Helper 的修订与重测结果，更新名册文档后提交 |
+| 名册遗留的三个问题 | 开发 | 第 3 轮修订后仍未解决，根因在平台与语料而非提示词：Automation Script Writer 纯文字请求超 2048 token 失败（返回 503）；Claims FAQ Helper 把虚构公司的流程指南规则套到香港表格上（建议把 3 份合成流程文档改写成与香港产品一致，或在选源时不混选）；英文问题检索不到中文指南。见[名册](2026-10-28-agent-roster.md)第 8 节 |
 | 名册验证暴露的产品问题 | 开发 | 1) 回答输出上限 2048 token，长回答直接失败；2) 带引用标记的表格行被 `parse_inline_answer` 删除；3) 英文问题检索不到中文流程文档（多文档时被挤出）；4) 对话请求不带 `insightsReportRefs`，`insights.query` 在对话中不可用且拒答无说明；5) 回答正文不进入对话历史，追问轮看不到上一轮生成的内容，Agent 之间无法在同一会话接力；6) 证据标签 `S1` 泄漏到正文与代码注释。建议进入路线图 V2 的 LangGraph 收尾或单独排期 |
 | 重拍团队页截图 | 下一会话 | 名册就绪后更新演示文档第 1.3 节的团队总览与组织架构图截图 |
 | Skill Hub 计划与实施 | 下一会话 | 产品负责人审阅 spec 后，用 writing-plans 出第 1 阶段计划，Opus 实施，人工审查 |
