@@ -31,6 +31,7 @@ from tap.contracts.problems import build_problem
 from tap.entrypoints.tapper_draft_batcher import DraftBatcher
 from tap.modules.ai.application.chat_graph import ChatGraphNodes, ChatGraphState
 from tap.modules.ai.domain.persona import persona_for
+from tap.modules.ai.domain.skill_activation import PromptSkill
 from tap.modules.ai.domain.tool_calls import (
     MAX_REQUESTED_TOOL_CALLS_PER_ROUND,
     AdmittedToolCall,
@@ -298,11 +299,13 @@ class SingleShotAnswerSteps:
         authorize=None,
         on_text=None,
         tools: tuple[str, ...] = (),
+        activated_skills: tuple[PromptSkill, ...] = (),
     ) -> ConversationAnswerStep:
         # `prepare` already produced the complete answer; there is nothing
         # left to stream, so `on_text` (if given) is simply never called.
-        # `tools` is likewise accepted and ignored: a single-shot `answer()`
-        # double has no tool-calling round to offer them to.
+        # `tools` and `activated_skills` are likewise accepted and ignored: a
+        # single-shot `answer()` double has no tool-calling round to offer
+        # them to.
         return step
 
     async def verify_conversation_answer(

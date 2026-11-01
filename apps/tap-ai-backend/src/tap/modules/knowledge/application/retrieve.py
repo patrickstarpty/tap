@@ -25,6 +25,7 @@ from tap.modules.access.domain.policy import (
 from tap.modules.ai.application.agents.protocol import AgentContext
 from tap.modules.ai.application.agents.registry import AgentRegistry
 from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
+from tap.modules.ai.domain.skill_activation import TurnSkillContext
 from tap.modules.knowledge.application.answer_templates import assemble_answer
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.application.planned_answer import AuthorizedAnswerExecution
@@ -834,6 +835,7 @@ class AuthorizedRetrieval:
         persona: TapperPersona = CURRENT_PERSONA,
         tools: tuple[str, ...] = (),
         transcript: tuple[Mapping[str, object], ...] = (),
+        skills: TurnSkillContext | None = None,
     ) -> AnswerGeneration:
         """Rechecks current revision/policy and authorizes before generating.
 
@@ -860,6 +862,7 @@ class AuthorizedRetrieval:
             persona=persona,
             tools=tools,
             transcript=transcript,
+            **({"skills": skills} if skills is not None else {}),
         )
 
     async def _generate_from_bundle(
@@ -872,6 +875,7 @@ class AuthorizedRetrieval:
         persona: TapperPersona = CURRENT_PERSONA,
         tools: tuple[str, ...] = (),
         transcript: tuple[Mapping[str, object], ...] = (),
+        skills: TurnSkillContext | None = None,
     ) -> AnswerGeneration:
         use_extended_answer = (
             governance is not None
@@ -884,6 +888,7 @@ class AuthorizedRetrieval:
             or bool(tools)
             or bool(transcript)
             or bool(bundle.insights_records)
+            or skills is not None
         )
         generation = (
             await cast(Any, self._answers).answer(
@@ -905,6 +910,7 @@ class AuthorizedRetrieval:
                 **(
                     {"insights_records": bundle.insights_records} if bundle.insights_records else {}
                 ),
+                **({"skills": skills} if skills is not None else {}),
             )
             if use_extended_answer
             else await self._answers.answer(

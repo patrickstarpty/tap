@@ -18,9 +18,14 @@ from test_answer_service import MemoryAnswerRepository, answer_response, ready
 
 from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
 from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
-from tap.interfaces.http.knowledge_service import KnowledgeHttpService
+from tap.interfaces.http.knowledge_service import KnowledgeHttpService, turn_skill_context
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.domain.persona import TAPPER_PERSONA_V1, UnknownPersonaVersion
+from tap.modules.ai.domain.skill_activation import (
+    PromptSkill,
+    SkillCatalogEntry,
+    TurnSkillContext,
+)
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput, planning_input
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
@@ -206,9 +211,12 @@ class PhaseAnswers:
         self.save_calls.append(response)
 
 
-async def _retrieve_route(*, persona_version: str | None = None) -> tuple[TurnInput, object]:
+async def _retrieve_route(
+    *, persona_version: str | None = None, **turn_fields: object
+) -> tuple[TurnInput, object]:
     """A frozen turn input and admitted `retrieve`-route plan selecting the one
-    revision `ready()`/`PhaseAnswers` are built around."""
+    revision `ready()`/`PhaseAnswers` are built around; `turn_fields` add
+    further frozen `TurnInput` fields (bound into the plan's input digest)."""
 
     revision = ready()
     authority = build_demo_policy_context((revision,))
@@ -234,6 +242,7 @@ async def _retrieve_route(*, persona_version: str | None = None) -> tuple[TurnIn
             }
         ),
         persona_version=persona_version,
+        **turn_fields,  # type: ignore[arg-type]
     )
     plan = await AnswerPlanner().plan(
         PlanningInput(
@@ -1891,6 +1900,76 @@ async def test_generate_conversation_answer_threads_tools_through_the_real_chain
         {"callId": "c1", "name": "knowledge_search", "argumentsJson": '{"query":"q"}'}
     ]
     assert answers_port.answer_kwargs[-1]["tools"] == ("knowledge.search",)
+
+
+def _sha256(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_generate_passes_activated_skills_and_frozen_catalog() -> None:
+    """Skill Hub Task 5: an ungoverned (Tapper-default) Turn's frozen manual
+    Skill, the Skills activated so far this Turn and the frozen candidate
+    catalog all reach the model gateway as one `TurnSkillContext` through the
+    real `AnswerService` -> `KnowledgeAPI` -> `AuthorizedRetrieval` chain."""
+    template = "Follow the intake checklist."
+    catalog = (
+        SkillCatalogEntry(
+            "skill-web", "revision-web", "webapp-testing", "Browser checks.", "automation"
+        ),
+    )
+    frozen, plan = await _retrieve_route(
+        skill_revision_ids=("revision-manual",),
+        skill_revision_digests=(_sha256("revision-manual"),),
+        skill_labels=("Claim intake",),
+        skill_instruction_templates=(template,),
+        skill_instruction_template_digests=(_sha256(template),),
+        requested_skill_revision_ids=("revision-manual",),
+        skill_catalog=catalog,
+    )
+    activated = PromptSkill(
+        "skill-web", "revision-web", "webapp-testing", "Drive the browser.", "auto"
+    )
+    revision = ready()
+    answers_port = _RealChainToolAnswers()
+    knowledge_api = KnowledgeAPI(
+        search=_RealChainSearch((_real_chain_search_hit(revision),)),
+        embeddings=_RealChainEmbeddings(),
+        answers=answers_port,
+        policy_verifier=_CurrentPolicyVerifier(),
+        redactor=_PassthroughRedactor(),
+        id_factory=lambda: str(uuid4()),
+    )
+    repository = MemoryAnswerRepository((revision,))
+    repository.scope = VALIDATION_SCOPE  # type: ignore[attr-defined]
+    service = _service(AnswerService(repository=repository, knowledge=knowledge_api))
+
+    step = await service.prepare_conversation_answer(
+        RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
+    )
+    await service.generate_conversation_answer(
+        step,
+        frozen,
+        answer_plan=plan,
+        tools=("knowledge.search", "skill.activate"),
+        activated_skills=(activated,),
+    )
+
+    skills = answers_port.answer_kwargs[-1]["skills"]
+    assert isinstance(skills, TurnSkillContext)
+    assert skills.catalog == catalog
+    assert [
+        (item.revision_id, item.name, item.instruction, item.mode) for item in skills.blocks
+    ] == [
+        ("revision-manual", "Claim intake", template, "manual"),
+        ("revision-web", "webapp-testing", "Drive the browser.", "auto"),
+    ]
+    # A governed Turn's governance already renders its frozen Skills.
+    assert turn_skill_context(frozen, (activated,), governed=True) == TurnSkillContext(
+        catalog=catalog, blocks=(activated,)
+    )
+    plain, _ = await _retrieve_route()
+    assert turn_skill_context(plain, (), governed=False) is None
 
 
 class _RoundAwareRealChainSearch:

@@ -34,6 +34,7 @@ from tap.contracts.http import (
 from tap.interfaces.http.dependencies import UploadInput
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import AuthorizationDenied
+from tap.modules.ai.domain.skill_activation import PromptSkill, TurnSkillContext
 from tap.modules.knowledge.api import (
     answer_request_from_http,
     answer_response_to_http,
@@ -117,6 +118,46 @@ def _tool_call_summary(tool_id: str, query: str, labels: tuple[str, ...], *, uni
         return f"{prefix} → 无新{unit}"
     label_range = labels[0] if labels[0] == labels[-1] else f"{labels[0]}–{labels[-1]}"
     return f"{prefix} → +{len(labels)} 条{unit}（{label_range}）"
+
+
+def turn_skill_context(
+    frozen_input: Any, activated: tuple[PromptSkill, ...], *, governed: bool
+) -> TurnSkillContext | None:
+    """The Skills one model call renders outside its generation governance,
+    plus the Turn's frozen candidate catalog (Skill Hub spec 1.2/1.3).
+
+    A governed Turn's governance already renders its frozen (manual/pinned)
+    Skill blocks, so only the Skills `skill.activate` loaded are added. An
+    ungoverned (Tapper-default) Turn has no governance, so its frozen Skills
+    are rendered here too, ahead of the activated ones; a frozen Skill is
+    manual when the caller requested its revision, otherwise pinned.
+    `TurnInput` freezes revision identities only, so a frozen Skill's
+    `skill_id` is its revision id. `None` when there is nothing to render."""
+
+    frozen: tuple[PromptSkill, ...] = ()
+    if not governed:
+        names = frozen_input.skill_labels or frozen_input.skill_revision_ids
+        requested = frozenset(frozen_input.requested_skill_revision_ids)
+        frozen = tuple(
+            PromptSkill(
+                skill_id=revision_id,
+                revision_id=revision_id,
+                name=name,
+                instruction=instruction,
+                mode="manual" if revision_id in requested else "pinned",
+            )
+            for revision_id, name, instruction in zip(
+                frozen_input.skill_revision_ids,
+                names,
+                frozen_input.skill_instruction_templates,
+                strict=False,
+            )
+        )
+    blocks = (*frozen, *activated)
+    catalog = tuple(frozen_input.skill_catalog)
+    if not blocks and not catalog:
+        return None
+    return TurnSkillContext(catalog=catalog, blocks=blocks)
 
 
 class DocumentOperations(Protocol):
@@ -524,6 +565,7 @@ class KnowledgeHttpService:
         authorize=None,
         on_text=None,
         tools: tuple[str, ...] = (),
+        activated_skills: tuple[PromptSkill, ...] = (),
     ):
         """Resumable generate phase: only acts on a `"prepared"` step,
         re-authorizing from `frozen_input` before the model call, bounded by
@@ -536,7 +578,10 @@ class KnowledgeHttpService:
         model asks to call one, this returns a `"tool_calls"` step carrying
         `pending_tool_calls` and the extended `transcript` instead of a
         `"generated"` step -- the model's draft is discarded unparsed
-        (`AnswerGeneration.text` stays `""`)."""
+        (`AnswerGeneration.text` stays `""`). `activated_skills` (Skill Hub)
+        are the Skills `skill.activate` loaded so far this Turn; with the
+        frozen Skills and catalog they reach the gateway as `skills` (see
+        `turn_skill_context`), omitted when there is nothing to render."""
         async with self._plan_deadline(answer_plan):
             if step.get("kind") != "prepared":
                 return step
@@ -556,6 +601,9 @@ class KnowledgeHttpService:
             revisions, policy, governance = context
             bundle = decode_bundle(step["bundle"])
             transcript = step.get("transcript", [])
+            skills = turn_skill_context(
+                frozen_input, activated_skills, governed=governance is not None
+            )
             generation = await self._answers.generate_frozen(
                 bundle,
                 revisions,
@@ -568,6 +616,7 @@ class KnowledgeHttpService:
                 **({"on_text": on_text} if on_text is not None else {}),
                 **({"tools": tools} if tools else {}),
                 **({"transcript": tuple(transcript)} if transcript else {}),
+                **({"skills": skills} if skills is not None else {}),
             )
             if generation.tool_calls:
                 pending_tool_calls = [

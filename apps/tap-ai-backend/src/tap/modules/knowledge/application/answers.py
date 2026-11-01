@@ -11,6 +11,7 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import PolicyUnavailable, RetrievalPolicyContext
 from tap.modules.ai.domain.models import GenerationGovernance
 from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
+from tap.modules.ai.domain.skill_activation import TurnSkillContext
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
 from tap.modules.knowledge.application.publication import (
     FlowchartPublicationGate,
@@ -258,6 +259,7 @@ class AnswerService:
         persona: TapperPersona = CURRENT_PERSONA,
         tools: tuple[str, ...] = (),
         transcript: tuple[Mapping[str, object], ...] = (),
+        skills: TurnSkillContext | None = None,
     ):
         publication = await self._authorize_frozen_selection(revisions, policy)
         knowledge_generate = getattr(self._knowledge, "generate_frozen", None)
@@ -274,6 +276,7 @@ class AnswerService:
             **({"on_text": on_text} if on_text is not None else {}),
             **({"tools": tools} if tools else {}),
             **({"transcript": transcript} if transcript else {}),
+            **({"skills": skills} if skills is not None else {}),
         )
         await self._revalidate_publication(publication)
         return generation

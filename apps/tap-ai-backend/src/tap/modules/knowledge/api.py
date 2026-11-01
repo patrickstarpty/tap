@@ -67,6 +67,7 @@ from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
+from tap.modules.ai.domain.skill_activation import TurnSkillContext
 from tap.modules.knowledge.application.answer_templates import (
     get_template,
     latest_template_version,
@@ -234,6 +235,7 @@ class KnowledgeAPI:
         persona: TapperPersona = CURRENT_PERSONA,
         tools: tuple[str, ...] = (),
         transcript: tuple[Mapping[str, object], ...] = (),
+        skills: TurnSkillContext | None = None,
     ):
         import asyncio
 
@@ -251,6 +253,7 @@ class KnowledgeAPI:
                 persona=persona,
                 tools=tools,
                 transcript=transcript,
+                **({"skills": skills} if skills is not None else {}),
             )
 
     async def verify_frozen(

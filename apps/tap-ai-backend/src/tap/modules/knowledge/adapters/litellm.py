@@ -28,6 +28,12 @@ from tap.modules.ai.domain.models import (
 )
 from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
 from tap.modules.ai.domain.prompt_guard import untrusted_context
+from tap.modules.ai.domain.skill_activation import (
+    PromptSkill,
+    TurnSkillContext,
+    render_skill_catalog,
+)
+from tap.modules.ai.domain.tools import platform_tool_ids
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.adapters.grounded_output import CODE_SPAN, parse_inline_answer
 from tap.modules.knowledge.application.answer_templates import (
@@ -83,6 +89,13 @@ def _neutralize_skill_body(instruction: str) -> str:
     )
 
 
+def _skill_block(name: str, revision_id: str, instruction: str) -> str:
+    return (
+        f'<skill name="{_escape_skill_name(name)}" revision="{revision_id}">\n'
+        f"{_neutralize_skill_body(instruction)}\n</skill>"
+    )
+
+
 def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
     """Wrap each applied Skill's instruction text in a `<skill name=... revision=...>`
     block so the model (and a transcript reader) can see which Skill a given
@@ -98,8 +111,7 @@ def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
     ) != len(governance.skill_instructions):
         return governance.skill_instructions
     return tuple(
-        f'<skill name="{_escape_skill_name(name)}" revision="{revision_id}">\n'
-        f"{_neutralize_skill_body(instruction)}\n</skill>"
+        _skill_block(name, revision_id, instruction)
         for name, revision_id, instruction in zip(
             governance.skill_names,
             governance.skill_revision_ids,
@@ -107,6 +119,25 @@ def _skill_blocks(governance: GenerationGovernance) -> tuple[str, ...]:
             strict=True,
         )
     )
+
+
+def _turn_skill_sections(
+    skills: TurnSkillContext | None, tools: Sequence[str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Skill Hub (spec 1.2/1.3): the Skills a Turn renders outside its
+    generation governance -- an ungoverned Turn's frozen manual Skills and
+    every Skill `skill.activate` loaded -- as trusted `<skill>` blocks, then
+    the frozen candidate catalog, only while `skill.activate` is offered this
+    round. The catalog's author-supplied names and descriptions get the same
+    close-tag neutralization as a Skill body so they cannot end a block."""
+
+    if skills is None:
+        return (), ()
+    blocks = tuple(
+        _skill_block(skill.name, skill.revision_id, skill.instruction) for skill in skills.blocks
+    )
+    catalog = render_skill_catalog(skills.catalog) if "skill.activate" in tools else ""
+    return blocks, ((_neutralize_skill_body(catalog),) if catalog else ())
 
 
 _INSUFFICIENT_EVIDENCE_SENTINEL = INSUFFICIENT_EVIDENCE_SENTINEL
@@ -788,6 +819,7 @@ class KnowledgeModelGateway:
         tools: tuple[str, ...] = (),
         transcript: tuple[Mapping[str, object], ...] = (),
         insights_records: tuple[Mapping[str, object], ...] = (),
+        skills: TurnSkillContext | None = None,
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -880,7 +912,28 @@ class KnowledgeModelGateway:
                 task_prompts.append(_FLOWCHART_ANSWER_PROMPT)
             if insights_records:
                 task_prompts.append(_INSIGHTS_ANSWER_PROMPT)
-            prompt = "\n\n".join((persona.platform_instruction, *task_prompts))
+            turn_skill_blocks, catalog_section = _turn_skill_sections(skills, tools)
+            prompt_skills: tuple[PromptSkill, ...] = () if skills is None else skills.blocks
+            customization = (*turn_skill_blocks, *catalog_section)
+            prompt = "\n\n".join(
+                (
+                    persona.platform_instruction,
+                    *customization,
+                    persona.customization_boundary,
+                    *task_prompts,
+                )
+                if customization
+                else (persona.platform_instruction, *task_prompts)
+            )
+            if prompt_skills and governance is None:
+                current_span = trace.get_current_span()
+                current_span.set_attribute(
+                    "tap.skill.revision_ids",
+                    ",".join(skill.revision_id for skill in prompt_skills),
+                )
+                current_span.set_attribute(
+                    "tap.skill.prompt_chars", sum(len(block) for block in turn_skill_blocks)
+                )
             alias = model_alias or self.chat_alias
             tool_allowlist: frozenset[str] = frozenset()
             governance_digests: tuple[str, ...] = ()
@@ -909,18 +962,23 @@ class KnowledgeModelGateway:
             if governance is not None:
                 if governance.model_alias != alias:
                     raise ModelGatewayRejected()
-                skill_blocks = _skill_blocks(governance)
+                skill_blocks = (*_skill_blocks(governance), *turn_skill_blocks)
                 prompt = "\n\n".join(
                     (
                         persona.platform_instruction,
                         governance.system_instruction,
                         *skill_blocks,
+                        *catalog_section,
                         persona.customization_boundary,
                         *task_prompts,
                     )
                 )
                 alias = governance.model_alias
-                tool_allowlist = governance.tool_allowlist
+                # Platform tools (`skill.activate`) are offered by the platform,
+                # not granted by an Agent, so they join its allowlist when offered.
+                tool_allowlist = governance.tool_allowlist | (
+                    frozenset(tools) & platform_tool_ids()
+                )
                 governance_digests = (
                     *governance.revision_digests,
                     schema_digest(governance.output_schema),
@@ -930,9 +988,13 @@ class KnowledgeModelGateway:
                     current_span.set_attribute(
                         "tap.agent.revision_id", governance.agent_revision_id
                     )
-                if governance.skill_revision_ids:
+                skill_revision_ids = (
+                    *governance.skill_revision_ids,
+                    *(skill.revision_id for skill in prompt_skills),
+                )
+                if skill_revision_ids:
                     current_span.set_attribute(
-                        "tap.skill.revision_ids", ",".join(governance.skill_revision_ids)
+                        "tap.skill.revision_ids", ",".join(skill_revision_ids)
                     )
                 current_span.set_attribute(
                     "tap.skill.prompt_chars", sum(len(block) for block in skill_blocks)
@@ -1047,7 +1109,10 @@ class KnowledgeModelGateway:
                     _without_bare_label_lists(
                         _without_skill_pseudo_citations(
                             _without_stray_sentinel(raw_text),
-                            () if governance is None else governance.skill_names,
+                            (
+                                *(() if governance is None else governance.skill_names),
+                                *(skill.name for skill in prompt_skills),
+                            ),
                         ),
                         frozenset(item.evidence_label for item in evidence) | extra_labels,
                         (query, *(item.content for item in evidence)),

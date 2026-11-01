@@ -10,6 +10,7 @@ from typing import Literal, Protocol, TypedDict
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import RetrievalAnswerResponse
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.skill_activation import PromptSkill
 from tap.modules.ai.domain.tool_calls import AdmittedToolCall
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
 
@@ -286,6 +287,7 @@ class ConversationAnswerSteps(Protocol):
         authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
         tools: tuple[str, ...] = (),
+        activated_skills: tuple[PromptSkill, ...] = (),
     ) -> ConversationAnswerStep: ...
 
     async def verify_conversation_answer(
