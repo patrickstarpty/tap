@@ -9,7 +9,7 @@
 | V2.1 Agent 团队视图 | 工程完成；2026-10-28 两轮改动已合入并推送 `origin/develop`（`845d1c68`）：审查修复、分析平台式面板 v2、TAP 品牌与完整模块导航、香港语料数据重建、英文版演示文档 |
 | 演示数据 | 只用香港公开语料（8 份产品小册子、2 份理赔表、3 份合成流程文档）；真实运行 178 轮 + 仿真历史 397 次，核对 252 项一致；脚本与清理命令在 `~/tap-synthetic-2026-10-28/`（见交接文档第 2–4 节） |
 | 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；第 3 轮提示词修订已完成：Test Case Designer 修好；Automation Script Writer 与 Claims FAQ Helper 的剩余问题属平台与语料（见待办） |
-| Skills 模块 | 方向定为 Skill Hub（不绑定、分阶段）；spec 已写待审阅：[Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md) |
+| Skills 模块 | [Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)已由产品负责人确认（2026-11-01）；第 1 阶段实施计划未写、未开工 |
 | 业务验证（spec 7.4） | 未完成，仍需真实使用一周 |
 
 ## 2. 真实 Agent 名册（进行中）
@@ -44,7 +44,14 @@
 - 统计口径（已确认）：激活次数（自动/手动）、使用者数、满意度为主；成本、耗时为次要、不分摊（同步 worker 给 trace 加 `skill:<skill_id>` 标签）。
 - 不做：安全扫描与信任分级、外部 Hub 同步/从 URL 导入、团队/负责人/组织架构。
 
-产品负责人 2026-11-01 决定：不绑定，按 Skill Hub 来做，功能大就分阶段。spec 已写：[Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)（第 1 阶段：库 + 自动激活 + 绑定迁移 + 用量；第 2 阶段：来源与版本；第 3 阶段：信任与共享），待产品负责人审阅后用 writing-plans 出计划、Opus 实施。
+产品负责人 2026-11-01 决定：不绑定，按 Skill Hub 来做，功能大就分阶段；同日确认了 [Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)（第 1 阶段：库 + 自动激活 + 绑定迁移 + 用量；第 2 阶段：来源与版本；第 3 阶段：信任与共享）。
+
+接手步骤：
+
+1. 用 superpowers writing-plans 按 spec 第 1 阶段写 `docs/superpowers/plans/2026-11-01-skill-hub-phase-1.md`，任务按 TDD 拆分；产品负责人要求计划与实施都交给 Opus，人工只做审查。
+2. 实施顺序建议：迁移与 `turn_skill_activation` 回填 → `skill_selection` 改为"手动 ∪ 常驻" + `skill.activate` 工具与预算 → `skill_hub` 模块与接口（复用 `agent_team` 的周期/缓存/降级工具）→ 同步 worker 的 `skill:` 标签与游标重置 → 前端库页、详情、Agent 表单常驻/排除、对话展开 → 激活精度夹具与 e2e 旅程 → 名册 Agent 去常驻复跑验证。
+3. 每个任务完成后派审查员（Opus）审查，Important 以上必须修完再合入；最后跑 `make check`、`make test`、`make demo-e2e`。
+4. 合入 `develop` 后更新路线图 "Skill Hub" 行、`docs/architecture.md`（`skill_hub` 模块、`skill.activate` 工具、`skill:` 标签）与本文档。
 
 ## 4. 环境与操作要点
 
@@ -64,6 +71,6 @@
 | 名册遗留的三个问题 | 开发 | 第 3 轮修订后仍未解决，根因在平台与语料而非提示词：Automation Script Writer 纯文字请求超 2048 token 失败（返回 503）；Claims FAQ Helper 把虚构公司的流程指南规则套到香港表格上（建议把 3 份合成流程文档改写成与香港产品一致，或在选源时不混选）；英文问题检索不到中文指南。见[名册](2026-10-28-agent-roster.md)第 8 节 |
 | 名册验证暴露的产品问题 | 开发 | 1) 回答输出上限 2048 token，长回答直接失败；2) 带引用标记的表格行被 `parse_inline_answer` 删除；3) 英文问题检索不到中文流程文档（多文档时被挤出）；4) 对话请求不带 `insightsReportRefs`，`insights.query` 在对话中不可用且拒答无说明；5) 回答正文不进入对话历史，追问轮看不到上一轮生成的内容，Agent 之间无法在同一会话接力；6) 证据标签 `S1` 泄漏到正文与代码注释。建议进入路线图 V2 的 LangGraph 收尾或单独排期 |
 | 重拍团队页截图 | 下一会话 | 名册就绪后更新演示文档第 1.3 节的团队总览与组织架构图截图 |
-| Skill Hub 计划与实施 | 下一会话 | 产品负责人审阅 spec 后，用 writing-plans 出第 1 阶段计划，Opus 实施，人工审查 |
+| Skill Hub 第 1 阶段 | 下一会话 | spec 已确认：先用 writing-plans 出计划（Opus），再 Opus 实施、人工审查；步骤见第 3 节 |
 | 业务验证一周 | 负责人 | spec 7.4；完成后把路线图 V2.1 改为完成 |
 | 清理验证数据 | 负责人 | `~/tap-synthetic-2026-10-28/cleanup.py synthetic|real` |

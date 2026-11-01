@@ -62,7 +62,7 @@ flowchart LR
 | 项 | 内容 | 状态 |
 | --- | --- | --- |
 | V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 工程完成（[plan](2026-10-23-agent-team-view.md)；[spec](../specs/2026-10-22-agent-team-view-design.md)）；2026-10-28 审查修复、面板重做（分析平台式）与香港语料数据重建合入（[演示](../../guides/2026-10-28-agent-team-business-demo.md)）；待业务验证（spec 7.4） |
-| Skill Hub | Skills 模块改为 Skill 库：按描述自动激活取代绑定 Agent、类别/版本/来源元数据、用量统计与导出（第 1 阶段）；来源同步与版本（第 2 阶段）；静态扫描与信任等级、项目内共享（第 3 阶段） | 已设计（[spec](../specs/2026-11-01-skill-hub-design.md)，2026-11-01，待产品负责人确认；替代已否决的"Skill 名册"方向） |
+| Skill Hub | Skills 模块改为 Skill 库：按描述自动激活取代绑定 Agent、类别/版本/来源元数据、用量统计与导出（第 1 阶段）；来源同步与版本（第 2 阶段）；静态扫描与信任等级、项目内共享（第 3 阶段） | 已设计并确认（[spec](../specs/2026-11-01-skill-hub-design.md)，2026-11-01；替代已否决的"Skill 名册"方向）；第 1 阶段计划待写 |
 | LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 长任务（`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片） | 已设计（[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；V2 第二个实施，在 V2.1 之后、V2.2 主动框架之前） |
 | V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
