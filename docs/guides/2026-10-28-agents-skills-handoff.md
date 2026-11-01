@@ -9,7 +9,7 @@
 | V2.1 Agent 团队视图 | 工程完成；2026-10-28 两轮改动已合入并推送 `origin/develop`（`845d1c68`）：审查修复、分析平台式面板 v2、TAP 品牌与完整模块导航、香港语料数据重建、英文版演示文档 |
 | 演示数据 | 只用香港公开语料（8 份产品小册子、2 份理赔表、3 份合成流程文档）；真实运行 178 轮 + 仿真历史 397 次，核对 252 项一致；脚本与清理命令在 `~/tap-synthetic-2026-10-28/`（见交接文档第 2–4 节） |
 | 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；第 3 轮提示词修订已完成：Test Case Designer 修好；Automation Script Writer 与 Claims FAQ Helper 的剩余问题属平台与语料（见待办） |
-| Skills 模块 | [Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)已由产品负责人确认（2026-11-01）；第 1 阶段实施计划未写、未开工 |
+| Skills 模块 | [Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)已由产品负责人确认（2026-11-01）；第 1 阶段[实施计划](../superpowers/plans/2026-11-01-skill-hub-phase-1.md)已写（2026-11-01），未开工 |
 | 业务验证（spec 7.4） | 未完成，仍需真实使用一周 |
 
 ## 2. 真实 Agent 名册（进行中）
