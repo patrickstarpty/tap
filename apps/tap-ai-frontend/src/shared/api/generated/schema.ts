@@ -324,6 +324,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/ai/skill-hub/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog */
+        get: operations["skill_hub_list_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skill-hub/catalog/{skill_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Skill */
+        get: operations["skill_hub_get_skill"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skill-hub/catalog/{skill_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Skill Usage */
+        get: operations["skill_hub_get_skill_usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skill-hub/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Skill Hub */
+        get: operations["skill_hub_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skill-hub/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["skill_hub_get_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/skills": {
         parameters: {
             query?: never;
@@ -438,6 +523,40 @@ export interface paths {
         put?: never;
         /** Enable Skill */
         post: operations["ai_enable_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{skill_id}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transfer Skill Owner */
+        post: operations["skill_hub_transfer_skill_owner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/{skill_id}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Skill Profile */
+        put: operations["skill_hub_update_skill_profile"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5458,6 +5577,269 @@ export interface components {
             /** Sizebytes */
             sizeBytes: number;
         };
+        /** SkillHubCatalogItem */
+        SkillHubCatalogItem: {
+            /** Activations */
+            activations: number;
+            byMode: components["schemas"]["SkillHubModeCounts"];
+            skill: components["schemas"]["SkillHubSkill"];
+        };
+        /** SkillHubCatalogView */
+        SkillHubCatalogView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            /** Data */
+            data: components["schemas"]["SkillHubCatalogItem"][];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** SkillHubDetail */
+        SkillHubDetail: {
+            /** Files */
+            files: components["schemas"]["SkillFileView"][];
+            /** Pinnedby */
+            pinnedBy: string[];
+            /** Revisions */
+            revisions: components["schemas"]["SkillRevisionSummary"][];
+            skill: components["schemas"]["SkillHubSkill"];
+            /** Topagents */
+            topAgents: components["schemas"]["SkillHubRankedKey"][];
+            /** Topcallers */
+            topCallers: components["schemas"]["SkillHubRankedKey"][];
+            usage: components["schemas"]["SkillHubUsage"];
+        };
+        /** SkillHubDetailView */
+        SkillHubDetailView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["SkillHubDetail"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /** SkillHubLibrarySummary */
+        SkillHubLibrarySummary: {
+            /** Autoshare */
+            autoShare: number | null;
+            /** Candidatecount */
+            candidateCount: number;
+            /** Candidatelimit */
+            candidateLimit: number;
+            /** Enabled */
+            enabled: number;
+            /** Skilltotal */
+            skillTotal: number;
+            /** Unused */
+            unused: number;
+            /** Usedinperiod */
+            usedInPeriod: number;
+        };
+        /**
+         * SkillHubModeCounts
+         * @description Activation runs per mode; not additive across Skills (a run using N
+         *     Skills counts once for each).
+         */
+        SkillHubModeCounts: {
+            /** Auto */
+            auto: number;
+            /** Manual */
+            manual: number;
+            /** Pinned */
+            pinned: number;
+        };
+        /** SkillHubRankedKey */
+        SkillHubRankedKey: {
+            /** Key */
+            key: string;
+            /** Runs */
+            runs: number;
+        };
+        /** SkillHubRuntimeStats */
+        SkillHubRuntimeStats: {
+            /** Costusd */
+            costUsd: string;
+            /** Failures */
+            failures: number;
+            /** Latencytotalms */
+            latencyTotalMs: number;
+            /** Runs */
+            runs: number;
+        };
+        /**
+         * SkillHubSkill
+         * @description A Skill and its latest revision (`SkillRecord`); `version` is the
+         *     display version (SemVer `metadata.version`, else `r<revisionNumber>`).
+         */
+        SkillHubSkill: {
+            /** Applicabletasks */
+            applicableTasks: string[];
+            /** Builtin */
+            builtIn: boolean;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other";
+            /** Compatibility */
+            compatibility: string | null;
+            /** Description */
+            description: string | null;
+            /** Latestrevisionid */
+            latestRevisionId: string;
+            /** Name */
+            name: string;
+            /** Originimportedat */
+            originImportedAt: string | null;
+            /**
+             * Originkind
+             * @enum {string}
+             */
+            originKind: "files" | "zip" | "paste" | "authored" | "built_in" | "unknown";
+            /** Originref */
+            originRef: string | null;
+            /** Owneractorid */
+            ownerActorId: string;
+            /**
+             * Ownerassignedat
+             * Format: date-time
+             */
+            ownerAssignedAt: string;
+            /** Revisionnumber */
+            revisionNumber: number;
+            /** Skillid */
+            skillId: string;
+            /**
+             * Sourcekind
+             * @enum {string}
+             */
+            sourceKind: "imported" | "authored" | "built_in";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Version */
+            version: string;
+        };
+        /** SkillHubSummaryView */
+        SkillHubSummaryView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["SkillHubLibrarySummary"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
+        /**
+         * SkillHubUsage
+         * @description `runtime` is null only while the runtime backend is unavailable;
+         *     `lastUsedAt` is not limited to the period.
+         */
+        SkillHubUsage: {
+            byMode: components["schemas"]["SkillHubModeCounts"];
+            /** Lastusedat */
+            lastUsedAt: string | null;
+            /** Pinnedbyagents */
+            pinnedByAgents: number;
+            runtime: components["schemas"]["SkillHubRuntimeStats"] | null;
+            /** Satisfaction */
+            satisfaction: number | null;
+            /**
+             * Satisfactionsample
+             * @enum {string}
+             */
+            satisfactionSample: "ok" | "insufficient";
+            /** Users */
+            users: number;
+        };
+        /** SkillHubUsagePoint */
+        SkillHubUsagePoint: {
+            /**
+             * Bucketstart
+             * Format: date
+             */
+            bucketStart: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "manual" | "pinned" | "auto";
+            /** Runs */
+            runs: number;
+        };
+        /** SkillHubUsageSeries */
+        SkillHubUsageSeries: {
+            byMode: components["schemas"]["SkillHubModeCounts"];
+            /** Points */
+            points: components["schemas"]["SkillHubUsagePoint"][];
+        };
+        /** SkillHubUsageView */
+        SkillHubUsageView: {
+            /**
+             * Computedat
+             * Format: date-time
+             */
+            computedAt: string;
+            data: components["schemas"]["SkillHubUsageSeries"];
+            /**
+             * Granularity
+             * @enum {string}
+             */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["AgentTeamPeriod"];
+            /**
+             * Runtimestatus
+             * @enum {string}
+             */
+            runtimeStatus: "ok" | "syncing" | "unavailable";
+            /** Timezone */
+            timezone: string;
+        };
         /** SkillImportCommitRequest */
         SkillImportCommitRequest: {
             /** Selections */
@@ -5508,12 +5890,25 @@ export interface components {
             /** Root */
             root: string;
         };
+        /** SkillOwnerTransferRequest */
+        SkillOwnerTransferRequest: {
+            /** Newowneractorid */
+            newOwnerActorId: string;
+        };
         /** SkillProblem */
         SkillProblem: {
             /** Code */
             code: string;
             /** Detail */
             detail: string;
+        };
+        /** SkillProfileUpdateRequest */
+        SkillProfileUpdateRequest: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other";
         };
         /** SkillReviseRequest */
         SkillReviseRequest: {
@@ -8086,6 +8481,331 @@ export interface operations {
             };
         };
     };
+    skill_hub_list_catalog: {
+        parameters: {
+            query: {
+                q?: string | null;
+                category?: "test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other";
+                task?: "knowledge.answer" | "test-plan.generate" | "automation.generate";
+                source?: "imported" | "authored" | "built_in";
+                status?: "enabled" | "disabled";
+                sort?: "name" | "last_used_at" | "activations" | "updated_at";
+                order?: "asc" | "desc";
+                from: string;
+                to: string;
+                /** @description Period selector that produced from/to; unknown values are 400 period_invalid. */
+                preset?: "last7" | "last30" | "thisMonth" | "lastMonth" | "custom";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHubCatalogView"];
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    skill_hub_get_skill: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                /** @description Period selector that produced from/to; unknown values are 400 period_invalid. */
+                preset?: "last7" | "last30" | "thisMonth" | "lastMonth" | "custom";
+            };
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHubDetailView"];
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    skill_hub_get_skill_usage: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                /** @description Period selector that produced from/to; unknown values are 400 period_invalid. */
+                preset?: "last7" | "last30" | "thisMonth" | "lastMonth" | "custom";
+            };
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHubUsageView"];
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    skill_hub_export: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                /** @description Period selector that produced from/to; unknown values are 400 period_invalid. */
+                preset?: "last7" | "last30" | "thisMonth" | "lastMonth" | "custom";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CSV zip export (library, usage detail) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "application/zip": string;
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    skill_hub_get_summary: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                /** @description Period selector that produced from/to; unknown values are 400 period_invalid. */
+                preset?: "last7" | "last30" | "thisMonth" | "lastMonth" | "custom";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHubSummaryView"];
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     ai_list_skill_revisions: {
         parameters: {
             query?: never;
@@ -8573,6 +9293,132 @@ export interface operations {
             };
             /** @description Knowledge runtime unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    skill_hub_transfer_skill_owner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillOwnerTransferRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHubSkill"];
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    skill_hub_update_skill_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHubSkill"];
+                };
+            };
+            /** @description Skill Hub request rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in Skill is read-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Skill not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

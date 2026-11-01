@@ -2124,3 +2124,140 @@ class AgentOwnerTransferRequest(ContractModel):
 
 class AgentTeamFeedbackResolveRequest(ContractModel):
     note: str | None = None
+
+
+# -- Skill Hub (spec 2026-11-01-skill-hub-design.md, section 5) -------------
+
+
+class SkillHubSkill(ContractModel):
+    """A Skill and its latest revision (`SkillRecord`); `version` is the
+    display version (SemVer `metadata.version`, else `r<revisionNumber>`)."""
+
+    skill_id: str
+    name: str
+    description: str | None
+    category: SkillCategoryName
+    version: str
+    latest_revision_id: str
+    revision_number: int
+    source_kind: Literal["imported", "authored", "built_in"]
+    origin_kind: Literal["files", "zip", "paste", "authored", "built_in", "unknown"]
+    origin_ref: str | None
+    origin_imported_at: datetime | None
+    owner_actor_id: str
+    owner_assigned_at: datetime
+    status: Literal["enabled", "disabled"]
+    applicable_tasks: list[str]
+    compatibility: str | None
+    updated_at: datetime
+    built_in: bool
+
+
+class SkillHubModeCounts(ContractModel):
+    """Activation runs per mode; not additive across Skills (a run using N
+    Skills counts once for each)."""
+
+    manual: int
+    pinned: int
+    auto: int
+
+
+class SkillHubCatalogItem(ContractModel):
+    skill: SkillHubSkill
+    activations: int
+    by_mode: SkillHubModeCounts
+
+
+class SkillHubRuntimeStats(ContractModel):
+    runs: int
+    failures: int
+    latency_total_ms: int
+    cost_usd: Decimal
+
+
+class SkillHubUsage(ContractModel):
+    """`runtime` is null only while the runtime backend is unavailable;
+    `lastUsedAt` is not limited to the period."""
+
+    by_mode: SkillHubModeCounts
+    users: int
+    satisfaction: float | None
+    satisfaction_sample: Literal["ok", "insufficient"]
+    last_used_at: datetime | None
+    pinned_by_agents: int
+    runtime: SkillHubRuntimeStats | None
+
+
+class SkillHubRankedKey(ContractModel):
+    key: str
+    runs: int
+
+
+class SkillHubDetail(ContractModel):
+    skill: SkillHubSkill
+    usage: SkillHubUsage
+    revisions: list[SkillRevisionSummary]
+    files: list[SkillFileView]
+    pinned_by: list[str]
+    top_agents: list[SkillHubRankedKey]
+    top_callers: list[SkillHubRankedKey]
+
+
+class SkillHubUsagePoint(ContractModel):
+    bucket_start: date
+    mode: Literal["manual", "pinned", "auto"]
+    runs: int
+
+
+class SkillHubUsageSeries(ContractModel):
+    points: list[SkillHubUsagePoint]
+    by_mode: SkillHubModeCounts
+
+
+class SkillHubLibrarySummary(ContractModel):
+    skill_total: int
+    enabled: int
+    used_in_period: int
+    unused: int
+    auto_share: float | None
+    candidate_count: int
+    candidate_limit: int
+
+
+class SkillHubViewEnvelope(ContractModel):
+    """Same read envelope as the Agent team view. The library, summary and
+    usage views are MySQL-only and always report `ok`; only the detail
+    (and the export) can report `syncing`/`unavailable`."""
+
+    runtime_status: Literal["ok", "syncing", "unavailable"]
+    computed_at: datetime
+    timezone: str
+    period: AgentTeamPeriod
+    granularity: Literal["day", "week", "month"]
+
+
+class SkillHubCatalogView(SkillHubViewEnvelope):
+    data: list[SkillHubCatalogItem]
+
+
+class SkillHubDetailView(SkillHubViewEnvelope):
+    data: SkillHubDetail
+
+
+class SkillHubUsageView(SkillHubViewEnvelope):
+    data: SkillHubUsageSeries
+
+
+class SkillHubSummaryView(SkillHubViewEnvelope):
+    data: SkillHubLibrarySummary
+
+
+class SkillProfileUpdateRequest(ContractModel):
+    category: SkillCategoryName
+
+
+class SkillOwnerTransferRequest(ContractModel):
+    # Not `actorId`: the request-scope guard rejects any body key that
+    # normalizes to an identity field as caller-asserted identity (see
+    # `AgentOwnerTransferRequest`).
+    new_owner_actor_id: str

@@ -87,6 +87,8 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.documents import JobStage
+    from tap.modules.skill_hub.application.service import SkillHubService
+    from tap.modules.skill_hub.ports import SkillRuntimeStats
     from tap.operations.milvus.client import TapperDocumentMilvusClients
     from tap.platform.storage.s3 import S3ObjectStore
 
@@ -729,6 +731,16 @@ class _UnavailableAgentRuntimeMetrics:
         raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
 
 
+class _UnavailableSkillRuntimeMetrics:
+    """`SkillRuntimeMetrics` stand-in for the same case as
+    `_UnavailableAgentRuntimeMetrics`: the Skill Hub detail and export report
+    `runtimeStatus: "unavailable"` rather than zeros."""
+
+    async def skill_stats(self, project_id: str, period: "Period") -> list["SkillRuntimeStats"]:
+        del project_id, period
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
+
+
 class _AsyncCloseable(Protocol):
     async def aclose(self) -> None: ...
 
@@ -1059,6 +1071,9 @@ async def create_api_runtime(
                 asset_catalog, model_catalog, scope=repository.scope
             )
         agent_team = _create_agent_team_service(settings, engine, repository.scope, resources)
+        skill_hub = _create_skill_hub_service(
+            settings, engine, repository.scope, resources, asset_catalog
+        )
         from tap.modules.chat.adapters.mysql_skill_activations import (
             MysqlSkillActivationRuntime,
             MysqlTurnSkillActivations,
@@ -1074,6 +1089,7 @@ async def create_api_runtime(
             skill_authoring=skill_authoring,
             agent_authoring=agent_authoring,
             agent_team=agent_team,
+            skill_hub=skill_hub,
             skill_activations=MysqlTurnSkillActivations(skill_sessions, scope=repository.scope),
         )
         if settings.insights_base_url:
@@ -2144,6 +2160,87 @@ def _create_agent_team_service(
         clock=lambda: datetime.now(UTC),
         check_sync_lag=check_sync_lag,
         sync_settle_seconds=settings.langfuse_sync_settle_seconds,
+    )
+
+
+def _create_skill_hub_service(
+    settings: TapperSettings,
+    engine: AsyncEngine,
+    scope: ProjectScopeContext,
+    resources: OwnedResources,
+    asset_catalog: "MysqlAssetCatalog",
+) -> "SkillHubService":
+    """Wire the Skill Hub's runtime metrics adapter with the Agent team
+    view's rules (`_create_agent_team_service`): the turn-table adapter only
+    under `TAP_AGENT_TEAM_RUNTIME_METRICS=turn_table` (uncached); the Langfuse
+    adapter over its own process-owned `httpx.AsyncClient` when
+    `LANGFUSE_HOST` is configured, reporting sync lag from the Agent team
+    store's `oldest_unsynced_age`; otherwise always unavailable and never
+    `"syncing"`. `CachedSkillRuntimeMetrics` wraps whichever adapter is
+    chosen."""
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore
+    from tap.modules.skill_hub.adapters.cached_metrics import CachedSkillRuntimeMetrics
+    from tap.modules.skill_hub.adapters.mysql import MysqlSkillHubStore
+    from tap.modules.skill_hub.application.service import SkillHubService
+    from tap.modules.skill_hub.ports import SkillRuntimeMetrics
+    from tap.platform.reporting.ttl_cache import TtlSingleFlightCache
+
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    sync_lag: Callable[[], Awaitable[timedelta | None]] | None = None
+    cache_ttl_seconds = 300
+    failure_ttl_seconds = 30
+    inner: SkillRuntimeMetrics
+    if settings.agent_team_runtime_metrics == "turn_table":
+        # MySQL-backed and cheap: caching would only serve stale counts.
+        cache_ttl_seconds = 0
+        failure_ttl_seconds = 0
+        from tap.modules.skill_hub.adapters.turn_table_metrics import (
+            TurnTableSkillRuntimeMetrics,
+        )
+
+        inner = TurnTableSkillRuntimeMetrics(sessions)
+    elif settings.langfuse_host is not None:
+        import httpx
+
+        from tap.modules.skill_hub.adapters.langfuse_metrics import LangfuseSkillRuntimeMetrics
+        from tap.platform.reporting.langfuse_metrics_client import LangfuseMetricsClient
+
+        langfuse_client = httpx.AsyncClient()
+        resources.push(langfuse_client)
+        inner = LangfuseSkillRuntimeMetrics(
+            LangfuseMetricsClient(
+                langfuse_client,
+                host=settings.langfuse_host,
+                public_key=settings.langfuse_public_key or "",
+                secret_key=settings.langfuse_secret_key or "",
+                environment=settings.langfuse_environment,
+            )
+        )
+        agent_team_store = MysqlAgentTeamStore(sessions, scope=scope)
+        settle = timedelta(seconds=settings.langfuse_sync_settle_seconds)
+
+        async def langfuse_sync_lag() -> timedelta | None:
+            return await agent_team_store.oldest_unsynced_age(now=datetime.now(UTC), settle=settle)
+
+        sync_lag = langfuse_sync_lag
+    else:
+        inner = _UnavailableSkillRuntimeMetrics()
+
+    return SkillHubService(
+        MysqlSkillHubStore(sessions, scope=scope),
+        CachedSkillRuntimeMetrics(
+            inner,
+            TtlSingleFlightCache(
+                ttl_seconds=cache_ttl_seconds, failure_ttl_seconds=failure_ttl_seconds
+            ),
+        ),
+        asset_catalog=asset_catalog,
+        scope=scope,
+        clock=lambda: datetime.now(UTC),
+        sync_lag=sync_lag,
     )
 
 

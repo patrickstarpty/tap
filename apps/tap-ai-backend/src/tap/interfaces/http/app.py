@@ -36,6 +36,7 @@ from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sou
 from tap.interfaces.http.routes.model_calls import router as model_calls_router
 from tap.interfaces.http.routes.model_catalog import router as model_catalog_router
 from tap.interfaces.http.routes.prompt_suggestions import router as prompt_suggestions_router
+from tap.interfaces.http.routes.skill_hub import router as skill_hub_router
 from tap.interfaces.http.routes.test_plans import router as test_plans_router
 from tap.interfaces.http.scope import resolve_project_scope
 from tap.modules.access.domain.context import IdentityMode
@@ -116,6 +117,7 @@ def create_app(
         ai_agents_router,
         ai_skills_router,
         agent_team_router,
+        skill_hub_router,
         conversations_router,
         model_calls_router,
         knowledge_graph_router,

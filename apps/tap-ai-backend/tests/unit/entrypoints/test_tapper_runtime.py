@@ -222,6 +222,83 @@ def test_agent_team_service_does_not_cache_turn_table_metrics() -> None:
         asyncio.run(engine.dispose())
 
 
+def test_skill_hub_service_uses_unavailable_adapter_without_langfuse_host() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import (
+        OwnedResources,
+        _create_skill_hub_service,
+        _UnavailableSkillRuntimeMetrics,
+    )
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    try:
+        service = _create_skill_hub_service(
+            settings, engine, VALIDATION_SCOPE, OwnedResources(), object()
+        )
+        assert isinstance(service._metrics._inner, _UnavailableSkillRuntimeMetrics)
+        assert service._sync_lag is None
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_skill_hub_service_does_not_cache_turn_table_metrics() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import OwnedResources, _create_skill_hub_service
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.skill_hub.adapters.turn_table_metrics import TurnTableSkillRuntimeMetrics
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table",
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "TAPPER_GRAPH_EXTRACTION_MODE": "fake",
+        }
+    )
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    try:
+        service = _create_skill_hub_service(
+            settings, engine, VALIDATION_SCOPE, OwnedResources(), object()
+        )
+        assert isinstance(service._metrics._inner, TurnTableSkillRuntimeMetrics)
+        assert service._metrics._cache._ttl_seconds == 0
+        assert service._sync_lag is None
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_skill_hub_service_uses_langfuse_with_sync_lag_when_host_set() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import OwnedResources, _create_skill_hub_service
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.skill_hub.adapters.langfuse_metrics import LangfuseSkillRuntimeMetrics
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+        }
+    )
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    resources = OwnedResources()
+    try:
+        service = _create_skill_hub_service(settings, engine, VALIDATION_SCOPE, resources, object())
+        assert isinstance(service._metrics._inner, LangfuseSkillRuntimeMetrics)
+        assert service._metrics._cache._ttl_seconds == 300
+        assert service._sync_lag is not None
+    finally:
+        asyncio.run(resources.aclose())
+        asyncio.run(engine.dispose())
+
+
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
         S3_SETTINGS

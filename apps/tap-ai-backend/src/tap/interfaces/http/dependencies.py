@@ -58,6 +58,7 @@ from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.modules.skill_hub.application.service import SkillHubService
 from tap.modules.test_management.application.plans import TestPlanApplication
 
 
@@ -261,6 +262,7 @@ class HttpServices:
     skill_authoring: SkillAuthoringService | None = None
     agent_authoring: AgentAuthoringService | None = None
     agent_team: AgentTeamService | None = None
+    skill_hub: SkillHubService | None = None
     # The shared, per-process Redis draft/wake-up stream adapter, composed once
     # in `tapper_runtime` from the same Redis client the API and generation
     # worker (which shares this composition via `create_api_runtime`) both use.
@@ -397,6 +399,14 @@ def agent_authoring_service(request: Request) -> AgentAuthoringService:
 def agent_team_service(request: Request) -> AgentTeamService:
     services = getattr(request.app.state, "http_services", None)
     service = services.agent_team if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def skill_hub_service(request: Request) -> SkillHubService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.skill_hub if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

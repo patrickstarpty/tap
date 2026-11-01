@@ -75,6 +75,7 @@ from tap.modules.knowledge.ports.errors import (
     SearchBoundsExceeded,
     SearchUnavailable,
 )
+from tap.modules.skill_hub.application.service import SkillHubRejected
 from tap.modules.test_management.domain.validation import RevisionConflict, RevisionImmutable
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -154,6 +155,9 @@ _SKILL_PROBLEM_STATUS: dict[str, int] = {
     "agent_read_only": 403,
     "agent_not_found": 404,
     "feedback_not_found": 404,
+    # Skill Hub (spec 2026-11-01 section 5; the 400 codes above are shared).
+    "skill_read_only": 403,
+    "skill_not_found": 404,
 }
 
 
@@ -467,6 +471,12 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(AgentTeamRejected)
     async def agent_team_rejected_problem(
         _request: Request, error: AgentTeamRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(SkillHubRejected)
+    async def skill_hub_rejected_problem(
+        _request: Request, error: SkillHubRejected
     ) -> JSONResponse:
         return skill_problem_response(error.code, error.detail)
 
