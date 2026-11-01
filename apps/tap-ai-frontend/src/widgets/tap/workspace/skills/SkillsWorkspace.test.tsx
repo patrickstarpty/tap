@@ -180,6 +180,48 @@ describe("SkillsWorkspace library", () => {
 });
 
 describe("SkillsWorkspace actions", () => {
+  it("uses a skill in chat from its detail drawer", async () => {
+    const user = userEvent.setup();
+    const onUse = vi.fn();
+    renderWorkspace({ onUse });
+    const detail = {
+      revisionId: "rev_custom",
+      skillId: "skill_custom",
+      assetId: "skill_custom",
+      displayName: "Custom policy helper",
+      contentDigest: "d2",
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      description: "Answers policy questions.",
+      instructions: "Answer from the policy index.",
+      attachedReferences: null,
+      files: [],
+      frontmatter: { name: "custom-policy-helper" },
+    };
+    vi.mocked(useSkill).mockImplementation(
+      (_projectId: string, revisionId: string | null) =>
+        (revisionId === "rev_custom"
+          ? { data: detail, isPending: false, isError: false }
+          : { data: undefined, isPending: true, isError: false }) as never,
+    );
+    vi.mocked(useSkillRevisions).mockReturnValue({
+      data: [detail],
+      isPending: false,
+      isError: false,
+    } as never);
+    await user.click(
+      await screen.findByRole("button", { name: "Custom policy helper" }),
+    );
+    const drawer = screen.getByRole("dialog", { name: "Custom policy helper" });
+    await user.click(
+      within(drawer).getByRole("button", { name: "Use in chat" }),
+    );
+    expect(onUse).toHaveBeenCalledWith("rev_custom");
+  });
+
   it("opens the import dialog from the Import skill button", async () => {
     const user = userEvent.setup();
     renderWorkspace();
