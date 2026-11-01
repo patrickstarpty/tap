@@ -11,10 +11,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, Period
-
-
-class RuntimeMetricsUnavailable(Exception):
-    """The runtime metrics backend (Langfuse) could not answer the query."""
+from tap.platform.reporting.runtime import RuntimeMetricsUnavailable as RuntimeMetricsUnavailable
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,16 +12,15 @@ Domain-level rows already carry `None` -- never `0` -- on every
 run-derived field when the runtime backend is unavailable (controller ruling,
 Task 9 review fix round 1: see `domain/models.py`'s `MemberRow`/`PersonRow`/
 `TeamSummary` docstrings); this module renders `None` as an empty cell.
+The cell, CSV and zip writers live in `tap.platform.reporting.csv_zip`
+(shared with Skill Hub).
 """
 
 from __future__ import annotations
 
 import calendar
-import csv
-import io
-import zipfile
-from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, date, datetime, timedelta
+from collections.abc import Mapping, Sequence
+from datetime import date, timedelta
 
 from tap.modules.agent_team.application.service import PeriodReport
 from tap.modules.agent_team.domain.models import (
@@ -32,8 +31,13 @@ from tap.modules.agent_team.domain.models import (
     RuntimeStatus,
 )
 from tap.modules.agent_team.ports import ServedActor, TrendPoint
-
-_UTF8_BOM = "﻿"
+from tap.platform.reporting.csv_zip import (
+    blank_cell,
+    csv_bytes,
+    iso_datetime_cell,
+    text_cell,
+    zip_bytes,
+)
 
 # Closed order matching `MaintenanceKind` (Global Constraints): one roster
 # column per kind.
@@ -94,38 +98,12 @@ _TREND_HEADER: tuple[str, ...] = (
 )
 
 
-# Spreadsheet apps evaluate a cell starting with any of these as a formula
-# (OWASP "CSV injection"); free-text cells get a leading `'` so they render
-# as literal text. Numeric cells never start with them and are left as-is.
-_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _blank(value: object | None) -> str:
-    return "" if value is None else str(value)
-
-
-def _text(value: str | None) -> str:
-    """A free-text cell (`name`, `job_title`, actor ids, `top_served`),
-    neutralized against formula injection."""
-    if value is None:
-        return ""
-    return f"'{value}" if value.startswith(_FORMULA_PREFIXES) else value
-
-
-def _iso_datetime(value: datetime | None) -> str:
-    """ISO-8601 UTC, `Z`-suffixed. Domain datetimes are always timezone-aware
-    UTC (ports.py's `AgentTeamStore`/`AgentRuntimeMetrics` docstrings)."""
-    if value is None:
-        return ""
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _iso_date(value: date) -> str:
     return value.isoformat()
 
 
 def _top_served_cell(top_served: Sequence[ServedActor]) -> str:
-    return _text(";".join(f"{actor.actor_id}:{actor.runs}" for actor in top_served))
+    return text_cell(";".join(f"{actor.actor_id}:{actor.runs}" for actor in top_served))
 
 
 def _maintenance_cell(maintenance: Mapping[MaintenanceKind, int], kind: MaintenanceKind) -> str:
@@ -141,32 +119,32 @@ def _calls_per_run_cell(value: float | None) -> str:
 def _roster_row(row: MemberRow) -> list[str]:
     cells = [
         row.agent_key,
-        _text(row.name),
+        text_cell(row.name),
         row.kind,
-        _text(row.job_title),
-        _text(row.owner_actor_id),
-        _iso_datetime(row.joined_at),
-        _blank(row.status),
-        _blank(row.runs),
-        _blank(row.failures),
-        _blank(row.abstained),
-        _blank(row.canceled),
-        _blank(row.latency_total_ms),
-        _blank(row.latency_p50_ms),
-        _blank(row.cost_usd),
-        _blank(row.served_count),
+        text_cell(row.job_title),
+        text_cell(row.owner_actor_id),
+        iso_datetime_cell(row.joined_at),
+        blank_cell(row.status),
+        blank_cell(row.runs),
+        blank_cell(row.failures),
+        blank_cell(row.abstained),
+        blank_cell(row.canceled),
+        blank_cell(row.latency_total_ms),
+        blank_cell(row.latency_p50_ms),
+        blank_cell(row.cost_usd),
+        blank_cell(row.served_count),
         _top_served_cell(row.top_served),
-        _iso_datetime(row.last_run_at),
-        _blank(row.satisfaction),
+        iso_datetime_cell(row.last_run_at),
+        blank_cell(row.satisfaction),
         row.satisfaction_sample,
-        _iso_datetime(row.last_maintenance_at),
+        iso_datetime_cell(row.last_maintenance_at),
         str(row.pending_feedback),
     ]
     cells.extend(_maintenance_cell(row.maintenance, kind) for kind in _MAINTENANCE_KINDS)
     cells.extend(
         [
-            _blank(row.generation_calls),
-            _blank(row.tool_calls),
+            blank_cell(row.generation_calls),
+            blank_cell(row.tool_calls),
             _calls_per_run_cell(row.calls_per_run),
         ]
     )
@@ -175,11 +153,11 @@ def _roster_row(row: MemberRow) -> list[str]:
 
 def _people_row(row: PersonRow) -> list[str]:
     return [
-        _text(row.actor_id),
+        text_cell(row.actor_id),
         str(row.owned_agents),
-        _blank(row.owned_runs),
-        _blank(row.served_by_agents),
-        _blank(row.runs),
+        blank_cell(row.owned_runs),
+        blank_cell(row.served_by_agents),
+        blank_cell(row.runs),
         str(row.maintenance),
     ]
 
@@ -211,20 +189,6 @@ def _trend_row(point: TrendPoint, period: Period) -> list[str]:
     ]
 
 
-def _csv_bytes(
-    header: Sequence[str], rows: Iterable[Sequence[str]], *, comment_lines: Sequence[str] = ()
-) -> bytes:
-    text = io.StringIO()
-    text.write(_UTF8_BOM)
-    for line in comment_lines:
-        text.write(f"{line}\n")
-    writer = csv.writer(text, lineterminator="\n")
-    writer.writerow(header)
-    for row in rows:
-        writer.writerow(row)
-    return text.getvalue().encode("utf-8")
-
-
 def build_export(
     report: PeriodReport,
     trend: list[TrendPoint],
@@ -243,12 +207,12 @@ def build_export(
     already carry `None` there, not because the column was dropped."""
     unavailable = runtime_status == "unavailable"
     unavailable_comment = ["# runtime=unavailable"] if unavailable else []
-    roster_csv = _csv_bytes(
+    roster_csv = csv_bytes(
         _ROSTER_HEADER,
         (_roster_row(row) for row in report.members),
         comment_lines=unavailable_comment,
     )
-    people_csv = _csv_bytes(
+    people_csv = csv_bytes(
         _PEOPLE_HEADER,
         (_people_row(row) for row in report.people),
         comment_lines=unavailable_comment,
@@ -256,15 +220,10 @@ def build_export(
     trend_comment = f"# granularity={period.granularity}"
     if unavailable:
         trend_comment += "; runtime=unavailable"
-    trend_csv = _csv_bytes(
+    trend_csv = csv_bytes(
         _TREND_HEADER,
         (_trend_row(point, period) for point in trend),
         comment_lines=[trend_comment],
     )
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("roster.csv", roster_csv)
-        archive.writestr("people.csv", people_csv)
-        archive.writestr("trend.csv", trend_csv)
-    return buffer.getvalue()
+    return zip_bytes({"roster.csv": roster_csv, "people.csv": people_csv, "trend.csv": trend_csv})

@@ -7,10 +7,10 @@ never touches routes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, TypeVar
+from typing import Literal, TypeVar
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
@@ -45,6 +45,7 @@ from tap.modules.agent_team.ports import (
     ServedActor,
     TrendPoint,
 )
+from tap.platform.reporting.runtime import combine_status, gather_runtime, view_deadline
 
 _MAX_JOB_TITLE_LENGTH = 64
 _MAX_NOTE_LENGTH = 500
@@ -76,11 +77,6 @@ _PEOPLE_SORT_FIELDS = frozenset(
     {"actor_id", "owned_agents", "owned_runs", "served_by_agents", "runs", "maintenance"}
 )
 _SORT_ORDERS = frozenset({"asc", "desc"})
-
-# Spec 5.1: Langfuse unavailable/stale ranks worse than merely behind, which
-# ranks worse than caught up -- `report()` combines two periods' statuses by
-# taking the worse of the two.
-_STATUS_RANK: dict[RuntimeStatus, int] = {"unavailable": 0, "syncing": 1, "ok": 2}
 
 
 class AgentTeamRejected(Exception):
@@ -188,10 +184,6 @@ def _runs_or_zero(stats: AgentRuntimeStats | None) -> int:
     return stats.runs if stats is not None else 0
 
 
-def _combine_status(a: RuntimeStatus, b: RuntimeStatus) -> RuntimeStatus:
-    return a if _STATUS_RANK[a] <= _STATUS_RANK[b] else b
-
-
 def _validate_sort(sort: str, order: str, allowed: frozenset[str]) -> None:
     if order not in _SORT_ORDERS:
         raise AgentTeamRejected("sort_invalid", f"invalid order {order!r}")
@@ -208,17 +200,6 @@ _RUNTIME_LOAD_GRACE_SECONDS = 1.0
 
 # Seconds left in one view's shared runtime budget (spec 5.1).
 _Remaining = Callable[[], float]
-
-
-async def _gather_runtime(*awaitables: Coroutine[Any, Any, Any]) -> list[Any]:
-    """Runs one view's runtime queries concurrently; the first failure
-    cancels the rest and is re-raised bare (not as an `ExceptionGroup`)."""
-    try:
-        async with asyncio.TaskGroup() as group:
-            tasks = [group.create_task(awaitable) for awaitable in awaitables]
-    except ExceptionGroup as group_error:
-        raise group_error.exceptions[0] from None
-    return [task.result() for task in tasks]
 
 
 class AgentTeamService:
@@ -256,13 +237,7 @@ class AgentTeamService:
 
     def _deadline(self) -> _Remaining:
         """Starts one view's shared runtime budget; returns how much is left."""
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._runtime_timeout
-
-        def remaining() -> float:
-            return max(deadline - loop.time(), 0.0)
-
-        return remaining
+        return view_deadline(self._runtime_timeout)
 
     async def _load_runtime(
         self,
@@ -294,7 +269,7 @@ class AgentTeamService:
         agent_keys = sorted(roster_keys)
 
         try:
-            stats, trailing_stats, trend, last_runs = await _gather_runtime(
+            stats, trailing_stats, trend, last_runs = await gather_runtime(
                 self._metrics.agent_stats(project_id, period, timeout_seconds=remaining()),
                 self._metrics.agent_stats(project_id, trailing, timeout_seconds=remaining()),
                 self._metrics.trend(
@@ -651,7 +626,7 @@ class AgentTeamService:
             self._period_report(period, remaining),
             self._period_report(previous_period, remaining),
         )
-        status = _combine_status(current_status, previous_status)
+        status = combine_status(current_status, previous_status)
         computed_at = min(current_computed_at, previous_computed_at)
         data = TeamReport(current=current, previous=previous, previous_period=previous_period)
         return self._view(period, status, computed_at, data)

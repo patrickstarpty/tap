@@ -7,7 +7,6 @@ All logic lives in ``AgentTeamService`` (Task 7) and ``build_export`` (Task
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any, get_args
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -67,6 +66,7 @@ from tap.modules.agent_team.domain.models import (
     TeamView,
 )
 from tap.modules.agent_team.ports import PendingFeedback, ResolvedFeedback, ServedActor, TrendPoint
+from tap.platform.reporting.period import parse_period_query, parse_preset
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -86,12 +86,7 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 def _parse_period(from_: str, to: str) -> Period:
     try:
-        start = date.fromisoformat(from_)
-        end = date.fromisoformat(to)
-    except (ValueError, OverflowError) as exc:
-        raise AgentTeamRejected("period_invalid", "from/to must be ISO dates") from exc
-    try:
-        return Period.parse(start, end)
+        return parse_period_query(from_, to)
     except PeriodInvalid as exc:
         raise AgentTeamRejected("period_invalid", str(exc)) from exc
 
@@ -99,12 +94,10 @@ def _parse_period(from_: str, to: str) -> Period:
 def _parse_preset(value: str | None) -> PeriodPreset | None:
     """An unknown `preset` is a malformed period selector: 400
     `period_invalid` (not FastAPI's generic 422)."""
-    if value is None:
-        return None
-    for preset in PERIOD_PRESETS:
-        if value == preset:
-            return preset
-    raise AgentTeamRejected("period_invalid", f"invalid preset {value!r}")
+    try:
+        return parse_preset(value)
+    except PeriodInvalid as exc:
+        raise AgentTeamRejected("period_invalid", str(exc)) from exc
 
 
 def _closed_choice(value: str | None, allowed: tuple[str, ...], name: str) -> Any:

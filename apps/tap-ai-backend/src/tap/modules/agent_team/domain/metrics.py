@@ -23,9 +23,8 @@ from tap.modules.agent_team.domain.models import (
     TeamSummary,
 )
 from tap.modules.agent_team.ports import AgentRuntimeStats, ServedActor, TrendPoint
+from tap.platform.reporting.satisfaction import satisfaction as satisfaction
 
-# Spec 2.3: fewer than 10 rated turns is "sample insufficient".
-_MIN_RATED_TURNS_FOR_SATISFACTION = 10
 # Spec 1.2/6.1: cards show at most the top 3 served actors.
 _TOP_SERVED_LIMIT = 3
 
@@ -47,15 +46,6 @@ def member_status(*, disabled: bool, trailing_30d_runs: int | None) -> MemberSta
     if trailing_30d_runs >= 1:
         return "active"
     return "idle"
-
-
-def satisfaction(up: int, down: int) -> tuple[float | None, Literal["ok", "insufficient"]]:
-    """Spec 2.3: `up / (up + down)`; fewer than 10 rated turns reports no
-    value and `"insufficient"`."""
-    total = up + down
-    if total < _MIN_RATED_TURNS_FOR_SATISFACTION:
-        return None, "insufficient"
-    return up / total, "ok"
 
 
 def roster_agent_keys(
