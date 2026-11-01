@@ -1,43 +1,22 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.ai.domain.assets import (
-    AiAgentRevision,
-    AssetRevisionStatus,
-    SkillRevision,
-    text_digest,
-)
-from tap.modules.ai.domain.models import schema_digest
+from tap.modules.ai.domain.assets import AssetRevisionStatus, SkillRevision, text_digest
 from tap.modules.chat.application.skill_selection import (
     SkillBudgetExceeded,
     merge_skill_selection,
+    pinned_revisions,
 )
-
-_AGENT_OUTPUT_SCHEMA = {"type": "object"}
-
-
-def _agent(skill_revision_ids: tuple[str, ...] = ()) -> AiAgentRevision:
-    return AiAgentRevision(
-        revision_id="agent-revision",
-        asset_id="knowledge-agent",
-        display_name="Knowledge agent",
-        scope=VALIDATION_SCOPE,
-        content_digest=text_digest("agent-v1"),
-        system_instruction_digest=text_digest("server-instruction"),
-        tool_allowlist=frozenset({"knowledge.search"}),
-        output_schema_digest=schema_digest(_AGENT_OUTPUT_SCHEMA),
-        status=AssetRevisionStatus.ENABLED,
-        system_instruction="server-instruction",
-        output_schema_json='{"type":"object"}',
-        skill_revision_ids=skill_revision_ids,
-    )
 
 
 def _skill(
     revision_id: str,
     *,
+    asset_id: str | None = None,
     instruction: str = "instruction",
     status: AssetRevisionStatus = AssetRevisionStatus.ENABLED,
     applicable_tasks: frozenset[str] = frozenset({"knowledge.answer"}),
@@ -46,7 +25,7 @@ def _skill(
     combined = instruction + (attached_references or "")
     return SkillRevision(
         revision_id=revision_id,
-        asset_id=f"{revision_id}-asset",
+        asset_id=asset_id or f"{revision_id}-asset",
         display_name=revision_id,
         scope=VALIDATION_SCOPE,
         content_digest=text_digest(f"{revision_id}-content"),
@@ -58,49 +37,91 @@ def _skill(
     )
 
 
-def test_agent_skills_precede_requested_and_dedupe() -> None:
-    bound = _skill("skill-bound")
-    requested_dupe = _skill("skill-bound")  # same id requested again, explicitly
-    requested_extra = _skill("skill-extra")
-    agent = _agent(skill_revision_ids=("skill-bound",))
+def test_manual_skills_come_before_pinned() -> None:
+    manual = _skill("skill-manual")
+    pinned = _skill("skill-pinned")
 
-    selection = merge_skill_selection(
-        agent, [bound, requested_dupe, requested_extra], task="knowledge.answer"
-    )
+    selection = merge_skill_selection([manual], [pinned], task="knowledge.answer")
 
-    assert [item.revision_id for item in selection.applied] == ["skill-bound", "skill-extra"]
+    assert [item.revision_id for item in selection.applied] == ["skill-manual", "skill-pinned"]
+    assert selection.modes == ("manual", "pinned")
     assert selection.notices == ()
 
 
-def test_disabled_bound_skill_is_skipped_with_notice() -> None:
-    bound = _skill("skill-bound", status=AssetRevisionStatus.DISABLED)
-    agent = _agent(skill_revision_ids=("skill-bound",))
+def test_same_skill_manual_and_pinned_records_manual_once() -> None:
+    manual_old = _skill("skill-r1", asset_id="skill-a")
+    pinned_latest = _skill("skill-r2", asset_id="skill-a")
+    manual_again = _skill("skill-r1", asset_id="skill-a")
 
-    selection = merge_skill_selection(agent, [bound], task="knowledge.answer")
+    selection = merge_skill_selection(
+        [manual_old, manual_again], [pinned_latest], task="knowledge.answer"
+    )
+
+    assert [item.revision_id for item in selection.applied] == ["skill-r1"]
+    assert selection.modes == ("manual",)
+    assert selection.notices == ()
+
+
+def test_disabled_pinned_skill_is_skipped_with_notice() -> None:
+    disabled = _skill("skill-pinned", status=AssetRevisionStatus.DISABLED)
+    manual = _skill("skill-manual")
+
+    selection = merge_skill_selection([manual], [disabled], task="knowledge.answer")
+
+    assert [item.revision_id for item in selection.applied] == ["skill-manual"]
+    assert selection.modes == ("manual",)
+    assert selection.notices == ("skill_disabled:skill-pinned",)
+
+
+def test_inapplicable_skill_is_skipped() -> None:
+    manual = _skill("skill-wrong-task", applicable_tasks=frozenset({"test-plan.generate"}))
+    pinned = _skill("skill-pinned-wrong", applicable_tasks=frozenset({"test-plan.generate"}))
+
+    selection = merge_skill_selection([manual], [pinned], task="knowledge.answer")
 
     assert selection.applied == ()
-    assert selection.notices == ("skill_disabled:skill-bound",)
+    assert selection.modes == ()
+    assert selection.notices == (
+        "skill_inapplicable:skill-wrong-task",
+        "skill_inapplicable:skill-pinned-wrong",
+    )
 
 
-def test_inapplicable_skill_is_skipped_with_notice() -> None:
-    skill = _skill("skill-wrong-task", applicable_tasks=frozenset({"test-plan.generate"}))
+def test_combined_budget_over_96kb_raises() -> None:
+    half = 48 * 1024
+    manual = _skill("skill-manual", instruction="x" * half)
+    pinned = _skill("skill-pinned", instruction="y" * (half - 4), attached_references="refs!")
 
-    selection = merge_skill_selection(None, [skill], task="knowledge.answer")
-
-    assert selection.applied == ()
-    assert selection.notices == ("skill_inapplicable:skill-wrong-task",)
-
-
-def test_budget_over_96kb_rejected() -> None:
-    oversized = _skill("skill-big", instruction="x" * (96 * 1024 + 1))
+    at_budget = merge_skill_selection(
+        [manual], [_skill("skill-fits", instruction="y" * half)], task="knowledge.answer"
+    )
+    assert len(at_budget.applied) == 2
 
     with pytest.raises(SkillBudgetExceeded) as excinfo:
-        merge_skill_selection(None, [oversized], task="knowledge.answer")
+        merge_skill_selection([manual], [pinned], task="knowledge.answer")
     assert excinfo.value.code == "skill_budget_exceeded"
 
 
-def test_merge_skill_selection_with_no_agent_and_no_requested_skills_is_empty() -> None:
-    selection = merge_skill_selection(None, [], task="knowledge.answer")
+def test_agent_bound_revisions_are_no_longer_read() -> None:
+    # The merge sees only the Turn's manual Skills and the Agent's pinned
+    # Skills; there is no Agent (and so no bound revision list) to read.
+    assert list(inspect.signature(merge_skill_selection).parameters) == [
+        "requested",
+        "pinned",
+        "task",
+    ]
+    selection = merge_skill_selection([], [], task="knowledge.answer")
 
     assert selection.applied == ()
+    assert selection.modes == ()
     assert selection.notices == ()
+
+
+def test_pinned_ids_resolve_to_latest_library_revision_or_unavailable() -> None:
+    latest = _skill("skill-r2", asset_id="skill-a")
+    other = _skill("skill-b-r1", asset_id="skill-b")
+
+    revisions, notices = pinned_revisions(("skill-a", "skill-gone"), [other, latest])
+
+    assert revisions == (latest,)
+    assert notices == ("skill_unavailable:skill-gone",)

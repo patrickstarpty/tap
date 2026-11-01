@@ -29,7 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tap.contracts.events import ProjectEventEnvelope
 from tap.contracts.problems import build_problem
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
+from tap.modules.chat.adapters.mysql_skill_activations import insert_frozen_activations
 from tap.modules.chat.application.conversations import (
     ClaimBatch,
     ConversationConflict,
@@ -259,6 +261,7 @@ def _input_json(value):
         "skill_instruction_template_digests": list(value.skill_instruction_template_digests),
         "skill_notices": list(value.skill_notices),
         "requested_skill_revision_ids": list(value.requested_skill_revision_ids),
+        "skill_catalog": [asdict(entry) for entry in value.skill_catalog],
     }
 
 
@@ -423,6 +426,13 @@ class MysqlConversationRepository:
                 created_at=now,
             )
         )
+        await insert_frozen_activations(
+            session,
+            self.scope,
+            turn_id=turn.turn_id,
+            value=turn.input_snapshot.value,
+            activated_at=now,
+        )
         await self._event(session, event, conversation_id, turn.turn_id)
 
     async def _next_event(self, session, conversation_id, event):
@@ -549,6 +559,7 @@ class MysqlConversationRepository:
             skill_labels=tuple(raw.get("skill_labels", [])),
             skill_notices=tuple(raw.get("skill_notices", [])),
             requested_skill_revision_ids=tuple(raw.get("requested_skill_revision_ids", [])),
+            skill_catalog=tuple(SkillCatalogEntry(**item) for item in raw.get("skill_catalog", [])),
             agent_system_instruction=raw.get("agent_system_instruction"),
             agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
             agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),

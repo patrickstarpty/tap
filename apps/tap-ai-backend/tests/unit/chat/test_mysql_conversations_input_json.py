@@ -14,9 +14,12 @@ write/read path end to end.
 
 from __future__ import annotations
 
+import hashlib
+
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
 from tap.modules.chat.adapters.mysql_conversations import _input_json
-from tap.modules.chat.domain.conversations import FrozenResource, TurnInput
+from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
 
 
 def _reconstruct(raw: dict) -> TurnInput:
@@ -40,6 +43,7 @@ def _reconstruct(raw: dict) -> TurnInput:
         skill_labels=tuple(raw.get("skill_labels", [])),
         skill_notices=tuple(raw.get("skill_notices", [])),
         requested_skill_revision_ids=tuple(raw.get("requested_skill_revision_ids", [])),
+        skill_catalog=tuple(SkillCatalogEntry(**item) for item in raw.get("skill_catalog", [])),
         agent_system_instruction=raw.get("agent_system_instruction"),
         agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
         agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
@@ -122,3 +126,114 @@ def test_persona_version_is_frozen_and_legacy_digest_is_stable():
     # Every other key is unaffected by this field's addition -- the digest
     # over this dict is exactly what it was before `persona_version` existed.
     assert set(legacy_material) == set(material) - {"persona_version"}
+
+
+def _sha(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_CATALOG = (
+    SkillCatalogEntry(
+        skill_id="skill-a",
+        revision_id="skill-a-r2",
+        name="Boundary checks",
+        description="Find boundary values",
+        category="test-design",
+    ),
+    SkillCatalogEntry(
+        skill_id="skill-b",
+        revision_id="skill-b-r1",
+        name="数据 summary",
+        description="",
+        category="other",
+    ),
+)
+
+
+def test_tapper_default_turn_accepts_manual_skills():
+    """Tapper default (no Agent) loads manual Skills too: the frozen Skill
+    content no longer requires a frozen Agent authority."""
+
+    turn_input = TurnInput(
+        message="Use my Skill",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode="validation",
+        model_alias="qwen-plus",
+        skill_revision_ids=("skill-1",),
+        skill_revision_digests=("sha256:" + "b" * 64,),
+        skill_instruction_templates=("manual skill text",),
+        skill_instruction_template_digests=(_sha("manual skill text"),),
+        requested_skill_revision_ids=("skill-1",),
+        retrieval_policy_digest="sha256:" + "c" * 64,
+    )
+
+    assert turn_input.agent_revision_id is None
+    assert turn_input.skill_instruction_templates == ("manual skill text",)
+
+
+def test_empty_catalog_keeps_legacy_digest():
+    base_kwargs = dict(
+        message="Legacy digest",
+        actor_id="tapper-local-user",
+        identity_mode="validation",
+        model_alias="qwen-plus",
+        retrieval_policy_digest="sha256:" + "c" * 64,
+    )
+    legacy = TurnInput(**base_kwargs)
+    material = legacy.material(project_id="p", turn_id="t")
+
+    assert "skill_catalog" not in material
+    # Recorded from this exact input before `skill_catalog` existed.
+    assert content_digest(material) == (
+        "sha256:9032d3453fb4de7ffe659dd7d5a4fa6c9a0cfd507d9b34d7c3a105b19a8f54e2"
+    )
+
+    with_catalog = TurnInput(**base_kwargs, skill_catalog=_CATALOG)
+    catalog_material = with_catalog.material(project_id="p", turn_id="t")
+    assert catalog_material["skill_catalog"] == [
+        {
+            "skill_id": "skill-a",
+            "revision_id": "skill-a-r2",
+            "name": "Boundary checks",
+            "description": "Find boundary values",
+            "category": "test-design",
+        },
+        {
+            "skill_id": "skill-b",
+            "revision_id": "skill-b-r1",
+            "name": "数据 summary",
+            "description": "",
+            "category": "other",
+        },
+    ]
+    assert set(catalog_material) - {"skill_catalog"} == set(material)
+    assert content_digest(catalog_material) != content_digest(material)
+
+
+def test_catalog_round_trips_through_input_json():
+    turn_input = TurnInput(
+        message="Freeze a catalog",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode="validation",
+        model_alias="qwen-plus",
+        skill_catalog=_CATALOG,
+        retrieval_policy_digest="sha256:" + "c" * 64,
+    )
+
+    raw = _input_json(turn_input)
+
+    assert raw["skill_catalog"] == [
+        {
+            "skill_id": entry.skill_id,
+            "revision_id": entry.revision_id,
+            "name": entry.name,
+            "description": entry.description,
+            "category": entry.category,
+        }
+        for entry in _CATALOG
+    ]
+    reconstructed = _reconstruct(raw)
+    assert reconstructed == turn_input
+    assert reconstructed.material(project_id="p", turn_id="t") == turn_input.material(
+        project_id="p", turn_id="t"
+    )

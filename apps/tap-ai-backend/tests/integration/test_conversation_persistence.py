@@ -303,6 +303,113 @@ def test_turn_with_skill_notices_round_trips_through_mysql(owned_project_mysql):
     asyncio.run(scenario())
 
 
+def test_frozen_manual_and_pinned_activations_written_with_turn(owned_project_mysql):
+    """Manual and pinned Skills are recorded in `turn_skill_activation` in the
+    Turn's own transaction: one row per Skill, at the Turn's creation time,
+    sized by the frozen instruction text (template + references)."""
+
+    import hashlib
+
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import SkillRevision, text_digest
+    from tap.modules.chat.adapters.mysql_skill_activations import activation_id_for
+
+    def _sha(value):
+        return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+            for skill_id, body, references in (
+                ("activation-manual", "手动 instruction", None),
+                ("activation-pinned", "pinned instruction", "\nreference 数据"),
+            ):
+                await catalog.insert_skill_revision(
+                    SkillRevision(
+                        revision_id=f"{skill_id}-v1",
+                        asset_id=skill_id,
+                        display_name=skill_id,
+                        scope=VALIDATION_SCOPE,
+                        content_digest=text_digest(f"{skill_id}-content"),
+                        instruction_template_digest=text_digest(body + (references or "")),
+                        applicable_tasks=frozenset({"knowledge.answer"}),
+                        instruction_template=body,
+                        attached_references=references,
+                    ),
+                    base_revision_id=None,
+                )
+            manual_text = "手动 instruction"
+            pinned_text = "pinned instruction\nreference 数据"
+            turn_input = TurnInput(
+                message="Use Skills",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                identity_mode="validation",
+                model_alias="qwen-plus",
+                skill_revision_ids=("activation-manual-v1", "activation-pinned-v1"),
+                skill_revision_digests=("sha256:" + "b" * 64, "sha256:" + "d" * 64),
+                skill_instruction_templates=(manual_text, pinned_text),
+                skill_instruction_template_digests=(_sha(manual_text), _sha(pinned_text)),
+                requested_skill_revision_ids=("activation-manual-v1",),
+                retrieval_policy_digest="sha256:" + "c" * 64,
+            )
+            service = ConversationService(
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                scope=VALIDATION_SCOPE,
+            )
+            await service.create(
+                "activation-conversation", "activation-turn", "activation-request", turn_input
+            )
+
+            async with engine.connect() as connection:
+                turn_created_at = (
+                    await connection.execute(
+                        text("SELECT created_at FROM chat_turn WHERE turn_id='activation-turn'")
+                    )
+                ).scalar_one()
+                rows = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT activation_id, project_id, skill_id, skill_revision_id, "
+                                "mode, activated_at, bytes FROM turn_skill_activation "
+                                "WHERE turn_id='activation-turn' ORDER BY skill_id"
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            assert [dict(row) for row in rows] == [
+                {
+                    "activation_id": activation_id_for("activation-turn", "activation-manual"),
+                    "project_id": VALIDATION_SCOPE.project_id,
+                    "skill_id": "activation-manual",
+                    "skill_revision_id": "activation-manual-v1",
+                    "mode": "manual",
+                    "activated_at": turn_created_at,
+                    "bytes": len(manual_text.encode("utf-8")),
+                },
+                {
+                    "activation_id": activation_id_for("activation-turn", "activation-pinned"),
+                    "project_id": VALIDATION_SCOPE.project_id,
+                    "skill_id": "activation-pinned",
+                    "skill_revision_id": "activation-pinned-v1",
+                    "mode": "pinned",
+                    "activated_at": turn_created_at,
+                    "bytes": len(pinned_text.encode("utf-8")),
+                },
+            ]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     async def scenario():
         url = owned_project_database_url(owned_project_mysql).replace(

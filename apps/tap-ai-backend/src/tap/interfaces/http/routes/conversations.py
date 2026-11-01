@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import uuid4
@@ -51,6 +52,7 @@ from tap.modules.ai.domain.models import (
     schema_digest,
 )
 from tap.modules.ai.domain.persona import CURRENT_PERSONA
+from tap.modules.ai.domain.skill_activation import build_skill_catalog
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
@@ -63,7 +65,11 @@ from tap.modules.chat.application.ports import (
     draft_stream_key,
     wake_stream_key,
 )
-from tap.modules.chat.application.skill_selection import SkillBudgetExceeded, merge_skill_selection
+from tap.modules.chat.application.skill_selection import (
+    SkillBudgetExceeded,
+    merge_skill_selection,
+    pinned_revisions,
+)
 from tap.modules.chat.domain.conversations import TurnInput
 from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
@@ -82,12 +88,12 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
     """A cheap pre-check for the obvious-mismatch case, so an unmistakably different
     replay body fails fast without the asset/knowledge lookups `_input` would do.
     The frozen Turn's `skill_revision_ids` is `merge_skill_selection`'s *applied*
-    set (Agent-bound ids first, deduped, with disabled/inapplicable ids skipped),
+    set (manual then pinned, deduped, with disabled/inapplicable ids skipped),
     not `body.skill_revision_ids` verbatim, so it is compared against
     `requested_skill_revision_ids` (the caller's raw request, frozen alongside it
     for exactly this check) instead -- fix round 1, I-2. `_validate_replay`'s full
-    recomputation and dataclass equality below still catches a genuine mismatch
-    this quick check would miss.
+    recomputation below still catches a genuine non-Skill mismatch this quick
+    check would miss.
     """
 
     value = turn.input_snapshot.value
@@ -99,6 +105,23 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
         and value.agent_revision_id == body.agent_revision_id
         and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
         and value.insights_report_refs == tuple(body.insights_report_refs)
+    )
+
+
+def _replay_comparable(value: TurnInput) -> TurnInput:
+    """`value` without what the Skill library decides at freeze time (applied
+    Skills, their content and notices, the candidate catalog): a pinned Skill's
+    new revision or a newly imported Skill mid-retry is not a different
+    request. The manual request itself is checked by `_matches_replay`."""
+    return replace(
+        value,
+        skill_revision_ids=(),
+        skill_revision_digests=(),
+        skill_labels=(),
+        skill_instruction_templates=(),
+        skill_instruction_template_digests=(),
+        skill_notices=(),
+        skill_catalog=(),
     )
 
 
@@ -117,7 +140,7 @@ async def _validate_replay(turn, body: ConversationCreateRequest, request: Reque
         SkillBudgetExceeded,
     ):
         return
-    if current != turn.input_snapshot.value:
+    if _replay_comparable(current) != _replay_comparable(turn.input_snapshot.value):
         raise ConversationConflict("idempotency-conflict")
 
 
@@ -147,19 +170,30 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
         )
         agent_digest = agent.content_digest
-    bound_skill_ids = tuple(getattr(agent, "skill_revision_ids", ()) or ())
-    candidate_skill_ids = list(dict.fromkeys((*bound_skill_ids, *body.skill_revision_ids)))
-    if candidate_skill_ids and services.asset_catalog is None:
+    if body.skill_revision_ids and services.asset_catalog is None:
         raise KnowledgeRuntimeUnavailable
-    candidate_skills = [
+    # Each Skill's latest revision, whatever its status: pinned Skills and the
+    # auto-activation catalog both come from this one read.
+    library = (
+        () if services.asset_catalog is None else await services.asset_catalog.list_skills(scope)
+    )
+    manual_skills = [
         # Tolerant of a disabled Skill (unlike `get_skill`): `merge_skill_selection`
-        # decides whether to skip it with a notice, rather than this failing the
-        # whole turn for a Skill the Agent bound before it was disabled.
+        # decides whether to skip it with a notice rather than failing the turn.
         await services.asset_catalog.resolve_historical_skill(scope, revision_id)
-        for revision_id in candidate_skill_ids
+        for revision_id in dict.fromkeys(body.skill_revision_ids)
     ]
-    selection = merge_skill_selection(agent, candidate_skills, task="knowledge.answer")
+    pinned_skills, unavailable_notices = pinned_revisions(
+        tuple(getattr(agent, "pinned_skill_ids", ()) or ()), library
+    )
+    selection = merge_skill_selection(manual_skills, pinned_skills, task="knowledge.answer")
     skills = selection.applied
+    catalog = build_skill_catalog(
+        library,
+        task="knowledge.answer",
+        excluded_skill_ids=frozenset(getattr(agent, "excluded_skill_ids", ()) or ()),
+        loaded_skill_ids=frozenset(item.asset_id for item in skills),
+    )
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
     if body.insights_report_refs and services.insights_explanation is None:
@@ -187,8 +221,9 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         skill_revision_ids=tuple(item.revision_id for item in skills),
         skill_revision_digests=tuple(item.content_digest for item in skills),
         skill_labels=tuple(getattr(item, "display_name", item.revision_id) for item in skills),
-        skill_notices=selection.notices,
+        skill_notices=(*selection.notices, *unavailable_notices),
         requested_skill_revision_ids=tuple(body.skill_revision_ids),
+        skill_catalog=catalog.entries,
         agent_system_instruction=(
             None if body.agent_revision_id is None else agent.system_instruction
         ),

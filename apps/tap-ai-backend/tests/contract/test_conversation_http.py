@@ -288,6 +288,7 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
 
             return SimpleNamespace(
                 revision_id=identity,
+                asset_id=f"{identity}-asset",
                 content_digest="sha256:" + "b" * 64,
                 instruction_template="frozen skill instruction",
                 instruction_template_digest=text_digest("frozen skill instruction"),
@@ -297,6 +298,9 @@ def test_idempotent_http_replay_uses_historical_snapshot_before_current_asset_re
 
         async def resolve_historical_skill(self, scope, identity):
             return await self.get_skill(scope, identity)
+
+        async def list_skills(self, _scope):
+            return ()
 
     class Knowledge:
         scope = VALIDATION_SCOPE
@@ -659,10 +663,52 @@ def test_conversation_event_item_accepts_task_step() -> None:
     assert item.event_type == "task.step"
 
 
-def _asset_catalog_for_merge_tests():
+def _library_skill(skill_id, revision_number, **overrides):
+    from tap.modules.ai.domain.assets import SkillRevision, text_digest
+
+    instruction = overrides.pop("instruction", f"{skill_id} r{revision_number} instruction")
+    values = dict(
+        revision_id=f"{skill_id}-r{revision_number}",
+        asset_id=skill_id,
+        display_name=skill_id.replace("-", " ").capitalize(),
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest(f"{skill_id}-r{revision_number}-content"),
+        instruction_template_digest=text_digest(instruction),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template=instruction,
+        description=f"{skill_id} description",
+    )
+    values.update(overrides)
+    return SkillRevision(**values)
+
+
+def _library_catalog():
+    """An asset catalog whose `list_skills` behaves like the MySQL catalog:
+    each Skill's latest revision, whatever its status. The Agent pins three
+    Skills (one with a newer revision, one disabled, one not in the library),
+    excludes one, and still carries a legacy bound revision of a Skill it no
+    longer pins."""
+
     from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, ApprovedAssetCatalog
-    from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision, text_digest
+    from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
     from tap.modules.ai.domain.models import schema_digest
+
+    class LibraryCatalog(ApprovedAssetCatalog):
+        scope = VALIDATION_SCOPE
+
+        def __init__(self, *, agents, skills):
+            super().__init__(agents=agents, skills=skills)
+            self.revisions = list(skills)
+
+        def publish(self, skill):
+            self.revisions.append(skill)
+            self._skills = tuple(self.revisions)
+
+        async def list_skills(self, scope):
+            latest = {}
+            for item in self.revisions:
+                latest[item.asset_id] = item
+            return tuple(latest.values())
 
     schema = VALIDATION_OUTPUT_SCHEMA
     agent = AiAgentRevision(
@@ -676,48 +722,24 @@ def _asset_catalog_for_merge_tests():
         output_schema_digest=schema_digest(schema),
         system_instruction="agent system instruction",
         output_schema_json=json.dumps(schema, sort_keys=True, separators=(",", ":")),
-        skill_revision_ids=("skill-bound", "skill-disabled-bound"),
+        skill_revision_ids=("skill-legacy-bound-r1",),
+        pinned_skill_ids=("skill-pinned", "skill-pinned-disabled", "skill-missing"),
+        excluded_skill_ids=("skill-excluded",),
     )
-    bound_skill = SkillRevision(
-        revision_id="skill-bound",
-        asset_id="skill-bound-asset",
-        display_name="Bound skill",
-        scope=VALIDATION_SCOPE,
-        content_digest=text_digest("skill-bound-content"),
-        instruction_template_digest=text_digest("bound skill instruction"),
-        applicable_tasks=frozenset({"knowledge.answer"}),
-        instruction_template="bound skill instruction",
+    skills = (
+        _library_skill("skill-pinned", 1),
+        _library_skill("skill-pinned", 2),
+        _library_skill("skill-pinned-disabled", 1, status=AssetRevisionStatus.DISABLED),
+        _library_skill("skill-manual", 1),
+        _library_skill("skill-excluded", 1),
+        _library_skill("skill-legacy-bound", 1),
+        _library_skill("skill-catalog", 1),
+        _library_skill("skill-wrong-task", 1, applicable_tasks=frozenset({"test-plan.generate"})),
     )
-    disabled_bound_skill = SkillRevision(
-        revision_id="skill-disabled-bound",
-        asset_id="skill-disabled-bound-asset",
-        display_name="Disabled bound skill",
-        scope=VALIDATION_SCOPE,
-        content_digest=text_digest("skill-disabled-bound-content"),
-        instruction_template_digest=text_digest("disabled bound skill instruction"),
-        applicable_tasks=frozenset({"knowledge.answer"}),
-        status=AssetRevisionStatus.DISABLED,
-        instruction_template="disabled bound skill instruction",
-    )
-    requested_skill = SkillRevision(
-        revision_id="skill-requested",
-        asset_id="skill-requested-asset",
-        display_name="Requested skill",
-        scope=VALIDATION_SCOPE,
-        content_digest=text_digest("skill-requested-content"),
-        instruction_template_digest=text_digest("requested skill instruction"),
-        applicable_tasks=frozenset({"knowledge.answer"}),
-        instruction_template="requested skill instruction",
-    )
-    catalog = ApprovedAssetCatalog(
-        agents=(agent,),
-        skills=(bound_skill, disabled_bound_skill, requested_skill),
-    )
-    catalog.scope = VALIDATION_SCOPE
-    return catalog
+    return LibraryCatalog(agents=(agent,), skills=skills)
 
 
-def test_turn_view_lists_frozen_revisions_and_skill_notices():
+def _library_client(catalog):
     class Allow:
         async def authorize(self, *_args):
             return AuthorizationDecision(True, "test")
@@ -744,13 +766,24 @@ def test_turn_view_lists_frozen_revisions_and_skill_notices():
         validation_http_services(knowledge=Knowledge()),
         conversations=conversations,
         model_catalog=Models(),
-        asset_catalog=_asset_catalog_for_merge_tests(),
+        asset_catalog=catalog,
         authorization_policy=Allow(),
     )
     origin = "http://127.0.0.1:15175"
     client = TestClient(
         create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
     )
+    return client, conversations
+
+
+def _only_turn(conversations):
+    (value,) = conversations.repository.values.values()
+    (turn,) = value.turns
+    return turn
+
+
+def test_turn_freezes_catalog_without_loaded_and_excluded_skills():
+    client, conversations = _library_client(_library_catalog())
 
     response = client.post(
         "/api/v1/projects/tapper-demo/conversations",
@@ -758,78 +791,84 @@ def test_turn_view_lists_frozen_revisions_and_skill_notices():
             "message": "question",
             "modelAlias": "qwen-plus",
             "agentRevisionId": "agent-1",
-            "skillRevisionIds": ["skill-requested", "skill-bound"],
+            "skillRevisionIds": ["skill-manual-r1"],
         },
-        headers={"Idempotency-Key": "turn-view-merge"},
+        headers={"Idempotency-Key": "freeze-catalog"},
     )
     assert response.status_code == 202, response.text
 
-    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
-    # Agent-bound skills precede the explicitly requested skill; the explicit
-    # re-request of the already-bound "skill-bound" is a no-op (deduped); the
-    # disabled bound skill is skipped with a notice instead of failing the turn.
-    assert frozen.skill_revision_ids == ("skill-bound", "skill-requested")
-    assert frozen.skill_notices == ("skill_disabled:skill-disabled-bound",)
+    frozen = _only_turn(conversations).input_snapshot.value
+    # Manual first, then pinned; the legacy bound revision is not loaded.
+    assert frozen.skill_revision_ids == ("skill-manual-r1", "skill-pinned-r2")
+    assert frozen.requested_skill_revision_ids == ("skill-manual-r1",)
+    assert frozen.skill_notices == (
+        "skill_disabled:skill-pinned-disabled-r1",
+        "skill_unavailable:skill-missing",
+    )
+    # Neither loaded (manual/pinned), excluded, disabled nor task-inapplicable.
+    assert [(entry.skill_id, entry.revision_id) for entry in frozen.skill_catalog] == [
+        ("skill-catalog", "skill-catalog-r1"),
+        ("skill-legacy-bound", "skill-legacy-bound-r1"),
+    ]
+    assert frozen.skill_catalog[0].description == "skill-catalog description"
 
     detail = client.get(
         f"/api/v1/projects/tapper-demo/conversations/{response.json()['conversationId']}"
     )
     view = detail.json()["turns"][0]["input"]
     assert view["agentRevisionId"] == "agent-1"
-    assert view["skillRevisionIds"] == ["skill-bound", "skill-requested"]
-    assert view["skillNotices"] == ["skill_disabled:skill-disabled-bound"]
+    assert view["skillRevisionIds"] == ["skill-manual-r1", "skill-pinned-r2"]
+    assert view["skillNotices"] == [
+        "skill_disabled:skill-pinned-disabled-r1",
+        "skill_unavailable:skill-missing",
+    ]
 
 
-def test_idempotency_replay_with_a_different_skill_request_is_a_conflict():
-    """I-2 (fix round 1): the frozen Turn's `skillRevisionIds` is the merged/
-    applied set, not a 1:1 echo of the request -- comparing it against a
-    replay's raw `skillRevisionIds` would let two different requests share an
-    Idempotency-Key whenever their merged results happened to collide. This
-    checks the fast `_matches_replay` pre-check catches a genuine mismatch,
-    including when the *merged* result would otherwise be identical: the
-    Agent here binds "skill-bound", so an implicit (`[]`) and an explicit
-    (`["skill-bound"]`) request apply the exact same Skill, but are still two
-    different requests."""
+def test_pinned_skill_uses_latest_enabled_revision():
+    client, conversations = _library_client(_library_catalog())
 
-    class Allow:
-        async def authorize(self, *_args):
-            return AuthorizationDecision(True, "test")
-
-    class Models:
-        scope = VALIDATION_SCOPE
-
-        async def list_models(self, _scope):
-            return [STRUCTURED_CHAT_MODEL]
-
-    class Knowledge:
-        scope = VALIDATION_SCOPE
-
-        async def resolve_conversation_selection(self, _revision_ids):
-            return (), SimpleNamespace(
-                acl_digest="sha256:" + "0" * 64,
-                decision_id="decision-1",
-                policy_version="policy-1",
-                active_corpus_version="tapper-demo-v1",
-            )
-
-    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
-    services = replace(
-        validation_http_services(knowledge=Knowledge()),
-        conversations=conversations,
-        model_catalog=Models(),
-        asset_catalog=_asset_catalog_for_merge_tests(),
-        authorization_policy=Allow(),
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "question", "modelAlias": "qwen-plus", "agentRevisionId": "agent-1"},
+        headers={"Idempotency-Key": "pinned-latest"},
     )
-    origin = "http://127.0.0.1:15175"
-    client = TestClient(
-        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
-    )
-    headers = {"Idempotency-Key": "replay-skill-mismatch"}
-    base_body = {
+    assert response.status_code == 202, response.text
+
+    frozen = _only_turn(conversations).input_snapshot.value
+    assert frozen.skill_revision_ids == ("skill-pinned-r2",)
+    assert frozen.skill_instruction_templates == ("skill-pinned r2 instruction",)
+    assert frozen.requested_skill_revision_ids == ()
+
+
+def test_replay_after_library_change_is_not_a_conflict():
+    catalog = _library_catalog()
+    client, conversations = _library_client(catalog)
+    body = {
         "message": "question",
         "modelAlias": "qwen-plus",
         "agentRevisionId": "agent-1",
+        "skillRevisionIds": ["skill-manual-r1"],
     }
+    headers = {"Idempotency-Key": "replay-library-change"}
+
+    first = client.post("/api/v1/projects/tapper-demo/conversations", json=body, headers=headers)
+    assert first.status_code == 202, first.text
+    frozen = _only_turn(conversations).input_snapshot
+
+    # The pinned Skill gets a newer revision and a new Skill joins the catalog.
+    catalog.publish(_library_skill("skill-pinned", 3))
+    catalog.publish(_library_skill("skill-new", 1))
+
+    replay = client.post("/api/v1/projects/tapper-demo/conversations", json=body, headers=headers)
+    assert replay.status_code == 202, replay.text
+    assert replay.json() == first.json()
+    assert _only_turn(conversations).input_snapshot == frozen
+
+
+def test_replay_with_different_manual_skills_conflicts():
+    client, _conversations = _library_client(_library_catalog())
+    headers = {"Idempotency-Key": "replay-skill-mismatch"}
+    base_body = {"message": "question", "modelAlias": "qwen-plus", "agentRevisionId": "agent-1"}
 
     first = client.post(
         "/api/v1/projects/tapper-demo/conversations",
@@ -838,9 +877,11 @@ def test_idempotency_replay_with_a_different_skill_request_is_a_conflict():
     )
     assert first.status_code == 202, first.text
 
+    # Manually requesting the pinned Skill's latest revision applies the same
+    # Skill, but is still a different request.
     same_applied_different_request = client.post(
         "/api/v1/projects/tapper-demo/conversations",
-        json={**base_body, "skillRevisionIds": ["skill-bound"]},
+        json={**base_body, "skillRevisionIds": ["skill-pinned-r2"]},
         headers=headers,
     )
     assert same_applied_different_request.status_code == 409, same_applied_different_request.text
@@ -848,7 +889,7 @@ def test_idempotency_replay_with_a_different_skill_request_is_a_conflict():
 
     genuinely_different = client.post(
         "/api/v1/projects/tapper-demo/conversations",
-        json={**base_body, "skillRevisionIds": ["skill-requested"]},
+        json={**base_body, "skillRevisionIds": ["skill-manual-r1"]},
         headers=headers,
     )
     assert genuinely_different.status_code == 409, genuinely_different.text

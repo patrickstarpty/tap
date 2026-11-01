@@ -11,6 +11,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
 
+from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
 from tap.modules.ai.domain.tools import known_tool_ids
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -133,16 +134,22 @@ class TurnInput:
     skill_instruction_templates: tuple[str, ...] = ()
     skill_instruction_template_digests: tuple[str, ...] = ()
     # Server-computed facts about Skills merge_skill_selection skipped (disabled
-    # bound Skill, task-inapplicable Skill); frozen into the Turn so a checkpoint
-    # resume/retry sees the same notices rather than recomputing them.
+    # or task-inapplicable Skill, pinned Skill missing from the library); frozen
+    # into the Turn so a checkpoint resume/retry sees the same notices rather
+    # than recomputing them.
     skill_notices: tuple[str, ...] = ()
     # The caller's raw request (fix round 1, I-2): `skill_revision_ids` above is
-    # `merge_skill_selection`'s *applied* set (Agent-bound ids first, deduped,
+    # `merge_skill_selection`'s *applied* set (manual then pinned, deduped,
     # disabled/inapplicable ids skipped) -- not a 1:1 echo of what the caller
     # asked for, so it cannot detect an idempotency replay that requests a
     # different set of Skills than the one already frozen. This field is that
-    # 1:1 echo, kept only so `_matches_replay` can tell the two requests apart.
+    # 1:1 echo: `_matches_replay` tells the two requests apart with it, and an
+    # applied revision listed here was activated manually, otherwise pinned.
     requested_skill_revision_ids: tuple[str, ...] = ()
+    # The auto-activation candidate catalog frozen with the Turn (Skill Hub
+    # spec 1.3); `skill.activate` loads the frozen `revision_id`. Dropped from
+    # `material()` when empty so Turns frozen before it keep their digest.
+    skill_catalog: tuple[SkillCatalogEntry, ...] = ()
     acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
     insights_query_id: str | None = None
@@ -187,8 +194,6 @@ class TurnInput:
             or len(self.skill_revision_ids) != len(self.skill_instruction_template_digests)
         ):
             raise ValueError("skill revision execution content must be frozen")
-        if self.skill_instruction_templates and self.agent_revision_id is None:
-            raise ValueError("skill execution requires a frozen agent authority")
         if len({item.revision_id for item in self.resolved_resources}) != len(
             self.resolved_resources
         ):
@@ -264,6 +269,10 @@ class TurnInput:
             value.pop("skill_notices")
         if not self.requested_skill_revision_ids:
             value.pop("requested_skill_revision_ids")
+        if self.skill_catalog:
+            value["skill_catalog"] = list(value["skill_catalog"])
+        else:
+            value.pop("skill_catalog")
         resources = []
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})
