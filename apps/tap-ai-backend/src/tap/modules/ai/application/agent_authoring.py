@@ -127,6 +127,12 @@ def _unique(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+# Same bound as the contract's `pinnedSkillIds`/`excludedSkillIds` lists: the
+# deprecated `skillRevisionIds` mapping must not push the stored pinned set
+# past what `AiAgentRevisionSummary` can serialize.
+MAX_AGENT_SKILL_IDS = 64
+
+
 class AgentAuthoringService:
     def __init__(
         self,
@@ -244,6 +250,16 @@ class AgentAuthoringService:
             excluded=excluded_ids,
             tolerate_disabled=frozenset(latest.pinned_skill_ids),
         )
+        # Keep the deprecated binding consistent with the new pinned set: a
+        # bound revision stays only while its Skill is still pinned, so a
+        # client round-tripping `skillRevisionIds` cannot re-pin a Skill just
+        # removed here, and the binding-based chat path keeps the rest.
+        skill_of = await self._skill_of(scope, set(latest.skill_revision_ids))
+        kept_revision_ids = tuple(
+            revision_id
+            for revision_id in latest.skill_revision_ids
+            if skill_of.get(revision_id) in pinned_ids
+        )
         revision = replace(
             latest,
             revision_id=f"agent-rev-{uuid4().hex[:16]}",
@@ -252,10 +268,7 @@ class AgentAuthoringService:
             adopted_from_revision_id=latest.revision_id,
             pinned_skill_ids=pinned_ids,
             excluded_skill_ids=excluded_ids,
-            # The explicit pinned set supersedes the deprecated binding: a
-            # client still round-tripping `skillRevisionIds` must not re-pin
-            # a Skill just removed here.
-            skill_revision_ids=(),
+            skill_revision_ids=kept_revision_ids,
         )
         event = new_event(
             scope, agent_id, "revised", revision_id=revision.revision_id, now=datetime.now(UTC)
@@ -275,6 +288,11 @@ class AgentAuthoringService:
         this project, and a newly pinned Skill enabled. A Skill the Agent
         already pinned tolerates having been disabled since (it is skipped
         at Turn time), so saving is never blocked by it."""
+        if len(pinned) > MAX_AGENT_SKILL_IDS or len(excluded) > MAX_AGENT_SKILL_IDS:
+            raise AgentAuthoringRejected(
+                "agent_skill_limit_exceeded",
+                f"an agent can pin and exclude at most {MAX_AGENT_SKILL_IDS} skills each",
+            )
         if set(pinned) & set(excluded):
             raise AgentAuthoringRejected(
                 "agent_skill_conflict", "a skill cannot be both pinned and excluded"

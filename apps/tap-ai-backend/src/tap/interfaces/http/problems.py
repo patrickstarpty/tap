@@ -138,6 +138,7 @@ _SKILL_PROBLEM_STATUS: dict[str, int] = {
     "agent_tool_allowlist_invalid": 400,
     "agent_skill_unavailable": 400,
     "agent_skill_conflict": 400,
+    "agent_skill_limit_exceeded": 400,
     "agent_model_not_selectable": 400,
     "agent_built_in_immutable": 403,
     "agent_frontmatter_invalid": 400,

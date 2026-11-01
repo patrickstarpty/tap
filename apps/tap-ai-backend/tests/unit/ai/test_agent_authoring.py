@@ -521,7 +521,9 @@ async def test_set_skills_creates_revision_with_revised_event() -> None:
     service, catalog = _service()
     catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
     catalog.seed_skill(_skill_revision(asset_id="skill-2", revision_id="skill-rev-2"))
-    created = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+    created = await service.create(
+        VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1", "skill-rev-2"))
+    )
     # The base revision was written by another member of the project.
     catalog._agents[created.asset_id][-1] = replace(
         created, scope=replace(VALIDATION_SCOPE, actor_id="another-actor")
@@ -538,8 +540,9 @@ async def test_set_skills_creates_revision_with_revised_event() -> None:
     assert revised.adopted_from_revision_id == created.revision_id
     assert revised.pinned_skill_ids == ("skill-2",)
     assert revised.excluded_skill_ids == ("skill-1",)
-    # The deprecated binding is superseded by the explicit pinned set.
-    assert revised.skill_revision_ids == ()
+    # The deprecated binding keeps only revisions of Skills still pinned:
+    # skill-1 was unpinned (its revision is dropped), skill-2 stays.
+    assert revised.skill_revision_ids == ("skill-rev-2",)
     for field in (
         "display_name",
         "description",
@@ -570,3 +573,35 @@ async def test_set_skills_on_built_in_rejected() -> None:
 
     assert excinfo.value.code == "agent_built_in_immutable"
     assert len(await catalog.list_revisions("agent", built_in.asset_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_combined_pinned_over_64_rejected() -> None:
+    service, catalog = _service()
+    for index in range(65):
+        catalog.seed_skill(
+            _skill_revision(asset_id=f"skill-{index}", revision_id=f"skill-rev-{index}")
+        )
+
+    # 64 pinned ids pass the request limit; the deprecated binding maps a 65th.
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(
+            VALIDATION_SCOPE,
+            _draft(
+                pinned_skill_ids=tuple(f"skill-{index}" for index in range(64)),
+                skill_revision_ids=("skill-rev-64",),
+            ),
+        )
+
+    assert excinfo.value.code == "agent_skill_limit_exceeded"
+    assert catalog.received_events == []
+
+    # Exactly 64 after dedupe is fine.
+    revision = await service.create(
+        VALIDATION_SCOPE,
+        _draft(
+            pinned_skill_ids=tuple(f"skill-{index}" for index in range(64)),
+            skill_revision_ids=("skill-rev-0",),
+        ),
+    )
+    assert len(revision.pinned_skill_ids) == 64

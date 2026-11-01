@@ -316,6 +316,8 @@ def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
 
 @pytest.mark.asyncio
 async def test_insert_skill_revision_round_trips_files(owned_project_mysql) -> None:
+    from dataclasses import replace
+
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
@@ -362,7 +364,8 @@ async def test_insert_skill_revision_round_trips_files(owned_project_mysql) -> N
             files=files,
         )
         persisted = await catalog.insert_skill_revision(revision, base_revision_id=None)
-        assert persisted == revision
+        # Returned as stored: the new Skill's category and the resolved origin.
+        assert persisted == replace(revision, category="other", origin_kind="authored")
 
         fetched = await catalog.get_skill(VALIDATION_SCOPE, revision.revision_id)
         assert fetched.instruction_template == body

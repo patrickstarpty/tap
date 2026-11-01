@@ -574,6 +574,30 @@ def test_put_agent_skills_rejects_pinned_and_excluded_overlap() -> None:
     assert response.json()["code"] == "agent_skill_conflict"
 
 
+def test_create_agent_rejects_more_than_64_combined_pinned_skills() -> None:
+    client, catalog = _app()
+    for index in range(65):
+        _seed_skill(catalog, asset_id=f"skill-{index}", revision_id=f"skill-rev-{index}")
+
+    response = client.post(
+        f"{BASE}/agents",
+        json={
+            "name": "demo-agent",
+            "description": "demo",
+            "systemInstruction": "demo instruction",
+            "pinnedSkillIds": [f"skill-{index}" for index in range(64)],
+            "skillRevisionIds": ["skill-rev-64"],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "agent_skill_limit_exceeded"
+    # Nothing was stored, so the catalog still serializes.
+    listed = client.get(f"{BASE}/agents")
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+
+
 def test_put_agent_skills_requires_write_permission() -> None:
     client, _catalog = _app(allowed=frozenset({"ai.agents.read"}))
 
