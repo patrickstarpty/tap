@@ -2877,6 +2877,11 @@ export interface components {
             skillNotices?: string[];
             /** Skillrevisionids */
             skillRevisionIds: string[];
+            /**
+             * Skillsused
+             * @default []
+             */
+            skillsUsed?: components["schemas"]["ConversationTurnSkillView"][];
             /** Sourcerevisionids */
             sourceRevisionIds: string[];
         };
@@ -2897,6 +2902,24 @@ export interface components {
             inputSnapshotDigest: string;
             /** Turnid */
             turnId: string;
+        };
+        /**
+         * ConversationTurnSkillView
+         * @description One Skill the Turn used: frozen (`manual`/`pinned`) or loaded by the
+         *     model through `skill.activate` (`auto`).
+         */
+        ConversationTurnSkillView: {
+            /** Label */
+            label: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "manual" | "pinned" | "auto";
+            /** Revisionid */
+            revisionId: string;
+            /** Skillid */
+            skillId: string;
         };
         /** ConversationTurnSummary */
         ConversationTurnSummary: {

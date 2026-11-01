@@ -85,7 +85,7 @@ _INSIGHTS_ONLY_MARKER = "[e2e-insights-only]"
 # Task 12: one marker produces one native tool call per model round --
 # `[e2e-tool:<toolId>:<argument text>]`, matched in the order it appears in
 # the question. `toolId` is the dotted tool id (`knowledge.search`,
-# `graph.relations`, `insights.query`), never the online wire/function name.
+# `graph.relations`, `insights.query`, `skill.activate`), never the online wire/function name.
 _TOOL_CALL_MARKER = re.compile(r"\[e2e-tool:([^:\[\]]+):([^\[\]]*)\]")
 
 # Task 12: `insights.query`'s input contract has no free-text `query` field
@@ -140,7 +140,7 @@ def _consumed_tool_marker_keys(
     (its call is always the fixed `_FIXED_INSIGHTS_ARGUMENTS`), so any prior
     `insights.query` call consumes every `[e2e-tool:insights.query:...]`
     marker regardless of its argument text -- keyed on `None` for both
-    sides instead."""
+    sides instead. `skill.activate` is keyed by its `name` argument."""
 
     consumed: set[tuple[str, str | None]] = set()
     for message in messages:
@@ -158,7 +158,8 @@ def _consumed_tool_marker_keys(
                 parsed_args = json.loads(call.arguments_json)
             except (ValueError, TypeError):
                 parsed_args = None
-            query = parsed_args.get("query") if isinstance(parsed_args, dict) else None
+            key = "name" if tool_id == "skill.activate" else "query"
+            query = parsed_args.get(key) if isinstance(parsed_args, dict) else None
             consumed.add((tool_id, query if isinstance(query, str) else None))
     return consumed
 
@@ -187,6 +188,8 @@ def _tool_call_arguments(tool_id: str, argument_text: str) -> dict[str, Any] | N
         return {"query": argument_text}
     if tool_id == "insights.query":
         return dict(_FIXED_INSIGHTS_ARGUMENTS)
+    if tool_id == "skill.activate":
+        return {"name": argument_text}
     return None
 
 

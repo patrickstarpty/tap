@@ -3391,6 +3391,14 @@
             "title": "Skillrevisionids",
             "type": "array"
           },
+          "skillsUsed": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ConversationTurnSkillView"
+            },
+            "title": "Skillsused",
+            "type": "array"
+          },
           "sourceRevisionIds": {
             "items": {
               "type": "string"
@@ -3455,6 +3463,41 @@
           "inputSnapshotDigest"
         ],
         "title": "ConversationTurnRequestedPayload",
+        "type": "object"
+      },
+      "ConversationTurnSkillView": {
+        "additionalProperties": false,
+        "description": "One Skill the Turn used: frozen (`manual`/`pinned`) or loaded by the\nmodel through `skill.activate` (`auto`).",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "manual",
+              "pinned",
+              "auto"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "revisionId": {
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "skillId": {
+            "title": "Skillid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skillId",
+          "revisionId",
+          "label",
+          "mode"
+        ],
+        "title": "ConversationTurnSkillView",
         "type": "object"
       },
       "ConversationTurnSummary": {

@@ -1300,6 +1300,16 @@ class ConversationResolvedResourceView(ContractModel):
     label: str
 
 
+class ConversationTurnSkillView(ContractModel):
+    """One Skill the Turn used: frozen (`manual`/`pinned`) or loaded by the
+    model through `skill.activate` (`auto`)."""
+
+    skill_id: str
+    revision_id: str
+    label: str
+    mode: Literal["manual", "pinned", "auto"]
+
+
 class ConversationTurnInputView(ContractModel):
     """Browser-safe immutable input facts; excludes instructions and policy internals."""
 
@@ -1313,6 +1323,7 @@ class ConversationTurnInputView(ContractModel):
     skill_revision_ids: list[str]
     skill_labels: list[str]
     skill_notices: list[str] = []
+    skills_used: list[ConversationTurnSkillView] = []
     insights_query_id: str | None = None
 
 

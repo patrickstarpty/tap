@@ -6,7 +6,9 @@ and pinned rows are written when the Turn input is frozen, auto rows when
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Protocol, cast
 
 from sqlalchemy import (
     Column,
@@ -22,12 +24,14 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.mysql import DATETIME
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.domain.skill_metadata import frozen_activations
+from tap.modules.ai.domain.assets import SkillRevision
+from tap.modules.ai.domain.skill_metadata import ActivationMode, frozen_activations
+from tap.modules.chat.application.ports import TurnSkillUse
 from tap.modules.chat.domain.conversations import TurnInput
-from tap.platform.db.project_scope import scope_predicates, scope_values
+from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import augment_project_table, metadata
 
 turn_skill_activation = Table(
@@ -111,3 +115,107 @@ async def insert_frozen_activations(
             skill_revision.c.revision_id == activation.skill_revision_id,
         )
         await session.execute(insert(turn_skill_activation).from_select(columns, rows))
+
+
+class _HistoricalSkills(Protocol):
+    async def get_historical_skill(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> SkillRevision: ...
+
+
+class MysqlSkillActivationRuntime:
+    """`SkillActivationRuntime` over the asset catalog and
+    `turn_skill_activation`: `load` reads the revision whatever its status
+    (the `tools` node rejects a disabled one), `record_auto` writes one
+    `auto` row per Turn and Skill and ignores a repeat (a resumed node)."""
+
+    def __init__(
+        self,
+        catalog: _HistoricalSkills,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        scope: ProjectScopeContext,
+    ) -> None:
+        self._catalog = catalog
+        self._sessions = sessions
+        self._scope = require_project_scope(scope)
+
+    async def load(self, revision_id: str) -> SkillRevision:
+        return await self._catalog.get_historical_skill(self._scope, revision_id)
+
+    async def record_auto(
+        self,
+        *,
+        turn_id: str,
+        skill_id: str,
+        skill_revision_id: str,
+        bytes_: int,
+        activated_at: datetime,
+    ) -> None:
+        if activated_at.tzinfo is not None:
+            # `DATETIME` columns hold naive UTC, as `chat_turn.created_at` does.
+            activated_at = activated_at.astimezone(UTC).replace(tzinfo=None)
+        async with self._sessions.begin() as session:
+            await session.execute(
+                insert(turn_skill_activation)
+                .prefix_with("IGNORE")
+                .values(
+                    activation_id=activation_id_for(turn_id, skill_id),
+                    turn_id=turn_id,
+                    skill_id=skill_id,
+                    skill_revision_id=skill_revision_id,
+                    mode="auto",
+                    activated_at=activated_at,
+                    bytes=bytes_,
+                    **scope_values(self._scope),
+                )
+            )
+
+
+class MysqlTurnSkillActivations:
+    """Reads the Skills each Turn used (frozen manual/pinned rows and `auto`
+    rows alike), labelled with the Skill's display name at read time."""
+
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
+    ) -> None:
+        self._sessions = sessions
+        self._scope = require_project_scope(scope)
+
+    async def for_turns(self, turn_ids: Sequence[str]) -> dict[str, tuple[TurnSkillUse, ...]]:
+        if not turn_ids:
+            return {}
+        from tap.modules.ai.adapters.mysql import skill
+
+        query = (
+            select(
+                turn_skill_activation.c.turn_id,
+                turn_skill_activation.c.skill_id,
+                turn_skill_activation.c.skill_revision_id,
+                turn_skill_activation.c.mode,
+                skill.c.display_name,
+            )
+            .join(
+                skill,
+                (skill.c.enterprise_id == turn_skill_activation.c.enterprise_id)
+                & (skill.c.project_id == turn_skill_activation.c.project_id)
+                & (skill.c.skill_id == turn_skill_activation.c.skill_id),
+            )
+            .where(
+                *scope_predicates(turn_skill_activation, self._scope),
+                turn_skill_activation.c.turn_id.in_(tuple(turn_ids)),
+            )
+            .order_by(
+                turn_skill_activation.c.turn_id,
+                turn_skill_activation.c.activated_at,
+                turn_skill_activation.c.skill_id,
+            )
+        )
+        async with self._sessions() as session:
+            rows = (await session.execute(query)).all()
+        uses: dict[str, list[TurnSkillUse]] = {}
+        for turn_id, skill_id, revision_id, mode, label in rows:
+            uses.setdefault(turn_id, []).append(
+                TurnSkillUse(skill_id, revision_id, label, cast(ActivationMode, mode))
+            )
+        return {turn_id: tuple(items) for turn_id, items in uses.items()}

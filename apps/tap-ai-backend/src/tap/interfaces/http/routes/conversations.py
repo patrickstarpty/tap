@@ -28,6 +28,7 @@ from tap.contracts.http import (
     ConversationResolvedResourceView,
     ConversationSummary,
     ConversationTurnInputView,
+    ConversationTurnSkillView,
     ConversationTurnSummary,
     TurnTrace,
 )
@@ -62,6 +63,7 @@ from tap.modules.chat.application.feedback import FeedbackService
 from tap.modules.chat.application.ports import (
     DraftStream,
     DraftStreamUnavailable,
+    TurnSkillUse,
     draft_stream_key,
     wake_stream_key,
 )
@@ -254,7 +256,12 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     )
 
 
-def _turn(value, *, feedback: AnswerFeedback | None = None):
+def _turn(
+    value,
+    *,
+    feedback: AnswerFeedback | None = None,
+    skills_used: tuple[TurnSkillUse, ...] = (),
+):
     frozen = value.input_snapshot.value
     return ConversationTurnSummary(
         turn_id=value.turn_id,
@@ -299,6 +306,15 @@ def _turn(value, *, feedback: AnswerFeedback | None = None):
             skill_revision_ids=list(frozen.skill_revision_ids),
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
             skill_notices=list(frozen.skill_notices),
+            skills_used=[
+                ConversationTurnSkillView(
+                    skill_id=item.skill_id,
+                    revision_id=item.skill_revision_id,
+                    label=item.label,
+                    mode=item.mode,
+                )
+                for item in skills_used
+            ],
             insights_query_id=frozen.insights_query_id,
         ),
         trace_id=trace_id_of(value.traceparent),
@@ -319,14 +335,26 @@ def _summary(value):
     )
 
 
-def _detail(value, feedback_by_turn: dict[str, AnswerFeedback] | None = None):
+def _detail(
+    value,
+    feedback_by_turn: dict[str, AnswerFeedback] | None = None,
+    skills_by_turn: dict[str, tuple[TurnSkillUse, ...]] | None = None,
+):
     feedback_by_turn = feedback_by_turn or {}
+    skills_by_turn = skills_by_turn or {}
     return ConversationDetail(
         conversation_id=value.conversation_id,
         title=value.title,
         created_at=value.created_at.isoformat(),
         updated_at=value.updated_at.isoformat(),
-        turns=[_turn(turn, feedback=feedback_by_turn.get(turn.turn_id)) for turn in value.turns],
+        turns=[
+            _turn(
+                turn,
+                feedback=feedback_by_turn.get(turn.turn_id),
+                skills_used=skills_by_turn.get(turn.turn_id, ()),
+            )
+            for turn in value.turns
+        ],
     )
 
 
@@ -409,12 +437,14 @@ async def get(
 ):
     conversation = await service.load(conversation_id)
     feedback_by_turn: dict[str, AnswerFeedback] = {}
+    skills_by_turn: dict[str, tuple[TurnSkillUse, ...]] = {}
     services = request.app.state.http_services
+    turn_ids = tuple(turn.turn_id for turn in conversation.turns)
     if services.feedback is not None:
-        feedback_by_turn = await services.feedback.mine(
-            tuple(turn.turn_id for turn in conversation.turns)
-        )
-    return _detail(conversation, feedback_by_turn)
+        feedback_by_turn = await services.feedback.mine(turn_ids)
+    if services.skill_activations is not None:
+        skills_by_turn = await services.skill_activations.for_turns(turn_ids)
+    return _detail(conversation, feedback_by_turn, skills_by_turn)
 
 
 @router.patch(

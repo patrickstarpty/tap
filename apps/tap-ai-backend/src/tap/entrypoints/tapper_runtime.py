@@ -39,6 +39,7 @@ from tap.modules.ai.application.catalog import ModelCatalog
 from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.modules.chat.application.plan_answer import DEFAULT_PLANNER_TIMEOUT_SECONDS
+from tap.modules.chat.application.ports import SkillActivationRuntime
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
@@ -957,6 +958,9 @@ class TapperApiRuntime:
     _resources: OwnedResources
     failure_controller: TapperFailureController | None = None
     skill_authoring: SkillAuthoringService | None = None
+    # Skill Hub: what the generation worker (which reuses this runtime) runs
+    # `skill.activate` through.
+    skill_activation_runtime: SkillActivationRuntime | None = None
 
     async def aclose(self) -> None:
         await self._resources.aclose()
@@ -1055,12 +1059,22 @@ async def create_api_runtime(
                 asset_catalog, model_catalog, scope=repository.scope
             )
         agent_team = _create_agent_team_service(settings, engine, repository.scope, resources)
+        from tap.modules.chat.adapters.mysql_skill_activations import (
+            MysqlSkillActivationRuntime,
+            MysqlTurnSkillActivations,
+        )
+
+        skill_sessions = async_sessionmaker(engine, expire_on_commit=False)
+        skill_activation_runtime = MysqlSkillActivationRuntime(
+            asset_catalog, skill_sessions, scope=repository.scope
+        )
         services = replace(
             services,
             chunk_manager=chunk_manager,
             skill_authoring=skill_authoring,
             agent_authoring=agent_authoring,
             agent_team=agent_team,
+            skill_activations=MysqlTurnSkillActivations(skill_sessions, scope=repository.scope),
         )
         if settings.insights_base_url:
             if services.insights_knowledge_search is None:
@@ -1114,6 +1128,7 @@ async def create_api_runtime(
             _resources=resources,
             failure_controller=failure_controller,
             skill_authoring=skill_authoring,
+            skill_activation_runtime=skill_activation_runtime,
         )
     except BaseException as error:
         await resources.aclose(error)

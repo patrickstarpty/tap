@@ -455,6 +455,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         "skillRevisionIds": [],
         "skillLabels": [],
         "skillNotices": [],
+        "skillsUsed": [],
         "insightsQueryId": None,
     }
     serialized = json.dumps(detail.json())

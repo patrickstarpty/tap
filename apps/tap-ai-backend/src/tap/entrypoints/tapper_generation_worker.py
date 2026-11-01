@@ -77,6 +77,9 @@ class GenerationWorker:
     # the same redactor `KnowledgeHttpService` uses for answer finalization.
     drafts: Any | None = None
     redact: Callable[[str], Awaitable[str]] | None = None
+    # Skill Hub: the `SkillActivationRuntime` the `tools` node runs
+    # `skill.activate` through (`None` never offers the tool).
+    skills: Any | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -196,6 +199,7 @@ class GenerationWorker:
                 retryable=turn_retryable,
                 drafts=self.drafts,
                 redact=self.redact,
+                skills=self.skills,
             ).nodes
 
             async def canceled() -> bool:
@@ -431,6 +435,8 @@ async def main() -> None:
         # exact same Redis-backed `DraftStream` the API composes (Task 4).
         drafts=runtime.http_services.draft_stream,
         redact=_redact_chat_egress,
+        # Same `MysqlAssetCatalog` and session factory the API composes.
+        skills=runtime.skill_activation_runtime,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

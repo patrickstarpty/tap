@@ -15,7 +15,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from opentelemetry.trace import get_current_span
@@ -30,8 +31,15 @@ from tap.contracts.http import (
 from tap.contracts.problems import build_problem
 from tap.entrypoints.tapper_draft_batcher import DraftBatcher
 from tap.modules.ai.application.chat_graph import ChatGraphNodes, ChatGraphState
+from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.persona import persona_for
-from tap.modules.ai.domain.skill_activation import PromptSkill
+from tap.modules.ai.domain.skill_activation import (
+    ActivationRejection,
+    PromptSkill,
+    activation_rejection,
+    catalog_entry,
+    skill_text_bytes,
+)
 from tap.modules.ai.domain.tool_calls import (
     MAX_REQUESTED_TOOL_CALLS_PER_ROUND,
     AdmittedToolCall,
@@ -43,7 +51,11 @@ from tap.modules.ai.domain.tool_calls import step_id as _tool_step_id
 from tap.modules.ai.domain.tools import tool_for_wire_name, visible_tool_ids
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged, InsightsQueryUnavailable
 from tap.modules.chat.application.plan_answer import planning_input
-from tap.modules.chat.application.ports import ConversationAnswerStep, ConversationAnswerSteps
+from tap.modules.chat.application.ports import (
+    ConversationAnswerStep,
+    ConversationAnswerSteps,
+    SkillActivationRuntime,
+)
 from tap.modules.chat.application.process_turn import ProviderResult, TurnProcessor
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
@@ -374,8 +386,12 @@ class ChatTurnNodes:
         retryable: Callable[[BaseException], bool] = lambda _error: False,
         drafts: Any | None = None,
         redact: Callable[[str], Awaitable[str]] | None = None,
+        skills: SkillActivationRuntime | None = None,
     ) -> None:
         self._conversation_id = conversation_id
+        # Skill Hub: loads and records `skill.activate` calls; `None` (no
+        # Skill catalog store wired) never offers the tool.
+        self._skills = skills
         self._turn = turn
         self._conversations = conversations
         self._steps = steps
@@ -460,11 +476,15 @@ class ChatTurnNodes:
                 and bool(getattr(value, "insights_report_refs", ()))
                 and getattr(value, "insights_query_id", None) is None
             )
+            skills_available = (
+                bool(getattr(value, "skill_catalog", ())) and self._skills is not None
+            )
             tools = list(
                 visible_tool_ids(
                     agent_allowlist=None if agent is None else frozenset(agent_tool_allowlist),
                     relations_available=relations_available,
                     insights_available=insights_available,
+                    skills_available=skills_available,
                 )
             )
             result["agent"] = agent
@@ -706,6 +726,16 @@ class ChatTurnNodes:
         tool_rounds_used = int(budget_used.get("toolRounds", 0))
         visible_tools = tuple(state.get("tools") or ())
         offered = visible_tools if tool_rounds_used < max_tool_rounds else ()
+        activated_skills = tuple(
+            PromptSkill(
+                skill_id=str(item["skillId"]),
+                revision_id=str(item["revisionId"]),
+                name=str(item["name"]),
+                instruction=str(item["instruction"]),
+                mode="auto",
+            )
+            for item in state.get("activated_skills") or ()
+        )
         step = await self._steps.generate_conversation_answer(
             _require_step(state),
             self._turn.input_snapshot.value,
@@ -713,6 +743,7 @@ class ChatTurnNodes:
             authorize=self._require_authorized,
             on_text=batcher.push,
             tools=offered,
+            activated_skills=activated_skills,
         )
         if step.get("kind") == "tool_calls":
             await batcher.discard()
@@ -781,6 +812,7 @@ class ChatTurnNodes:
         current_step: dict[str, object] = dict(step)
         transcript = list(cast("list[dict[str, object]]", current_step.get("transcript") or []))
         committed = list(state.get("committed_stream_events") or ())
+        activated = list(state.get("activated_skills") or ())
 
         async def emit(event_type: str, payload: Mapping[str, object]) -> None:
             nonlocal committed
@@ -860,8 +892,10 @@ class ChatTurnNodes:
             started_at = time.monotonic()
             # Final review M-2: redact the query before cutting it to 60
             # characters, so an ID/email straddling the cut is never split
-            # into an unrecognizable fragment.
-            running_query = (await self._redact_summary(str(call.arguments.get("query", ""))))[:60]
+            # into an unrecognizable fragment. `skill.activate` has no query;
+            # its running step shows the requested Skill name instead.
+            argument_text = call.arguments.get("query", call.arguments.get("name", ""))
+            running_query = (await self._redact_summary(str(argument_text)))[:60]
             running_summary = await self._redact_summary(f'{call.tool_id} "{running_query}"')
             await emit(
                 "task.step",
@@ -874,6 +908,50 @@ class ChatTurnNodes:
                     "toolRound": round_number,
                 },
             )
+
+            if call.tool_id == "skill.activate":
+                with span("tool.skill.activate", {"tap.tool.step_id": this_step_id}) as skill_span:
+                    rejection, activation = await self._activate_skill(
+                        str(call.arguments.get("name", "")), value, activated
+                    )
+                    skill_span.set_attribute(
+                        "tap.skill.activation.outcome", rejection or "activated"
+                    )
+                content: dict[str, object]
+                if activation is not None:
+                    activated.append(activation)
+                    status = "completed"
+                    summary = await self._redact_summary(
+                        f"skill.activate → 已激活 {activation['name']}"
+                    )
+                    # An acknowledgement only: tool results are untrusted, so
+                    # the Skill text reaches the model as a trusted block via
+                    # `activated_skills` on the next `model` call instead.
+                    content = {"status": "activated", "name": activation["name"]}
+                else:
+                    status = "rejected"
+                    summary = await self._redact_summary(f"skill.activate → 已拒绝（{rejection}）")
+                    content = {"status": "rejected", "reason": rejection}
+                await emit(
+                    "task.step",
+                    {
+                        "stepId": this_step_id,
+                        "tool": call.tool_id,
+                        "status": status,
+                        "summary": summary,
+                        "durationMs": int((time.monotonic() - started_at) * 1000),
+                        "toolRound": round_number,
+                    },
+                )
+                transcript.append(
+                    {
+                        "role": "tool",
+                        "toolCallId": call.call_id,
+                        "toolId": call.tool_id,
+                        "content": json.dumps(content),
+                    }
+                )
+                continue
 
             if call.tool_id == "insights.query":
                 if self._insights_explanation is None:
@@ -1019,7 +1097,66 @@ class ChatTurnNodes:
         result: dict[str, object] = {"step": current_step, "tool_rounds_delta": 1}
         if committed != list(state.get("committed_stream_events") or ()):
             result["committed_stream_events"] = committed
+        if activated != list(state.get("activated_skills") or ()):
+            result["activated_skills"] = activated
         return result
+
+    async def _activate_skill(
+        self, name: str, value: Any, activated: Sequence[Mapping[str, object]]
+    ) -> tuple[ActivationRejection | None, dict[str, object] | None]:
+        """Runs one admitted `skill.activate` call against the Turn's frozen
+        catalog and budgets (spec 1.2/1.3): returns the rejection, or the
+        activation to add to `activated_skills` after recording it.
+
+        Loaded bytes are the frozen (manual/pinned) instruction text plus the
+        Skills activated so far; the frozen catalog already excludes the
+        manual/pinned Skills, so naming one of them is `not_in_catalog`. The
+        revision is loaded only when the count/bytes-so-far checks pass, and
+        a revision disabled since the catalog was frozen is
+        `skill_disabled`."""
+        entry = catalog_entry(name, tuple(getattr(value, "skill_catalog", ()) or ()))
+        frozen_bytes = sum(
+            len(text.encode("utf-8"))
+            for text in getattr(value, "skill_instruction_templates", ()) or ()
+        )
+        loaded_bytes = frozen_bytes + sum(cast(int, item["bytes"]) for item in activated)
+        loaded_skill_ids = frozenset(str(item["skillId"]) for item in activated)
+
+        def rejection(candidate_bytes: int) -> ActivationRejection | None:
+            return activation_rejection(
+                entry,
+                loaded_skill_ids=loaded_skill_ids,
+                auto_count=len(activated),
+                loaded_bytes=loaded_bytes,
+                candidate_bytes=candidate_bytes,
+            )
+
+        early = rejection(0)
+        if early is not None or entry is None or self._skills is None:
+            # `self._skills is None` never offers the tool (see `ingress`).
+            return early or "skill_disabled", None
+        revision = await self._skills.load(entry.revision_id)
+        if revision.status is not AssetRevisionStatus.ENABLED:
+            return "skill_disabled", None
+        size = skill_text_bytes(revision)
+        late = rejection(size)
+        if late is not None:
+            return late, None
+        await self._skills.record_auto(
+            turn_id=self._turn.turn_id,
+            skill_id=entry.skill_id,
+            skill_revision_id=entry.revision_id,
+            bytes_=size,
+            activated_at=datetime.now(UTC),
+        )
+        return None, {
+            "skillId": entry.skill_id,
+            "revisionId": entry.revision_id,
+            "name": entry.name,
+            "instruction": (revision.instruction_template or "")
+            + (revision.attached_references or ""),
+            "bytes": size,
+        }
 
     async def verify(self, state: ChatGraphState) -> dict[str, object]:
         active_plan = self._active_plan(state)

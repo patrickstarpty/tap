@@ -49,7 +49,7 @@ from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.feedback import FeedbackService
-from tap.modules.chat.application.ports import DraftStream
+from tap.modules.chat.application.ports import DraftStream, TurnSkillActivations
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
 from tap.modules.graph.application.jobs import GraphJobStore
@@ -267,6 +267,9 @@ class HttpServices:
     # Read by `conversation_stream` (Task 6) to replay/stream drafts; Task 7
     # also reads it to check cancellation.
     draft_stream: DraftStream | None = None
+    # Skill Hub: the Skills each Turn used (manual, pinned and `auto`), read
+    # by the conversation detail route for `skillsUsed`.
+    skill_activations: TurnSkillActivations | None = None
 
 
 class GraphUnavailable(Exception):

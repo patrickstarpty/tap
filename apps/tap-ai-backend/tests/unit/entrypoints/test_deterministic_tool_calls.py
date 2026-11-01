@@ -203,3 +203,25 @@ async def test_no_tools_offered_never_produces_a_tool_call() -> None:
     result = await gateway.chat(_request(question, tools=()))
 
     assert result.tool_calls == ()
+
+
+@pytest.mark.asyncio
+async def test_skill_activate_marker_is_consumed_once() -> None:
+    gateway = _gateway()
+    question = "按发布清单回答 [e2e-tool:skill.activate:release-checklist]"
+    tools = ("knowledge.search", "skill.activate")
+
+    first = await gateway.chat(_request(question, tools=tools))
+
+    assert len(first.tool_calls) == 1
+    assert first.tool_calls[0].name == "skill_activate"
+    assert json.loads(first.tool_calls[0].arguments_json) == {"name": "release-checklist"}
+
+    # The prior `skill.activate` call (keyed by its `name`) consumes the marker.
+    messages = (
+        _assistant_message(first.tool_calls[0]),
+        _tool_result_message(first.tool_calls[0].call_id),
+    )
+    second = await gateway.chat(_request(question, tools=tools, messages=messages))
+    assert second.tool_calls == ()
+    assert isinstance(second.output, str) and second.output

@@ -70,6 +70,11 @@ class ChatGraphState(TypedDict, total=False):
     # emit`) by `seed_search`/`verify`, so `finalize`'s own `streamEvents`
     # batch never repeats them.
     committed_stream_events: list[str]
+    # Skill Hub: Skills `skill.activate` loaded so far this Turn, in
+    # activation order -- `{"skillId", "revisionId", "name", "instruction",
+    # "bytes"}` each. Checkpointed so a resumed `model` call still renders
+    # them and a resumed `tools` node still counts them against the budget.
+    activated_skills: list[dict[str, object]]
 
 
 GraphNode = Callable[[ChatGraphState], Awaitable[dict[str, Any]]]

@@ -19,7 +19,9 @@ from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.ai.application.interaction_graph import InteractionGraph
+from tap.modules.ai.domain.assets import AssetRevisionStatus, SkillRevision, text_digest
 from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
+from tap.modules.ai.domain.skill_activation import PromptSkill, SkillCatalogEntry
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.application.conversations import ClaimBatch
 from tap.modules.chat.domain.answer_plan import AnswerPlan
@@ -99,7 +101,15 @@ class _StepsKnowledge:
         return {"kind": "prepared", "bundle": {}}
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools=(),
+        activated_skills=(),
     ):
         self.generate_calls += 1
         if not self._generate_failed_once:
@@ -640,7 +650,15 @@ class _PlanDeadlineExpiredKnowledge(_StepsKnowledge):
     found at the very start of a phase, not a mid-phase timeout."""
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools=(),
+        activated_skills=(),
     ):
         from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
 
@@ -883,7 +901,15 @@ class _HitsReadyKnowledge(_StepsKnowledge):
         }
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools=(),
+        activated_skills=(),
     ):
         self.generate_calls += 1
         self.hits_ready_committed_before_generate = any(
@@ -1102,7 +1128,15 @@ async def test_model_node_streams_through_draft_batcher() -> None:
 
     class _StreamingKnowledge(_StepsKnowledge):
         async def generate_conversation_answer(
-            self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+            self,
+            step,
+            frozen_input,
+            *,
+            answer_plan=None,
+            authorize=None,
+            on_text=None,
+            tools=(),
+            activated_skills=(),
         ):
             self.generate_calls += 1
             assert on_text is not None
@@ -1194,7 +1228,15 @@ class _ToolLoopSteps(_StepsKnowledge):
         )
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools=(),
+        activated_skills=(),
     ):
         self.tools_seen = tools
         return await super().generate_conversation_answer(
@@ -1498,7 +1540,15 @@ async def test_final_round_tool_calls_fallback_does_not_fail_turn() -> None:
 
     class _NonCompliantSteps(_StepsKnowledge):
         async def generate_conversation_answer(
-            self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+            self,
+            step,
+            frozen_input,
+            *,
+            answer_plan=None,
+            authorize=None,
+            on_text=None,
+            tools=(),
+            activated_skills=(),
         ):
             self.generate_calls += 1
             return {
@@ -1579,14 +1629,24 @@ class _ScriptedToolCallKnowledge(_StepsKnowledge):
         super().__init__()
         self._rounds = rounds
         self.tools_seen_per_call: list[tuple[str, ...]] = []
+        self.activated_skills_per_call: list[tuple] = []
         self.run_tool_calls: list = []
         self.add_insights_calls: list = []
 
     async def generate_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        self,
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools=(),
+        activated_skills=(),
     ):
         self.generate_calls += 1
         self.tools_seen_per_call.append(tools)
+        self.activated_skills_per_call.append(activated_skills)
         round_spec = self._rounds[min(self.generate_calls - 1, len(self._rounds) - 1)]
         if on_text is not None and round_spec.get("text"):
             await on_text(round_spec["text"])
@@ -1644,7 +1704,14 @@ async def test_resume_after_tools_node_does_not_repeat_tool_calls_or_steps() -> 
     real_generate = knowledge.generate_conversation_answer
 
     async def _flaky_generate(
-        step, frozen_input, *, answer_plan=None, authorize=None, on_text=None, tools=()
+        step,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_text=None,
+        tools=(),
+        activated_skills=(),
     ):
         calls_seen["n"] += 1
         if calls_seen["n"] == 2:
@@ -2167,3 +2234,418 @@ async def test_tools_node_rejects_a_duplicate_call_id_without_running_it() -> No
     assert statuses[-1] == ("turn-tools-duplicate:r1:c1", "rejected")
     content = json.loads(result["step"]["transcript"][-1]["content"])
     assert content == {"status": "rejected", "reason": "duplicate-call-id"}
+
+
+# Skill Hub phase 1 (Task 6): `skill.activate` in the tool loop.
+
+
+def _skill_revision(
+    skill_id: str,
+    *,
+    body: str = "Follow the checklist.",
+    references: str | None = None,
+    status: AssetRevisionStatus = AssetRevisionStatus.ENABLED,
+) -> SkillRevision:
+    return SkillRevision(
+        revision_id=f"{skill_id}-v1",
+        asset_id=skill_id,
+        display_name=skill_id,
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest(f"{skill_id}-content"),
+        instruction_template_digest=text_digest(body + (references or "")),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        status=status,
+        instruction_template=body,
+        attached_references=references,
+    )
+
+
+def _catalog_entry(skill_id: str) -> SkillCatalogEntry:
+    return SkillCatalogEntry(
+        skill_id=skill_id,
+        revision_id=f"{skill_id}-v1",
+        name=skill_id,
+        description=f"{skill_id} description",
+        category="other",
+    )
+
+
+def _activated(skill_id: str, *, size: int = 10) -> dict[str, object]:
+    return {
+        "skillId": skill_id,
+        "revisionId": f"{skill_id}-v1",
+        "name": skill_id,
+        "instruction": "x" * size,
+        "bytes": size,
+    }
+
+
+class _SkillRuntime:
+    """`SkillActivationRuntime` double: serves fixed revisions and records
+    every `record_auto` call."""
+
+    def __init__(self, *revisions: SkillRevision) -> None:
+        self._revisions = {item.revision_id: item for item in revisions}
+        self.loaded: list[str] = []
+        self.recorded: list[dict[str, object]] = []
+
+    async def load(self, revision_id: str) -> SkillRevision:
+        self.loaded.append(revision_id)
+        return self._revisions[revision_id]
+
+    async def record_auto(self, *, turn_id, skill_id, skill_revision_id, bytes_, activated_at):
+        self.recorded.append(
+            {
+                "turn_id": turn_id,
+                "skill_id": skill_id,
+                "skill_revision_id": skill_revision_id,
+                "bytes_": bytes_,
+                "activated_at": activated_at,
+            }
+        )
+
+
+def _skill_nodes(*, turn, skills, conversations=None, steps=None) -> ChatTurnNodes:
+    return ChatTurnNodes(
+        conversation_id="conversation-1",
+        turn=turn,
+        conversations=conversations or _Conversations(turn),
+        steps=steps or _ToolLoopSteps(),
+        planner=None,
+        knowledge=object(),
+        insights_explanation=None,
+        require_authorized=_require_authorized_noop,
+        skills=skills,
+    )
+
+
+def _activate_state(*names: str, activated=()) -> dict[str, object]:
+    return {
+        "tools": ["knowledge.search", "skill.activate"],
+        "budget": {"maxToolRounds": 6},
+        "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
+        "activated_skills": list(activated),
+        "step": {
+            "kind": "tool_calls",
+            "bundle": {},
+            "transcript": [],
+            "pending_tool_calls": [
+                {
+                    "callId": f"call-{index}",
+                    "name": "skill_activate",
+                    "argumentsJson": json.dumps({"name": name}),
+                }
+                for index, name in enumerate(names)
+            ],
+        },
+    }
+
+
+def _skill_steps(conversations: _Conversations) -> list[tuple[str, str]]:
+    return [
+        (payload["tool"], payload["status"])
+        for _c, _t, event_type, payload, _lease in conversations.emitted
+        if event_type == "task.step"
+    ]
+
+
+def _tool_replies(result: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        json.loads(entry["content"])
+        for entry in result["step"]["transcript"]
+        if entry["role"] == "tool"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ingress_offers_skill_activate_only_with_catalog() -> None:
+    with_catalog = _frozen_turn_for_planning(
+        turn_id="turn-ingress-skills", skill_catalog=(_catalog_entry("checklist"),)
+    )
+    without_catalog = _frozen_turn_for_planning(turn_id="turn-ingress-no-catalog")
+
+    offered = await _skill_nodes(turn=with_catalog, skills=_SkillRuntime()).ingress({})
+    no_runtime = await _skill_nodes(turn=with_catalog, skills=None).ingress({})
+    no_catalog = await _skill_nodes(turn=without_catalog, skills=_SkillRuntime()).ingress({})
+
+    assert offered["tools"] == ["knowledge.search", "skill.activate"]
+    assert no_runtime["tools"] == ["knowledge.search"]
+    assert no_catalog["tools"] == ["knowledge.search"]
+
+
+@pytest.mark.asyncio
+async def test_skill_activate_loads_records_and_emits_steps(span_recorder) -> None:
+    body = "Follow the 数据 checklist."
+    references = "\nreference text"
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-skill-activate", skill_catalog=(_catalog_entry("checklist"),)
+    )
+    conversations = _Conversations(turn)
+    runtime = _SkillRuntime(_skill_revision("checklist", body=body, references=references))
+    nodes = _skill_nodes(turn=turn, skills=runtime, conversations=conversations)
+
+    result = await nodes.tools(_activate_state("checklist"))
+
+    size = len((body + references).encode("utf-8"))
+    assert runtime.loaded == ["checklist-v1"]
+    assert len(runtime.recorded) == 1
+    recorded = runtime.recorded[0]
+    assert {key: recorded[key] for key in ("turn_id", "skill_id", "skill_revision_id")} == {
+        "turn_id": "turn-skill-activate",
+        "skill_id": "checklist",
+        "skill_revision_id": "checklist-v1",
+    }
+    assert recorded["bytes_"] == size
+    activated_at = recorded["activated_at"]
+    assert isinstance(activated_at, datetime) and activated_at.tzinfo is not None
+    assert _skill_steps(conversations) == [
+        ("skill.activate", "running"),
+        ("skill.activate", "completed"),
+    ]
+    assert result["activated_skills"] == [
+        {
+            "skillId": "checklist",
+            "revisionId": "checklist-v1",
+            "name": "checklist",
+            "instruction": body + references,
+            "bytes": size,
+        }
+    ]
+    # The tool result is only an acknowledgement: the Skill text reaches the
+    # model as a trusted block on the next `model` call, never as tool output.
+    assert _tool_replies(result) == [{"status": "activated", "name": "checklist"}]
+    assert body not in result["step"]["transcript"][-1]["content"]
+    assert result["tool_rounds_delta"] == 1
+    skill_spans = [s for s in span_recorder.get_finished_spans() if s.name == "tool.skill.activate"]
+    assert len(skill_spans) == 1
+    assert skill_spans[0].attributes["tap.tool.step_id"] == "turn-skill-activate:r1:c0"
+    assert skill_spans[0].attributes["tap.skill.activation.outcome"] == "activated"
+
+
+@pytest.mark.asyncio
+async def test_sixth_auto_activation_is_rejected_budget_count(span_recorder) -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-skill-count", skill_catalog=(_catalog_entry("sixth"),)
+    )
+    conversations = _Conversations(turn)
+    runtime = _SkillRuntime(_skill_revision("sixth"))
+    nodes = _skill_nodes(turn=turn, skills=runtime, conversations=conversations)
+    five = [_activated(f"auto-{index}") for index in range(5)]
+
+    result = await nodes.tools(_activate_state("sixth", activated=five))
+
+    assert runtime.loaded == []
+    assert runtime.recorded == []
+    assert _skill_steps(conversations) == [
+        ("skill.activate", "running"),
+        ("skill.activate", "rejected"),
+    ]
+    assert _tool_replies(result) == [{"status": "rejected", "reason": "budget_count"}]
+    assert result.get("activated_skills", five) == five
+    skill_spans = [s for s in span_recorder.get_finished_spans() if s.name == "tool.skill.activate"]
+    assert skill_spans[0].attributes["tap.skill.activation.outcome"] == "budget_count"
+
+
+@pytest.mark.asyncio
+async def test_activation_over_96kb_is_rejected_budget_bytes() -> None:
+    # Loaded bytes = the frozen (manual/pinned) instruction text plus the
+    # Skills activated so far: 60 KB + 30 KB + a 7 KB candidate > 96 KB.
+    frozen_text = "f" * (60 * 1024)
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-skill-bytes",
+        skill_revision_ids=("manual-v1",),
+        skill_revision_digests=(_digest("b"),),
+        skill_instruction_templates=(frozen_text,),
+        skill_instruction_template_digests=(text_digest(frozen_text),),
+        skill_catalog=(_catalog_entry("big"),),
+    )
+    conversations = _Conversations(turn)
+    runtime = _SkillRuntime(_skill_revision("big", body="b" * (7 * 1024)))
+    nodes = _skill_nodes(turn=turn, skills=runtime, conversations=conversations)
+
+    result = await nodes.tools(
+        _activate_state("big", activated=[_activated("earlier", size=30 * 1024)])
+    )
+
+    assert runtime.loaded == ["big-v1"]
+    assert runtime.recorded == []
+    assert _skill_steps(conversations)[-1] == ("skill.activate", "rejected")
+    assert _tool_replies(result) == [{"status": "rejected", "reason": "budget_bytes"}]
+
+    # The same candidate fits once the activated-so-far text is smaller.
+    fits = await _skill_nodes(turn=turn, skills=runtime).tools(
+        _activate_state("big", activated=[_activated("earlier", size=20 * 1024)])
+    )
+    assert _tool_replies(fits) == [{"status": "activated", "name": "big"}]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_activation_in_turn_is_rejected_already_loaded() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-skill-duplicate", skill_catalog=(_catalog_entry("checklist"),)
+    )
+    conversations = _Conversations(turn)
+    runtime = _SkillRuntime(_skill_revision("checklist"))
+    nodes = _skill_nodes(turn=turn, skills=runtime, conversations=conversations)
+
+    first_round = await nodes.tools(_activate_state("checklist", "checklist"))
+    second_round = await nodes.tools(
+        _activate_state("checklist", activated=first_round["activated_skills"])
+    )
+
+    assert len(runtime.recorded) == 1
+    assert _tool_replies(first_round) == [
+        {"status": "activated", "name": "checklist"},
+        {"status": "rejected", "reason": "already_loaded"},
+    ]
+    assert _tool_replies(second_round) == [{"status": "rejected", "reason": "already_loaded"}]
+    assert [item["skillId"] for item in first_round["activated_skills"]] == ["checklist"]
+
+
+@pytest.mark.asyncio
+async def test_activation_of_skill_disabled_after_freeze_is_rejected() -> None:
+    turn = _frozen_turn_for_planning(
+        turn_id="turn-skill-disabled", skill_catalog=(_catalog_entry("retired"),)
+    )
+    conversations = _Conversations(turn)
+    runtime = _SkillRuntime(_skill_revision("retired", status=AssetRevisionStatus.DISABLED))
+    nodes = _skill_nodes(turn=turn, skills=runtime, conversations=conversations)
+
+    result = await nodes.tools(_activate_state("retired"))
+
+    assert runtime.loaded == ["retired-v1"]
+    assert runtime.recorded == []
+    assert _skill_steps(conversations)[-1] == ("skill.activate", "rejected")
+    assert _tool_replies(result) == [{"status": "rejected", "reason": "skill_disabled"}]
+
+    # Driven through the real `GenerationWorker`/`ChatGraph`, the rejection
+    # is answered to the model and the Turn still reaches `verify`.
+    full_turn = _turn(turn_id="turn-skill-disabled-e2e")
+    full_turn.input_snapshot.value.skill_catalog = (_catalog_entry("retired"),)
+    full_conversations = _Conversations(full_turn)
+    knowledge = _ScriptedToolCallKnowledge(
+        rounds=[
+            {
+                "tool_call": {
+                    "callId": "call-1",
+                    "name": "skill_activate",
+                    "argumentsJson": json.dumps({"name": "retired"}),
+                }
+            },
+            {},
+        ]
+    )
+    verified: list[str] = []
+    real_verify = knowledge.verify_conversation_answer
+
+    async def _recording_verify(step, frozen_input, **kwargs):
+        verified.append(step["kind"])
+        return await real_verify(step, frozen_input, **kwargs)
+
+    knowledge.verify_conversation_answer = _recording_verify  # type: ignore[method-assign]
+    full_runtime = _SkillRuntime(_skill_revision("retired", status=AssetRevisionStatus.DISABLED))
+    worker = GenerationWorker(
+        full_conversations, knowledge, checkpointer=InMemorySaver(), skills=full_runtime
+    )
+
+    assert await worker.run_once(limit=1) == 1
+
+    assert knowledge.tools_seen_per_call[0] == ("knowledge.search", "skill.activate")
+    assert knowledge.generate_calls == 2
+    assert verified == ["generated"]
+    _conversation_id, _turn_id, evidence, _kwargs = full_conversations.completed[0]
+    assert evidence.outcome == "completed"
+    assert full_runtime.recorded == []
+    assert _skill_steps(full_conversations)[-1] == ("skill.activate", "rejected")
+
+
+@pytest.mark.asyncio
+async def test_model_node_passes_activated_skills() -> None:
+    class _CapturingSteps(_StepsKnowledge):
+        seen: tuple = ()
+
+        async def generate_conversation_answer(
+            self,
+            step,
+            frozen_input,
+            *,
+            answer_plan=None,
+            authorize=None,
+            on_text=None,
+            tools=(),
+            activated_skills=(),
+        ):
+            self.seen = activated_skills
+            return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+
+    turn = _frozen_turn_for_planning(turn_id="turn-model-skills")
+    steps = _CapturingSteps()
+    nodes = _skill_nodes(turn=turn, skills=_SkillRuntime(), steps=steps)
+
+    await nodes.model(
+        {
+            "tools": ["knowledge.search", "skill.activate"],
+            "budget": {"maxToolRounds": 6},
+            "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
+            "activated_skills": [_activated("checklist", size=3)],
+            "step": {"kind": "prepared", "bundle": {}},
+        }
+    )
+
+    assert steps.seen == (
+        PromptSkill(
+            skill_id="checklist",
+            revision_id="checklist-v1",
+            name="checklist",
+            instruction="xxx",
+            mode="auto",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_after_skill_activate_does_not_repeat_steps() -> None:
+    turn = _turn(turn_id="turn-resume-skill")
+    turn.input_snapshot.value.skill_catalog = (_catalog_entry("checklist"),)
+    conversations = _Conversations(turn)
+    knowledge = _ScriptedToolCallKnowledge(
+        rounds=[
+            {
+                "tool_call": {
+                    "callId": "call-1",
+                    "name": "skill_activate",
+                    "argumentsJson": json.dumps({"name": "checklist"}),
+                }
+            },
+            {},
+        ]
+    )
+    runtime = _SkillRuntime(_skill_revision("checklist"))
+    worker = GenerationWorker(
+        conversations, knowledge, checkpointer=InMemorySaver(), skills=runtime
+    )
+    calls_seen = {"n": 0}
+    real_generate = knowledge.generate_conversation_answer
+
+    async def _flaky_generate(step, frozen_input, **kwargs):
+        calls_seen["n"] += 1
+        if calls_seen["n"] == 2:
+            raise GraphCheckpointRetryable("connection lost after durable task write")
+        return await real_generate(step, frozen_input, **kwargs)
+
+    knowledge.generate_conversation_answer = _flaky_generate  # type: ignore[method-assign]
+
+    assert await worker.run_once(limit=1) == 1
+    assert conversations.completed == []
+    assert len(runtime.recorded) == 1
+    assert [status for _tool, status in _skill_steps(conversations)] == ["running", "completed"]
+
+    assert await worker.run_once(limit=1) == 1
+    _conversation_id, _turn_id, evidence, _kwargs = conversations.completed[0]
+    assert evidence.outcome == "completed"
+    assert len(runtime.recorded) == 1
+    assert runtime.loaded == ["checklist-v1"]
+    assert [status for _tool, status in _skill_steps(conversations)] == ["running", "completed"]
+    # The resumed `model` call still renders the Skill activated before the crash.
+    resumed_skills = knowledge.activated_skills_per_call[-1]
+    assert [(item.skill_id, item.mode) for item in resumed_skills] == [("checklist", "auto")]

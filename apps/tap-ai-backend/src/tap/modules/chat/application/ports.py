@@ -10,7 +10,9 @@ from typing import Literal, Protocol, TypedDict
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import RetrievalAnswerResponse
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.assets import SkillRevision
 from tap.modules.ai.domain.skill_activation import PromptSkill
+from tap.modules.ai.domain.skill_metadata import ActivationMode
 from tap.modules.ai.domain.tool_calls import AdmittedToolCall
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
 
@@ -267,6 +269,42 @@ class ConversationToolResult(TypedDict):
     summary: str
     added_labels: list[str]
     retrieval_hits: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class TurnSkillUse:
+    """One Skill a Turn used (spec 1.2): frozen manual/pinned Skills and those
+    `skill.activate` loaded, merged for the Turn's "Skills used" view.
+    `label` is the Skill's display name at read time."""
+
+    skill_id: str
+    skill_revision_id: str
+    label: str
+    mode: ActivationMode
+
+
+class TurnSkillActivations(Protocol):
+    """Reads the Skills each Turn used, for the conversation detail view."""
+
+    async def for_turns(self, turn_ids: Sequence[str]) -> dict[str, tuple[TurnSkillUse, ...]]: ...
+
+
+class SkillActivationRuntime(Protocol):
+    """What the `tools` node needs to run `skill.activate`: load the frozen
+    catalog revision's text, then record the auto activation idempotently
+    (one row per Turn and Skill, so a resumed node never duplicates it)."""
+
+    async def load(self, revision_id: str) -> SkillRevision: ...
+
+    async def record_auto(
+        self,
+        *,
+        turn_id: str,
+        skill_id: str,
+        skill_revision_id: str,
+        bytes_: int,
+        activated_at: datetime,
+    ) -> None: ...
 
 
 class ConversationAnswerSteps(Protocol):
