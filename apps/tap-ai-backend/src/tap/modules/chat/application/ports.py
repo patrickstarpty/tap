@@ -275,7 +275,7 @@ class ConversationToolResult(TypedDict):
 class TurnSkillUse:
     """One Skill a Turn used (spec 1.2): frozen manual/pinned Skills and those
     `skill.activate` loaded, merged for the Turn's "Skills used" view.
-    `label` is the Skill's display name at read time."""
+    `label` is the display name of the revision the Turn used."""
 
     skill_id: str
     skill_revision_id: str

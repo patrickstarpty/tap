@@ -40,19 +40,21 @@ def _sessions(owned_project_mysql):
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def _insert_skill(catalog: MysqlAssetCatalog, skill_id: str, name: str, body: str) -> None:
+async def _insert_skill(
+    catalog: MysqlAssetCatalog, skill_id: str, name: str, body: str, *, revision: int = 1
+) -> None:
     await catalog.insert_skill_revision(
         SkillRevision(
-            revision_id=f"{skill_id}-v1",
+            revision_id=f"{skill_id}-v{revision}",
             asset_id=skill_id,
             display_name=name,
             scope=VALIDATION_SCOPE,
-            content_digest=text_digest(f"{skill_id}-content"),
+            content_digest=text_digest(f"{skill_id}-content-{revision}"),
             instruction_template_digest=text_digest(body),
             applicable_tasks=frozenset({"knowledge.answer"}),
             instruction_template=body,
         ),
-        base_revision_id=None,
+        base_revision_id=None if revision == 1 else f"{skill_id}-v{revision - 1}",
     )
 
 
@@ -176,7 +178,10 @@ def test_for_turns_merges_frozen_and_auto_rows(owned_project_mysql):
         try:
             catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
             await _insert_skill(catalog, "merge-manual", "Merge Manual", manual_text)
-            await _insert_skill(catalog, "merge-auto", "Merge Auto", "Auto instruction")
+            # Renamed before the Turn: the Skill row keeps its creation-time
+            # name, while the Turn activates the renamed `merge-auto-v2`.
+            await _insert_skill(catalog, "merge-auto", "Original Auto", "Old instruction")
+            await _insert_skill(catalog, "merge-auto", "Merge Auto", "Auto instruction", revision=2)
             service = ConversationService(
                 MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
                 scope=VALIDATION_SCOPE,
@@ -203,10 +208,14 @@ def test_for_turns_merges_frozen_and_auto_rows(owned_project_mysql):
             await runtime.record_auto(
                 turn_id="merge-turn",
                 skill_id="merge-auto",
-                skill_revision_id="merge-auto-v1",
+                skill_revision_id="merge-auto-v2",
                 bytes_=16,
                 activated_at=datetime.now(UTC) + timedelta(seconds=5),
             )
+            # Both Skills are renamed after the Turn: the label stays the
+            # name of the revision the Turn used, matching `skillLabels`.
+            await _insert_skill(catalog, "merge-manual", "Renamed Manual", "New", revision=2)
+            await _insert_skill(catalog, "merge-auto", "Renamed Auto", "New", revision=3)
 
             uses = await MysqlTurnSkillActivations(sessions, scope=VALIDATION_SCOPE).for_turns(
                 ("merge-turn", "unknown-turn")
@@ -215,7 +224,7 @@ def test_for_turns_merges_frozen_and_auto_rows(owned_project_mysql):
             assert uses == {
                 "merge-turn": (
                     TurnSkillUse("merge-manual", "merge-manual-v1", "Merge Manual", "manual"),
-                    TurnSkillUse("merge-auto", "merge-auto-v1", "Merge Auto", "auto"),
+                    TurnSkillUse("merge-auto", "merge-auto-v2", "Merge Auto", "auto"),
                 )
             }
             assert (

@@ -174,7 +174,9 @@ class MysqlSkillActivationRuntime:
 
 class MysqlTurnSkillActivations:
     """Reads the Skills each Turn used (frozen manual/pinned rows and `auto`
-    rows alike), labelled with the Skill's display name at read time."""
+    rows alike), each labelled with the display name of the revision the
+    Turn used -- immutable, and the same name `skillLabels` and the catalog
+    the model activated by show."""
 
     def __init__(
         self, sessions: async_sessionmaker[AsyncSession], *, scope: ProjectScopeContext
@@ -185,7 +187,7 @@ class MysqlTurnSkillActivations:
     async def for_turns(self, turn_ids: Sequence[str]) -> dict[str, tuple[TurnSkillUse, ...]]:
         if not turn_ids:
             return {}
-        from tap.modules.ai.adapters.mysql import skill
+        from tap.modules.ai.adapters.mysql import skill_revision
 
         query = (
             select(
@@ -193,13 +195,13 @@ class MysqlTurnSkillActivations:
                 turn_skill_activation.c.skill_id,
                 turn_skill_activation.c.skill_revision_id,
                 turn_skill_activation.c.mode,
-                skill.c.display_name,
+                skill_revision.c.display_name,
             )
             .join(
-                skill,
-                (skill.c.enterprise_id == turn_skill_activation.c.enterprise_id)
-                & (skill.c.project_id == turn_skill_activation.c.project_id)
-                & (skill.c.skill_id == turn_skill_activation.c.skill_id),
+                skill_revision,
+                (skill_revision.c.enterprise_id == turn_skill_activation.c.enterprise_id)
+                & (skill_revision.c.project_id == turn_skill_activation.c.project_id)
+                & (skill_revision.c.revision_id == turn_skill_activation.c.skill_revision_id),
             )
             .where(
                 *scope_predicates(turn_skill_activation, self._scope),
