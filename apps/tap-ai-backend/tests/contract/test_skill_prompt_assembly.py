@@ -509,3 +509,61 @@ async def test_auto_skill_name_is_stripped_as_pseudo_citation() -> None:
 
     assert "[webapp-testing]" not in result.text
     assert "按 Skill 指引执行 webapp-testing。" in result.text
+
+
+class _DirectCapturingGateway(_CapturingGateway):
+    """`_CapturingGateway` for the model-only `chat()` path, which calls the
+    gateway's non-streaming `chat`/`generate_structured` instead."""
+
+    async def _complete(self, request):
+        async for event in self.chat_stream(request):
+            return event
+        raise AssertionError("no result")
+
+    async def chat(self, request):
+        return await self._complete(request)
+
+    async def generate_structured(self, request):
+        return await self._complete(request)
+
+
+@pytest.mark.asyncio
+async def test_direct_route_governed_keeps_governance_blocks_and_adds_none_twice() -> None:
+    """A governed direct-route Turn: the governance renders its frozen Skill
+    block once; `turn_skill_context(governed=True)` adds no frozen block (only
+    activated ones, and a direct answer activates none) and the catalog does
+    not render because no tools are offered."""
+    exporter = InMemorySpanExporter()
+    provider_trace = TracerProvider()
+    provider_trace.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider_trace.get_tracer("test-skill-prompt-assembly-direct")
+
+    governance = _governance(skill_instruction="Always answer in bullet points.")
+    provider = _DirectCapturingGateway(output="Hello")
+    models = _gateway(provider)
+
+    with tracer.start_as_current_span("answer"):
+        await models.chat(
+            "query",
+            model_alias="qwen-plus",
+            governance=governance,
+            skills=TurnSkillContext(catalog=(_catalog_entry("webapp-testing", "Browser checks."),)),
+        )
+
+    prompt = provider.requests[0].prompt
+    governed_block = (
+        '<skill name="Citation discipline" revision="skill-revision-1">\n'
+        "Always answer in bullet points.\n"
+        "</skill>"
+    )
+    assert prompt.count("<skill ") == 1
+    assert prompt.count(governed_block) == 1
+    assert "Available Skills" not in prompt
+    assert (
+        prompt.index("Identify yourself as Qwen Plus.")
+        < prompt.index(governed_block)
+        < prompt.index(TAPPER_PERSONA_V1.customization_boundary)
+        < prompt.index("Answer the user directly.")
+    )
+    answer_span = exporter.get_finished_spans()[-1]
+    assert answer_span.attributes["tap.skill.revision_ids"] == "skill-revision-1"

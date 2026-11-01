@@ -647,6 +647,7 @@ class KnowledgeModelGateway:
         answer_plan_id: str | None = None,
         answer_input: AssembledAnswer | None = None,
         persona: TapperPersona = CURRENT_PERSONA,
+        skills: TurnSkillContext | None = None,
     ) -> AnswerGeneration:
         """Generate a model-only answer when the user selected no Knowledge corpus."""
 
@@ -657,7 +658,27 @@ class KnowledgeModelGateway:
             "Answer the user directly. Reply in the user's language unless they ask for another "
             "language. No Knowledge corpus was selected; do not invent citations."
         )
-        prompt = "\n\n".join((persona.platform_instruction, direct_chat_prompt))
+        # No tools are offered on a direct answer, so no catalog section renders.
+        turn_skill_blocks, _ = _turn_skill_sections(skills, ())
+        prompt_skills: tuple[PromptSkill, ...] = () if skills is None else skills.blocks
+        prompt = "\n\n".join(
+            (
+                persona.platform_instruction,
+                *turn_skill_blocks,
+                persona.customization_boundary,
+                direct_chat_prompt,
+            )
+            if turn_skill_blocks
+            else (persona.platform_instruction, direct_chat_prompt)
+        )
+        if prompt_skills and governance is None:
+            current_span = trace.get_current_span()
+            current_span.set_attribute(
+                "tap.skill.revision_ids", ",".join(skill.revision_id for skill in prompt_skills)
+            )
+            current_span.set_attribute(
+                "tap.skill.prompt_chars", sum(len(block) for block in turn_skill_blocks)
+            )
         tools: frozenset[str] = frozenset()
         governance_digests: tuple[str, ...] = ()
         schema = None
@@ -667,7 +688,7 @@ class KnowledgeModelGateway:
         if governance is not None:
             if governance.model_alias != model_alias:
                 raise AnswerRejected("model-rejected")
-            skill_blocks = _skill_blocks(governance)
+            skill_blocks = (*_skill_blocks(governance), *turn_skill_blocks)
             prompt = "\n\n".join(
                 (
                     persona.platform_instruction,
@@ -685,10 +706,12 @@ class KnowledgeModelGateway:
             current_span = trace.get_current_span()
             if governance.agent_revision_id is not None:
                 current_span.set_attribute("tap.agent.revision_id", governance.agent_revision_id)
-            if governance.skill_revision_ids:
-                current_span.set_attribute(
-                    "tap.skill.revision_ids", ",".join(governance.skill_revision_ids)
-                )
+            skill_revision_ids = (
+                *governance.skill_revision_ids,
+                *(skill.revision_id for skill in prompt_skills),
+            )
+            if skill_revision_ids:
+                current_span.set_attribute("tap.skill.revision_ids", ",".join(skill_revision_ids))
             current_span.set_attribute(
                 "tap.skill.prompt_chars", sum(len(block) for block in skill_blocks)
             )

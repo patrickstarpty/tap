@@ -20,6 +20,13 @@ from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
 from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.interfaces.http.knowledge_service import KnowledgeHttpService, turn_skill_context
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.domain.models import (
+    ModelCallAudit,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+    text_digest,
+)
 from tap.modules.ai.domain.persona import TAPPER_PERSONA_V1, UnknownPersonaVersion
 from tap.modules.ai.domain.skill_activation import (
     PromptSkill,
@@ -34,6 +41,7 @@ from tap.modules.chat.domain.conversations import (
     TurnInputSnapshot,
     content_digest,
 )
+from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.api import KnowledgeAPI
 from tap.modules.knowledge.application.answers import AnswerService
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
@@ -212,16 +220,21 @@ class PhaseAnswers:
 
 
 async def _retrieve_route(
-    *, persona_version: str | None = None, **turn_fields: object
+    *,
+    persona_version: str | None = None,
+    message: str = "错误码 E104 如何处理？",
+    route: str = "retrieve",
+    **turn_fields: object,
 ) -> tuple[TurnInput, object]:
     """A frozen turn input and admitted `retrieve`-route plan selecting the one
     revision `ready()`/`PhaseAnswers` are built around; `turn_fields` add
-    further frozen `TurnInput` fields (bound into the plan's input digest)."""
+    further frozen `TurnInput` fields (bound into the plan's input digest).
+    `message`/`route` select another planner route over the same selection."""
 
     revision = ready()
     authority = build_demo_policy_context((revision,))
     frozen = TurnInput(
-        "错误码 E104 如何处理？",
+        message,
         VALIDATION_SCOPE.actor_id,
         "validation",
         "qwen-plus",
@@ -258,13 +271,13 @@ async def _retrieve_route(
             (revision.source_id,),
         )
     )
-    assert plan.route == "retrieve"
+    assert plan.route == route
     return frozen, plan
 
 
-async def _direct_route() -> tuple[TurnInput, object]:
+async def _direct_route(**turn_fields: object) -> tuple[TurnInput, object]:
     """A frozen turn input and admitted `direct`-route plan (a greeting), which
-    never reaches retrieval."""
+    never reaches retrieval; `turn_fields` add further frozen `TurnInput` fields."""
 
     frozen = TurnInput(
         "你好",
@@ -273,6 +286,7 @@ async def _direct_route() -> tuple[TurnInput, object]:
         "qwen-plus",
         acl_digest=content_digest({"mode": "model-only", "resources": []}),
         retrieval_policy_digest=content_digest({"mode": "model-only", "retrieval": "not-selected"}),
+        **turn_fields,  # type: ignore[arg-type]
     )
     snapshot = TurnInputSnapshot.create(
         snapshot_id="snapshot-a",
@@ -1970,6 +1984,109 @@ async def test_generate_passes_activated_skills_and_frozen_catalog() -> None:
     )
     plain, _ = await _retrieve_route()
     assert turn_skill_context(plain, (), governed=False) is None
+
+
+class _DirectCapturingProvider:
+    """The `ModelGateway` under a real `KnowledgeModelGateway` on the direct
+    route: records each request and answers with plain text."""
+
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    async def _result(self, request: ModelRequest) -> ModelResult:
+        self.requests.append(request)
+        return ModelResult(
+            output="Done.",
+            actual_model="provider-model",
+            usage=ModelUsage(),
+            actual_provider="provider",
+            audit=ModelCallAudit(
+                request.scope,
+                request.alias,
+                request.operation,
+                request.prompt_digest,
+                request.schema_digest,
+                text_digest(request.context),
+                request.idempotency_key,
+                "provider",
+                "provider-model",
+                ModelUsage(),
+            ),
+        )
+
+    async def chat(self, request: ModelRequest) -> ModelResult:
+        return await self._result(request)
+
+    async def generate_structured(self, request: ModelRequest) -> ModelResult:
+        return await self._result(request)
+
+
+async def _redact_nothing(text: str) -> str:
+    return text
+
+
+class _DirectPhaseAnswers(PhaseAnswers):
+    async def authorize_frozen_selection(self, revisions) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_documents", [False, True])
+async def test_direct_route_renders_manual_skills_for_tapper_default(with_documents) -> None:
+    """Skill Hub Task 5 fix: a direct-route Tapper-default Turn (greeting, or
+    rewrite/translate with documents selected) never reaches
+    `generate_conversation_answer`, yet its manual Skill still loads this
+    Turn -- rendered by the model-only `chat()` as a trusted block before the
+    boundary, with no catalog since no tools are offered."""
+    template = "Reply in formal English."
+    skill_fields: dict[str, object] = {
+        "skill_revision_ids": ("revision-manual",),
+        "skill_revision_digests": (_sha256("revision-manual"),),
+        "skill_labels": ("Formal tone",),
+        "skill_instruction_templates": (template,),
+        "skill_instruction_template_digests": (_sha256(template),),
+        "requested_skill_revision_ids": ("revision-manual",),
+        "skill_catalog": (
+            SkillCatalogEntry(
+                "skill-web", "revision-web", "webapp-testing", "Browser checks.", "automation"
+            ),
+        ),
+    }
+    if with_documents:
+        frozen, plan = await _retrieve_route(
+            message="翻译：理赔需要哪些材料？", route="direct", **skill_fields
+        )
+    else:
+        frozen, plan = await _direct_route(**skill_fields)
+    provider = _DirectCapturingProvider()
+    models = KnowledgeModelGateway(
+        provider,
+        scope=VALIDATION_SCOPE,
+        redact=_redact_nothing,
+        embedding_alias="text-embedding-v4",
+        chat_alias="qwen-plus",
+        embedding_dimension=2,
+        timeout_seconds=1,
+    )
+    service = _service(_DirectPhaseAnswers(), models=models)
+
+    step = await service.prepare_conversation_answer(
+        RetrievalAnswerRequest(query=frozen.message), frozen, answer_plan=plan
+    )
+
+    assert step["kind"] == "final"
+    prompt = provider.requests[-1].prompt
+    block = (
+        '<skill name="Formal tone" revision="revision-manual">\nReply in formal English.\n</skill>'
+    )
+    assert prompt.count("<skill ") == 1
+    assert (
+        prompt.index(TAPPER_PERSONA_V1.platform_instruction)
+        < prompt.index(block)
+        < prompt.index(TAPPER_PERSONA_V1.customization_boundary)
+        < prompt.index("Answer the user directly.")
+    )
+    assert "Available Skills" not in prompt
 
 
 class _RoundAwareRealChainSearch:

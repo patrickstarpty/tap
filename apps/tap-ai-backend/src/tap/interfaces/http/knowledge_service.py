@@ -934,6 +934,9 @@ class KnowledgeHttpService:
                 raise ValueError("accepted model-only authority changed")
             if answer_plan is not None and answer_plan.route != "direct":
                 return self._stopped_answer(answer_plan, answer_input)
+            # A direct answer offers no tools, so this renders only the Turn's
+            # frozen Skills (none extra for a governed Turn) and no catalog.
+            skills = turn_skill_context(frozen_input, (), governed=governance is not None)
             generation = await self._models.chat(
                 original_question,
                 model_alias=frozen_input.model_alias,
@@ -944,6 +947,7 @@ class KnowledgeHttpService:
                     if answer_plan is not None
                     else {}
                 ),
+                **({"skills": skills} if skills is not None else {}),
             )
             if authorize is not None:
                 await authorize()
@@ -978,6 +982,7 @@ class KnowledgeHttpService:
                 return self._stopped_answer(answer_plan, answer_input)
             if self._models is None:
                 raise ValueError("direct answer model is unavailable")
+            skills = turn_skill_context(frozen_input, (), governed=governance is not None)
             generation = await self._models.chat(
                 original_question,
                 model_alias=frozen_input.model_alias,
@@ -985,6 +990,7 @@ class KnowledgeHttpService:
                 answer_plan_id=answer_plan.plan_id,
                 answer_input=answer_input,
                 persona=persona,
+                **({"skills": skills} if skills is not None else {}),
             )
             if authorize is not None:
                 await authorize()
