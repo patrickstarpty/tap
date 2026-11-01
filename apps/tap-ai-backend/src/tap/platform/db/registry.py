@@ -21,6 +21,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_input_snapshot,
 )
 from tap.modules.chat.adapters.mysql_feedback import answer_feedback
+from tap.modules.chat.adapters.mysql_skill_activations import turn_skill_activation
 from tap.modules.chat.adapters.mysql_suggestions import prompt_suggestion, prompt_suggestion_refresh
 from tap.modules.governance.adapters.schema import project_audit
 from tap.modules.graph.adapters.mysql import GRAPH_TABLES
@@ -48,6 +49,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_state,
 )
 from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
+from tap.modules.skill_hub.adapters.mysql import skill_maintenance_event
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 from tap.platform.telemetry.schema import (
@@ -108,6 +110,8 @@ BUSINESS_TABLES = (
     skill_revision_file,
     skill_import,
     agent_maintenance_event,
+    turn_skill_activation,
+    skill_maintenance_event,
     *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
     *PROJECT_GRAPH_TABLES,

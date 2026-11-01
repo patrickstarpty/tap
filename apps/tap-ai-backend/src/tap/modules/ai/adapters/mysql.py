@@ -37,6 +37,10 @@ from tap.modules.ai.domain.assets import (
     SkillFile,
     SkillRevision,
 )
+from tap.modules.ai.domain.skill_metadata import (
+    category_from_frontmatter,
+    version_label_from_frontmatter,
+)
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 
@@ -83,6 +87,18 @@ ai_agent.append_constraint(
 )
 
 skill = _asset_table("skill", "skill_id")
+# Skill Hub (spec 1.1): a closed-set category and the current maintenance
+# owner (backfilled by `0038_skill_hub` from the first revision's creator).
+skill.append_column(Column("category", String(16), nullable=False))
+skill.append_column(Column("owner_actor_id", String(128), nullable=False))
+skill.append_column(Column("owner_assigned_at", DATETIME(fsp=6), nullable=False))
+skill.append_constraint(
+    ForeignKeyConstraint(
+        ["enterprise_id", "owner_actor_id"],
+        ["actor_principal.enterprise_id", "actor_principal.actor_id"],
+        name="fk_skill_owner_actor",
+    )
+)
 
 ai_agent_revision = Table(
     "ai_agent_revision",
@@ -99,7 +115,11 @@ ai_agent_revision = Table(
     Column("tool_allowlist", JSON, nullable=False),
     Column("output_schema_digest", String(71), nullable=False),
     Column("output_schema_json", JSON),
+    # Read-only since Skill Hub (spec 4): superseded by `pinned_skill_ids`.
     Column("skill_revision_ids", JSON),
+    # Skill Hub (spec 1.2): Skills always loaded with this Agent / never offered.
+    Column("pinned_skill_ids", JSON),
+    Column("excluded_skill_ids", JSON),
     Column("default_model_alias", String(128)),
     Column("status", String(16), nullable=False),
     Column("adopted_from_revision_id", String(64)),
@@ -152,6 +172,11 @@ skill_revision = Table(
     Column("frontmatter_json", JSON),
     Column("package_digest", String(71)),
     Column("applicable_tasks", JSON, nullable=False),
+    # Skill Hub (spec 1.1): SemVer `metadata.version` and the revision's origin.
+    Column("version_label", String(32)),
+    Column("origin_kind", String(16), nullable=False),
+    Column("origin_ref", String(512)),
+    Column("origin_imported_at", DATETIME(fsp=6)),
     Column("status", String(16), nullable=False),
     Column("adopted_from_revision_id", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
@@ -245,6 +270,29 @@ skill_import = Table(
         name="fk_skill_import_scope_actor",
     ),
 )
+
+
+def _new_skill_values(
+    revision: SkillRevision, scope: ProjectScopeContext, now: datetime
+) -> dict[str, object]:
+    """Skill Hub columns of a first-time `skill` row: the creator owns it and
+    the category comes from frontmatter (`other` otherwise)."""
+    return {
+        "category": category_from_frontmatter(revision.frontmatter) or "other",
+        "owner_actor_id": scope.actor_id,
+        "owner_assigned_at": now,
+    }
+
+
+def _skill_revision_origin_values(revision: SkillRevision, now: datetime) -> dict[str, object]:
+    """Skill Hub columns of a `skill_revision` row. Imports do not record how
+    the package was uploaded yet, so they read as `unknown` (as backfilled)."""
+    imported = revision.source_kind == "imported"
+    return {
+        "version_label": version_label_from_frontmatter(revision.frontmatter),
+        "origin_kind": "unknown" if imported else revision.source_kind,
+        "origin_imported_at": now if imported else None,
+    }
 
 
 class MysqlAssetCatalog:
@@ -443,6 +491,7 @@ class MysqlAssetCatalog:
                     skill_id=revision.asset_id,
                     display_name=revision.display_name,
                     created_at=now,
+                    **_new_skill_values(revision, self._scope, now),
                     **scope_values(self._scope),
                 )
             )
@@ -467,6 +516,7 @@ class MysqlAssetCatalog:
                 ),
                 package_digest=revision.package_digest,
                 applicable_tasks=sorted(revision.applicable_tasks),
+                **_skill_revision_origin_values(revision, now),
                 status=revision.status.value,
                 adopted_from_revision_id=revision.adopted_from_revision_id,
                 created_at=now,
@@ -877,6 +927,7 @@ class MysqlAssetCatalog:
                             skill_id=revision.asset_id,
                             display_name=revision.display_name,
                             created_at=now,
+                            **_new_skill_values(revision, self._scope, now),
                             **scope_values(self._scope),
                         )
                     )
@@ -908,6 +959,7 @@ class MysqlAssetCatalog:
                         ),
                         package_digest=revision.package_digest,
                         applicable_tasks=sorted(revision.applicable_tasks),
+                        **_skill_revision_origin_values(revision, now),
                         status=revision.status.value,
                         adopted_from_revision_id=revision.adopted_from_revision_id,
                         created_at=now,
