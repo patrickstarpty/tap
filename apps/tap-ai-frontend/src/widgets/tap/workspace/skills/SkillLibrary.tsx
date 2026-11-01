@@ -11,9 +11,9 @@ import {
   type SkillTask,
 } from "../../../../features/knowledge/api/skillHub";
 import type { WorkspaceCopy } from "../copy";
+import type { TeamPeriod } from "../../../../features/knowledge/api/agentTeam";
 import {
   PeriodPicker,
-  useValidPeriod,
   type PeriodSelection,
 } from "../agents/team/PeriodPicker";
 import { RuntimeBadge } from "../agents/team/RuntimeBadge";
@@ -26,6 +26,9 @@ export interface SkillLibraryProps {
   projectId: string;
   copy: WorkspaceCopy;
   selection: PeriodSelection;
+  /** The period to query: `selection` while valid, else the last valid one
+   * (`useValidPeriod`), resolved by the page so the drawer shares it. */
+  period: TeamPeriod;
   onSelectionChange: (selection: PeriodSelection) => void;
   onOpen: (latestRevisionId: string) => void;
   onImport: () => void;
@@ -110,6 +113,7 @@ export function SkillLibrary({
   projectId,
   copy,
   selection,
+  period,
   onSelectionChange,
   onOpen,
   onImport,
@@ -117,9 +121,6 @@ export function SkillLibrary({
 }: SkillLibraryProps) {
   const text = copy.skillHub;
   const locale = teamLocale(copy);
-  // An inverted or half-typed custom range never queries; the last valid
-  // period's library stays on screen under the picker's inline message.
-  const { period } = useValidPeriod(selection);
 
   const [search, setSearch] = useState("");
   const q = useDebounced(search.trim(), SEARCH_DELAY_MS);

@@ -1,25 +1,101 @@
 import { Button } from "antd";
 import { useEffect, useState } from "react";
 
+import type { TeamPeriod } from "../../../../features/knowledge/api/agentTeam";
 import {
   skillFileUrl,
   useSkill,
   useSkillRevisions,
   type SkillRevisionDetail,
 } from "../../../../features/knowledge/api/aiAssets";
+import {
+  useSkillHubDetail,
+  type SkillHubDetailView,
+} from "../../../../features/knowledge/api/skillHub";
 import { AccessibleDialog } from "../AccessibleDialog";
+import { formatDateTime, teamLocale } from "../agents/team/format";
 import type { WorkspaceCopy } from "../copy";
+import { RevisionCompare } from "./RevisionCompare";
+import { SkillSettingsPanel } from "./SkillSettingsPanel";
+import { SkillUsagePanel } from "./SkillUsagePanel";
+import "./skillHub.css";
 
 // Files in these categories never enter a prompt (spec §1.3) -- they are
 // archived verbatim and only ever downloaded, never executed.
 const NOT_EXECUTED_CATEGORIES = new Set(["script", "asset", "other"]);
 
-type DetailTab = "instructions" | "files" | "metadata" | "revisions";
+type DetailTab =
+  "overview" | "instructions" | "files" | "revisions" | "usage" | "settings";
+
+const DETAIL_TABS: DetailTab[] = [
+  "overview",
+  "instructions",
+  "files",
+  "revisions",
+  "usage",
+  "settings",
+];
+
+function OverviewPanel({
+  view,
+  revisionId,
+  copy,
+}: {
+  view: SkillHubDetailView;
+  revisionId: string;
+  copy: WorkspaceCopy;
+}) {
+  const hub = copy.skillHub;
+  const text = hub.detail;
+  const skill = view.data.skill;
+  const locale = teamLocale(copy);
+  const time = (value: string | null) =>
+    value === null
+      ? text.notSpecified
+      : formatDateTime(value, view.timezone, locale);
+  const taskLabels: Record<string, string> = copy.skillsWorkspace.taskLabels;
+  const rows: [string, string][] = [
+    [text.fields.category, hub.categories[skill.category]],
+    [text.fields.version, skill.version],
+    [text.fields.source, hub.sources[skill.sourceKind]],
+    [text.fields.originKind, text.originKinds[skill.originKind]],
+    ...(skill.sourceKind === "imported"
+      ? ([
+          [text.fields.originRef, skill.originRef ?? text.notSpecified],
+          [text.fields.importedAt, time(skill.originImportedAt)],
+        ] as [string, string][])
+      : []),
+    [text.fields.owner, skill.ownerActorId],
+    [text.fields.ownerSince, time(skill.ownerAssignedAt)],
+    [text.fields.compatibility, skill.compatibility ?? text.notSpecified],
+    [
+      text.fields.applicableTasks,
+      skill.applicableTasks.map((task) => taskLabels[task] ?? task).join(", "),
+    ],
+    [text.fields.revision, revisionId],
+  ];
+  return (
+    <>
+      <h3>{text.fields.description}</h3>
+      <p>{skill.description ?? text.noDescription}</p>
+      <dl className="tap-skill-overview">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </>
+  );
+}
 
 export interface SkillDetailDrawerProps {
   projectId: string;
   copy: WorkspaceCopy;
   revisionId: string;
+  /** The library's resolved period, for the usage figures. */
+  period: TeamPeriod;
   onClose: () => void;
   onUse: (revisionId: string) => void;
   onEdit: (detail: SkillRevisionDetail) => void;
@@ -31,6 +107,7 @@ export function SkillDetailDrawer({
   projectId,
   copy,
   revisionId,
+  period,
   onClose,
   onUse,
   onEdit,
@@ -38,7 +115,7 @@ export function SkillDetailDrawer({
   opener,
 }: SkillDetailDrawerProps) {
   const text = copy.skillsWorkspace;
-  const [tab, setTab] = useState<DetailTab>("instructions");
+  const [tab, setTab] = useState<DetailTab>("overview");
   // I-7: a revision switcher on the Revision history tab -- clicking an
   // older/newer revision re-points the drawer at it in place, rather than
   // only ever showing the revision the caller opened it with.
@@ -48,14 +125,25 @@ export function SkillDetailDrawer({
   }, [revisionId]);
   const detailQuery = useSkill(projectId, activeRevisionId);
   const detail = detailQuery.data;
-  const revisionsQuery = useSkillRevisions(projectId, detail?.skillId ?? null);
+  const skillId = detail?.skillId ?? null;
+  const revisionsQuery = useSkillRevisions(projectId, skillId);
+  const hubQuery = useSkillHubDetail(projectId, skillId, period);
+  const hubView = hubQuery.data;
+  const tabLabels = copy.skillHub.detail.tabs;
 
-  const tabs: { id: DetailTab; label: string }[] = [
-    { id: "instructions", label: text.tabs.instructions },
-    { id: "files", label: text.tabs.files },
-    { id: "metadata", label: text.tabs.metadata },
-    { id: "revisions", label: text.tabs.revisions },
-  ];
+  // The overview and settings tabs read the Skill's library record and
+  // share one loading/failure state for it.
+  const hubFallback =
+    hubView === undefined ? (
+      hubQuery.isError ? (
+        <div role="alert">
+          <p>{copy.skillHub.detail.loadFailed}</p>
+          <Button onClick={() => void hubQuery.refetch()}>{text.retry}</Button>
+        </div>
+      ) : (
+        <p role="status">{text.loading}</p>
+      )
+    ) : null;
 
   return (
     <AccessibleDialog
@@ -81,18 +169,31 @@ export function SkillDetailDrawer({
       ) : (
         <>
           <div role="tablist">
-            {tabs.map((item) => (
+            {DETAIL_TABS.map((id) => (
               <button
-                key={item.id}
+                key={id}
                 type="button"
                 role="tab"
-                aria-selected={tab === item.id}
-                onClick={() => setTab(item.id)}
+                aria-selected={tab === id}
+                onClick={() => setTab(id)}
               >
-                {item.label}
+                {tabLabels[id]}
               </button>
             ))}
           </div>
+          {tab === "overview" ? (
+            <div role="tabpanel">
+              {hubView === undefined ? (
+                hubFallback
+              ) : (
+                <OverviewPanel
+                  view={hubView}
+                  revisionId={detail.revisionId}
+                  copy={copy}
+                />
+              )}
+            </div>
+          ) : null}
           {tab === "instructions" ? (
             <div role="tabpanel">
               <pre>{detail.instructions ?? ""}</pre>
@@ -152,20 +253,6 @@ export function SkillDetailDrawer({
               </ul>
             </div>
           ) : null}
-          {tab === "metadata" ? (
-            <div role="tabpanel">
-              <dl>
-                <dt>{text.applicableTasks}</dt>
-                <dd>
-                  {detail.applicableTasks
-                    .map((task) => text.taskLabels[task])
-                    .join(", ")}
-                </dd>
-                <dt>{text.revision}</dt>
-                <dd>{detail.revisionId}</dd>
-              </dl>
-            </div>
-          ) : null}
           {tab === "revisions" ? (
             <div role="tabpanel">
               <ul>
@@ -184,6 +271,41 @@ export function SkillDetailDrawer({
                   </li>
                 ))}
               </ul>
+              <RevisionCompare
+                projectId={projectId}
+                skillId={detail.skillId}
+                copy={copy}
+              />
+            </div>
+          ) : null}
+          {tab === "usage" ? (
+            <div role="tabpanel">
+              <SkillUsagePanel
+                projectId={projectId}
+                skillId={detail.skillId}
+                period={period}
+                copy={copy}
+              />
+            </div>
+          ) : null}
+          {tab === "settings" ? (
+            <div role="tabpanel">
+              {hubView === undefined ? (
+                hubFallback
+              ) : (
+                <SkillSettingsPanel
+                  projectId={projectId}
+                  detail={hubView.data}
+                  copy={copy}
+                  // Same rule as Edit below: a new revision builds on the
+                  // latest revision of a Skill created in Tapper.
+                  onEdit={
+                    detail.isLatest && detail.sourceKind === "authored"
+                      ? () => onEdit(detail)
+                      : undefined
+                  }
+                />
+              )}
             </div>
           ) : null}
           <div className="tap-dialog-actions">

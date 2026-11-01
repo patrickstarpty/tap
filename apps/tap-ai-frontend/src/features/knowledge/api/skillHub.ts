@@ -23,6 +23,7 @@ export type SkillHubSkill = Schemas["SkillHubSkill"];
 export type SkillHubSummaryView = Schemas["SkillHubSummaryView"];
 export type SkillHubLibrarySummary = Schemas["SkillHubLibrarySummary"];
 export type SkillHubDetailView = Schemas["SkillHubDetailView"];
+export type SkillHubDetail = Schemas["SkillHubDetail"];
 export type SkillHubUsageView = Schemas["SkillHubUsageView"];
 export type SkillCategory = SkillHubSkill["category"];
 export type SkillSourceKind = SkillHubSkill["sourceKind"];

@@ -214,12 +214,6 @@ export interface WorkspaceCopy {
     savedNotExecuted: string;
     attachedReferences: string;
     noAttachedReferences: string;
-    tabs: {
-      instructions: string;
-      files: string;
-      metadata: string;
-      revisions: string;
-    };
     taskLabels: {
       "knowledge.answer": string;
       "test-plan.generate": string;
@@ -340,6 +334,93 @@ export interface WorkspaceCopy {
     loading: string;
     loadFailed: string;
     retry: string;
+    /** The Skill detail drawer. */
+    detail: {
+      tabs: {
+        overview: string;
+        instructions: string;
+        files: string;
+        revisions: string;
+        usage: string;
+        settings: string;
+      };
+      fields: {
+        description: string;
+        category: string;
+        version: string;
+        source: string;
+        originKind: string;
+        originRef: string;
+        importedAt: string;
+        owner: string;
+        ownerSince: string;
+        compatibility: string;
+        applicableTasks: string;
+        revision: string;
+      };
+      originKinds: {
+        files: string;
+        zip: string;
+        paste: string;
+        authored: string;
+        built_in: string;
+        unknown: string;
+      };
+      noDescription: string;
+      notSpecified: string;
+      loadFailed: string;
+    };
+    compare: {
+      heading: string;
+      left: string;
+      right: string;
+      placeholder: string;
+      choose: string;
+      /** `{side}` is Left/Right, `{revision}` the revision's version. */
+      regionLabel: string;
+      latest: string;
+      loading: string;
+    };
+    usage: {
+      modes: { manual: string; pinned: string; auto: string };
+      users: string;
+      satisfaction: string;
+      insufficientSample: string;
+      lastUsed: string;
+      neverUsed: string;
+      pinnedByAgents: string;
+      cost: string;
+      latencyTotal: string;
+      failures: string;
+      runtimeUnavailable: string;
+      trendHeading: string;
+      trendUnit: string;
+      noUsage: string;
+      topAgents: string;
+      topCallers: string;
+      noRanking: string;
+      tapperDefault: string;
+      removedAgent: string;
+      /** `{count}` is a number of runs. */
+      runs: { one: string; other: string };
+      loadFailed: string;
+    };
+    settings: {
+      category: string;
+      categoryFailed: string;
+      owner: string;
+      newOwner: string;
+      newOwnerPlaceholder: string;
+      transfer: string;
+      transferred: string;
+      actorNotFound: string;
+      transferFailed: string;
+      status: string;
+      statusFailed: string;
+      revision: string;
+      newRevision: string;
+      builtInReadOnly: string;
+    };
   };
   agentsWorkspace: {
     heading: string;
@@ -1016,12 +1097,6 @@ export const WORKSPACE_COPY = {
       savedNotExecuted: "Saved, not executed",
       attachedReferences: "Attached reference text",
       noAttachedReferences: "No reference text was attached.",
-      tabs: {
-        instructions: "Instructions",
-        files: "Files",
-        metadata: "Metadata",
-        revisions: "Revision history",
-      },
       taskLabels: {
         "knowledge.answer": "Knowledge answers",
         "test-plan.generate": "Test plan generation",
@@ -1153,6 +1228,95 @@ export const WORKSPACE_COPY = {
       loading: "Loading…",
       loadFailed: "The skill library could not be loaded.",
       retry: "Retry",
+      detail: {
+        tabs: {
+          overview: "Overview",
+          instructions: "Instructions",
+          files: "Files",
+          revisions: "Revision history",
+          usage: "Usage",
+          settings: "Settings",
+        },
+        fields: {
+          description: "Description",
+          category: "Category",
+          version: "Version",
+          source: "Source",
+          originKind: "Imported as",
+          originRef: "File or package",
+          importedAt: "Imported at",
+          owner: "Owner",
+          ownerSince: "Owner since",
+          compatibility: "Compatibility",
+          applicableTasks: "Applicable tasks",
+          revision: "Revision",
+        },
+        originKinds: {
+          files: "Uploaded files",
+          zip: "Zip package",
+          paste: "Pasted text",
+          authored: "Created in Tapper",
+          built_in: "Built-in",
+          unknown: "Unknown",
+        },
+        noDescription: "No description.",
+        notSpecified: "Not specified",
+        loadFailed: "The skill's details could not be loaded.",
+      },
+      compare: {
+        heading: "Compare revisions",
+        left: "Left revision",
+        right: "Right revision",
+        placeholder: "Select a revision",
+        choose: "Choose two revisions to compare.",
+        regionLabel: "{side}: {revision}",
+        latest: "latest",
+        loading: "Loading…",
+      },
+      usage: {
+        modes: {
+          manual: "Manual",
+          pinned: "Pinned by an Agent",
+          auto: "Automatic",
+        },
+        users: "Users",
+        satisfaction: "Satisfaction",
+        insufficientSample: "Insufficient sample",
+        lastUsed: "Last used",
+        neverUsed: "Never",
+        pinnedByAgents: "Agents pinning it",
+        cost: "Cost",
+        latencyTotal: "Total latency",
+        failures: "Failures",
+        runtimeUnavailable: "Run data unavailable",
+        trendHeading: "Activations by mode",
+        trendUnit: "activations",
+        noUsage: "Not used in this period.",
+        topAgents: "Agents using it",
+        topCallers: "People using it",
+        noRanking: "No one used it in this period.",
+        tapperDefault: "Tapper default",
+        removedAgent: "Removed Agent",
+        runs: { one: "{count} run", other: "{count} runs" },
+        loadFailed: "Usage could not be loaded.",
+      },
+      settings: {
+        category: "Category",
+        categoryFailed: "The category could not be saved.",
+        owner: "Owner",
+        newOwner: "New owner",
+        newOwnerPlaceholder: "User ID",
+        transfer: "Transfer",
+        transferred: "Ownership transferred.",
+        actorNotFound: "No user with this ID was found in this project.",
+        transferFailed: "Ownership could not be transferred.",
+        status: "Status",
+        statusFailed: "The status could not be changed.",
+        revision: "Revisions",
+        newRevision: "New revision",
+        builtInReadOnly:
+          "Built-in skills are maintained by Tapper. You can only enable or disable them.",
+      },
     },
     agentsWorkspace: {
       heading: "Agents",
@@ -1850,12 +2014,6 @@ export const WORKSPACE_COPY = {
       savedNotExecuted: "已保存，不执行",
       attachedReferences: "已附加的参考文本",
       noAttachedReferences: "未附加参考文本。",
-      tabs: {
-        instructions: "指令",
-        files: "文件",
-        metadata: "元数据",
-        revisions: "修订历史",
-      },
       taskLabels: {
         "knowledge.answer": "知识问答",
         "test-plan.generate": "测试计划生成",
@@ -1983,6 +2141,94 @@ export const WORKSPACE_COPY = {
       loading: "加载中…",
       loadFailed: "Skill 库加载失败。",
       retry: "重试",
+      detail: {
+        tabs: {
+          overview: "基本信息",
+          instructions: "指令",
+          files: "文件",
+          revisions: "修订历史",
+          usage: "用量",
+          settings: "设置",
+        },
+        fields: {
+          description: "描述",
+          category: "类别",
+          version: "版本",
+          source: "来源",
+          originKind: "导入方式",
+          originRef: "文件或包",
+          importedAt: "导入时间",
+          owner: "负责人",
+          ownerSince: "负责起始",
+          compatibility: "兼容性",
+          applicableTasks: "适用任务",
+          revision: "修订",
+        },
+        originKinds: {
+          files: "上传文件",
+          zip: "Zip 包",
+          paste: "粘贴文本",
+          authored: "在 Tapper 中创建",
+          built_in: "内置",
+          unknown: "未知",
+        },
+        noDescription: "暂无描述。",
+        notSpecified: "未注明",
+        loadFailed: "Skill 详情加载失败。",
+      },
+      compare: {
+        heading: "对比修订",
+        left: "左侧修订",
+        right: "右侧修订",
+        placeholder: "选择修订",
+        choose: "选择两个修订进行对比。",
+        regionLabel: "{side}：{revision}",
+        latest: "最新",
+        loading: "加载中…",
+      },
+      usage: {
+        modes: {
+          manual: "手动",
+          pinned: "Agent 常驻",
+          auto: "自动",
+        },
+        users: "使用者",
+        satisfaction: "满意度",
+        insufficientSample: "样本不足",
+        lastUsed: "最近使用",
+        neverUsed: "从未使用",
+        pinnedByAgents: "常驻它的 Agent",
+        cost: "成本",
+        latencyTotal: "耗时合计",
+        failures: "失败",
+        runtimeUnavailable: "运行数据暂不可用",
+        trendHeading: "按方式的激活趋势",
+        trendUnit: "次",
+        noUsage: "本周期内未被用到。",
+        topAgents: "用到它的 Agent",
+        topCallers: "用到它的人",
+        noRanking: "本周期内无人用到。",
+        tapperDefault: "Tapper 默认",
+        removedAgent: "已删除的 Agent",
+        runs: { one: "{count} 次", other: "{count} 次" },
+        loadFailed: "用量加载失败。",
+      },
+      settings: {
+        category: "类别",
+        categoryFailed: "类别保存失败。",
+        owner: "负责人",
+        newOwner: "新负责人",
+        newOwnerPlaceholder: "用户 ID",
+        transfer: "转交",
+        transferred: "已转交负责人。",
+        actorNotFound: "本项目中找不到该用户 ID。",
+        transferFailed: "负责人转交失败。",
+        status: "状态",
+        statusFailed: "状态修改失败。",
+        revision: "修订",
+        newRevision: "新建修订",
+        builtInReadOnly: "内置 Skill 由 Tapper 维护，只能启用或停用。",
+      },
     },
     agentsWorkspace: {
       heading: "智能体",

@@ -91,21 +91,52 @@ function stubSkillHub(items: unknown[]) {
     granularity: "day",
     data,
   });
+  const detailOf = (url: string) => {
+    const match = /\/skill-hub\/catalog\/([^/?]+)/.exec(url);
+    if (match === null) return undefined;
+    const item = items.find(
+      (entry) =>
+        (entry as ReturnType<typeof catalogItem>).skill.skillId === match[1],
+    ) as ReturnType<typeof catalogItem> | undefined;
+    if (url.includes("/usage"))
+      return envelope({
+        byMode: { manual: 0, pinned: 0, auto: 0 },
+        points: [],
+      });
+    return envelope({
+      skill: item?.skill,
+      usage: {
+        byMode: { manual: 0, pinned: 0, auto: 0 },
+        users: 0,
+        satisfaction: null,
+        satisfactionSample: "insufficient",
+        lastUsedAt: null,
+        pinnedByAgents: 0,
+        runtime: null,
+      },
+      revisions: [],
+      files: [],
+      pinnedBy: [],
+      topAgents: [],
+      topCallers: [],
+    });
+  };
   const fetchMock = vi.fn((input: string) =>
     Promise.resolve(
       new Response(
         JSON.stringify(
-          String(input).includes("/skill-hub/summary")
-            ? envelope({
-                skillTotal: items.length,
-                enabled: items.length,
-                usedInPeriod: items.length,
-                unused: 0,
-                autoShare: null,
-                candidateCount: items.length,
-                candidateLimit: 60,
-              })
-            : envelope(items),
+          detailOf(String(input)) ??
+            (String(input).includes("/skill-hub/summary")
+              ? envelope({
+                  skillTotal: items.length,
+                  enabled: items.length,
+                  usedInPeriod: items.length,
+                  unused: 0,
+                  autoShare: null,
+                  candidateCount: items.length,
+                  candidateLimit: 60,
+                })
+              : envelope(items)),
         ),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -183,7 +214,7 @@ describe("SkillsWorkspace actions", () => {
   it("uses a skill in chat from its detail drawer", async () => {
     const user = userEvent.setup();
     const onUse = vi.fn();
-    renderWorkspace({ onUse });
+    const { fetchMock } = renderWorkspace({ onUse });
     const detail = {
       revisionId: "rev_custom",
       skillId: "skill_custom",
@@ -220,6 +251,19 @@ describe("SkillsWorkspace actions", () => {
       within(drawer).getByRole("button", { name: "Use in chat" }),
     );
     expect(onUse).toHaveBeenCalledWith("rev_custom");
+    // The drawer reads the skill's details for the library's period.
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    const catalogParams = new URL(
+      urls.find((url) => url.includes("/skill-hub/catalog?"))!,
+      "http://localhost",
+    ).searchParams;
+    const detailUrl = urls.find((url) =>
+      url.includes("/skill-hub/catalog/skill_custom?"),
+    );
+    expect(detailUrl).toBeDefined();
+    const detailParams = new URL(detailUrl!, "http://localhost").searchParams;
+    expect(detailParams.get("from")).toBe(catalogParams.get("from"));
+    expect(detailParams.get("to")).toBe(catalogParams.get("to"));
   });
 
   it("opens the import dialog from the Import skill button", async () => {

@@ -5,7 +5,10 @@ import { createElement, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WORKSPACE_COPY } from "../copy";
-import type { PeriodSelection } from "../agents/team/PeriodPicker";
+import {
+  useValidPeriod,
+  type PeriodSelection,
+} from "../agents/team/PeriodPicker";
 import { SkillLibrary } from "./SkillLibrary";
 
 const period = { from: "2026-10-01", to: "2026-10-30" };
@@ -121,10 +124,12 @@ function Harness(props: {
     preset: "custom",
     custom: period,
   });
+  const { period: validPeriod } = useValidPeriod(selection);
   return createElement(SkillLibrary, {
     projectId: "project-1",
     copy: WORKSPACE_COPY[props.locale],
     selection,
+    period: validPeriod,
     onSelectionChange: setSelection,
     onOpen: props.onOpen,
     onImport: props.onImport,

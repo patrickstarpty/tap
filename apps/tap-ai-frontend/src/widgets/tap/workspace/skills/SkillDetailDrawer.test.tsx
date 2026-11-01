@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   useSkill,
@@ -25,6 +25,84 @@ vi.mock(
     };
   },
 );
+
+const PERIOD = { from: "2026-10-01", to: "2026-10-30" };
+
+function hubSkill(over: Record<string, unknown> = {}) {
+  return {
+    skillId: "skill_1",
+    name: "policy-lookup",
+    description: "Looks up policy terms in the product library.",
+    category: "knowledge",
+    version: "1.2.0",
+    revisionNumber: 4,
+    latestRevisionId: "rev_1",
+    sourceKind: "imported",
+    originKind: "zip",
+    originRef: "policy-lookup.zip",
+    originImportedAt: "2026-10-02T09:30:00Z",
+    ownerActorId: "alice",
+    ownerAssignedAt: "2026-10-02T09:30:00Z",
+    status: "enabled",
+    applicableTasks: ["knowledge.answer"],
+    compatibility: "Requires the policy index",
+    updatedAt: "2026-10-20T12:00:00Z",
+    builtIn: false,
+    ...over,
+  };
+}
+
+let hubSkillOverrides: Record<string, unknown> = {};
+
+function hubEnvelope(data: unknown) {
+  return {
+    runtimeStatus: "syncing",
+    computedAt: "2026-10-30T08:00:00Z",
+    timezone: "UTC",
+    period: PERIOD,
+    granularity: "day",
+    data,
+  };
+}
+
+beforeEach(() => {
+  hubSkillOverrides = {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: string) => {
+      const url = String(input);
+      const body = url.includes("/skill-hub/catalog/skill_1/usage")
+        ? hubEnvelope({ byMode: { manual: 1, pinned: 0, auto: 2 }, points: [] })
+        : url.includes("/skill-hub/catalog/skill_1")
+          ? hubEnvelope({
+              skill: hubSkill(hubSkillOverrides),
+              usage: {
+                byMode: { manual: 1, pinned: 0, auto: 2 },
+                users: 2,
+                satisfaction: null,
+                satisfactionSample: "insufficient",
+                lastUsedAt: null,
+                pinnedByAgents: 0,
+                runtime: null,
+              },
+              revisions: [],
+              files: [],
+              pinnedBy: [],
+              topAgents: [],
+              topCallers: [],
+            })
+          : { items: [] };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }),
+  );
+});
+
+afterEach(() => vi.unstubAllGlobals());
 
 function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({
@@ -91,6 +169,7 @@ function renderDrawer(
         projectId: "project-1",
         copy: WORKSPACE_COPY.en,
         revisionId: "rev_1",
+        period: PERIOD,
         onClose,
         onUse,
         onEdit,
@@ -103,17 +182,98 @@ function renderDrawer(
 }
 
 describe("SkillDetailDrawer", () => {
-  it("renders the four tabs for a Skill revision", () => {
+  it("renders the six tabs and switches between them", async () => {
+    const user = userEvent.setup();
     renderDrawer();
-    expect(screen.getByRole("tab", { name: "Instructions" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Files" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Metadata" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Revision history" })).toBeVisible();
+    const names = [
+      "Overview",
+      "Instructions",
+      "Files",
+      "Revision history",
+      "Usage",
+      "Settings",
+    ];
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(
+      names,
+    );
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    for (const name of names) {
+      await user.click(screen.getByRole("tab", { name }));
+      expect(screen.getByRole("tab", { name })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    }
+    expect(screen.queryByRole("tab", { name: "Metadata" })).toBeNull();
   });
 
-  it("shows instructions content on the Instructions tab by default", () => {
+  it("shows the skill's basic information on the Overview tab", async () => {
     renderDrawer();
+    const panel = screen.getByRole("tabpanel");
+    expect(
+      await within(panel).findByText(
+        "Looks up policy terms in the product library.",
+      ),
+    ).toBeVisible();
+    const row = (label: string) =>
+      within(panel).getByText(label, { selector: "dt" }).nextElementSibling;
+    expect(row("Category")).toHaveTextContent("Knowledge");
+    expect(row("Version")).toHaveTextContent("1.2.0");
+    expect(row("Source")).toHaveTextContent("Imported");
+    expect(row("Imported as")).toHaveTextContent("Zip package");
+    expect(row("File or package")).toHaveTextContent("policy-lookup.zip");
+    expect(row("Imported at")).toHaveTextContent("10/02/2026, 09:30");
+    expect(row("Owner")).toHaveTextContent("alice");
+    expect(row("Compatibility")).toHaveTextContent("Requires the policy index");
+    expect(row("Applicable tasks")).toHaveTextContent("Knowledge answers");
+  });
+
+  it("shows instructions content on the Instructions tab", async () => {
+    const user = userEvent.setup();
+    renderDrawer();
+    await user.click(screen.getByRole("tab", { name: "Instructions" }));
     expect(screen.getByText("Search the index.")).toBeVisible();
+  });
+
+  it("shows the usage panel with the detail's run-data status", async () => {
+    const user = userEvent.setup();
+    renderDrawer();
+    await user.click(screen.getByRole("tab", { name: "Usage" }));
+    expect(await screen.findByText("Run data is syncing")).toBeVisible();
+    expect(screen.getByText("Insufficient sample")).toBeVisible();
+  });
+
+  it("shows the settings panel and starts a new revision from it", async () => {
+    const user = userEvent.setup();
+    hubSkillOverrides = { sourceKind: "authored", originKind: "authored" };
+    const customDetail = {
+      ...BUILT_IN_DETAIL,
+      sourceKind: "authored",
+      builtIn: false,
+    };
+    const onEdit = vi.fn();
+    renderDrawer({ detail: customDetail, onEdit });
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.click(
+      await screen.findByRole("button", { name: "New revision" }),
+    );
+    expect(onEdit).toHaveBeenCalledWith(customDetail);
+  });
+
+  it("compares two revisions from the Revision history tab", async () => {
+    const user = userEvent.setup();
+    renderDrawer();
+    await user.click(screen.getByRole("tab", { name: "Revision history" }));
+    expect(
+      screen.getByRole("combobox", { name: "Left revision" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("combobox", { name: "Right revision" }),
+    ).toBeVisible();
   });
 
   it("switches to the Files tab and lists attached files", async () => {
@@ -170,16 +330,16 @@ describe("SkillDetailDrawer", () => {
 
   it("shows attached reference text and a fallback when none was attached (I-7)", async () => {
     const user = userEvent.setup();
-    renderDrawer({
+    const { unmount } = renderDrawer({
       detail: { ...BUILT_IN_DETAIL, attachedReferences: "Cited excerpt." },
     });
+    await user.click(screen.getByRole("tab", { name: "Instructions" }));
     expect(screen.getByText("Cited excerpt.")).toBeVisible();
+    unmount();
 
     renderDrawer({ detail: { ...BUILT_IN_DETAIL, attachedReferences: null } });
-    expect(
-      screen.getAllByText("No reference text was attached.").length,
-    ).toBeGreaterThan(0);
-    await user.click;
+    await user.click(screen.getByRole("tab", { name: "Instructions" }));
+    expect(screen.getByText("No reference text was attached.")).toBeVisible();
   });
 
   it("labels each file by category, marks non-prompt files 'Saved, not executed', and links a download (I-7)", async () => {
@@ -268,6 +428,7 @@ describe("SkillDetailDrawer", () => {
         projectId: "project-1",
         copy: WORKSPACE_COPY.en,
         revisionId: "rev_1",
+        period: PERIOD,
         onClose: vi.fn(),
         onUse: vi.fn(),
         onEdit: vi.fn(),
@@ -311,6 +472,7 @@ describe("SkillDetailDrawer", () => {
         projectId: "project-1",
         copy: WORKSPACE_COPY.en,
         revisionId: "rev_1",
+        period: PERIOD,
         onClose: vi.fn(),
         onUse: vi.fn(),
         onEdit: vi.fn(),

@@ -3,7 +3,10 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { resolvePeriod } from "../../../../features/knowledge/api/agentTeam";
 import type { SkillRevisionDetail } from "../../../../features/knowledge/api/aiAssets";
-import type { PeriodSelection } from "../agents/team/PeriodPicker";
+import {
+  useValidPeriod,
+  type PeriodSelection,
+} from "../agents/team/PeriodPicker";
 import type { WorkspaceCopy } from "../copy";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
 import { SkillForm } from "./SkillForm";
@@ -42,6 +45,9 @@ export function SkillsWorkspace({
     preset: "last30",
     custom: resolvePeriod("last30", new Date()),
   }));
+  // An inverted or half-typed custom range never queries; the library and
+  // the detail drawer keep the last valid period meanwhile.
+  const { period } = useValidPeriod(selection);
   const [importOpen, setImportOpen] = useState(false);
   const [detailRevisionId, setDetailRevisionId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState | null>(null);
@@ -107,6 +113,7 @@ export function SkillsWorkspace({
         projectId={projectId}
         copy={copy}
         selection={selection}
+        period={period}
         onSelectionChange={setSelection}
         onOpen={openDetail}
         onImport={() => openImport()}
@@ -127,6 +134,7 @@ export function SkillsWorkspace({
           projectId={projectId}
           copy={copy}
           revisionId={detailRevisionId}
+          period={period}
           onClose={() => setDetailRevisionId(null)}
           onUse={onUse}
           onEdit={(detail) => {

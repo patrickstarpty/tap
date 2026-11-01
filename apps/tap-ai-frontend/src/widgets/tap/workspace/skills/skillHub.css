@@ -277,3 +277,98 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- Detail drawer: overview, compare, usage, settings ---------- */
+
+.tap-skill-overview {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.tap-skill-overview > div {
+  display: contents;
+}
+
+.tap-skill-overview dt {
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tap-skill-overview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tap-skill-compare-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.tap-skill-compare-pickers label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.tap-skill-compare-panes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.tap-skill-compare-pane pre {
+  overflow: auto;
+  max-height: 420px;
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.tap-skill-usage,
+.tap-skill-settings {
+  display: grid;
+  gap: 16px;
+}
+
+.tap-skill-usage-note,
+.tap-skill-settings-note {
+  margin: 8px 0 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-skill-usage-rankings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.tap-skill-usage-ranking ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-skill-usage-ranking li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tap-skill-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
