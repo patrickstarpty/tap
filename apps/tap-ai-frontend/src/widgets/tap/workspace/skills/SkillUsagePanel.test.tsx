@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -51,21 +51,25 @@ function detail(usage: Record<string, unknown> = {}) {
 const SERIES = {
   byMode: { manual: 3, pinned: 4, auto: 5 },
   points: [
-    { bucketStart: "2026-09-29", mode: "manual", runs: 1 },
-    { bucketStart: "2026-09-29", mode: "auto", runs: 2 },
-    { bucketStart: "2026-10-06", mode: "pinned", runs: 4 },
-    { bucketStart: "2026-10-06", mode: "auto", runs: 3 },
-    { bucketStart: "2026-10-13", mode: "manual", runs: 2 },
+    { bucketStart: "2026-09-28", mode: "manual", runs: 1 },
+    { bucketStart: "2026-09-28", mode: "auto", runs: 2 },
+    { bucketStart: "2026-10-05", mode: "pinned", runs: 4 },
+    { bucketStart: "2026-10-05", mode: "auto", runs: 3 },
+    { bucketStart: "2026-10-12", mode: "manual", runs: 2 },
   ],
 };
 
 function stubApi(
-  opts: { usage?: Record<string, unknown>; runtimeStatus?: string } = {},
+  opts: {
+    usage?: Record<string, unknown>;
+    runtimeStatus?: string;
+    series?: typeof SERIES;
+  } = {},
 ) {
   const fetchMock = vi.fn((input: string) => {
     const url = String(input);
     const body = url.includes("/skill-hub/catalog/skill_1/usage")
-      ? envelope(SERIES, opts.runtimeStatus)
+      ? envelope(opts.series ?? SERIES, opts.runtimeStatus)
       : url.includes("/skill-hub/catalog/skill_1")
         ? envelope(detail(opts.usage), opts.runtimeStatus)
         : url.endsWith("/ai/agents")
@@ -108,6 +112,25 @@ function renderPanel(opts: Parameters<typeof stubApi>[0] = {}) {
     ),
   );
   return fetchMock;
+}
+
+function renderPanelWithContainer(opts: Parameters<typeof stubApi>[0] = {}) {
+  stubApi(opts);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(SkillUsagePanel, {
+        projectId: "project-1",
+        skillId: "skill_1",
+        period,
+        copy: WORKSPACE_COPY.en,
+      }),
+    ),
+  );
 }
 
 function tile(label: string) {
@@ -185,5 +208,34 @@ describe("SkillUsagePanel", () => {
     expect(
       screen.getByText("Run data is temporarily unavailable"),
     ).toBeVisible();
+  });
+  it("draws every week of the period, with empty weeks at zero and the first week clamped to the period", async () => {
+    // 2026-10-01 is a Thursday: the first ISO week starts 2026-09-28. The
+    // server omits the empty week of 2026-10-05.
+    const { container } = renderPanelWithContainer({
+      series: {
+        byMode: { manual: 3, pinned: 0, auto: 0 },
+        points: [
+          { bucketStart: "2026-09-28", mode: "manual", runs: 1 },
+          { bucketStart: "2026-10-12", mode: "manual", runs: 2 },
+        ],
+      },
+    });
+    await screen.findByRole("group", {
+      name: "Manual, Pinned by an Agent, Automatic",
+    });
+    const hits = within(container).getAllByTestId("trend-hit");
+    // Weeks of 09-28, 10-05, 10-12, 10-19 and 10-26.
+    expect(hits).toHaveLength(5);
+
+    fireEvent.mouseEnter(hits[0]!);
+    expect(
+      screen.getByText("2026-10-01 – 2026-10-04 · Manual: 1 activations"),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseEnter(hits[1]!);
+    expect(
+      screen.getByText("2026-10-05 – 2026-10-11 · Manual: 0 activations"),
+    ).toBeInTheDocument();
   });
 });

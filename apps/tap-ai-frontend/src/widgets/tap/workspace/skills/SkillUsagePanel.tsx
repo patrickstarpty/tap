@@ -8,6 +8,7 @@ import {
   type SkillHubUsageView,
 } from "../../../../features/knowledge/api/skillHub";
 import type { WorkspaceCopy } from "../copy";
+import { bucketAxis, fillBuckets } from "../agents/team/buckets";
 import { TrendChart, type TrendSeries } from "../agents/team/charts";
 import {
   formatCost,
@@ -30,29 +31,26 @@ export interface SkillUsagePanelProps {
 type Mode = "manual" | "pinned" | "auto";
 const MODES: Mode[] = ["manual", "pinned", "auto"];
 
-/** One line per activation mode over the usage buckets, as the server sends
- * them (the first bucket may start before the period). */
+/** One line per activation mode over every bucket of the period: empty
+ * buckets read zero and the first/last buckets are labelled with the dates
+ * they actually cover. */
 function modeSeries(
-  points: SkillHubUsageView["data"]["points"],
+  view: SkillHubUsageView,
   labels: Record<Mode, string>,
 ): TrendSeries[] {
-  const buckets = [...new Set(points.map((p) => p.bucketStart))].sort();
-  return MODES.map((mode) => {
-    const runs = new Map<string, number>();
-    for (const point of points)
-      if (point.mode === mode)
-        runs.set(
-          point.bucketStart,
-          (runs.get(point.bucketStart) ?? 0) + point.runs,
-        );
-    return {
-      label: labels[mode],
-      points: buckets.map((bucket) => ({
-        bucket,
-        value: runs.get(bucket) ?? 0,
-      })),
-    };
-  });
+  const axis = bucketAxis(view.period, view.granularity);
+  return MODES.map((mode) => ({
+    label: labels[mode],
+    points: fillBuckets(
+      axis,
+      view.data.points
+        .filter((point) => point.mode === mode)
+        .map((point) => ({
+          bucketStart: point.bucketStart,
+          value: point.runs,
+        })),
+    ),
+  }));
 }
 
 interface Tile {
@@ -166,7 +164,7 @@ export function SkillUsagePanel({
           },
         ];
 
-  const points = usageQuery.data?.data.points ?? [];
+  const usageView = usageQuery.data;
   const renderTiles = (items: Tile[]) =>
     items.map((tile) => (
       <div key={tile.key}>
@@ -221,15 +219,13 @@ export function SkillUsagePanel({
         <h3>{text.trendHeading}</h3>
         {usageQuery.isError ? (
           <p role="alert">{text.loadFailed}</p>
-        ) : points.length === 0 ? (
-          <p>
-            {usageQuery.data === undefined
-              ? copy.skillHub.loading
-              : text.noUsage}
-          </p>
+        ) : usageView === undefined ? (
+          <p role="status">{copy.skillHub.loading}</p>
+        ) : usageView.data.points.length === 0 ? (
+          <p>{text.noUsage}</p>
         ) : (
           <TrendChart
-            series={modeSeries(points, text.modes)}
+            series={modeSeries(usageView, text.modes)}
             unit={text.trendUnit}
             locale={locale}
             hint={copy.agentTeam.team.chartHint}

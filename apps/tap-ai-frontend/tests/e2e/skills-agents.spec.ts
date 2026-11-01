@@ -386,7 +386,8 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
   await skillLink.click();
   const skillDetailDialog = page.getByRole("dialog", { name: SKILL_NAME });
   await expect(skillDetailDialog).toBeVisible();
-  await skillDetailDialog.getByRole("tab", { name: "Metadata" }).click();
+  // Overview (the default tab) lists the revision id.
+  await skillDetailDialog.getByRole("tab", { name: "Overview" }).click();
   await expect(
     skillDetailDialog.getByText(importedSkill!.revisionId, { exact: true }),
   ).toBeVisible();
