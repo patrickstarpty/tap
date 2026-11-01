@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import date
 
+import httpx
 import pytest
 
+from tap.modules.agent_team.adapters.langfuse_metrics import LangfuseRuntimeMetrics
 from tap.platform.reporting.csv_zip import blank_cell, csv_bytes, text_cell
+from tap.platform.reporting.langfuse_metrics_client import LangfuseMetricsClient
 from tap.platform.reporting.period import Period, PeriodInvalid, parse_period_query
 from tap.platform.reporting.runtime import RuntimeMetricsUnavailable
 from tap.platform.reporting.ttl_cache import TtlSingleFlightCache
@@ -87,3 +91,40 @@ def test_parse_period_query_rejects_bad_dates() -> None:
     ):
         with pytest.raises(PeriodInvalid):
             parse_period_query(from_, to)
+
+
+@pytest.mark.asyncio
+async def test_langfuse_client_exposes_query_base_filters_request() -> None:
+    """The opt-in Langfuse smoke reaches the shared client through
+    `LangfuseRuntimeMetrics._metrics`; keep those names from drifting."""
+    async with httpx.AsyncClient() as http:
+        adapter = LangfuseRuntimeMetrics(
+            http,
+            host="https://langfuse.example.test",
+            public_key="pk",
+            secret_key="sk",
+            environment="local",
+        )
+        client = adapter._metrics
+        assert isinstance(client, LangfuseMetricsClient)
+        assert inspect.iscoroutinefunction(client.request)
+        assert inspect.iscoroutinefunction(client.rows)
+        assert client.base_filters("proj1", tags=["agent:a"]) == [
+            {
+                "column": "tags",
+                "operator": "any of",
+                "value": ["project:proj1"],
+                "type": "arrayOptions",
+            },
+            {"column": "tags", "operator": "any of", "value": ["agent:a"], "type": "arrayOptions"},
+            {"column": "environment", "operator": "=", "value": "local", "type": "string"},
+        ]
+        query = client.query(
+            view="traces",
+            dimensions=[],
+            metrics=[{"measure": "latency", "aggregation": "p50"}],
+            filters=client.base_filters("proj1"),
+            period=Period(date(2026, 1, 1), date(2026, 1, 7)),
+        )
+        assert query["fromTimestamp"] == "2026-01-01T00:00:00.000Z"
+        assert query["toTimestamp"] == "2026-01-07T23:59:59.999Z"

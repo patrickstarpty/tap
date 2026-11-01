@@ -63,15 +63,18 @@ async def test_agent_stats_and_last_runs_against_real_langfuse() -> None:
         # with a numeric `p50_latency` -- `agent_stats` silently falls back to
         # an approximation when it is not, so assert on the raw response.
         with_runs = next(agent_stat for agent_stat in stats if agent_stat.runs > 0)
-        p50_query = metrics._metrics_query(
+        # The query building and request now live in the shared
+        # `LangfuseMetricsClient` the adapter holds as `_metrics`.
+        client_api = metrics._metrics
+        p50_query = client_api.query(
             view="traces",
             dimensions=[],
             metrics=[{"measure": "latency", "aggregation": "p50"}],
-            filters=metrics._base_filters(project_id, agent_key=with_runs.agent_key),
+            filters=client_api.base_filters(project_id, tags=[f"agent:{with_runs.agent_key}"]),
             period=period,
         )
         assert p50_query["dimensions"] == []
-        rows = await metrics._request_metrics(p50_query)
+        rows = await client_api.request(p50_query)
         assert len(rows) == 1, rows
         assert isinstance(rows[0].get("p50_latency"), int | float), rows
         assert with_runs.latency_p50_ms is not None
