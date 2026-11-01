@@ -1,20 +1,14 @@
 import { Button } from "antd";
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 
-import {
-  useSetSkillEnabled,
-  useSkills,
-  type SkillRevision,
-  type SkillRevisionDetail,
-} from "../../../../features/knowledge/api/aiAssets";
-import {
-  filterAssetWorkspaceItems,
-  type AssetWorkspaceFilter,
-} from "../assetWorkspaceFilter";
+import { resolvePeriod } from "../../../../features/knowledge/api/agentTeam";
+import type { SkillRevisionDetail } from "../../../../features/knowledge/api/aiAssets";
+import type { PeriodSelection } from "../agents/team/PeriodPicker";
 import type { WorkspaceCopy } from "../copy";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
 import { SkillForm } from "./SkillForm";
 import { SkillImportDialog } from "./SkillImportDialog";
+import { SkillLibrary } from "./SkillLibrary";
 
 export interface SkillsWorkspaceProps {
   projectId: string;
@@ -44,8 +38,10 @@ export function SkillsWorkspace({
   onInitialDetailConsumed,
 }: SkillsWorkspaceProps) {
   const text = copy.skillsWorkspace;
-  const isChinese = text.heading !== "Skills";
-  const [filter, setFilter] = useState<AssetWorkspaceFilter>("all");
+  const [selection, setSelection] = useState<PeriodSelection>(() => ({
+    preset: "last30",
+    custom: resolvePeriod("last30", new Date()),
+  }));
   const [importOpen, setImportOpen] = useState(false);
   const [detailRevisionId, setDetailRevisionId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState | null>(null);
@@ -63,32 +59,30 @@ export function SkillsWorkspace({
     }
   }, [initialDetailRevisionId, onInitialDetailConsumed]);
 
-  const skillsQuery = useSkills(projectId);
-  const setEnabled = useSetSkillEnabled(projectId);
+  // Library controls report no event; the focused control opened the
+  // dialog, so closing it hands focus back there.
+  const rememberFocus = () => {
+    triggerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  };
 
-  const latestItems = useMemo(
-    () => (skillsQuery.data ?? []).filter((item) => item.isLatest),
-    [skillsQuery.data],
-  );
-
-  const visibleItems = useMemo(
-    () => filterAssetWorkspaceItems(latestItems, filter),
-    [filter, latestItems],
-  );
-
-  const openImport = (event: MouseEvent<HTMLElement>) => {
-    triggerRef.current = event.currentTarget;
+  const openImport = (event?: MouseEvent<HTMLElement>) => {
+    if (event === undefined) rememberFocus();
+    else triggerRef.current = event.currentTarget;
     setImportOpen(true);
   };
 
-  const openCreate = (event: MouseEvent<HTMLElement>) => {
-    triggerRef.current = event.currentTarget;
+  const openCreate = (event?: MouseEvent<HTMLElement>) => {
+    if (event === undefined) rememberFocus();
+    else triggerRef.current = event.currentTarget;
     setFormState({ mode: "create" });
   };
 
-  const openDetail = (item: SkillRevision, event: MouseEvent<HTMLElement>) => {
-    triggerRef.current = event.currentTarget;
-    setDetailRevisionId(item.revisionId);
+  const openDetail = (revisionId: string) => {
+    rememberFocus();
+    setDetailRevisionId(revisionId);
   };
 
   return (
@@ -109,92 +103,15 @@ export function SkillsWorkspace({
         </div>
       </header>
 
-      <div className="tap-catalog-toolbar">
-        <label>
-          <span>{isChinese ? "筛选" : "Filter"}</span>
-          <select
-            aria-label={isChinese ? "筛选" : "Filter"}
-            value={
-              filter === "all"
-                ? text.filterAll
-                : filter === "built-in"
-                  ? text.filterBuiltIn
-                  : filter === "custom"
-                    ? text.filterCustom
-                    : text.filterDisabled
-            }
-            onChange={(event) => {
-              const { value } = event.target;
-              if (value === text.filterBuiltIn) setFilter("built-in");
-              else if (value === text.filterCustom) setFilter("custom");
-              else if (value === text.filterDisabled) setFilter("disabled");
-              else setFilter("all");
-            }}
-          >
-            <option value={text.filterAll}>{text.filterAll}</option>
-            <option value={text.filterBuiltIn}>{text.filterBuiltIn}</option>
-            <option value={text.filterCustom}>{text.filterCustom}</option>
-            <option value={text.filterDisabled}>{text.filterDisabled}</option>
-          </select>
-        </label>
-        <span>{visibleItems.length}</span>
-      </div>
-
-      {visibleItems.length === 0 ? (
-        <div className="tap-catalog-empty">{text.noResults}</div>
-      ) : (
-        <ul className="tap-catalog-list" aria-label={text.heading}>
-          {visibleItems.map((item) => (
-            <li key={item.revisionId} aria-label={item.displayName}>
-              <article>
-                <div className="tap-catalog-title">
-                  <h2>
-                    <button
-                      type="button"
-                      onClick={(event) => openDetail(item, event)}
-                    >
-                      {item.displayName}
-                    </button>
-                  </h2>
-                  <span data-source-kind={item.sourceKind}>
-                    {item.sourceKind === "built_in"
-                      ? text.filterBuiltIn
-                      : text.filterCustom}
-                  </span>
-                  <span data-status={item.status}>
-                    {item.status === "enabled"
-                      ? text.statusEnabled
-                      : text.statusDisabled}
-                  </span>
-                </div>
-                {item.description ? <p>{item.description}</p> : null}
-              </article>
-              <div className="tap-catalog-actions">
-                {item.status === "enabled" ? (
-                  <Button
-                    type="primary"
-                    ghost
-                    onClick={() => onUse(item.revisionId)}
-                  >
-                    {text.useInChat}
-                  </Button>
-                ) : null}
-                <Button
-                  loading={setEnabled.isPending}
-                  onClick={() =>
-                    setEnabled.mutate({
-                      skillId: item.skillId,
-                      enabled: item.status !== "enabled",
-                    })
-                  }
-                >
-                  {item.status === "enabled" ? text.disable : text.enable}
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <SkillLibrary
+        projectId={projectId}
+        copy={copy}
+        selection={selection}
+        onSelectionChange={setSelection}
+        onOpen={openDetail}
+        onImport={() => openImport()}
+        onCreate={() => openCreate()}
+      />
 
       {importOpen ? (
         <SkillImportDialog

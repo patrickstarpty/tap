@@ -192,6 +192,11 @@ export const aiAssetKeys = {
 export const agentTeamRootKey = (projectId: string) =>
   ["agent-team", projectId] as const;
 
+/** Root key of every Skill library query for a project; shared with
+ * `skillHubKeys` (skillHub.ts imports this module). */
+export const skillHubRootKey = (projectId: string) =>
+  ["skill-hub", projectId] as const;
+
 function invalidateAiAssets(queryClient: QueryClient, projectId: string) {
   // The composer still reads the Agent/Skill catalog through the older
   // `useAiAssetCatalog` hook above (its own query keys, kept separate so a
@@ -210,6 +215,8 @@ function invalidateAiAssets(queryClient: QueryClient, projectId: string) {
     // skill updates); the Team tab keeps its queries cached while the
     // Configuration tab is open, so refresh them here.
     queryClient.invalidateQueries({ queryKey: agentTeamRootKey(projectId) }),
+    // Skill imports, revisions and enable/disable change the Skill library.
+    queryClient.invalidateQueries({ queryKey: skillHubRootKey(projectId) }),
   ]);
 }
 

@@ -1,6 +1,6 @@
-// Shared by AgentsWorkspace and SkillsWorkspace: both facet their catalog
-// the same way (All / Built-in / Custom / Disabled), over items that only
-// differ in which extra fields they carry.
+// Used by AgentsWorkspace to facet its catalog (All / Built-in / Custom /
+// Disabled); kept generic over items that only differ in which extra
+// fields they carry. The Skills page filters on the server instead.
 
 export type AssetWorkspaceFilter = "all" | "built-in" | "custom" | "disabled";
 

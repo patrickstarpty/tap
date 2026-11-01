@@ -269,6 +269,10 @@ describe("Skill write hooks", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skill-catalog", "project-1"],
     });
+    // The Skill library lists the new Skill without a manual refresh.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skill-hub", "project-1"],
+    });
   });
 
   it("revises a Skill against a base revision", async () => {

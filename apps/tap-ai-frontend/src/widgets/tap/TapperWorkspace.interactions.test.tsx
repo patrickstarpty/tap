@@ -31,7 +31,9 @@ import {
   useGraphSearch,
 } from "../../features/graph/api/queries";
 import { pushGraphHighlight } from "../../features/graph/model/highlight";
+import { resolvePeriod } from "../../features/knowledge/api/agentTeam";
 import { aiAssetKeys } from "../../features/knowledge/api/aiAssets";
+import { skillHubKeys } from "../../features/knowledge/api/skillHub";
 import { TapperWorkspace } from "./TapperWorkspace";
 
 const workspaceStyles = readFileSync(
@@ -169,6 +171,74 @@ function seedAgentSkillCatalog(
   );
 }
 
+// The Skills page reads the Skill library (`skillHubKeys`) for its default
+// period and sort. Seed the library and its summary with these Skills so the
+// page renders them without a network call.
+function seedSkillLibrary(
+  queryClient: ReturnType<typeof createTestQueryClient>,
+  projectId: string,
+  skills: {
+    skillId: string;
+    revisionId: string;
+    name: string;
+    description: string;
+  }[],
+) {
+  const period = resolvePeriod("last30", new Date());
+  const envelope = (data: unknown) => ({
+    runtimeStatus: "ok",
+    computedAt: "2026-10-30T08:00:00Z",
+    timezone: "UTC",
+    period,
+    granularity: "day",
+    data,
+  });
+  queryClient.setQueryData(
+    skillHubKeys.catalog(projectId, period, {
+      sort: "activations",
+      order: "desc",
+    }),
+    envelope(
+      skills.map((skill) => ({
+        skill: {
+          skillId: skill.skillId,
+          name: skill.name,
+          description: skill.description,
+          category: "test-design",
+          version: "r1",
+          revisionNumber: 1,
+          latestRevisionId: skill.revisionId,
+          sourceKind: "built_in",
+          originKind: "built_in",
+          originRef: null,
+          originImportedAt: null,
+          ownerActorId: "system",
+          ownerAssignedAt: "2026-10-01T00:00:00Z",
+          status: "enabled",
+          applicableTasks: ["knowledge.answer"],
+          compatibility: null,
+          updatedAt: "2026-10-01T12:00:00Z",
+          builtIn: true,
+        },
+        activations: 0,
+        byMode: { manual: 0, pinned: 0, auto: 0 },
+      })),
+    ),
+  );
+  queryClient.setQueryData(
+    skillHubKeys.summary(projectId, period),
+    envelope({
+      skillTotal: skills.length,
+      enabled: skills.length,
+      usedInPeriod: 0,
+      unused: skills.length,
+      autoShare: null,
+      candidateCount: skills.length,
+      candidateLimit: 60,
+    }),
+  );
+}
+
 // The Agents/Skills management pages (AgentsWorkspace/SkillsWorkspace) read
 // their own catalog through `useAgents`/`useSkills` (query keys under
 // `aiAssetKeys`), independent of the composer-facing
@@ -211,6 +281,14 @@ function seedAiAssetWorkspaces(
       status: "enabled",
       isLatest: true,
       builtIn: true,
+    },
+  ]);
+  seedSkillLibrary(queryClient, projectId, [
+    {
+      skillId: "bdd-scenario-design",
+      revisionId: "bdd-scenario-design",
+      name: "BDD Scenario Design",
+      description: "Turns underwriting rules into BDD scenarios.",
     },
   ]);
   // `AgentForm`'s tool checkboxes (LangGraph PR 5 Task 10) read `GET
@@ -607,6 +685,14 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
       status: "enabled",
       isLatest: true,
       builtIn: true,
+    },
+  ]);
+  seedSkillLibrary(queryClient, api.projectId, [
+    {
+      skillId: "validation-citation-skill",
+      revisionId: "validation-citation-skill-v2",
+      name: "Citation skill",
+      description: "Cites the strongest evidence for knowledge answers.",
     },
   ]);
   renderKnowledgeApp(<TapperWorkspace />, {

@@ -283,6 +283,64 @@ export interface WorkspaceCopy {
       saveFailed: string;
     };
   };
+  skillHub: {
+    libraryLabel: string;
+    searchLabel: string;
+    searchPlaceholder: string;
+    categoryFilter: string;
+    taskFilter: string;
+    sourceFilter: string;
+    statusFilter: string;
+    sortLabel: string;
+    allCategories: string;
+    allTasks: string;
+    allSources: string;
+    allStatuses: string;
+    categories: {
+      "test-design": string;
+      automation: string;
+      knowledge: string;
+      analysis: string;
+      writing: string;
+      other: string;
+    };
+    sources: { imported: string; authored: string; built_in: string };
+    statuses: { enabled: string; disabled: string };
+    sortOptions: {
+      activations: string;
+      name: string;
+      last_used_at: string;
+      updated_at: string;
+    };
+    summaryLabel: string;
+    summary: {
+      skillTotal: string;
+      enabled: string;
+      usedInPeriod: string;
+      unused: string;
+      autoShare: string;
+    };
+    cardFields: {
+      category: string;
+      version: string;
+      source: string;
+      updated: string;
+      activations: string;
+    };
+    /** Activations count once per Skill a conversation used. */
+    activationsHint: string;
+    /** `{limit}` is the number of Skills Tapper can offer automatically. */
+    candidateNotice: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    importSkill: string;
+    createSkill: string;
+    noResults: string;
+    exportCsv: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+  };
   agentsWorkspace: {
     heading: string;
     description: string;
@@ -1032,6 +1090,69 @@ export const WORKSPACE_COPY = {
         revisionConflict: "This content was updated elsewhere. Please refresh.",
         saveFailed: "This skill could not be saved.",
       },
+    },
+    skillHub: {
+      libraryLabel: "Skill library",
+      searchLabel: "Search skills",
+      searchPlaceholder: "Search by name or description",
+      categoryFilter: "Category",
+      taskFilter: "Task",
+      sourceFilter: "Source",
+      statusFilter: "Status",
+      sortLabel: "Sort by",
+      allCategories: "All categories",
+      allTasks: "All tasks",
+      allSources: "All sources",
+      allStatuses: "All statuses",
+      categories: {
+        "test-design": "Test design",
+        automation: "Automation",
+        knowledge: "Knowledge",
+        analysis: "Analysis",
+        writing: "Writing",
+        other: "Other",
+      },
+      sources: {
+        imported: "Imported",
+        authored: "Created in Tapper",
+        built_in: "Built-in",
+      },
+      statuses: { enabled: "Enabled", disabled: "Disabled" },
+      sortOptions: {
+        activations: "Most activations",
+        name: "Name (A–Z)",
+        last_used_at: "Recently used",
+        updated_at: "Recently updated",
+      },
+      summaryLabel: "Library summary",
+      summary: {
+        skillTotal: "Skills",
+        enabled: "Enabled",
+        usedInPeriod: "Used in period",
+        unused: "Unused in period",
+        autoShare: "Activated automatically",
+      },
+      cardFields: {
+        category: "Category",
+        version: "Version",
+        source: "Source",
+        updated: "Updated",
+        activations: "Activations in period",
+      },
+      activationsHint:
+        "A conversation that uses several skills counts once for each skill, so activations don't add up across skills.",
+      candidateNotice:
+        "More than {limit} skills are enabled, so Tapper can't offer all of them automatically. Some skills can only be selected manually.",
+      emptyTitle: "Your skill library is empty",
+      emptyDescription:
+        "Import a skill package or create a skill to give Tapper reusable instructions.",
+      importSkill: "Import skill",
+      createSkill: "New skill",
+      noResults: "No skills match these filters.",
+      exportCsv: "Export CSV",
+      loading: "Loading…",
+      loadFailed: "The skill library could not be loaded.",
+      retry: "Retry",
     },
     agentsWorkspace: {
       heading: "Agents",
@@ -1799,6 +1920,69 @@ export const WORKSPACE_COPY = {
         revisionConflict: "内容已被他人更新，请刷新。",
         saveFailed: "无法保存该 Skill。",
       },
+    },
+    skillHub: {
+      libraryLabel: "Skill 库",
+      searchLabel: "搜索 Skill",
+      searchPlaceholder: "按名称或描述搜索",
+      categoryFilter: "类别",
+      taskFilter: "适用任务",
+      sourceFilter: "来源",
+      statusFilter: "状态",
+      sortLabel: "排序",
+      allCategories: "全部类别",
+      allTasks: "全部任务",
+      allSources: "全部来源",
+      allStatuses: "全部状态",
+      categories: {
+        "test-design": "测试设计",
+        automation: "自动化",
+        knowledge: "知识",
+        analysis: "分析",
+        writing: "写作",
+        other: "其他",
+      },
+      sources: {
+        imported: "导入",
+        authored: "在 Tapper 中创建",
+        built_in: "内置",
+      },
+      statuses: { enabled: "已启用", disabled: "已停用" },
+      sortOptions: {
+        activations: "激活次数最多",
+        name: "名称（A–Z）",
+        last_used_at: "最近使用",
+        updated_at: "最近更新",
+      },
+      summaryLabel: "库概览",
+      summary: {
+        skillTotal: "Skill 总数",
+        enabled: "已启用",
+        usedInPeriod: "周期内用到",
+        unused: "周期内未用到",
+        autoShare: "自动激活占比",
+      },
+      cardFields: {
+        category: "类别",
+        version: "版本",
+        source: "来源",
+        updated: "更新于",
+        activations: "周期内激活次数",
+      },
+      activationsHint:
+        "一次对话用到多个 Skill 时，每个 Skill 各计 1 次，不同 Skill 的激活次数不可相加。",
+      candidateNotice:
+        "已启用的 Skill 超过 {limit} 个，Tapper 无法全部自动选用，部分 Skill 只能手动选用。",
+      emptyTitle: "Skill 库还是空的",
+      emptyDescription:
+        "导入 Skill 包或新建 Skill，为 Tapper 提供可复用的指令。",
+      importSkill: "导入 Skill",
+      createSkill: "新建 Skill",
+      noResults: "没有符合筛选条件的 Skill。",
+      exportCsv: "导出 CSV",
+      loading: "加载中…",
+      loadFailed: "Skill 库加载失败。",
+      retry: "重试",
     },
     agentsWorkspace: {
       heading: "智能体",

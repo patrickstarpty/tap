@@ -1,14 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  useSetSkillEnabled,
   useSkill,
   useSkillRevisions,
-  useSkills,
 } from "../../../../features/knowledge/api/aiAssets";
 import { WORKSPACE_COPY } from "../copy";
 import { SkillsWorkspace } from "./SkillsWorkspace";
@@ -22,10 +20,8 @@ vi.mock(
       >();
     return {
       ...actual,
-      useSkills: vi.fn(),
       useSkill: vi.fn(),
       useSkillRevisions: vi.fn(),
-      useSetSkillEnabled: vi.fn(),
       useStageSkillImport: vi.fn(() => ({
         mutateAsync: vi.fn(),
         isPending: false,
@@ -47,59 +43,86 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client }, children);
 }
 
-const SKILLS = [
-  {
-    revisionId: "rev_builtin",
+function catalogItem(over: Record<string, unknown>) {
+  return {
+    skill: {
+      skillId: "skill_custom",
+      name: "Custom policy helper",
+      description: "Answers policy questions.",
+      category: "knowledge",
+      version: "r2",
+      revisionNumber: 2,
+      latestRevisionId: "rev_custom",
+      sourceKind: "authored",
+      originKind: "authored",
+      originRef: null,
+      originImportedAt: null,
+      ownerActorId: "alice",
+      ownerAssignedAt: "2026-10-01T09:00:00Z",
+      status: "enabled",
+      applicableTasks: ["knowledge.answer"],
+      compatibility: null,
+      updatedAt: "2026-10-20T12:00:00Z",
+      builtIn: false,
+      ...over,
+    },
+    activations: 3,
+    byMode: { manual: 1, pinned: 1, auto: 1 },
+  };
+}
+
+const CATALOG = [
+  catalogItem({}),
+  catalogItem({
     skillId: "skill_builtin",
-    assetId: "skill_builtin",
-    displayName: "Built-in reviewer",
-    contentDigest: "d1",
-    applicableTasks: ["knowledge.answer"],
+    name: "Built-in reviewer",
+    latestRevisionId: "rev_builtin",
     sourceKind: "built_in",
     builtIn: true,
-    status: "enabled",
-    isLatest: true,
-  },
-  {
-    revisionId: "rev_custom",
-    skillId: "skill_custom",
-    assetId: "skill_custom",
-    displayName: "Custom policy helper",
-    contentDigest: "d2",
-    applicableTasks: ["knowledge.answer"],
-    sourceKind: "authored",
-    builtIn: false,
-    status: "enabled",
-    isLatest: true,
-  },
-  {
-    revisionId: "rev_disabled",
-    skillId: "skill_disabled",
-    assetId: "skill_disabled",
-    displayName: "Retired helper",
-    contentDigest: "d3",
-    applicableTasks: ["knowledge.answer"],
-    sourceKind: "authored",
-    builtIn: false,
-    status: "disabled",
-    isLatest: true,
-  },
+  }),
 ];
+
+function stubSkillHub(items: unknown[]) {
+  const envelope = (data: unknown) => ({
+    runtimeStatus: "ok",
+    computedAt: "2026-10-30T08:00:00Z",
+    timezone: "UTC",
+    period: { from: "2026-10-01", to: "2026-10-30" },
+    granularity: "day",
+    data,
+  });
+  const fetchMock = vi.fn((input: string) =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify(
+          String(input).includes("/skill-hub/summary")
+            ? envelope({
+                skillTotal: items.length,
+                enabled: items.length,
+                usedInPeriod: items.length,
+                unused: 0,
+                autoShare: null,
+                candidateCount: items.length,
+                candidateLimit: 60,
+              })
+            : envelope(items),
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 function renderWorkspace(
   overrides: {
-    skills?: typeof SKILLS;
+    items?: unknown[];
     locale?: "en" | "zh";
     onUse?: (revisionId: string) => void;
-    setEnabledMutate?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
-  vi.mocked(useSkills).mockReturnValue({
-    data: overrides.skills ?? SKILLS,
-    isPending: false,
-    isError: false,
-    refetch: vi.fn(),
-  } as never);
+  const fetchMock = stubSkillHub(overrides.items ?? CATALOG);
   vi.mocked(useSkill).mockReturnValue({
     data: undefined,
     isPending: true,
@@ -110,16 +133,11 @@ function renderWorkspace(
     isPending: true,
     isError: false,
   } as never);
-  const setEnabledMutate = overrides.setEnabledMutate ?? vi.fn();
-  vi.mocked(useSetSkillEnabled).mockReturnValue({
-    mutate: setEnabledMutate,
-    isPending: false,
-  } as never);
   const onUse = overrides.onUse ?? vi.fn();
   const copy = WORKSPACE_COPY[overrides.locale ?? "en"];
   return {
     onUse,
-    setEnabledMutate,
+    fetchMock,
     ...render(
       createElement(SkillsWorkspace, {
         projectId: "project-1",
@@ -131,75 +149,37 @@ function renderWorkspace(
   };
 }
 
-describe("SkillsWorkspace filters", () => {
-  it("shows all latest skills by default", () => {
-    renderWorkspace();
+afterEach(() => vi.unstubAllGlobals());
+
+describe("SkillsWorkspace library", () => {
+  it("lists the project's skills from the library for the last 30 days", async () => {
+    const { fetchMock } = renderWorkspace();
+    expect(await screen.findByText("Custom policy helper")).toBeVisible();
     expect(screen.getByText("Built-in reviewer")).toBeVisible();
-    expect(screen.getByText("Custom policy helper")).toBeVisible();
-    expect(screen.getByText("Retired helper")).toBeVisible();
+    const catalogUrl = fetchMock.mock.calls
+      .map((call) => String(call[0]))
+      .find((url) => url.includes("/skill-hub/catalog"))!;
+    const params = new URL(catalogUrl, "http://localhost").searchParams;
+    const from = Date.parse(`${params.get("from")}T00:00:00Z`);
+    const to = Date.parse(`${params.get("to")}T00:00:00Z`);
+    expect((to - from) / 86_400_000).toBe(29);
   });
 
-  it("filters to only built-in skills", async () => {
+  it("opens the skill's latest revision in the detail drawer", async () => {
     const user = userEvent.setup();
     renderWorkspace();
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Filter" }),
-      "Built-in",
+    await user.click(
+      await screen.findByRole("button", { name: "Custom policy helper" }),
     );
-    expect(screen.getByText("Built-in reviewer")).toBeVisible();
-    expect(screen.queryByText("Custom policy helper")).not.toBeInTheDocument();
-    expect(screen.queryByText("Retired helper")).not.toBeInTheDocument();
-  });
-
-  it("filters to only custom skills", async () => {
-    const user = userEvent.setup();
-    renderWorkspace();
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Filter" }),
-      "Custom",
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(vi.mocked(useSkill)).toHaveBeenLastCalledWith(
+      "project-1",
+      "rev_custom",
     );
-    expect(screen.getByText("Custom policy helper")).toBeVisible();
-    expect(screen.queryByText("Built-in reviewer")).not.toBeInTheDocument();
-    expect(screen.queryByText("Retired helper")).not.toBeInTheDocument();
-  });
-
-  it("filters to only disabled skills", async () => {
-    const user = userEvent.setup();
-    renderWorkspace();
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Filter" }),
-      "Disabled",
-    );
-    expect(screen.getByText("Retired helper")).toBeVisible();
-    expect(screen.queryByText("Built-in reviewer")).not.toBeInTheDocument();
-    expect(screen.queryByText("Custom policy helper")).not.toBeInTheDocument();
-  });
-
-  it("shows a no-results message when a filter matches nothing", async () => {
-    const user = userEvent.setup();
-    renderWorkspace({ skills: [] });
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Filter" }),
-      "Disabled",
-    );
-    expect(screen.getByText("No skills match this filter.")).toBeVisible();
   });
 });
 
 describe("SkillsWorkspace actions", () => {
-  it("calls onUse with the revision id when Use in chat is clicked", async () => {
-    const user = userEvent.setup();
-    const onUse = vi.fn();
-    renderWorkspace({ onUse });
-    const row = screen.getByText("Custom policy helper").closest("li")!;
-    await user.click(
-      screen
-        .getAllByRole("button", { name: "Use in chat" })
-        .find((button) => row.contains(button))!,
-    );
-    expect(onUse).toHaveBeenCalledWith("rev_custom");
-  });
-
   it("opens the import dialog from the Import skill button", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -207,19 +187,32 @@ describe("SkillsWorkspace actions", () => {
     expect(screen.getByText("Import a skill")).toBeVisible();
   });
 
+  it("opens the import dialog from the empty library", async () => {
+    const user = userEvent.setup();
+    renderWorkspace({ items: [] });
+    const empty = (
+      await screen.findByText("Your skill library is empty")
+    ).closest("div")!;
+    await user.click(
+      within(empty).getByRole("button", { name: "Import skill" }),
+    );
+    expect(screen.getByText("Import a skill")).toBeVisible();
+  });
+
   it("opens the create form from the New skill button", async () => {
     const user = userEvent.setup();
     renderWorkspace();
-    await user.click(screen.getByRole("button", { name: "New skill" }));
+    await user.click(screen.getAllByRole("button", { name: "New skill" })[0]!);
     expect(screen.getByText("New skill", { selector: "h2" })).toBeVisible();
   });
 });
 
 describe("SkillsWorkspace locale", () => {
-  it("renders Chinese copy", () => {
+  it("renders Chinese copy", async () => {
     renderWorkspace({ locale: "zh" });
     expect(screen.getByText("技能")).toBeVisible();
     expect(screen.getByRole("button", { name: "导入 Skill" })).toBeVisible();
     expect(screen.getByRole("button", { name: "新建 Skill" })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "库概览" })).toBeVisible();
   });
 });
