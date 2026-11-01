@@ -10,7 +10,10 @@ adding a built-in tool means adding one entry here.
 the model (OpenAI-style function names reject ``.``); ``input_schema`` is the
 closed JSON Schema object the model must satisfy for a tool call; only
 ``model_callable`` tools are ever offered to a model (``knowledge.answer`` is
-a governance marker, never an invocable function).
+a governance marker, never an invocable function). ``platform`` tools (Skill
+Hub's ``skill.activate``) are offered to every Agent and Tapper whenever their
+runtime precondition holds: they bypass the Agent allowlist, may not be listed
+in an Agent's ``toolIds`` and are not part of the public tool listing.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ class ToolDefinition:
     model_callable: bool
     input_schema: Mapping[str, object]
     tasks: frozenset[str]
+    platform: bool = False
 
 
 _KNOWLEDGE_SEARCH_SCHEMA: Mapping[str, object] = {
@@ -121,6 +125,15 @@ _INSIGHTS_QUERY_SCHEMA: Mapping[str, object] = {
     },
 }
 
+_SKILL_ACTIVATE_SCHEMA: Mapping[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name"],
+    "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    },
+}
+
 TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
     "knowledge.search": ToolDefinition(
         tool_id="knowledge.search",
@@ -178,6 +191,24 @@ TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
         input_schema=_INSIGHTS_QUERY_SCHEMA,
         tasks=frozenset({"knowledge.answer"}),
     ),
+    "skill.activate": ToolDefinition(
+        tool_id="skill.activate",
+        wire_name="skill_activate",
+        names={"en": "Skill Activate", "zh": "激活 Skill"},
+        descriptions={
+            "en": (
+                "Loads the full instructions of a Skill listed under Available Skills. "
+                "Call it only when the task needs that Skill."
+            ),
+            "zh": "读入“可用 Skills”中某个 Skill 的完整指令。仅在任务需要该 Skill 时调用。",
+        },
+        required=False,
+        default_enabled=True,
+        model_callable=True,
+        input_schema=_SKILL_ACTIVATE_SCHEMA,
+        tasks=frozenset({"knowledge.answer"}),
+        platform=True,
+    ),
 }
 
 _WIRE_NAME_INDEX: Mapping[str, str] = {
@@ -201,6 +232,14 @@ def required_tool_ids(task: str) -> frozenset[str]:
     )
 
 
+def platform_tool_ids() -> frozenset[str]:
+    """Tool ids offered outside the Agent allowlist (never in ``toolIds``)."""
+
+    return frozenset(
+        tool_id for tool_id, definition in TOOL_REGISTRY.items() if definition.platform
+    )
+
+
 def tool_for_wire_name(name: str) -> ToolDefinition | None:
     """Resolve a model-facing online function name back to its tool definition."""
 
@@ -215,16 +254,21 @@ def visible_tool_ids(
     agent_allowlist: frozenset[str] | None,
     relations_available: bool,
     insights_available: bool,
+    skills_available: bool = False,
 ) -> tuple[str, ...]:
     """Model-callable tool ids visible for this turn, in registry order.
 
-    Starts from the model-callable subset of the registry, drops
+    Starts from the model-callable, non-platform subset of the registry, drops
     ``graph.relations``/``insights.query`` when their runtime availability is
-    false, and finally intersects with ``agent_allowlist`` when one is given.
+    false, and intersects with ``agent_allowlist`` when one is given. Platform
+    tools are then appended when ``skills_available`` (a non-empty Skill
+    catalog), regardless of the allowlist.
     """
 
     visible = [
-        tool_id for tool_id, definition in TOOL_REGISTRY.items() if definition.model_callable
+        tool_id
+        for tool_id, definition in TOOL_REGISTRY.items()
+        if definition.model_callable and not definition.platform
     ]
     if not relations_available:
         visible = [tool_id for tool_id in visible if tool_id != "graph.relations"]
@@ -232,4 +276,10 @@ def visible_tool_ids(
         visible = [tool_id for tool_id in visible if tool_id != "insights.query"]
     if agent_allowlist is not None:
         visible = [tool_id for tool_id in visible if tool_id in agent_allowlist]
+    if skills_available:
+        visible.extend(
+            tool_id
+            for tool_id, definition in TOOL_REGISTRY.items()
+            if definition.model_callable and definition.platform
+        )
     return tuple(visible)

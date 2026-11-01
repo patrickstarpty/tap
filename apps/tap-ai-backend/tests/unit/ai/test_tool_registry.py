@@ -9,9 +9,15 @@ def test_registry_lists_built_in_tools() -> None:
     from tap.modules.ai.domain.tools import TOOL_REGISTRY, known_tool_ids
 
     assert known_tool_ids() == frozenset(
-        {"knowledge.search", "knowledge.answer", "graph.relations", "insights.query"}
+        {
+            "knowledge.search",
+            "knowledge.answer",
+            "graph.relations",
+            "insights.query",
+            "skill.activate",
+        }
     )
-    assert len(TOOL_REGISTRY) == 4
+    assert len(TOOL_REGISTRY) == 5
     required_tool_ids = {"knowledge.search", "knowledge.answer"}
     for tool_id, definition in TOOL_REGISTRY.items():
         assert definition.tool_id == tool_id
@@ -22,21 +28,81 @@ def test_registry_lists_built_in_tools() -> None:
         assert definition.required is (tool_id in required_tool_ids)
 
 
-def test_registry_has_four_tools_with_wire_names() -> None:
-    from tap.modules.ai.domain.tools import TOOL_REGISTRY, required_tool_ids
+def test_registry_has_five_tools_with_wire_names() -> None:
+    from tap.modules.ai.domain.tools import TOOL_REGISTRY, platform_tool_ids, required_tool_ids
 
     assert list(TOOL_REGISTRY) == [
         "knowledge.search",
         "knowledge.answer",
         "graph.relations",
         "insights.query",
+        "skill.activate",
     ]
     assert TOOL_REGISTRY["knowledge.search"].wire_name == "knowledge_search"
     assert TOOL_REGISTRY["knowledge.answer"].wire_name == "knowledge_answer"
     assert TOOL_REGISTRY["graph.relations"].wire_name == "graph_relations"
     assert TOOL_REGISTRY["insights.query"].wire_name == "insights_query"
+    assert TOOL_REGISTRY["skill.activate"].wire_name == "skill_activate"
     assert TOOL_REGISTRY["knowledge.answer"].model_callable is False
     assert required_tool_ids("knowledge.answer") == {"knowledge.search", "knowledge.answer"}
+    assert platform_tool_ids() == frozenset({"skill.activate"})
+
+
+def test_skill_activate_definition() -> None:
+    from tap.modules.ai.domain.tools import TOOL_REGISTRY
+
+    definition = TOOL_REGISTRY["skill.activate"]
+    assert definition.platform is True
+    assert definition.required is False
+    assert definition.default_enabled is True
+    assert definition.model_callable is True
+    assert definition.tasks == frozenset({"knowledge.answer"})
+    assert definition.input_schema == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name"],
+        "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 128}},
+    }
+    assert "only" in definition.descriptions["en"]
+    assert all(
+        not other.platform
+        for tool_id, other in TOOL_REGISTRY.items()
+        if tool_id != "skill.activate"
+    )
+
+
+def test_skill_activate_bypasses_agent_allowlist() -> None:
+    from tap.modules.ai.domain.tools import visible_tool_ids
+
+    assert visible_tool_ids(
+        agent_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+        relations_available=True,
+        insights_available=True,
+        skills_available=True,
+    ) == ("knowledge.search", "skill.activate")
+    assert visible_tool_ids(
+        agent_allowlist=None,
+        relations_available=True,
+        insights_available=True,
+        skills_available=True,
+    ) == ("knowledge.search", "graph.relations", "insights.query", "skill.activate")
+
+
+def test_skill_activate_hidden_without_skills() -> None:
+    from tap.modules.ai.domain.tools import visible_tool_ids
+
+    for allowlist in (None, frozenset({"knowledge.search", "skill.activate"})):
+        assert "skill.activate" not in visible_tool_ids(
+            agent_allowlist=allowlist,
+            relations_available=True,
+            insights_available=True,
+        )
+        assert "skill.activate" not in visible_tool_ids(
+            agent_allowlist=allowlist,
+            relations_available=True,
+            insights_available=True,
+            skills_available=False,
+        )
 
 
 def test_visible_tools_respect_agent_allowlist_and_availability() -> None:

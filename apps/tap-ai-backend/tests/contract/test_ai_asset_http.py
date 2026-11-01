@@ -158,7 +158,9 @@ def test_tool_catalog_defaults_to_english_and_supports_zh_locale() -> None:
     assert default.status_code == english.status_code == chinese.status_code == 200
     assert default.json() == english.json()
 
-    expected_tool_ids = sorted(TOOL_REGISTRY)
+    expected_tool_ids = sorted(
+        tool_id for tool_id, definition in TOOL_REGISTRY.items() if not definition.platform
+    )
     english_body = english.json()
     assert sorted(item["toolId"] for item in english_body["items"]) == expected_tool_ids
     for item in english_body["items"]:
@@ -176,6 +178,28 @@ def test_tool_catalog_defaults_to_english_and_supports_zh_locale() -> None:
         assert item["description"] == definition.descriptions["zh"]
 
     assert denied.status_code == 403
+
+
+def test_tools_listing_excludes_platform_tools() -> None:
+    from tap.modules.ai.domain.tools import platform_tool_ids
+
+    authority = _Authority()
+    app = create_app(
+        HttpServices(
+            asset_catalog=_Assets(),
+            scope=VALIDATION_SCOPE,
+            scope_provider=authority,
+            authorization_policy=authority,
+        )
+    )
+    client = TestClient(app)
+
+    for locale in ("en", "zh"):
+        response = client.get(f"/api/v1/projects/tapper-demo/ai/tools?locale={locale}")
+        assert response.status_code == 200
+        tool_ids = {item["toolId"] for item in response.json()["items"]}
+        assert "skill.activate" in platform_tool_ids()
+        assert tool_ids.isdisjoint(platform_tool_ids())
 
 
 def test_tool_catalog_returns_relation_and_insights_tools() -> None:

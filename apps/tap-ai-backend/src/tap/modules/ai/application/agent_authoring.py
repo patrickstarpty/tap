@@ -28,7 +28,7 @@ from tap.modules.ai.domain.assets import (
     text_digest,
 )
 from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor, schema_digest
-from tap.modules.ai.domain.tools import known_tool_ids, required_tool_ids
+from tap.modules.ai.domain.tools import known_tool_ids, platform_tool_ids, required_tool_ids
 
 _AGENT_TASK = "knowledge.answer"
 # Authoring (Task 6) has no per-Agent custom output-schema field — every
@@ -354,13 +354,14 @@ class AgentAuthoringService:
         # (defaults to `[]`) — union the registry's required ids in before
         # validating, so an empty/partial draft still succeeds. An unknown
         # id the caller did supply is not swept away by this and still
-        # fails the upper-bound check below.
+        # fails the upper-bound check below. Platform tools are offered
+        # outside the allowlist, so listing one is rejected too.
         required = required_tool_ids(_AGENT_TASK)
         tool_ids = frozenset(draft.tool_ids) | required
-        if not (required <= tool_ids <= known_tool_ids()):
+        if not (required <= tool_ids <= known_tool_ids() - platform_tool_ids()):
             raise AgentAuthoringRejected(
                 "agent_tool_allowlist_invalid",
-                "toolIds must include every required tool and only known tool ids",
+                "toolIds must include every required tool and only known, non-platform tool ids",
             )
         bound_skill_ids: list[str] = []
         for revision_id in draft.skill_revision_ids:

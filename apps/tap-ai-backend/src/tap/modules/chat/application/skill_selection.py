@@ -12,10 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from tap.modules.ai.domain.assets import AiAgentRevision, AssetRevisionStatus, SkillRevision
-
-#: A single turn's combined Skill instruction text (template + attached references)
-#: may not exceed this many bytes (Global Constraints: "单轮 Skill 文本...合计 ≤ 96 KB").
-SKILL_TURN_BUDGET_BYTES = 96 * 1024
+from tap.modules.ai.domain.skill_activation import SKILL_TURN_BUDGET_BYTES, skill_text_bytes
 
 
 class SkillBudgetExceeded(Exception):
@@ -34,11 +31,6 @@ class SkillBudgetExceeded(Exception):
 class SkillSelection:
     applied: tuple[SkillRevision, ...]
     notices: tuple[str, ...]
-
-
-def _skill_text_bytes(skill: SkillRevision) -> int:
-    body = (skill.instruction_template or "") + (getattr(skill, "attached_references", None) or "")
-    return len(body.encode("utf-8"))
 
 
 def merge_skill_selection(
@@ -82,7 +74,7 @@ def merge_skill_selection(
         if task not in candidate.applicable_tasks:
             notices.append(f"skill_inapplicable:{revision_id}")
             continue
-        total_bytes += _skill_text_bytes(candidate)
+        total_bytes += skill_text_bytes(candidate)
         applied.append(candidate)
 
     if total_bytes > SKILL_TURN_BUDGET_BYTES:

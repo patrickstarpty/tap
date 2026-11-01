@@ -40,5 +40,7 @@ async def list_tools(locale: Literal["en", "zh"] | None = Query(default=None)) -
                 default_enabled=definition.default_enabled,
             )
             for definition in TOOL_REGISTRY.values()
+            # Platform tools are not Agent-selectable, so they are not listed.
+            if not definition.platform
         ]
     )
