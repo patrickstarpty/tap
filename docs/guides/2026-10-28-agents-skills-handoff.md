@@ -9,7 +9,7 @@
 | V2.1 Agent 团队视图 | 工程完成；2026-10-28 两轮改动已合入并推送 `origin/develop`（`845d1c68`）：审查修复、分析平台式面板 v2、TAP 品牌与完整模块导航、香港语料数据重建、英文版演示文档 |
 | 演示数据 | 只用香港公开语料（8 份产品小册子、2 份理赔表、3 份合成流程文档）；真实运行 178 轮 + 仿真历史 397 次，核对 252 项一致；脚本与清理命令在 `~/tap-synthetic-2026-10-28/`（见交接文档第 2–4 节） |
 | 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；Test Case Designer、Automation Script Writer、Claims FAQ Helper 的提示词还需再修订一轮（已派 Opus，结果未提交时见 `git status`） |
-| Skills 模块 | "Skill 名册/团队"方向已否决；改为 Skill 库 + 自动激活（第 3 节），是否连运行时一起做待定；spec 未写 |
+| Skills 模块 | 方向定为 Skill Hub（不绑定、分阶段）；spec 已写待审阅：[Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md) |
 | 业务验证（spec 7.4） | 未完成，仍需真实使用一周 |
 
 ## 2. 真实 Agent 名册（进行中）
@@ -44,7 +44,7 @@
 - 统计口径（已确认）：激活次数（自动/手动）、使用者数、满意度为主；成本、耗时为次要、不分摊（同步 worker 给 trace 加 `skill:<skill_id>` 标签）。
 - 不做：安全扫描与信任分级、外部 Hub 同步/从 URL 导入、团队/负责人/组织架构。
 
-**待产品负责人决定**：这一版是否把"自动激活"一起做（库 + 运行时，才是 Hub 的用法），还是先做库页面与统计、保留现有绑定。决定后在新会话按 superpowers brainstorming 流程写 `docs/superpowers/specs/2026-10-28-skill-library-design.md`，再出计划由 Opus 实施。
+产品负责人 2026-11-01 决定：不绑定，按 Skill Hub 来做，功能大就分阶段。spec 已写：[Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)（第 1 阶段：库 + 自动激活 + 绑定迁移 + 用量；第 2 阶段：来源与版本；第 3 阶段：信任与共享），待产品负责人审阅后用 writing-plans 出计划、Opus 实施。
 
 ## 4. 环境与操作要点
 
@@ -64,6 +64,6 @@
 | Agent 名册第 3 轮提示词修订 | 下一会话 | 审查 Opus 对 Test Case Designer、Automation Script Writer、Claims FAQ Helper 的修订与重测结果，更新名册文档后提交 |
 | 名册验证暴露的产品问题 | 开发 | 1) 回答输出上限 2048 token，长回答直接失败；2) 带引用标记的表格行被 `parse_inline_answer` 删除；3) 英文问题检索不到中文流程文档（多文档时被挤出）；4) 对话请求不带 `insightsReportRefs`，`insights.query` 在对话中不可用且拒答无说明；5) 回答正文不进入对话历史，追问轮看不到上一轮生成的内容，Agent 之间无法在同一会话接力；6) 证据标签 `S1` 泄漏到正文与代码注释。建议进入路线图 V2 的 LangGraph 收尾或单独排期 |
 | 重拍团队页截图 | 下一会话 | 名册就绪后更新演示文档第 1.3 节的团队总览与组织架构图截图 |
-| Skills 模块 spec | 下一会话 | 第 3 节的决定落定后写 spec、出计划、Opus 实施 |
+| Skill Hub 计划与实施 | 下一会话 | 产品负责人审阅 spec 后，用 writing-plans 出第 1 阶段计划，Opus 实施，人工审查 |
 | 业务验证一周 | 负责人 | spec 7.4；完成后把路线图 V2.1 改为完成 |
 | 清理验证数据 | 负责人 | `~/tap-synthetic-2026-10-28/cleanup.py synthetic|real` |
