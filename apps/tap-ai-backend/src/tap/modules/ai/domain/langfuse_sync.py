@@ -58,6 +58,9 @@ class TraceBundle:
     calls: tuple[CallRecord, ...]
     agent_key: str | None = None
     turn_outcome: str | None = None
+    # Distinct ids of the Skills the Turn used, ascending; only for a
+    # `turn.request`-rooted trace, so each Turn counts one run per Skill.
+    skill_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

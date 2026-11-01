@@ -30,6 +30,7 @@ from tap.modules.ai.domain.langfuse_sync import (
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import turn_input_snapshot
 from tap.modules.chat.adapters.mysql_feedback import answer_feedback
+from tap.modules.chat.adapters.mysql_skill_activations import turn_skill_activation
 from tap.platform.telemetry.schema import (
     langfuse_sync_cursor,
     langfuse_sync_failure,
@@ -256,6 +257,7 @@ class MysqlLangfuseSyncStore:
             conversation_id: str | None = None
             agent_key: str | None = None
             turn_outcome: str | None = None
+            skill_ids: tuple[str, ...] = ()
             if turn_id is not None:
                 turn_row = (
                     await session.execute(
@@ -290,6 +292,21 @@ class MysqlLangfuseSyncStore:
                             agent_key = (
                                 found_agent_id if found_agent_id is not None else UNKNOWN_AGENT_KEY
                             )
+                        skill_ids = tuple(
+                            (
+                                await session.execute(
+                                    select(turn_skill_activation.c.skill_id)
+                                    .where(
+                                        turn_skill_activation.c.project_id == root["project_id"],
+                                        turn_skill_activation.c.turn_id == turn_id,
+                                    )
+                                    .distinct()
+                                    .order_by(turn_skill_activation.c.skill_id.asc())
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
 
         spans = tuple(_span_record(row) for row in span_rows)
         calls = tuple(_call_record(row) for row in call_rows)
@@ -304,6 +321,7 @@ class MysqlLangfuseSyncStore:
             calls=calls,
             agent_key=agent_key,
             turn_outcome=turn_outcome,
+            skill_ids=skill_ids,
         )
 
     async def load_feedback(self, feedback_id: str) -> FeedbackRecord | None:

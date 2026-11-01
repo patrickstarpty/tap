@@ -824,6 +824,116 @@ def test_unknown_revision_tags_unknown(owned_project_mysql: IsolatedMysql) -> No
     asyncio.run(scenario())
 
 
+async def _insert_used_skills(
+    connection: AsyncConnection, *, turn_id: str, uses: list[tuple[str, str]]
+) -> None:
+    """One `skill` row and one `turn_skill_activation` row per `(skill_id, mode)`."""
+    from tests.integration.test_skill_hub_store import _insert_activation, _insert_skill
+
+    for skill_id, mode in uses:
+        await _insert_skill(connection, VALIDATION_SCOPE, skill_id)
+        await _insert_activation(
+            connection,
+            VALIDATION_SCOPE,
+            turn_id=turn_id,
+            skill_id=skill_id,
+            mode=mode,
+            activated_at=_T0,
+        )
+
+
+def test_load_trace_reads_frozen_and_auto_skill_ids(owned_project_mysql: IsolatedMysql) -> None:
+    """A `turn.request`-rooted trace carries every Skill its Turn used --
+    frozen (`manual`/`pinned`) and `auto` alike -- sorted ascending."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_id = uuid4().hex
+            turn_id = f"turn-{uuid4().hex[:8]}"
+            chat_id = f"chat-{uuid4().hex[:8]}"
+            suffix = uuid4().hex[:6]
+            manual, pinned, auto = f"s-m-{suffix}", f"s-a-{suffix}", f"s-z-{suffix}"
+            async with engine.begin() as connection:
+                await _insert_conversation_and_turn(connection, turn_id=turn_id, chat_id=chat_id)
+                await _insert_turn_input_snapshot(
+                    connection, turn_id=turn_id, agent_revision_id=None
+                )
+                await _insert_used_skills(
+                    connection,
+                    turn_id=turn_id,
+                    uses=[(manual, "manual"), (auto, "auto"), (pinned, "pinned")],
+                )
+                root_span_id = uuid4().hex[:16]
+                await _insert_span(
+                    connection,
+                    trace_id=trace_id,
+                    span_id=root_span_id,
+                    recorded_at=_T0,
+                    turn_id=turn_id,
+                    name="turn.request",
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=trace_id,
+                    span_id=uuid4().hex[:16],
+                    parent_span_id=root_span_id,
+                    recorded_at=_T0,
+                    started_at=_T0 + timedelta(milliseconds=1),
+                    turn_id=turn_id,
+                    name="turn.execute",
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            bundle = await store.load_trace(trace_id)
+            assert bundle is not None
+            assert bundle.skill_ids == (pinned, manual, auto)
+            assert bundle.agent_key == "tapper_default"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_standalone_execute_root_gets_no_skill_ids(owned_project_mysql: IsolatedMysql) -> None:
+    """Only a `turn.request` root counts a Skill run; a trace rooted at
+    `turn.execute` for the same Turn must not, or runs would be overcounted."""
+
+    async def scenario() -> None:
+        engine, sessions = create_engine_and_session_factory(
+            owned_project_database_url(owned_project_mysql)
+        )
+        try:
+            trace_id = uuid4().hex
+            turn_id = f"turn-{uuid4().hex[:8]}"
+            chat_id = f"chat-{uuid4().hex[:8]}"
+            async with engine.begin() as connection:
+                await _insert_conversation_and_turn(connection, turn_id=turn_id, chat_id=chat_id)
+                await _insert_used_skills(
+                    connection, turn_id=turn_id, uses=[(f"s-{uuid4().hex[:8]}", "auto")]
+                )
+                await _insert_span(
+                    connection,
+                    trace_id=trace_id,
+                    span_id=uuid4().hex[:16],
+                    recorded_at=_T0,
+                    turn_id=turn_id,
+                    name="turn.execute",
+                )
+
+            store = MysqlLangfuseSyncStore(sessions)
+            bundle = await store.load_trace(trace_id)
+            assert bundle is not None
+            assert bundle.turn_id == turn_id
+            assert bundle.skill_ids == ()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_failures_roundtrip(owned_project_mysql: IsolatedMysql) -> None:
     async def scenario() -> None:
         engine, sessions = create_engine_and_session_factory(

@@ -139,6 +139,7 @@ def to_langfuse_trace(
         tags = (*tags, f"agent:{bundle.agent_key}")
     if bundle.turn_outcome is not None:
         tags = (*tags, f"outcome:{bundle.turn_outcome}")
+    tags = (*tags, *(f"skill:{skill_id}" for skill_id in sorted(set(bundle.skill_ids))))
     return LangfuseTrace(
         id=bundle.trace_id,
         name=root.name if root is not None else bundle.trace_id,

@@ -86,6 +86,7 @@ def bundle(
     calls: tuple[CallRecord, ...] = (),
     agent_key: str | None = None,
     turn_outcome: str | None = None,
+    skill_ids: tuple[str, ...] = (),
 ) -> TraceBundle:
     return TraceBundle(
         trace_id=trace_id,
@@ -98,6 +99,7 @@ def bundle(
         calls=calls,
         agent_key=agent_key,
         turn_outcome=turn_outcome,
+        skill_ids=skill_ids,
     )
 
 
@@ -258,6 +260,52 @@ def test_terminal_turn_gets_outcome_tag():
 def test_running_turn_has_no_outcome_tag():
     t = to_langfuse_trace(
         bundle(project_id="proj-1", turn_outcome=None), ExportRedactor(), environment="local"
+    )
+    assert t.tags == ("project:proj-1",)
+
+
+def test_turn_trace_gets_one_skill_tag_per_used_skill():
+    t = to_langfuse_trace(
+        bundle(
+            project_id="proj-1",
+            agent_key="agent-42",
+            turn_outcome="completed",
+            skill_ids=("skill-b", "skill-a", "skill-b"),
+        ),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == (
+        "project:proj-1",
+        "agent:agent-42",
+        "outcome:completed",
+        "skill:skill-a",
+        "skill:skill-b",
+    )
+
+
+def test_trace_without_skills_has_no_skill_tag():
+    t = to_langfuse_trace(
+        bundle(project_id="proj-1", agent_key="tapper_default", turn_outcome="completed"),
+        ExportRedactor(),
+        environment="local",
+    )
+    assert t.tags == ("project:proj-1", "agent:tapper_default", "outcome:completed")
+    assert not any(tag.startswith("skill:") for tag in t.tags)
+
+
+def test_job_trace_has_no_skill_tag():
+    t = to_langfuse_trace(
+        bundle(
+            project_id="proj-1",
+            turn_id=None,
+            conversation_id=None,
+            job_id="job-1",
+            agent_key=None,
+            turn_outcome=None,
+        ),
+        ExportRedactor(),
+        environment="local",
     )
     assert t.tags == ("project:proj-1",)
 
