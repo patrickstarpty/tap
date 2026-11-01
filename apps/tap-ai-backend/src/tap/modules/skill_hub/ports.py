@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal, Protocol
 
 from tap.modules.ai.domain.skill_metadata import ActivationMode, OriginKind, SkillCategory
@@ -128,3 +129,23 @@ class SkillHubStore(Protocol):
         `event` in the same transaction. Raises `LookupError` when the Skill
         is not in this Project."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRuntimeStats:
+    """Secondary metrics of the runs that used one Skill (spec 3): a run
+    using several Skills counts once for each of them."""
+
+    skill_id: str
+    runs: int
+    failures: int
+    latency_total_ms: int
+    cost_usd: Decimal
+
+
+class SkillRuntimeMetrics(Protocol):
+    """Runtime (Langfuse-backed) per-Skill stats over a period, by the
+    `skill:<skill_id>` trace tags. Raises `RuntimeMetricsUnavailable` when
+    the backend cannot answer."""
+
+    async def skill_stats(self, project_id: str, period: Period) -> list[SkillRuntimeStats]: ...
