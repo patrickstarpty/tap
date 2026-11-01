@@ -256,6 +256,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/ai/agents/{agent_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Agent Skills */
+        put: operations["ai_set_agent_skills"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/agents/{revision_id}": {
         parameters: {
             query?: never;
@@ -1771,9 +1788,16 @@ export interface components {
             defaultModelAlias?: string | null;
             /** Description */
             description: string;
+            /** Excludedskillids */
+            excludedSkillIds?: string[];
             /** Name */
             name: string;
-            /** Skillrevisionids */
+            /** Pinnedskillids */
+            pinnedSkillIds?: string[];
+            /**
+             * Skillrevisionids
+             * @deprecated
+             */
             skillRevisionIds?: string[];
             /** Systeminstruction */
             systemInstruction: string;
@@ -1798,14 +1822,28 @@ export interface components {
             defaultModelAlias?: string | null;
             /** Description */
             description: string;
+            /** Excludedskillids */
+            excludedSkillIds?: string[];
             /** Name */
             name: string;
-            /** Skillrevisionids */
+            /** Pinnedskillids */
+            pinnedSkillIds?: string[];
+            /**
+             * Skillrevisionids
+             * @deprecated
+             */
             skillRevisionIds?: string[];
             /** Systeminstruction */
             systemInstruction: string;
             /** Toolids */
             toolIds?: string[];
+        };
+        /** AgentSkillsRequest */
+        AgentSkillsRequest: {
+            /** Excludedskillids */
+            excludedSkillIds: string[];
+            /** Pinnedskillids */
+            pinnedSkillIds: string[];
         };
         /** AgentTeamFeedbackResolveRequest */
         AgentTeamFeedbackResolveRequest: {
@@ -2258,8 +2296,11 @@ export interface components {
             description?: string | null;
             /** Displayname */
             displayName: string;
+            /** Excludedskillids */
+            excludedSkillIds?: string[];
             /**
              * Hasskillupdates
+             * @deprecated
              * @default false
              */
             hasSkillUpdates?: boolean;
@@ -2267,6 +2308,8 @@ export interface components {
             isLatest: boolean;
             /** Outputschemadigest */
             outputSchemaDigest: string;
+            /** Pinnedskillids */
+            pinnedSkillIds?: string[];
             /** Revisionid */
             revisionId: string;
             /** Skillrevisionids */
@@ -2313,8 +2356,11 @@ export interface components {
             description?: string | null;
             /** Displayname */
             displayName: string;
+            /** Excludedskillids */
+            excludedSkillIds?: string[];
             /**
              * Hasskillupdates
+             * @deprecated
              * @default false
              */
             hasSkillUpdates?: boolean;
@@ -2322,6 +2368,8 @@ export interface components {
             isLatest: boolean;
             /** Outputschemadigest */
             outputSchemaDigest: string;
+            /** Pinnedskillids */
+            pinnedSkillIds?: string[];
             /** Revisionid */
             revisionId: string;
             /** Skillrevisionids */
@@ -5362,6 +5410,8 @@ export interface components {
         SkillDraftRequest: {
             /** Applicabletasks */
             applicableTasks?: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[] | null;
+            /** Category */
+            category?: ("test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other") | null;
             /** Description */
             description: string;
             /** Instructions */
@@ -5430,6 +5480,8 @@ export interface components {
         SkillImportSelection: {
             /** Asnewrevisionof */
             asNewRevisionOf?: string | null;
+            /** Category */
+            category?: ("test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other") | null;
             /** Root */
             root: string;
         };
@@ -5446,6 +5498,8 @@ export interface components {
             applicableTasks?: ("knowledge.answer" | "test-plan.generate" | "automation.generate")[] | null;
             /** Baserevisionid */
             baseRevisionId: string;
+            /** Category */
+            category?: ("test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other") | null;
             /** Description */
             description: string;
             /** Instructions */
@@ -5463,6 +5517,8 @@ export interface components {
             attachedReferences?: string | null;
             /** Builtin */
             builtIn: boolean;
+            /** Category */
+            category?: ("test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other") | null;
             /** Contentdigest */
             contentDigest: string;
             /** Description */
@@ -5493,6 +5549,8 @@ export interface components {
              * @enum {string}
              */
             status: "enabled" | "disabled";
+            /** Versionlabel */
+            versionLabel?: string | null;
         };
         /** SkillRevisionPage */
         SkillRevisionPage: {
@@ -5507,6 +5565,11 @@ export interface components {
             assetId: string;
             /** Builtin */
             builtIn: boolean;
+            /**
+             * Category
+             * @default null
+             */
+            category?: ("test-design" | "automation" | "knowledge" | "analysis" | "writing" | "other") | null;
             /** Contentdigest */
             contentDigest: string;
             /**
@@ -5532,6 +5595,11 @@ export interface components {
              * @enum {string}
              */
             status: "enabled" | "disabled";
+            /**
+             * Versionlabel
+             * @default null
+             */
+            versionLabel?: string | null;
         };
         /** SourceAccepted */
         SourceAccepted: {
@@ -7688,6 +7756,87 @@ export interface operations {
                 };
             };
             /** @description Agent draft rejected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Built-in agent is immutable */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillProblem"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_set_agent_skills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentSkillsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionDetail"];
+                };
+            };
+            /** @description Agent skills rejected */
             400: {
                 headers: {
                     [name: string]: unknown;

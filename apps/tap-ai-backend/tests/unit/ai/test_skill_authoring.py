@@ -8,7 +8,9 @@ behavior is covered separately in the isolated integration test.
 from __future__ import annotations
 
 import hashlib
+import io
 import re
+import zipfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +24,7 @@ from tap.modules.ai.application.skill_authoring import (
     SkillDraft,
     SkillImportRecord,
     TextUpload,
+    ZipUpload,
     _deterministic_id,
     _file_identity,
 )
@@ -68,8 +71,11 @@ class _FakeCatalog:
         # plain RuntimeError, simulating a DB write failure unrelated to any
         # revision conflict.
         self._fail_inserts = fail_inserts
+        self.skill_events: list = []
 
-    async def insert_skill_revision(self, revision, *, base_revision_id, file_object_refs=None):
+    async def insert_skill_revision(
+        self, revision, *, base_revision_id, file_object_refs=None, skill_event=None
+    ):
         if self._fail_inserts > 0:
             self._fail_inserts -= 1
             raise RuntimeError("simulated database failure")
@@ -78,18 +84,20 @@ class _FakeCatalog:
         if latest != base_revision_id:
             raise RevisionConflict()
         history.append(revision)
+        self.skill_events.append(skill_event)
         for file in revision.files:
             ref = (file_object_refs or {}).get(file.relative_path)
             if ref is not None:
                 self._file_refs[(revision.revision_id, file.relative_path)] = ref
         return revision
 
-    async def set_asset_enabled(self, kind, asset_id, enabled):
+    async def set_asset_enabled(self, kind, asset_id, enabled, *, skill_event=None):
         history = self._skills.get(asset_id)
         if not history:
             raise LookupError(asset_id)
         status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
         history[-1] = replace(history[-1], status=status)
+        self.skill_events.append(skill_event)
 
     async def list_revisions(self, kind, asset_id):
         return tuple(self._skills.get(asset_id, ()))
@@ -750,3 +758,198 @@ async def test_open_file_maps_missing_object_to_clean_rejection() -> None:
     with pytest.raises(SkillPackageRejected) as excinfo:
         await service.open_file(VALIDATION_SCOPE, revision.revision_id, "SKILL.md")
     assert excinfo.value.code == "skill_path_rejected"
+
+
+# -- Skill Hub metadata and maintenance events ----------------------------
+
+_CATEGORIZED_SKILL_MD = (
+    "---\n"
+    "name: zipped-skill\n"
+    "description: A zipped skill with Skill Hub metadata.\n"
+    "metadata:\n"
+    "  category: automation\n"
+    "  version: '1.2.0'\n"
+    "---\n"
+    "\n"
+    "Zipped body.\n"
+)
+
+
+def _zip(files: dict[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, text in files.items():
+            archive.writestr(name, text)
+    return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_import_records_zip_origin_and_frontmatter_category() -> None:
+    service, catalog, _, box = _service()
+    upload = ZipUpload(
+        data=_zip({"zipped-skill/SKILL.md": _CATEGORIZED_SKILL_MD}), filename="skills.zip"
+    )
+    preview = await service.stage_import(VALIDATION_SCOPE, upload=upload)
+    # The scanner strips the archive's single top-level directory.
+    assert [skill.root for skill in preview.skills] == [""]
+
+    # A frontmatter category in the closed set wins over the form's choice.
+    (revision,) = await service.commit_import(
+        VALIDATION_SCOPE,
+        preview.import_id,
+        (ImportSelection(root="", category="writing"),),
+    )
+
+    assert revision.category == "automation"
+    assert revision.version_label == "1.2.0"
+    assert revision.origin_kind == "zip"
+    assert revision.origin_ref == "skills.zip"
+    assert revision.origin_imported_at == box[0]
+    # Creating a Skill records no maintenance event.
+    assert catalog.skill_events == [None]
+
+    # An idempotent replay returns the same metadata.
+    (again,) = await service.commit_import(
+        VALIDATION_SCOPE,
+        preview.import_id,
+        (ImportSelection(root="", category="writing"),),
+    )
+    assert (again.category, again.version_label, again.origin_kind, again.origin_ref) == (
+        "automation",
+        "1.2.0",
+        "zip",
+        "skills.zip",
+    )
+
+
+@pytest.mark.asyncio
+async def test_paste_import_without_category_uses_selection_or_other() -> None:
+    service, _, _, _ = _service()
+    chosen = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=TextUpload(text="---\nname: chosen-skill\ndescription: d.\n---\n\nBody.\n"),
+    )
+    defaulted = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=TextUpload(text="---\nname: plain-skill\ndescription: d.\n---\n\nBody.\n"),
+    )
+
+    (with_selection,) = await service.commit_import(
+        VALIDATION_SCOPE, chosen.import_id, (ImportSelection(root="", category="knowledge"),)
+    )
+    (without,) = await service.commit_import(
+        VALIDATION_SCOPE, defaulted.import_id, (ImportSelection(root=""),)
+    )
+
+    assert with_selection.category == "knowledge"
+    assert without.category == "other"
+    for revision in (with_selection, without):
+        assert revision.origin_kind == "paste"
+        assert revision.origin_ref is None
+        assert revision.version_label is None
+
+
+@pytest.mark.asyncio
+async def test_files_import_records_files_origin_with_root() -> None:
+    service, _, _, _ = _service()
+    preview = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=FilesUpload(files={"demo-skill/SKILL.md": _SKILL_MD.encode("utf-8")}),
+    )
+
+    (revision,) = await service.commit_import(
+        VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="demo-skill"),)
+    )
+
+    assert revision.origin_kind == "files"
+    assert revision.origin_ref == "demo-skill"
+
+
+@pytest.mark.asyncio
+async def test_authored_skill_takes_draft_category_and_authored_origin() -> None:
+    service, _, _, _ = _service()
+
+    revision = await service.create_authored(
+        VALIDATION_SCOPE,
+        SkillDraft(
+            name="drafted-skill", description="d.", instructions="Body.", category="analysis"
+        ),
+    )
+
+    assert revision.category == "analysis"
+    assert revision.origin_kind == "authored"
+    assert revision.origin_ref is None
+    assert revision.origin_imported_at is None
+
+
+@pytest.mark.asyncio
+async def test_revise_skill_passes_revised_event() -> None:
+    service, catalog, _, box = _service()
+    created = await service.create_authored(
+        VALIDATION_SCOPE,
+        SkillDraft(
+            name="evented-skill", description="v1.", instructions="Body.", category="writing"
+        ),
+    )
+
+    revised = await service.revise(
+        VALIDATION_SCOPE,
+        created.asset_id,
+        created.revision_id,
+        # Category only changes through the profile endpoint, never a revise.
+        SkillDraft(name="evented-skill", description="v2.", instructions="Body.", category="other"),
+    )
+
+    assert revised.category == "writing"
+    assert catalog.skill_events[0] is None
+    event = catalog.skill_events[-1]
+    assert event is not None
+    assert event.kind == "revised"
+    assert event.skill_id == created.asset_id
+    assert event.revision_id == revised.revision_id
+    assert event.project_id == VALIDATION_SCOPE.project_id
+    assert event.actor_id == VALIDATION_SCOPE.actor_id
+    assert event.occurred_at == box[0]
+    assert event.event_id.startswith("sevt-")
+
+    # An imported new revision of an existing Skill is a revise too.
+    preview = await service.stage_import(
+        VALIDATION_SCOPE,
+        upload=TextUpload(text="---\nname: evented-skill\ndescription: v3.\n---\n\nBody.\n"),
+    )
+    (imported,) = await service.commit_import(
+        VALIDATION_SCOPE,
+        preview.import_id,
+        (ImportSelection(root="", as_new_revision_of=created.asset_id),),
+    )
+    assert imported.category == "writing"
+    imported_event = catalog.skill_events[-1]
+    assert imported_event is not None
+    assert imported_event.kind == "revised"
+    assert imported_event.revision_id == imported.revision_id
+
+
+@pytest.mark.asyncio
+async def test_disable_enable_skill_pass_events_only_on_change() -> None:
+    service, catalog, _, _ = _service()
+    created = await service.create_authored(
+        VALIDATION_SCOPE, SkillDraft(name="toggled-skill", description="d.", instructions="Body.")
+    )
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+    assert catalog.skill_events[-1] is None
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+    disabled = catalog.skill_events[-1]
+    assert disabled is not None
+    assert disabled.kind == "disabled"
+    assert disabled.skill_id == created.asset_id
+    assert disabled.revision_id is None
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+    assert catalog.skill_events[-1] is None
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+    enabled = catalog.skill_events[-1]
+    assert enabled is not None
+    assert enabled.kind == "enabled"

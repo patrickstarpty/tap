@@ -496,38 +496,115 @@ def test_revision_history_unknown_agent_is_not_found() -> None:
     assert response.headers["content-type"].startswith("application/problem+json")
 
 
-def test_has_skill_updates_becomes_true_after_skill_revision() -> None:
+def _seed_skill(catalog: _FakeCatalog, *, asset_id: str, revision_id: str, **overrides) -> None:
+    fields = {
+        "revision_id": revision_id,
+        "asset_id": asset_id,
+        "display_name": f"{asset_id}-name",
+        "scope": VALIDATION_SCOPE,
+        "content_digest": _digest(f"{revision_id}-content"),
+        "instruction_template_digest": _digest(f"{revision_id}-instructions"),
+        "applicable_tasks": frozenset({"knowledge.answer"}),
+        "instruction_template": f"{revision_id}-instructions",
+        "source_kind": "authored",
+    }
+    fields.update(overrides)
+    catalog.seed_skill(SkillRevision(**fields))
+
+
+def test_has_skill_updates_is_always_false() -> None:
     client, catalog = _app()
-    catalog.seed_skill(
-        SkillRevision(
-            revision_id="skill-rev-1",
-            asset_id="skill-1",
-            display_name="demo-skill",
-            scope=VALIDATION_SCOPE,
-            content_digest=_digest("skill-content"),
-            instruction_template_digest=_digest("skill-instructions"),
-            applicable_tasks=frozenset({"knowledge.answer"}),
-            instruction_template="skill-instructions",
-            source_kind="authored",
-        )
-    )
+    _seed_skill(catalog, asset_id="skill-1", revision_id="skill-rev-1")
     created = _create_agent(client, skillRevisionIds=["skill-rev-1"])
     assert created["hasSkillUpdates"] is False
+    assert created["pinnedSkillIds"] == ["skill-1"]
 
-    catalog.seed_skill(
-        SkillRevision(
-            revision_id="skill-rev-2",
-            asset_id="skill-1",
-            display_name="demo-skill",
-            scope=VALIDATION_SCOPE,
-            content_digest=_digest("skill-content-v2"),
-            instruction_template_digest=_digest("skill-instructions-v2"),
-            applicable_tasks=frozenset({"knowledge.answer"}),
-            instruction_template="skill-instructions-v2",
-            source_kind="authored",
-            adopted_from_revision_id="skill-rev-1",
-        )
+    # A newer Skill revision is no longer an "update": pinned Skills always
+    # load their latest enabled revision.
+    _seed_skill(
+        catalog,
+        asset_id="skill-1",
+        revision_id="skill-rev-2",
+        adopted_from_revision_id="skill-rev-1",
     )
 
     refreshed = client.get(f"{BASE}/agents/{created['revisionId']}")
-    assert refreshed.json()["hasSkillUpdates"] is True
+    assert refreshed.json()["hasSkillUpdates"] is False
+
+
+# -- PUT /agents/{agentId}/skills ------------------------------------------
+
+
+def test_put_agent_skills_returns_new_revision() -> None:
+    client, catalog = _app()
+    _seed_skill(catalog, asset_id="skill-1", revision_id="skill-rev-1")
+    _seed_skill(catalog, asset_id="skill-2", revision_id="skill-rev-2")
+    created = _create_agent(client)
+    assert created["pinnedSkillIds"] == []
+    assert created["excludedSkillIds"] == []
+
+    response = client.put(
+        f"{BASE}/agents/{created['agentId']}/skills",
+        json={"pinnedSkillIds": ["skill-1"], "excludedSkillIds": ["skill-2"]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["revisionId"] != created["revisionId"]
+    assert body["agentId"] == created["agentId"]
+    assert body["isLatest"] is True
+    assert body["pinnedSkillIds"] == ["skill-1"]
+    assert body["excludedSkillIds"] == ["skill-2"]
+    assert body["systemInstruction"] == created["systemInstruction"]
+    history = client.get(f"{BASE}/agents/{created['agentId']}/revisions").json()["items"]
+    assert [item["revisionId"] for item in history] == [created["revisionId"], body["revisionId"]]
+
+
+def test_put_agent_skills_rejects_pinned_and_excluded_overlap() -> None:
+    client, catalog = _app()
+    _seed_skill(catalog, asset_id="skill-1", revision_id="skill-rev-1")
+    created = _create_agent(client)
+
+    response = client.put(
+        f"{BASE}/agents/{created['agentId']}/skills",
+        json={"pinnedSkillIds": ["skill-1"], "excludedSkillIds": ["skill-1"]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "agent_skill_conflict"
+
+
+def test_put_agent_skills_requires_write_permission() -> None:
+    client, _catalog = _app(allowed=frozenset({"ai.agents.read"}))
+
+    response = client.put(
+        f"{BASE}/agents/agent-1/skills", json={"pinnedSkillIds": [], "excludedSkillIds": []}
+    )
+
+    assert response.status_code == 403
+
+
+def test_put_agent_skills_unknown_agent_is_not_found() -> None:
+    client, _catalog = _app()
+
+    response = client.put(
+        f"{BASE}/agents/unknown-agent/skills", json={"pinnedSkillIds": [], "excludedSkillIds": []}
+    )
+
+    assert response.status_code == 404
+
+
+def test_skill_revision_ids_marked_deprecated_in_openapi() -> None:
+    client, _catalog = _app()
+
+    document = client.app.openapi()
+    schemas = document["components"]["schemas"]
+    draft = schemas["AgentDraftRequest"]["properties"]
+    assert draft["skillRevisionIds"]["deprecated"] is True
+    assert draft["pinnedSkillIds"]["maxItems"] == 64
+    assert draft["excludedSkillIds"]["maxItems"] == 64
+    summary = schemas["AiAgentRevisionSummary"]["properties"]
+    assert summary["hasSkillUpdates"]["deprecated"] is True
+    assert {"pinnedSkillIds", "excludedSkillIds"} <= set(summary)
+    operation = document["paths"]["/api/v1/projects/{project_id}/ai/agents/{agent_id}/skills"]
+    assert operation["put"]["operationId"] == "ai_set_agent_skills"

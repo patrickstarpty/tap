@@ -53,6 +53,16 @@ class ModelCatalogPage(ContractModel):
     items: Annotated[list[ModelCatalogItem], Field(max_length=32)]
 
 
+# Skill Hub's closed category set (mirrors `skill_metadata.SKILL_CATEGORIES`).
+SkillCategoryName = Literal[
+    "test-design", "automation", "knowledge", "analysis", "writing", "other"
+]
+_SkillIdList = Annotated[
+    list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+    Field(max_length=64),
+]
+
+
 class AiAgentRevisionSummary(ContractModel):
     revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
@@ -76,7 +86,10 @@ class AiAgentRevisionSummary(ContractModel):
     default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
         None
     )
-    has_skill_updates: StrictBool = False
+    # Always `false` since Skill Hub: pinned Skills load their latest revision.
+    has_skill_updates: StrictBool = Field(default=False, deprecated=True)
+    pinned_skill_ids: _SkillIdList = Field(default_factory=list)
+    excluded_skill_ids: _SkillIdList = Field(default_factory=list)
 
 
 class AiAgentRevisionDetail(AiAgentRevisionSummary):
@@ -101,10 +114,12 @@ class AgentDraftRequest(ContractModel):
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
     system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=40_000)]
+    # Deprecated: each revision is mapped to its Skill and merged into
+    # `pinned_skill_ids`.
     skill_revision_ids: Annotated[
         list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
         Field(max_length=64),
-    ] = Field(default_factory=list)
+    ] = Field(default_factory=list, deprecated=True)
     tool_ids: Annotated[
         list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
         Field(max_length=32),
@@ -112,10 +127,17 @@ class AgentDraftRequest(ContractModel):
     default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
         None
     )
+    pinned_skill_ids: _SkillIdList = Field(default_factory=list)
+    excluded_skill_ids: _SkillIdList = Field(default_factory=list)
 
 
 class AgentReviseRequest(AgentDraftRequest):
     base_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+
+
+class AgentSkillsRequest(ContractModel):
+    pinned_skill_ids: _SkillIdList
+    excluded_skill_ids: _SkillIdList
 
 
 class ToolDescriptor(ContractModel):
@@ -145,6 +167,9 @@ class SkillRevisionSummary(ContractModel):
     built_in: StrictBool
     status: Literal["enabled", "disabled"]
     is_latest: StrictBool
+    category: SkillCategoryName | None = None
+    # SemVer from frontmatter `metadata.version`; absent means "show r<n>".
+    version_label: Annotated[str, Field(strict=True, min_length=1, max_length=32)] | None = None
 
 
 class SkillRevisionPage(ContractModel):
@@ -202,6 +227,9 @@ class SkillImportSelection(ContractModel):
     as_new_revision_of: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = (
         None
     )
+    # For a new Skill without a frontmatter `metadata.category`; ignored when
+    # attaching a revision to an existing Skill.
+    category: SkillCategoryName | None = None
 
 
 class SkillImportCommitRequest(ContractModel):
@@ -224,6 +252,8 @@ class SkillDraftRequest(ContractModel):
         ]
         | None
     ) = None
+    # Only read when creating a Skill; a revise keeps the Skill's category.
+    category: SkillCategoryName | None = None
 
 
 class SkillReviseRequest(SkillDraftRequest):

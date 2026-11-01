@@ -192,3 +192,159 @@ async def test_empty_file_and_unsafe_path_round_trip(owned_project_mysql) -> Non
         assert opened_tricky.data == b"tricky content"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_skill_revision_and_event_commit_together(owned_project_mysql) -> None:
+    """A maintenance event is written in the revision's own transaction: when
+    the event insert fails, the revision is not stored either."""
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.skill_authoring import SkillAuthoringService, SkillDraft
+    from tap.modules.ai.domain.assets import RevisionConflict
+    from tap.modules.skill_hub.adapters.mysql import skill_maintenance_event
+    from tap.modules.skill_hub.domain.models import new_skill_event
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+        service = SkillAuthoringService(catalog, _FakeObjectStore(), scope=VALIDATION_SCOPE)
+        created = await service.create_authored(
+            VALIDATION_SCOPE,
+            SkillDraft(name="evented-skill", description="v1.", instructions="Body."),
+        )
+        revised = await service.revise(
+            VALIDATION_SCOPE,
+            created.asset_id,
+            created.revision_id,
+            SkillDraft(name="evented-skill", description="v2.", instructions="Body."),
+        )
+        async with sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(skill_maintenance_event).where(
+                            skill_maintenance_event.c.skill_id == created.asset_id
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert [(row["kind"], row["revision_id"]) for row in rows] == [
+            ("revised", revised.revision_id)
+        ]
+        assert rows[0]["actor_id"] == VALIDATION_SCOPE.actor_id
+
+        # Reusing the stored event id makes the event insert fail.
+        duplicate = replace(
+            new_skill_event(
+                VALIDATION_SCOPE,
+                created.asset_id,
+                "revised",
+                revision_id="skill-rev-never-stored",
+                now=datetime.now(timezone.utc),
+            ),
+            event_id=rows[0]["event_id"],
+        )
+        rejected = replace(
+            revised,
+            revision_id="skill-rev-never-stored",
+            adopted_from_revision_id=revised.revision_id,
+            files=(),
+        )
+        with pytest.raises(RevisionConflict):
+            await catalog.insert_skill_revision(
+                rejected, base_revision_id=revised.revision_id, skill_event=duplicate
+            )
+        history = await catalog.list_revisions("skill", created.asset_id)
+        assert [item.revision_id for item in history] == [
+            created.revision_id,
+            revised.revision_id,
+        ]
+
+        # Toggling writes `disabled` once; a repeat toggle writes nothing.
+        await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+        await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+        async with sessions() as session:
+            kinds = (
+                await session.scalars(
+                    select(skill_maintenance_event.c.kind)
+                    .where(skill_maintenance_event.c.skill_id == created.asset_id)
+                    .order_by(skill_maintenance_event.c.occurred_at)
+                )
+            ).all()
+        assert kinds == ["revised", "disabled"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_new_skill_owner_defaults_to_creator(owned_project_mysql) -> None:
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog, skill, skill_revision
+    from tap.modules.ai.application.skill_authoring import (
+        ImportSelection,
+        SkillAuthoringService,
+        TextUpload,
+    )
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+        service = SkillAuthoringService(catalog, _FakeObjectStore(), scope=VALIDATION_SCOPE)
+        text = (
+            "---\nname: owned-skill\ndescription: d.\n"
+            "metadata:\n  category: knowledge\n  version: '0.3.0'\n---\n\nBody.\n"
+        )
+        preview = await service.stage_import(VALIDATION_SCOPE, upload=TextUpload(text=text))
+        (revision,) = await service.commit_import(
+            VALIDATION_SCOPE, preview.import_id, (ImportSelection(root="", category="writing"),)
+        )
+
+        async with sessions() as session:
+            owner = (
+                (await session.execute(select(skill).where(skill.c.skill_id == revision.asset_id)))
+                .mappings()
+                .one()
+            )
+            stored = (
+                (
+                    await session.execute(
+                        select(skill_revision).where(
+                            skill_revision.c.revision_id == revision.revision_id
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert owner["owner_actor_id"] == VALIDATION_SCOPE.actor_id
+        assert owner["owner_assigned_at"] is not None
+        assert owner["category"] == "knowledge"
+        assert stored["version_label"] == "0.3.0"
+        assert stored["origin_kind"] == "paste"
+        assert stored["origin_ref"] is None
+        assert stored["origin_imported_at"] is not None
+
+        persisted = next(
+            item
+            for item in await catalog.list_skills(VALIDATION_SCOPE)
+            if item.asset_id == revision.asset_id
+        )
+        assert persisted.category == "knowledge"
+        assert persisted.version_label == "0.3.0"
+        assert persisted.origin_kind == "paste"
+    finally:
+        await engine.dispose()

@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
-from typing import Literal, Mapping
+from typing import Literal, Mapping, get_args
 
 from tap.modules.access.domain.context import ProjectScopeContext, require_identifier
+from tap.modules.ai.domain.skill_metadata import SKILL_CATEGORIES, OriginKind, SkillCategory
 from tap.modules.ai.domain.tools import known_tool_ids
 
 _TASKS = frozenset({"knowledge.answer", "test-plan.generate", "automation.generate"})
@@ -20,6 +22,7 @@ _SOURCE_KINDS = frozenset({"imported", "authored", "built_in"})
 _FILE_CATEGORIES = frozenset({"skill", "reference", "script", "asset", "other"})
 _MAX_DESCRIPTION_LENGTH = 1024
 _MAX_SYSTEM_INSTRUCTION_BYTES = 32 * 1024
+_ORIGIN_KINDS = frozenset(get_args(OriginKind))
 
 
 class AssetRevisionStatus(StrEnum):
@@ -73,6 +76,18 @@ def _source_kind(value: object) -> None:
         raise AssetRevisionRejected()
 
 
+def _identities(values: object, name: str) -> None:
+    if type(values) is not tuple:
+        raise AssetRevisionRejected()
+    for value in values:
+        _identity(value, name)
+
+
+def _optional_text(value: object, max_length: int) -> None:
+    if value is not None and (not isinstance(value, str) or not value or len(value) > max_length):
+        raise AssetRevisionRejected()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AiAgentRevision:
     revision_id: str
@@ -89,8 +104,14 @@ class AiAgentRevision:
     output_schema_json: str | None = None
     description: str | None = None
     source_kind: AssetSourceKind = "built_in"
+    # Deprecated, read-only since Skill Hub (spec 4): superseded by
+    # `pinned_skill_ids`.
     skill_revision_ids: tuple[str, ...] = ()
     default_model_alias: str | None = None
+    # Skill Hub (spec 1.2): Skill ids (not revisions) always loaded with this
+    # Agent, and Skill ids kept out of its auto-activation catalog.
+    pinned_skill_ids: tuple[str, ...] = ()
+    excluded_skill_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -136,10 +157,9 @@ class AiAgentRevision:
                 raise AssetRevisionRejected()
         _description(self.description)
         _source_kind(self.source_kind)
-        if type(self.skill_revision_ids) is not tuple:
-            raise AssetRevisionRejected()
-        for skill_revision_id in self.skill_revision_ids:
-            _identity(skill_revision_id, "skill_revision_ids[]")
+        _identities(self.skill_revision_ids, "skill_revision_ids[]")
+        _identities(self.pinned_skill_ids, "pinned_skill_ids[]")
+        _identities(self.excluded_skill_ids, "excluded_skill_ids[]")
         if self.default_model_alias is not None and (
             not isinstance(self.default_model_alias, str)
             or not self.default_model_alias.strip()
@@ -203,6 +223,16 @@ class SkillRevision:
     frontmatter: Mapping[str, object] | None = None
     package_digest: str | None = None
     files: tuple[SkillFile, ...] = ()
+    # Skill Hub (spec 1.1). `category` is the Skill's (not the revision's):
+    # read back from `skill.category`; on a first insert it seeds that column.
+    # `None` on an in-memory revision means "not chosen": the catalog then
+    # falls back to frontmatter, else `other`.
+    category: SkillCategory | None = None
+    version_label: str | None = None
+    # `None` means "derive from `source_kind`" (imports read as `unknown`).
+    origin_kind: OriginKind | None = None
+    origin_ref: str | None = None
+    origin_imported_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -242,4 +272,14 @@ class SkillRevision:
         if self.package_digest is not None:
             _digest(self.package_digest)
         if type(self.files) is not tuple or any(type(file) is not SkillFile for file in self.files):
+            raise AssetRevisionRejected()
+        if self.category is not None and self.category not in SKILL_CATEGORIES:
+            raise AssetRevisionRejected()
+        _optional_text(self.version_label, 32)
+        if self.origin_kind is not None and self.origin_kind not in _ORIGIN_KINDS:
+            raise AssetRevisionRejected()
+        _optional_text(self.origin_ref, 512)
+        if self.origin_imported_at is not None and not isinstance(
+            self.origin_imported_at, datetime
+        ):
             raise AssetRevisionRejected()

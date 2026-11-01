@@ -428,32 +428,21 @@ async def test_outdated_skill_ids_is_empty_when_bound_revision_is_latest() -> No
 
 
 @pytest.mark.asyncio
-async def test_outdated_skill_ids_flags_superseded_revision() -> None:
+async def test_outdated_skill_ids_is_always_empty() -> None:
+    # Skill Hub (spec 1.2): Agents always use the latest enabled revision of a
+    # pinned Skill, so a superseded or disabled bound revision is no longer
+    # an "update" to offer.
     service, catalog = _service()
     catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
     agent = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
-
-    # A new Skill revision supersedes the one the Agent is bound to.
     catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-2"))
-
-    outdated = await service.outdated_skill_ids(VALIDATION_SCOPE, agent)
-
-    assert outdated == frozenset({"skill-rev-1"})
-
-
-@pytest.mark.asyncio
-async def test_outdated_skill_ids_flags_disabled_bound_revision() -> None:
-    service, catalog = _service()
-    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
-    agent = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
-
     catalog._skills["skill-1"][-1] = replace(
         catalog._skills["skill-1"][-1], status=AssetRevisionStatus.DISABLED
     )
 
     outdated = await service.outdated_skill_ids(VALIDATION_SCOPE, agent)
 
-    assert outdated == frozenset({"skill-rev-1"})
+    assert outdated == frozenset()
 
 
 @pytest.mark.asyncio
@@ -467,3 +456,117 @@ async def test_set_asset_enabled_rejects_an_event_on_a_skill() -> None:
     event = new_event(scope, "skill-1", "disabled", now=datetime.now(UTC))
     with pytest.raises(AssetRevisionRejected):
         await catalog.set_asset_enabled("skill", "skill-1", False, event=event)
+
+
+# -- pinned / excluded Skills (Skill Hub) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_maps_deprecated_skill_revision_ids_to_pinned() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    catalog.seed_skill(_skill_revision(asset_id="skill-2", revision_id="skill-rev-2"))
+    catalog.seed_skill(_skill_revision(asset_id="skill-3", revision_id="skill-rev-3"))
+
+    revision = await service.create(
+        VALIDATION_SCOPE,
+        _draft(
+            skill_revision_ids=("skill-rev-1", "skill-rev-2"),
+            pinned_skill_ids=("skill-2",),
+            excluded_skill_ids=("skill-3",),
+        ),
+    )
+
+    assert revision.pinned_skill_ids == ("skill-2", "skill-1")
+    assert revision.excluded_skill_ids == ("skill-3",)
+
+
+@pytest.mark.asyncio
+async def test_pinned_and_excluded_overlap_rejected() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+
+    with pytest.raises(AgentAuthoringRejected) as direct:
+        await service.create(
+            VALIDATION_SCOPE, _draft(pinned_skill_ids=("skill-1",), excluded_skill_ids=("skill-1",))
+        )
+    assert direct.value.code == "agent_skill_conflict"
+
+    # The deprecated binding counts as pinned too.
+    with pytest.raises(AgentAuthoringRejected) as mapped:
+        await service.create(
+            VALIDATION_SCOPE,
+            _draft(skill_revision_ids=("skill-rev-1",), excluded_skill_ids=("skill-1",)),
+        )
+    assert mapped.value.code == "agent_skill_conflict"
+    assert catalog.received_events == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_pinned_skill_rejected() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+
+    with pytest.raises(AgentAuthoringRejected) as pinned:
+        await service.create(VALIDATION_SCOPE, _draft(pinned_skill_ids=("no-such-skill",)))
+    assert pinned.value.code == "agent_skill_unavailable"
+
+    with pytest.raises(AgentAuthoringRejected) as excluded:
+        await service.create(VALIDATION_SCOPE, _draft(excluded_skill_ids=("no-such-skill",)))
+    assert excluded.value.code == "agent_skill_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_set_skills_creates_revision_with_revised_event() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    catalog.seed_skill(_skill_revision(asset_id="skill-2", revision_id="skill-rev-2"))
+    created = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+    # The base revision was written by another member of the project.
+    catalog._agents[created.asset_id][-1] = replace(
+        created, scope=replace(VALIDATION_SCOPE, actor_id="another-actor")
+    )
+
+    revised = await service.set_skills(
+        VALIDATION_SCOPE, created.asset_id, ("skill-2",), ("skill-1",)
+    )
+
+    assert revised.scope == VALIDATION_SCOPE
+
+    assert revised.revision_id != created.revision_id
+    assert revised.asset_id == created.asset_id
+    assert revised.adopted_from_revision_id == created.revision_id
+    assert revised.pinned_skill_ids == ("skill-2",)
+    assert revised.excluded_skill_ids == ("skill-1",)
+    # The deprecated binding is superseded by the explicit pinned set.
+    assert revised.skill_revision_ids == ()
+    for field in (
+        "display_name",
+        "description",
+        "system_instruction",
+        "tool_allowlist",
+        "default_model_alias",
+        "status",
+        "source_kind",
+    ):
+        assert getattr(revised, field) == getattr(created, field)
+    history = await catalog.list_revisions("agent", created.asset_id)
+    assert [item.revision_id for item in history] == [created.revision_id, revised.revision_id]
+    event = catalog.received_events[-1]
+    assert event is not None
+    assert event.kind == "revised"
+    assert event.agent_id == created.asset_id
+    assert event.revision_id == revised.revision_id
+
+
+@pytest.mark.asyncio
+async def test_set_skills_on_built_in_rejected() -> None:
+    service, catalog = _service()
+    built_in = await service.create(VALIDATION_SCOPE, _draft(name="built-in-agent"))
+    catalog._agents[built_in.asset_id][-1] = replace(built_in, source_kind="built_in")
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.set_skills(VALIDATION_SCOPE, built_in.asset_id, (), ())
+
+    assert excinfo.value.code == "agent_built_in_immutable"
+    assert len(await catalog.list_revisions("agent", built_in.asset_id)) == 1

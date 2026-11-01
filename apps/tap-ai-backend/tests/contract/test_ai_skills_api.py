@@ -77,7 +77,9 @@ class _FakeCatalog:
 
     # -- write: SkillAuthoringCatalog ------------------------------------
 
-    async def insert_skill_revision(self, revision, *, base_revision_id, file_object_refs=None):
+    async def insert_skill_revision(
+        self, revision, *, base_revision_id, file_object_refs=None, skill_event=None
+    ):
         history = self._skills.setdefault(revision.asset_id, [])
         latest = history[-1].revision_id if history else None
         if latest != base_revision_id:
@@ -89,7 +91,7 @@ class _FakeCatalog:
                 self._file_refs[(revision.revision_id, file.relative_path)] = ref
         return revision
 
-    async def set_asset_enabled(self, kind, asset_id, enabled):
+    async def set_asset_enabled(self, kind, asset_id, enabled, *, skill_event=None):
         from dataclasses import replace
 
         from tap.modules.ai.domain.assets import AssetRevisionRejected
@@ -693,6 +695,56 @@ def test_import_requires_write_permission() -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_skill_summary_carries_category_and_version_label() -> None:
+    client, _catalog = _app()
+    text = (
+        "---\nname: versioned-skill\ndescription: d.\nmetadata:\n  version: '2.0.1'\n---\n\nbody\n"
+    )
+    preview = client.post(f"{BASE}/skills/imports", json={"text": text}).json()
+
+    committed = client.post(
+        f"{BASE}/skills/imports/{preview['importId']}/commit",
+        json={"selections": [{"root": preview["skills"][0]["root"], "category": "analysis"}]},
+    )
+
+    assert committed.status_code == 200, committed.text
+    (revision,) = committed.json()["revisions"]
+    assert revision["category"] == "analysis"
+    assert revision["versionLabel"] == "2.0.1"
+    (listed,) = client.get(f"{BASE}/skills").json()["items"]
+    assert listed["category"] == "analysis"
+    assert listed["versionLabel"] == "2.0.1"
+
+
+def test_create_skill_accepts_a_category() -> None:
+    client, _catalog = _app()
+
+    response = client.post(
+        f"{BASE}/skills",
+        json={
+            "name": "categorized-skill",
+            "description": "d.",
+            "instructions": "Do it.",
+            "category": "test-design",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["category"] == "test-design"
+    assert response.json()["versionLabel"] is None
+
+
+def test_create_skill_rejects_an_unknown_category() -> None:
+    client, _catalog = _app()
+
+    response = client.post(
+        f"{BASE}/skills",
+        json={"name": "bad-skill", "description": "d.", "instructions": "x", "category": "ops"},
+    )
+
+    assert response.status_code == 422
 
 
 # -- synthetic coverage of every registered skill error code ------------

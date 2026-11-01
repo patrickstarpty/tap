@@ -103,6 +103,8 @@ def test_agent_and_skill_catalog_is_project_scoped_read_only_and_omits_content()
                 "skillRevisionIds": [],
                 "defaultModelAlias": None,
                 "hasSkillUpdates": False,
+                "pinnedSkillIds": [],
+                "excludedSkillIds": [],
             }
         ]
     }

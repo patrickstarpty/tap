@@ -6,16 +6,18 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal, TypedDict, cast
 
 from sqlalchemy import (
     Boolean,
     Column,
     ForeignKeyConstraint,
     Integer,
+    Select,
     String,
     Table,
     UniqueConstraint,
+    and_,
     func,
     select,
     update,
@@ -38,9 +40,13 @@ from tap.modules.ai.domain.assets import (
     SkillRevision,
 )
 from tap.modules.ai.domain.skill_metadata import (
+    OriginKind,
+    SkillCategory,
     category_from_frontmatter,
     version_label_from_frontmatter,
 )
+from tap.modules.skill_hub.adapters.mysql import insert_skill_maintenance_event
+from tap.modules.skill_hub.domain.models import SkillMaintenanceEvent
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 
@@ -272,27 +278,69 @@ skill_import = Table(
 )
 
 
+# `skill_revision` rows carry their Skill's `category` (a `skill` column) so
+# every read can return it without a second query.
+_skill_revision_with_category = skill_revision.join(
+    skill,
+    and_(
+        skill.c.project_id == skill_revision.c.project_id,
+        skill.c.skill_id == skill_revision.c.skill_id,
+    ),
+)
+
+
+def _select_skill_revisions() -> Select[Any]:
+    return select(skill_revision, skill.c.category).select_from(_skill_revision_with_category)
+
+
+def _new_skill_category(revision: SkillRevision) -> SkillCategory:
+    """A first-time `skill` row's category: the revision's chosen one, else
+    frontmatter's, else `other`."""
+    return revision.category or category_from_frontmatter(revision.frontmatter) or "other"
+
+
 def _new_skill_values(
     revision: SkillRevision, scope: ProjectScopeContext, now: datetime
 ) -> dict[str, object]:
-    """Skill Hub columns of a first-time `skill` row: the creator owns it and
-    the category comes from frontmatter (`other` otherwise)."""
+    """Skill Hub columns of a first-time `skill` row: the creator owns it."""
     return {
-        "category": category_from_frontmatter(revision.frontmatter) or "other",
+        "category": _new_skill_category(revision),
         "owner_actor_id": scope.actor_id,
         "owner_assigned_at": now,
     }
 
 
-def _skill_revision_origin_values(revision: SkillRevision, now: datetime) -> dict[str, object]:
-    """Skill Hub columns of a `skill_revision` row. Imports do not record how
-    the package was uploaded yet, so they read as `unknown` (as backfilled)."""
+class _OriginColumns(TypedDict):
+    version_label: str | None
+    origin_kind: OriginKind
+    origin_ref: str | None
+    origin_imported_at: datetime | None
+
+
+def _skill_revision_origin_values(revision: SkillRevision, now: datetime) -> _OriginColumns:
+    """Skill Hub columns of a `skill_revision` row. A revision that does not
+    say how it was imported (seeds, legacy staged imports) reads as `unknown`,
+    as backfilled; authored/built-in revisions keep their source kind."""
     imported = revision.source_kind == "imported"
+    origin_kind = cast(
+        OriginKind, revision.origin_kind or ("unknown" if imported else revision.source_kind)
+    )
+    origin_imported_at = revision.origin_imported_at
+    if origin_imported_at is None and imported:
+        origin_imported_at = now
     return {
-        "version_label": version_label_from_frontmatter(revision.frontmatter),
-        "origin_kind": "unknown" if imported else revision.source_kind,
-        "origin_imported_at": now if imported else None,
+        "version_label": revision.version_label
+        or version_label_from_frontmatter(revision.frontmatter),
+        "origin_kind": origin_kind,
+        "origin_ref": revision.origin_ref,
+        "origin_imported_at": origin_imported_at,
     }
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class MysqlAssetCatalog:
@@ -444,6 +492,8 @@ class MysqlAssetCatalog:
                 output_schema_digest=revision.output_schema_digest,
                 output_schema_json=revision.output_schema_json,
                 skill_revision_ids=list(revision.skill_revision_ids),
+                pinned_skill_ids=list(revision.pinned_skill_ids),
+                excluded_skill_ids=list(revision.excluded_skill_ids),
                 default_model_alias=revision.default_model_alias,
                 status=revision.status.value,
                 adopted_from_revision_id=revision.adopted_from_revision_id,
@@ -576,7 +626,7 @@ class MysqlAssetCatalog:
             )
             rows = (
                 await session.execute(
-                    select(skill_revision)
+                    _select_skill_revisions()
                     .join(
                         latest_numbers,
                         (skill_revision.c.skill_id == latest_numbers.c.skill_id)
@@ -663,7 +713,7 @@ class MysqlAssetCatalog:
             conditions.append(skill_revision.c.status == AssetRevisionStatus.ENABLED.value)
         async with self._sessions() as session:
             row = (
-                (await session.execute(select(skill_revision).where(*conditions)))
+                (await session.execute(_select_skill_revisions().where(*conditions)))
                 .mappings()
                 .one_or_none()
             )
@@ -711,6 +761,8 @@ class MysqlAssetCatalog:
             value.system_instruction,
             value.output_schema_json,
             value.skill_revision_ids,
+            value.pinned_skill_ids,
+            value.excluded_skill_ids,
             value.default_model_alias,
             value.adopted_from_revision_id,
         )
@@ -791,6 +843,10 @@ class MysqlAssetCatalog:
             source_kind=row["source_kind"],
             skill_revision_ids=tuple(row["skill_revision_ids"] or ()),
             default_model_alias=row["default_model_alias"],
+            # NULL (rows inserted between migration 0038 and Skill Hub
+            # writes) reads as "none", like a backfilled `[]`.
+            pinned_skill_ids=tuple(row["pinned_skill_ids"] or ()),
+            excluded_skill_ids=tuple(row["excluded_skill_ids"] or ()),
         )
 
     @classmethod
@@ -815,6 +871,12 @@ class MysqlAssetCatalog:
             attached_references=row["attached_reference_text"],
             frontmatter=row["frontmatter_json"],
             package_digest=row["package_digest"],
+            # Only reads joined with `skill` carry the category.
+            category=row.get("category"),
+            version_label=row["version_label"],
+            origin_kind=row["origin_kind"],
+            origin_ref=row["origin_ref"],
+            origin_imported_at=_utc(row["origin_imported_at"]),
         )
 
     async def _skill_with_files(self, session: AsyncSession, row) -> SkillRevision:
@@ -901,10 +963,16 @@ class MysqlAssetCatalog:
         *,
         base_revision_id: str | None,
         file_object_refs: Mapping[str, str] | None = None,
+        skill_event: SkillMaintenanceEvent | None = None,
     ) -> SkillRevision:
+        """Returns the revision as stored: its Skill's actual `category` and
+        the resolved origin columns. `skill_event`, when given, is inserted
+        in the same transaction -- if it fails, the revision is not stored."""
         if not isinstance(revision, SkillRevision):
             raise AssetRevisionRejected()
         self._assert_scope(revision.scope)
+        if skill_event is not None and not isinstance(skill_event, SkillMaintenanceEvent):
+            raise AssetRevisionRejected()
         try:
             async with self._sessions.begin() as session:
                 now = datetime.now(timezone.utc)
@@ -913,7 +981,7 @@ class MysqlAssetCatalog:
                 # revision_id read and the revision_number insert below).
                 parent = (
                     await session.execute(
-                        select(skill.c.skill_id)
+                        select(skill.c.skill_id, skill.c.category)
                         .where(
                             *scope_predicates(skill, self._scope),
                             skill.c.skill_id == revision.asset_id,
@@ -921,7 +989,9 @@ class MysqlAssetCatalog:
                         .with_for_update()
                     )
                 ).one_or_none()
+                category: SkillCategory
                 if parent is None:
+                    category = _new_skill_category(revision)
                     await session.execute(
                         skill.insert().values(
                             skill_id=revision.asset_id,
@@ -931,6 +1001,11 @@ class MysqlAssetCatalog:
                             **scope_values(self._scope),
                         )
                     )
+                else:
+                    # Category only changes through the profile endpoint,
+                    # never through a new revision.
+                    category = cast(SkillCategory, parent.category)
+                origin = _skill_revision_origin_values(revision, now)
                 latest = await self._latest_revision_id(
                     session, skill_revision, "skill_id", revision.asset_id
                 )
@@ -959,7 +1034,7 @@ class MysqlAssetCatalog:
                         ),
                         package_digest=revision.package_digest,
                         applicable_tasks=sorted(revision.applicable_tasks),
-                        **_skill_revision_origin_values(revision, now),
+                        **origin,
                         status=revision.status.value,
                         adopted_from_revision_id=revision.adopted_from_revision_id,
                         created_at=now,
@@ -967,13 +1042,17 @@ class MysqlAssetCatalog:
                     )
                 )
                 await self._insert_skill_files(session, revision, file_object_refs=file_object_refs)
+                if skill_event is not None:
+                    await insert_skill_maintenance_event(session, self._scope, skill_event)
         except IntegrityError as error:
             # A residual race (e.g. two first-time creates of the same new
             # asset_id racing the parent-row insert itself, before either
             # side has a row to lock) surfaces as a unique-constraint
-            # violation rather than the clean conflict detected above.
+            # violation rather than the clean conflict detected above. Also
+            # reached when the maintenance event's insert fails: the whole
+            # transaction rolled back, so the revision is not stored either.
             raise RevisionConflict() from error
-        return revision
+        return replace(revision, category=category, **origin)
 
     async def insert_agent_revision(
         self,
@@ -1040,6 +1119,8 @@ class MysqlAssetCatalog:
                         output_schema_digest=revision.output_schema_digest,
                         output_schema_json=revision.output_schema_json,
                         skill_revision_ids=list(revision.skill_revision_ids),
+                        pinned_skill_ids=list(revision.pinned_skill_ids),
+                        excluded_skill_ids=list(revision.excluded_skill_ids),
                         default_model_alias=revision.default_model_alias,
                         status=revision.status.value,
                         adopted_from_revision_id=revision.adopted_from_revision_id,
@@ -1064,6 +1145,7 @@ class MysqlAssetCatalog:
         enabled: bool,
         *,
         event: MaintenanceEvent | None = None,
+        skill_event: SkillMaintenanceEvent | None = None,
     ) -> None:
         """Enable/disable is asset-level state (C-2): apply the target status
         to every revision of the asset, not just the latest. Otherwise an
@@ -1074,8 +1156,13 @@ class MysqlAssetCatalog:
         if kind not in ("agent", "skill"):
             raise AssetRevisionRejected()
         if event is not None and (not isinstance(event, MaintenanceEvent) or kind != "agent"):
-            # Maintenance events are Agent-only (`agent_maintenance_event.agent_id`
-            # FKs `ai_agent`); a Skill toggle carrying one is a caller bug.
+            # `agent_maintenance_event.agent_id` FKs `ai_agent`, and
+            # `skill_maintenance_event.skill_id` FKs `skill`: an event of the
+            # other asset kind is a caller bug.
+            raise AssetRevisionRejected()
+        if skill_event is not None and (
+            not isinstance(skill_event, SkillMaintenanceEvent) or kind != "skill"
+        ):
             raise AssetRevisionRejected()
         table, id_column = (
             (ai_agent_revision, "agent_id") if kind == "agent" else (skill_revision, "skill_id")
@@ -1100,6 +1187,8 @@ class MysqlAssetCatalog:
             )
             if result.rowcount >= 1 and event is not None:
                 await insert_maintenance_event(session, self._scope, event)
+            if result.rowcount >= 1 and skill_event is not None:
+                await insert_skill_maintenance_event(session, self._scope, skill_event)
 
     async def list_revisions(
         self, kind: Literal["agent", "skill"], asset_id: str
@@ -1109,12 +1198,13 @@ class MysqlAssetCatalog:
         table, id_column = (
             (ai_agent_revision, "agent_id") if kind == "agent" else (skill_revision, "skill_id")
         )
+        query = select(table) if kind == "agent" else _select_skill_revisions()
         async with self._sessions() as session:
             rows = (
                 await session.execute(
-                    select(table)
-                    .where(*scope_predicates(table, self._scope), table.c[id_column] == asset_id)
-                    .order_by(table.c.revision_number)
+                    query.where(
+                        *scope_predicates(table, self._scope), table.c[id_column] == asset_id
+                    ).order_by(table.c.revision_number)
                 )
             ).mappings()
             if kind == "agent":
@@ -1142,16 +1232,15 @@ class MysqlAssetCatalog:
                 .group_by(table.c[id_column])
                 .subquery()
             )
+            query = select(table) if table is ai_agent_revision else _select_skill_revisions()
             row = (
                 (
                     await session.execute(
-                        select(table)
-                        .join(
+                        query.join(
                             latest_by_asset,
                             (table.c[id_column] == latest_by_asset.c[id_column])
                             & (table.c.revision_number == latest_by_asset.c.max_rev),
-                        )
-                        .where(*scope_predicates(table, self._scope), table.c.display_name == name)
+                        ).where(*scope_predicates(table, self._scope), table.c.display_name == name)
                     )
                 )
                 .mappings()

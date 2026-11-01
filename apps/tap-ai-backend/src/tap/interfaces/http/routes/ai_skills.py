@@ -88,6 +88,8 @@ def _summary(value: SkillRevision, *, is_latest: bool) -> SkillRevisionSummary:
         built_in=value.source_kind == "built_in",
         status=value.status.value,
         is_latest=is_latest,
+        category=value.category,
+        version_label=value.version_label,
     )
 
 
@@ -189,7 +191,7 @@ async def _parse_skill_upload(request: Request) -> ZipUpload | FilesUpload | Tex
             _reject_upload_shape("only one archive upload is accepted")
         archive = cast(UploadFile, archive_items[0])
         data = await _bounded_skill_upload_bytes(archive, budget)
-        return ZipUpload(data=data)
+        return ZipUpload(data=data, filename=archive.filename or None)
     files: dict[str, bytes] = {}
     for item in file_items:
         if not item.filename:
@@ -352,7 +354,9 @@ async def commit_skill_import(
     request: Request, import_id: str, body: SkillImportCommitRequest
 ) -> SkillImportCommitResult:
     selections = tuple(
-        ImportSelection(root=item.root, as_new_revision_of=item.as_new_revision_of)
+        ImportSelection(
+            root=item.root, as_new_revision_of=item.as_new_revision_of, category=item.category
+        )
         for item in body.selections
     )
     revisions = await skill_authoring_service(request).commit_import(
@@ -364,13 +368,17 @@ async def commit_skill_import(
 def _draft(body: SkillDraftRequest) -> SkillDraft:
     if not body.applicable_tasks:
         return SkillDraft(
-            name=body.name, description=body.description, instructions=body.instructions
+            name=body.name,
+            description=body.description,
+            instructions=body.instructions,
+            category=body.category,
         )
     return SkillDraft(
         name=body.name,
         description=body.description,
         instructions=body.instructions,
         applicable_tasks=frozenset(body.applicable_tasks),
+        category=body.category,
     )
 
 

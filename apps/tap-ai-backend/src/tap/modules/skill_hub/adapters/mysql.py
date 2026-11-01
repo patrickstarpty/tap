@@ -6,7 +6,11 @@ from __future__ import annotations
 
 from sqlalchemy import Column, Index, String, Table
 from sqlalchemy.dialects.mysql import DATETIME
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.skill_hub.domain.models import SkillMaintenanceEvent
+from tap.platform.db.project_scope import scope_values
 from tap.platform.db.schema import augment_project_table, metadata
 
 skill_maintenance_event = Table(
@@ -28,3 +32,23 @@ Index(
     skill_maintenance_event.c.skill_id,
     skill_maintenance_event.c.occurred_at,
 )
+
+
+async def insert_skill_maintenance_event(
+    session: AsyncSession, scope: ProjectScopeContext, event: SkillMaintenanceEvent
+) -> None:
+    """The one `skill_maintenance_event` insert, run inside the caller's
+    transaction so the event and the Skill write it records commit or roll
+    back together. An `IntegrityError` here (duplicate `event_id`, or the
+    Skill FK) fails the whole transaction, never just the event."""
+    await session.execute(
+        skill_maintenance_event.insert().values(
+            event_id=event.event_id,
+            skill_id=event.skill_id,
+            kind=event.kind,
+            revision_id=event.revision_id,
+            note=event.note,
+            occurred_at=event.occurred_at,
+            **scope_values(scope),
+        )
+    )

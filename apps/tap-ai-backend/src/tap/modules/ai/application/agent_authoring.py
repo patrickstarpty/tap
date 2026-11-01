@@ -11,7 +11,7 @@ port (Task 2's ``MysqlAssetCatalog``).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Literal, Protocol, cast
 from uuid import uuid4
@@ -61,9 +61,13 @@ class AgentDraft:
     name: str
     description: str
     system_instruction: str
+    # Deprecated: each bound revision is mapped to its Skill id and merged
+    # into `pinned_skill_ids` (spec 5); still stored as given, read-only.
     skill_revision_ids: tuple[str, ...] = ()
     tool_ids: frozenset[str] = frozenset()
     default_model_alias: str | None = None
+    pinned_skill_ids: tuple[str, ...] = ()
+    excluded_skill_ids: tuple[str, ...] = ()
 
 
 class SkillLookup(Protocol):
@@ -113,25 +117,14 @@ class ModelCatalogPort(Protocol):
 async def compute_outdated_skill_ids(
     catalog: SkillLookup, scope: ProjectScopeContext, skill_revision_ids: tuple[str, ...]
 ) -> frozenset[str]:
-    """Which of an Agent's bound Skill revision ids are no longer the latest
-    (or no longer enabled) revision of their Skill.
+    """Deprecated: always empty. Since Skill Hub (spec 1.2) a pinned Skill
+    always loads its latest enabled revision, so there is no "upgrade" to
+    offer; kept so `hasSkillUpdates` stays `false` for existing callers."""
+    return frozenset()
 
-    A bound revision that is no longer resolvable at all (disabled or
-    removed) is conservatively treated as outdated: the caller cannot tell
-    whether a newer revision superseded it, but it is certainly not current.
-    """
 
-    outdated: set[str] = set()
-    for revision_id in skill_revision_ids:
-        try:
-            skill = await catalog.get_skill(scope, revision_id)
-        except AssetRevisionRejected:
-            outdated.add(revision_id)
-            continue
-        history = await catalog.list_revisions("skill", skill.asset_id)
-        if not history or history[-1].revision_id != revision_id:
-            outdated.add(revision_id)
-    return frozenset(outdated)
+def _unique(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
 
 
 class AgentAuthoringService:
@@ -195,6 +188,7 @@ class AgentAuthoringService:
             # dead-end for them. A newly-added skill id still has to be
             # enabled, same as `create`.
             tolerate_disabled_ids=frozenset(latest.skill_revision_ids),
+            tolerate_disabled_skill_ids=frozenset(latest.pinned_skill_ids),
         )
         skill_of = await self._skill_of(
             scope, set(latest.skill_revision_ids) | set(revision.skill_revision_ids)
@@ -225,6 +219,78 @@ class AgentAuthoringService:
             event = new_event(scope, agent_id, kind, now=datetime.now(UTC))
         await self._catalog.set_asset_enabled("agent", agent_id, enabled, event=event)
 
+    async def set_skills(
+        self,
+        scope: ProjectScopeContext,
+        agent_id: str,
+        pinned: tuple[str, ...],
+        excluded: tuple[str, ...],
+    ) -> AiAgentRevision:
+        """Write a new revision of the Agent that only changes its pinned and
+        excluded Skills, based on its latest revision."""
+        self._assert_scope(scope)
+        history = await self._catalog.list_revisions("agent", agent_id)
+        if not history:
+            raise AssetRevisionRejected()
+        latest = cast(AiAgentRevision, history[-1])
+        if latest.source_kind == "built_in":
+            raise AgentAuthoringRejected(
+                "agent_built_in_immutable",
+                "built-in agents cannot be revised; create a new agent instead",
+            )
+        pinned_ids, excluded_ids = _unique(tuple(pinned)), _unique(tuple(excluded))
+        await self._validate_skill_ids(
+            pinned=pinned_ids,
+            excluded=excluded_ids,
+            tolerate_disabled=frozenset(latest.pinned_skill_ids),
+        )
+        revision = replace(
+            latest,
+            revision_id=f"agent-rev-{uuid4().hex[:16]}",
+            # The writer's scope, not the base revision's creator.
+            scope=scope,
+            adopted_from_revision_id=latest.revision_id,
+            pinned_skill_ids=pinned_ids,
+            excluded_skill_ids=excluded_ids,
+            # The explicit pinned set supersedes the deprecated binding: a
+            # client still round-tripping `skillRevisionIds` must not re-pin
+            # a Skill just removed here.
+            skill_revision_ids=(),
+        )
+        event = new_event(
+            scope, agent_id, "revised", revision_id=revision.revision_id, now=datetime.now(UTC)
+        )
+        return await self._catalog.insert_agent_revision(
+            revision, base_revision_id=latest.revision_id, event=event
+        )
+
+    async def _validate_skill_ids(
+        self,
+        *,
+        pinned: tuple[str, ...],
+        excluded: tuple[str, ...],
+        tolerate_disabled: frozenset[str],
+    ) -> None:
+        """Validate pinned/excluded Skill ids: disjoint, every id a Skill of
+        this project, and a newly pinned Skill enabled. A Skill the Agent
+        already pinned tolerates having been disabled since (it is skipped
+        at Turn time), so saving is never blocked by it."""
+        if set(pinned) & set(excluded):
+            raise AgentAuthoringRejected(
+                "agent_skill_conflict", "a skill cannot be both pinned and excluded"
+            )
+        for skill_id in (*pinned, *excluded):
+            history = await self._catalog.list_revisions("skill", skill_id)
+            latest = cast(SkillRevision, history[-1]) if history else None
+            if latest is None or (
+                skill_id in pinned
+                and skill_id not in tolerate_disabled
+                and latest.status != AssetRevisionStatus.ENABLED
+            ):
+                raise AgentAuthoringRejected(
+                    "agent_skill_unavailable", f"skill {skill_id!r} is not an available skill"
+                )
+
     async def _skill_of(
         self, scope: ProjectScopeContext, skill_revision_ids: set[str]
     ) -> dict[str, str]:
@@ -252,6 +318,7 @@ class AgentAuthoringService:
         adopted_from_revision_id: str | None = None,
         status: AssetRevisionStatus = AssetRevisionStatus.ENABLED,
         tolerate_disabled_ids: frozenset[str] = frozenset(),
+        tolerate_disabled_skill_ids: frozenset[str] = frozenset(),
     ) -> AiAgentRevision:
         if not isinstance(draft, AgentDraft):
             raise AgentAuthoringRejected("agent_frontmatter_invalid", "draft must be an AgentDraft")
@@ -277,20 +344,31 @@ class AgentAuthoringService:
                 "agent_tool_allowlist_invalid",
                 "toolIds must include every required tool and only known tool ids",
             )
+        bound_skill_ids: list[str] = []
         for revision_id in draft.skill_revision_ids:
             try:
                 if revision_id in tolerate_disabled_ids:
                     # I-6: a Skill the Agent already had bound tolerates
                     # becoming disabled since -- resolve any status so a
                     # revise is never blocked by it.
-                    await self._catalog.resolve_historical_skill(scope, revision_id)
+                    bound = await self._catalog.resolve_historical_skill(scope, revision_id)
                 else:
-                    await self._catalog.get_skill(scope, revision_id)
+                    bound = await self._catalog.get_skill(scope, revision_id)
             except AssetRevisionRejected as error:
                 raise AgentAuthoringRejected(
                     "agent_skill_unavailable",
                     f"skill revision {revision_id!r} is not an enabled skill",
                 ) from error
+            bound_skill_ids.append(bound.asset_id)
+        # The deprecated binding counts as pinned (spec 5); the Skills it
+        # names were just validated above, so tolerate them here.
+        pinned_ids = _unique((*draft.pinned_skill_ids, *bound_skill_ids))
+        excluded_ids = _unique(tuple(draft.excluded_skill_ids))
+        await self._validate_skill_ids(
+            pinned=pinned_ids,
+            excluded=excluded_ids,
+            tolerate_disabled=tolerate_disabled_skill_ids | frozenset(bound_skill_ids),
+        )
         if draft.default_model_alias is not None:
             models = await self._models.list_models(scope)
             selectable = {
@@ -315,6 +393,8 @@ class AgentAuthoringService:
             description=draft.description,
             source_kind="authored",
             skill_revision_ids=tuple(draft.skill_revision_ids),
+            pinned_skill_ids=pinned_ids,
+            excluded_skill_ids=excluded_ids,
             default_model_alias=draft.default_model_alias,
             adopted_from_revision_id=adopted_from_revision_id,
             status=status,

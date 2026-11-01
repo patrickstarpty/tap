@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Request
 from tap.contracts.http import (
     AgentDraftRequest,
     AgentReviseRequest,
+    AgentSkillsRequest,
     AiAgentRevisionDetail,
     AiAgentRevisionPage,
     AiAgentRevisionSummary,
@@ -22,7 +23,7 @@ from tap.contracts.http import (
 from tap.interfaces.http.dependencies import agent_authoring_service, asset_catalog_service
 from tap.interfaces.http.problems import problem_response_metadata, skill_problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
-from tap.modules.ai.application.agent_authoring import AgentDraft, compute_outdated_skill_ids
+from tap.modules.ai.application.agent_authoring import AgentDraft
 from tap.modules.ai.domain.assets import AiAgentRevision, AssetRevisionRejected
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -34,12 +35,7 @@ _READ = Depends(project_authorization("ai.agents.read"))
 # -- serialization --------------------------------------------------------
 
 
-async def _summary(
-    request: Request, value: AiAgentRevision, *, is_latest: bool
-) -> AiAgentRevisionSummary:
-    outdated = await compute_outdated_skill_ids(
-        asset_catalog_service(request), value.scope, value.skill_revision_ids
-    )
+def _summary(value: AiAgentRevision, *, is_latest: bool) -> AiAgentRevisionSummary:
     return AiAgentRevisionSummary(
         revision_id=value.revision_id,
         asset_id=value.asset_id,
@@ -55,14 +51,16 @@ async def _summary(
         is_latest=is_latest,
         skill_revision_ids=list(value.skill_revision_ids),
         default_model_alias=value.default_model_alias,
-        has_skill_updates=bool(outdated),
+        # Deprecated, always false (Skill Hub): pinned Skills load their
+        # latest enabled revision, so there is never an update to offer.
+        has_skill_updates=False,
+        pinned_skill_ids=list(value.pinned_skill_ids),
+        excluded_skill_ids=list(value.excluded_skill_ids),
     )
 
 
-async def _detail(
-    request: Request, value: AiAgentRevision, *, is_latest: bool
-) -> AiAgentRevisionDetail:
-    summary = await _summary(request, value, is_latest=is_latest)
+def _detail(value: AiAgentRevision, *, is_latest: bool) -> AiAgentRevisionDetail:
+    summary = _summary(value, is_latest=is_latest)
     return AiAgentRevisionDetail(
         **summary.model_dump(), system_instruction=value.system_instruction
     )
@@ -79,13 +77,20 @@ async def _latest_revision_ids(request: Request, asset_ids: set[str]) -> dict[st
 
 
 def _draft(body: AgentDraftRequest) -> AgentDraft:
+    # Read the deprecated field through `model_dump`: attribute access on a
+    # `deprecated=True` field emits a DeprecationWarning on every request.
+    legacy_skill_revision_ids = body.model_dump(include={"skill_revision_ids"})[
+        "skill_revision_ids"
+    ]
     return AgentDraft(
         name=body.name,
         description=body.description,
         system_instruction=body.system_instruction,
-        skill_revision_ids=tuple(body.skill_revision_ids),
+        skill_revision_ids=tuple(legacy_skill_revision_ids),
         tool_ids=frozenset(body.tool_ids),
         default_model_alias=body.default_model_alias,
+        pinned_skill_ids=tuple(body.pinned_skill_ids),
+        excluded_skill_ids=tuple(body.excluded_skill_ids),
     )
 
 
@@ -107,7 +112,7 @@ async def list_agents(request: Request) -> AiAgentRevisionPage:
     latest = await _latest_revision_ids(request, {item.asset_id for item in items})
     return AiAgentRevisionPage(
         items=[
-            await _summary(request, item, is_latest=latest.get(item.asset_id) == item.revision_id)
+            _summary(item, is_latest=latest.get(item.asset_id) == item.revision_id)
             for item in items
         ]
     )
@@ -131,7 +136,7 @@ async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionDetail
         request.state.project_scope, revision_id
     )
     latest = await _latest_revision_ids(request, {value.asset_id})
-    return await _detail(request, value, is_latest=latest.get(value.asset_id) == value.revision_id)
+    return _detail(value, is_latest=latest.get(value.asset_id) == value.revision_id)
 
 
 @router.get(
@@ -155,7 +160,7 @@ async def list_agent_revision_history(request: Request, agent_id: str) -> AiAgen
     latest_id = revisions[-1].revision_id
     return AiAgentRevisionPage(
         items=[
-            await _summary(request, revision, is_latest=revision.revision_id == latest_id)
+            _summary(revision, is_latest=revision.revision_id == latest_id)
             for revision in revisions
         ]
     )
@@ -181,7 +186,7 @@ async def create_agent(request: Request, body: AgentDraftRequest) -> AiAgentRevi
     revision = await agent_authoring_service(request).create(
         request.state.project_scope, _draft(body)
     )
-    return await _detail(request, revision, is_latest=True)
+    return _detail(revision, is_latest=True)
 
 
 @router.post(
@@ -205,7 +210,7 @@ async def revise_agent(
     revision = await agent_authoring_service(request).revise(
         request.state.project_scope, agent_id, body.base_revision_id, _draft(body)
     )
-    return await _detail(request, revision, is_latest=True)
+    return _detail(revision, is_latest=True)
 
 
 async def _toggle_enabled(
@@ -220,7 +225,33 @@ async def _toggle_enabled(
     )
     if not revisions:
         raise AssetRevisionRejected()
-    return await _summary(request, revisions[-1], is_latest=True)
+    return _summary(revisions[-1], is_latest=True)
+
+
+@router.put(
+    "/agents/{agent_id}/skills",
+    operation_id="ai_set_agent_skills",
+    response_model=AiAgentRevisionDetail,
+    dependencies=[_WRITE],
+    responses={
+        400: skill_problem_response_metadata("Agent skills rejected"),
+        403: skill_problem_response_metadata("Built-in agent is immutable"),
+        404: problem_response_metadata("Agent unavailable"),
+        409: skill_problem_response_metadata("Revision conflict"),
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Knowledge runtime unavailable"),
+    },
+)
+async def set_agent_skills(
+    request: Request, agent_id: str, body: AgentSkillsRequest
+) -> AiAgentRevisionDetail:
+    revision = await agent_authoring_service(request).set_skills(
+        request.state.project_scope,
+        agent_id,
+        tuple(body.pinned_skill_ids),
+        tuple(body.excluded_skill_ids),
+    )
+    return _detail(revision, is_latest=True)
 
 
 @router.post(

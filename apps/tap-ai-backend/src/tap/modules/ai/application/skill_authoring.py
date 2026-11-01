@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Protocol, cast
 from uuid import uuid4
@@ -37,6 +37,17 @@ from tap.modules.ai.domain.assets import (
     SkillFile,
     SkillRevision,
     text_digest,
+)
+from tap.modules.ai.domain.skill_metadata import (
+    OriginKind,
+    SkillCategory,
+    category_from_frontmatter,
+    version_label_from_frontmatter,
+)
+from tap.modules.skill_hub.domain.models import (
+    SkillMaintenanceEvent,
+    SkillMaintenanceKind,
+    new_skill_event,
 )
 from tap.platform.storage.objects import (
     ObjectMissingError,
@@ -82,6 +93,8 @@ def _file_identity(asset_id: str, revision_id: str, relative_path: str) -> str:
 @dataclass(frozen=True, slots=True)
 class ZipUpload:
     data: bytes
+    # The uploaded archive's own name, recorded as the revision's origin.
+    filename: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +114,10 @@ SkillUpload = ZipUpload | FilesUpload | TextUpload
 class ImportSelection:
     root: str
     as_new_revision_of: str | None = None
+    # The form's choice for a new Skill; a closed-set frontmatter
+    # `metadata.category` wins, and neither means `other`. Ignored when
+    # attaching a new revision to an existing Skill.
+    category: SkillCategory | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -109,6 +126,8 @@ class SkillDraft:
     description: str
     instructions: str
     applicable_tasks: frozenset[str] = _IMPORTED_APPLICABLE_TASKS
+    # Only read when creating a Skill (see `ImportSelection.category`).
+    category: SkillCategory | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -147,10 +166,16 @@ class SkillAuthoringCatalog(Protocol):
         *,
         base_revision_id: str | None,
         file_object_refs: Mapping[str, str] | None = None,
+        skill_event: SkillMaintenanceEvent | None = None,
     ) -> SkillRevision: ...
 
     async def set_asset_enabled(
-        self, kind: Literal["agent", "skill"], asset_id: str, enabled: bool
+        self,
+        kind: Literal["agent", "skill"],
+        asset_id: str,
+        enabled: bool,
+        *,
+        skill_event: SkillMaintenanceEvent | None = None,
     ) -> None: ...
 
     async def list_revisions(
@@ -192,6 +217,50 @@ class _CommitPlan:
     base_revision_id: str | None
     revision_id: str
     status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
+    # The new Skill's category, or the existing Skill's when attaching.
+    category: SkillCategory | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ImportOrigin:
+    """How a staged import was uploaded (`preview_json["origin"]`)."""
+
+    kind: OriginKind
+    ref: str | None
+
+    def to_json(self) -> dict[str, object]:
+        return {"kind": self.kind, "ref": self.ref}
+
+    @classmethod
+    def from_preview(cls, preview_json: Mapping[str, object]) -> _ImportOrigin:
+        # Imports staged before Skill Hub carry no origin.
+        raw = preview_json.get("origin")
+        if not isinstance(raw, Mapping) or raw.get("kind") not in ("files", "zip", "paste"):
+            return cls(kind="unknown", ref=None)
+        ref = raw.get("ref")
+        return cls(
+            kind=cast(OriginKind, raw["kind"]), ref=ref if isinstance(ref, str) and ref else None
+        )
+
+    def ref_for(self, root: str) -> str | None:
+        """The upload's own name when it has one (a zip filename), else the
+        Skill's package root directory; a pasted Skill has neither."""
+        ref = self.ref or root
+        return ref[:512] if ref else None
+
+
+def _initial_category(
+    frontmatter: Mapping[str, object] | None, chosen: SkillCategory | None
+) -> SkillCategory:
+    return category_from_frontmatter(frontmatter) or chosen or "other"
+
+
+def _upload_origin(upload: SkillUpload) -> _ImportOrigin:
+    if isinstance(upload, ZipUpload):
+        return _ImportOrigin(kind="zip", ref=upload.filename or None)
+    if isinstance(upload, FilesUpload):
+        return _ImportOrigin(kind="files", ref=None)
+    return _ImportOrigin(kind="paste", ref=None)
 
 
 Clock = Callable[[], datetime]
@@ -316,7 +385,7 @@ class SkillAuthoringService:
         expires_at = now + _STAGING_TTL
         await self._catalog.create_skill_import(
             import_id=import_id,
-            preview_json={"skills": preview_entries},
+            preview_json={"skills": preview_entries, "origin": _upload_origin(upload).to_json()},
             staging_locators=staging_locators,
             expires_at=expires_at,
         )
@@ -362,10 +431,11 @@ class SkillAuthoringService:
         preview_skills = cast(list[dict[str, object]], record.preview_json["skills"])
         preview_by_root = {cast(str, entry["root"]): entry for entry in preview_skills}
         plans = await self._validate_selections(scope, import_id, preview_by_root, selections)
+        origin = _ImportOrigin.from_preview(record.preview_json)
 
         revisions: list[SkillRevision] = []
         for plan in plans:
-            revisions.append(await self._commit_one(scope, plan))
+            revisions.append(await self._commit_one(scope, plan, origin=origin, now=now))
 
         result_json = self._encode_result(revisions)
         won = await self._catalog.set_skill_import_committed(import_id, result_json)
@@ -437,6 +507,9 @@ class SkillAuthoringService:
             asset_id = selection.as_new_revision_of
             base_revision_id: str | None = None
             status = AssetRevisionStatus.ENABLED
+            category: SkillCategory | None = _initial_category(
+                cast("Mapping[str, object]", entry["frontmatter"]), selection.category
+            )
             if asset_id is not None:
                 existing_revisions = await self._catalog.list_revisions("skill", asset_id)
                 if not existing_revisions:
@@ -454,6 +527,7 @@ class SkillAuthoringService:
                 # asset disabled across an import commit rather than
                 # silently re-enabling it.
                 status = base.status
+                category = base.category
             else:
                 asset_id = deterministic_asset_id
             assert asset_id is not None
@@ -465,11 +539,19 @@ class SkillAuthoringService:
                     base_revision_id=base_revision_id,
                     revision_id=revision_id,
                     status=status,
+                    category=category,
                 )
             )
         return plans
 
-    async def _commit_one(self, scope: ProjectScopeContext, plan: _CommitPlan) -> SkillRevision:
+    async def _commit_one(
+        self,
+        scope: ProjectScopeContext,
+        plan: _CommitPlan,
+        *,
+        origin: _ImportOrigin,
+        now: datetime,
+    ) -> SkillRevision:
         entry = plan.entry
         instruction_template = cast(str, entry["body"])
         attached_reference_text = cast(str, entry["attached_reference_text"])
@@ -488,6 +570,7 @@ class SkillAuthoringService:
             )
             for file in file_entries
         )
+        frontmatter = cast("Mapping[str, object]", entry["frontmatter"])
         revision = SkillRevision(
             revision_id=plan.revision_id,
             asset_id=plan.asset_id,
@@ -500,15 +583,30 @@ class SkillAuthoringService:
             description=cast(str, entry["description"]),
             source_kind="imported",
             attached_references=attached_reference_text,
-            frontmatter=cast("Mapping[str, object]", entry["frontmatter"]),
+            frontmatter=frontmatter,
             package_digest=text_digest(combined),
             files=files,
             status=plan.status,
+            category=plan.category,
+            version_label=version_label_from_frontmatter(frontmatter),
+            origin_kind=origin.kind,
+            origin_ref=origin.ref_for(cast(str, entry["root"])),
+            origin_imported_at=now,
+        )
+        # A new revision of an existing Skill is a revise; creating one is
+        # not an event.
+        skill_event = (
+            self._event(scope, plan.asset_id, "revised", revision_id=plan.revision_id)
+            if plan.base_revision_id is not None
+            else None
         )
         file_refs = await self._promote_staged_files(plan.asset_id, plan.revision_id, file_entries)
         try:
             return await self._catalog.insert_skill_revision(
-                revision, base_revision_id=plan.base_revision_id, file_object_refs=file_refs
+                revision,
+                base_revision_id=plan.base_revision_id,
+                file_object_refs=file_refs,
+                skill_event=skill_event,
             )
         except RevisionConflict:
             # Deterministic ids (I-2) mean a concurrent or retried committer
@@ -615,6 +713,15 @@ class SkillAuthoringService:
                 "applicable_tasks": sorted(revision.applicable_tasks),
                 "status": revision.status.value,
                 "adopted_from_revision_id": revision.adopted_from_revision_id,
+                "category": revision.category,
+                "version_label": revision.version_label,
+                "origin_kind": revision.origin_kind,
+                "origin_ref": revision.origin_ref,
+                "origin_imported_at": (
+                    revision.origin_imported_at.isoformat()
+                    if revision.origin_imported_at is not None
+                    else None
+                ),
                 "files": [
                     {
                         "relative_path": file.relative_path,
@@ -650,6 +757,16 @@ class SkillAuthoringService:
                 frontmatter=item["frontmatter"],
                 package_digest=item["package_digest"],
                 files=tuple(SkillFile(**file) for file in item["files"]),
+                # Results committed before Skill Hub carry none of these.
+                category=item.get("category"),
+                version_label=item.get("version_label"),
+                origin_kind=item.get("origin_kind"),
+                origin_ref=item.get("origin_ref"),
+                origin_imported_at=(
+                    datetime.fromisoformat(item["origin_imported_at"])
+                    if item.get("origin_imported_at")
+                    else None
+                ),
             )
             for item in data
         )
@@ -665,6 +782,9 @@ class SkillAuthoringService:
             )
         asset_id = f"skill-{uuid4().hex[:16]}"
         revision, scan = self._build_authored_revision(scope, draft, asset_id=asset_id)
+        revision = replace(
+            revision, category=_initial_category(revision.frontmatter, draft.category)
+        )
         file_refs = await self._promote_authored_files(asset_id, revision.revision_id, scan)
         try:
             return await self._catalog.insert_skill_revision(
@@ -705,10 +825,16 @@ class SkillAuthoringService:
             # disabled across a revise rather than silently re-enabling it.
             status=latest.status,
         )
+        # Category only changes through the profile endpoint.
+        revision = replace(revision, category=latest.category)
+        skill_event = self._event(scope, skill_id, "revised", revision_id=revision.revision_id)
         file_refs = await self._promote_authored_files(skill_id, revision.revision_id, scan)
         try:
             return await self._catalog.insert_skill_revision(
-                revision, base_revision_id=base_revision_id, file_object_refs=file_refs
+                revision,
+                base_revision_id=base_revision_id,
+                file_object_refs=file_refs,
+                skill_event=skill_event,
             )
         except BaseException:
             await self._cleanup_promoted(file_refs)
@@ -752,6 +878,8 @@ class SkillAuthoringService:
             adopted_from_revision_id=adopted_from_revision_id,
             files=scanned.files,
             status=status,
+            version_label=version_label_from_frontmatter(manifest.frontmatter),
+            origin_kind="authored",
         )
         return revision, scan
 
@@ -782,11 +910,28 @@ class SkillAuthoringService:
         history = await self._catalog.list_revisions("skill", skill_id)
         if not history:
             raise AssetRevisionRejected()
-        if cast(SkillRevision, history[-1]).source_kind == "built_in":
+        latest = cast(SkillRevision, history[-1])
+        if latest.source_kind == "built_in":
             raise SkillPackageRejected(
                 "skill_built_in_immutable", "built-in skills cannot be disabled or enabled"
             )
-        await self._catalog.set_asset_enabled("skill", skill_id, enabled)
+        target = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
+        skill_event = (
+            self._event(scope, skill_id, "enabled" if enabled else "disabled")
+            if latest.status != target
+            else None
+        )
+        await self._catalog.set_asset_enabled("skill", skill_id, enabled, skill_event=skill_event)
+
+    def _event(
+        self,
+        scope: ProjectScopeContext,
+        skill_id: str,
+        kind: SkillMaintenanceKind,
+        *,
+        revision_id: str | None = None,
+    ) -> SkillMaintenanceEvent:
+        return new_skill_event(scope, skill_id, kind, revision_id=revision_id, now=self._clock())
 
     async def open_file(
         self, scope: ProjectScopeContext, revision_id: str, relative_path: str
