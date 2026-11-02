@@ -67,7 +67,9 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 2. 提示词装配（`modules/knowledge/adapters/litellm.py`，对话图与直答 `chat()` 路径相同）把已加载的 Skill 渲染为受信 `<skill>` 块（位于 `untrusted` 区块之前）；本轮向模型提供 `skill.activate` 时，系统提示词追加"可用 Skills"目录段（每个候选一行名称与描述）。
 3. 模型在 `model ⇄ tools` 循环中调用 `skill.activate`（参数 `name`）：执行器先按 `not_in_catalog`、`already_loaded`、`budget_count`（第 6 个自动激活）检查，加载修订后再查 `skill_disabled`（冻结后被停用）与 `budget_bytes`，拒绝以 `{"status": "rejected", "reason": <code>}` 回灌模型，Turn 继续；接受时写一行 `auto` 记录（`tool.skill.activate` span，恢复执行不重复写），工具结果只是回执，Skill 正文作为受信 Skill 块进入下一次模型调用——工具结果属不受信内容，最终无工具轮会被压平为 `untrusted.toolActivity`。
 4. 会话详情的 `ConversationTurnInputView.skillsUsed` 合并冻结与自动行，前端在回答展开中按手动/常驻/自动显示"Skills used"；Langfuse 同步给 `turn.request` trace 打 `skill:<skill_id>` 标签（见下方可观测性第 5 条），供 `skill_hub` 按 Skill 聚合运行数据。
-5. 门禁：`make quality-skill-activation`（确定性假模型，应激活/不应激活两率均 ≥ 0.80）；真实模型精度 `make quality-skill-activation-real` 为 opt-in。
+5. 评估：`make quality-skill-activation` 只校验激活夹具并确定性地为已提交的观测结果打分（不调用模型，分数不代表模型精度，不是精度门槛）；只有 opt-in 的 `make quality-skill-activation-real` 度量真实模型的激活精度（按"问题 × 候选 Skill"逐对统计，应激活与不应激活两率均 ≥ 0.80；"无应激活 Skill 的问题中有激活"的逐题数字仅供参考，不参与门槛）。
+
+第 1 阶段限制：只有进入 `tapper-chat-v2` 工具循环的 Turn（已选 Knowledge 来源且规划器路由为检索或图谱）才提供候选目录与 `skill.activate`；未选 Knowledge 或被路由为直答、澄清、停止的 Turn 经单次 `chat()` 作答，不会自动激活（手动与常驻 Skill 照常生效）。
 
 **图谱**
 

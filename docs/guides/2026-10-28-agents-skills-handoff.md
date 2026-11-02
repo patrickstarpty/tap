@@ -59,7 +59,6 @@
 - Task 15 Step 6：授权后跑 `make quality-skill-activation-real`，两率均 ≥ 0.80；结果记入本节。
 - Task 16 Step 4：`TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 跑 Task 6 smoke；`pnpm --filter @tap/ai-frontend run ui:capture` 并与改动前截图对比（`make demo-e2e` 已通过）。
 - Task 17：名册 Agent（Test Case Designer、Automation Script Writer）去常驻后用真实模型复跑，结论写入[名册](2026-10-28-agent-roster.md)第 4 节。需在 0038 已执行的演示库上进行。
-- 导入接口的 `originActorId` 字段（来源出处的导入人）留到最后一轮修复。
 - 合入前不要在共享演示库上执行 `0038_skill_hub`；整个分支合入后此限制失效。
 
 决定记录（第 1 阶段实施期间）：
@@ -69,6 +68,12 @@
 - 内置 Skill 保留启用/停用；类别、负责人与出新版本只读。
 - 目录、汇总与用量视图始终返回 `runtimeStatus: "ok"`，只有详情与导出在 Langfuse 不可达时降级。
 - `skill.activate` 是平台工具（`platform=True`），不出现在 Agent 白名单表单与 `GET /ai/tools`；旧的 `skillRevisionIds` 写入映射为常驻，`hasSkillUpdates` 恒为 false，两者标为 deprecated。
+- 来源出处的导入人 `originActorId`（终审修复轮补上）：最新修订为导入时取该修订的 `actor_id`（导入人），否则取首个修订的 `actor_id`（创建人）；详情基本信息相应显示"导入人"或"创建人"。
+- 接受的第 1 阶段风险：导入 Skill 的描述会进入受信的候选目录区段。名称受正则约束，`</skill` 已被中和，但描述中的自由文本指令在第 3 阶段扫描之前不做过滤；任何持有 `ai.skills.write` 的人写的描述都会进入每个带目录的 Turn。
+
+已知限制（第 1 阶段）：
+
+- 自动激活只在进入 `tapper-chat-v2` 工具循环的 Turn 上提供（已选 Knowledge 来源且规划器路由为检索或图谱）；未选 Knowledge 的 Turn，以及规划器路由为直答、澄清或停止的 Turn，经单次 `chat()` 作答，看不到候选目录与 `skill.activate`（手动与常驻 Skill 照常生效）。待产品负责人决定是否在第 2 阶段扩展直答路由。
 
 ## 4. 环境与操作要点
 
