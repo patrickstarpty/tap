@@ -2787,8 +2787,10 @@ describe("Tap product workspace interactions", () => {
   // created Turn; `created` captures the create request body.
   function stubPinnedAgentConversation(
     detailTurnInput: Record<string, unknown>,
+    options: { agentSkillRevisionIds?: string[] } = {},
   ) {
     const created: Array<Record<string, unknown>> = [];
+    const appended: Array<Record<string, unknown>> = [];
     const agent = {
       revisionId: "underwriting-reviewer",
       agentId: "underwriting-reviewer",
@@ -2805,6 +2807,8 @@ describe("Tap product workspace interactions", () => {
       defaultModelAlias: null,
       pinnedSkillIds: ["rules-lookup-skill"],
       excludedSkillIds: [],
+      // Deprecated: the revisions a pre-pinning Agent revision bundled.
+      skillRevisionIds: options.agentSkillRevisionIds ?? [],
     };
     const skill = (
       revisionId: string,
@@ -2876,6 +2880,21 @@ describe("Tap product workspace interactions", () => {
             { status: 202 },
           );
         }
+        if (path.endsWith("/conversation-skills/turns") && method === "POST") {
+          const body =
+            input instanceof Request
+              ? await input.json()
+              : JSON.parse(String(init?.body ?? "{}"));
+          appended.push(body as Record<string, unknown>);
+          return Response.json(
+            {
+              conversationId: "conversation-skills",
+              turnId: "conversation-skills-turn-2",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
         if (path.endsWith("/conversation-skills")) {
           return Response.json({
             conversationId: "conversation-skills",
@@ -2925,7 +2944,7 @@ describe("Tap product workspace interactions", () => {
         return Response.json({ items: [] });
       }),
     );
-    return { created };
+    return { created, appended };
   }
 
   async function sendWithAgentAndManualSkill(
@@ -2989,6 +3008,39 @@ describe("Tap product workspace interactions", () => {
     expect(created[0]!.agentRevisionId).toBe("underwriting-reviewer");
     expect(created[0]!.skillRevisionIds).toEqual(["clause-finder-rev-1"]);
   });
+
+  it.each([
+    [
+      "an older revision of a currently pinned Skill",
+      "rules-lookup-rev-1",
+      ["rules-lookup-rev-1"],
+    ],
+    ["the pinned Skill's current revision", "rules-lookup-rev-2", []],
+  ])(
+    "regenerating an older turn sends only its manual skills (bound: %s)",
+    async (_case, boundRevisionId, agentSkillRevisionIds) => {
+      // A Turn recorded before Skill usage was tracked: no `skillsUsed`, and
+      // its frozen list mixes the Agent's bound Skill with a manual pick.
+      const { appended } = stubPinnedAgentConversation(
+        {
+          skillRevisionIds: [boundRevisionId, "clause-finder-rev-1"],
+          skillLabels: ["Rules lookup", "Clause finder"],
+        },
+        { agentSkillRevisionIds },
+      );
+      const user = userEvent.setup();
+      renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+      await sendWithAgentAndManualSkill(user);
+      await user.click(
+        await screen.findByRole("button", { name: "Regenerate" }),
+      );
+
+      await waitFor(() => expect(appended).toHaveLength(1));
+      expect(appended[0]!.agentRevisionId).toBe("underwriting-reviewer");
+      expect(appended[0]!.skillRevisionIds).toEqual(["clause-finder-rev-1"]);
+    },
+  );
 
   it("answer context lists skills used with their modes", async () => {
     stubPinnedAgentConversation({

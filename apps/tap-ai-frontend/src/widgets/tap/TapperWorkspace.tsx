@@ -118,23 +118,6 @@ function durableTestPlanPath(): { planId: string; revisionId: string } | null {
       };
 }
 
-/** The Skills a Turn's person picked by hand. A Turn that tracks Skill usage
- * says so per Skill; an older one only has the merged applied set, so the
- * restored Agent's pinned Skills are subtracted from it instead. */
-function manualSkillRevisionIds(
-  input: {
-    skillRevisionIds: readonly string[];
-    skillsUsed?: readonly { revisionId: string; mode: string }[];
-  },
-  pinnedRevisionIds: readonly string[],
-): string[] {
-  if (input.skillsUsed !== undefined && input.skillsUsed.length > 0)
-    return input.skillsUsed
-      .filter((skill) => skill.mode === "manual")
-      .map((skill) => skill.revisionId);
-  return input.skillRevisionIds.filter((id) => !pinnedRevisionIds.includes(id));
-}
-
 function TurnContext({
   copy,
   turn,
@@ -2075,9 +2058,9 @@ export function TapperWorkspace() {
                     // Only the manual picks go back into `selectedSkillIds`;
                     // the restored Agent's pinned Skills reappear as locked
                     // chips via `bundledSkillIdsFor` (minor finding).
-                    selectedSkillIds: manualSkillRevisionIds(
+                    selectedSkillIds: manualSkillRevisionIdsOf(
                       conversationDetail.data.turns.at(-1)!.input,
-                      bundledSkillIdsFor(restoredAgentIds),
+                      restoredAgentIds,
                     ),
                   }),
             }
@@ -2367,26 +2350,29 @@ export function TapperWorkspace() {
         ),
       );
   };
-  const resendContextOf = (turn: AssistantTurn): ResendContext => ({
-    sourceIds: turn.sourceReferences.map((source) => source.id),
-    agentIds:
+  const resendContextOf = (turn: AssistantTurn): ResendContext => {
+    const agentIds =
       turn.agentRevisionId != null
         ? [turn.agentRevisionId]
         : (turn.catalogReferences ?? [])
             .filter((item) => item.kind === "agent")
-            .map((item) => item.id),
-    skillIds: manualSkillRevisionIds(
-      {
-        skillRevisionIds:
-          turn.skillRevisionIds ??
-          (turn.catalogReferences ?? [])
-            .filter((item) => item.kind === "skill")
-            .map((item) => item.id),
-        skillsUsed: turn.skillsUsed,
-      },
-      [],
-    ),
-  });
+            .map((item) => item.id);
+    return {
+      sourceIds: turn.sourceReferences.map((source) => source.id),
+      agentIds,
+      skillIds: manualSkillRevisionIdsOf(
+        {
+          skillRevisionIds:
+            turn.skillRevisionIds ??
+            (turn.catalogReferences ?? [])
+              .filter((item) => item.kind === "skill")
+              .map((item) => item.id),
+          skillsUsed: turn.skillsUsed,
+        },
+        agentIds,
+      ),
+    };
+  };
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -2485,6 +2471,39 @@ export function TapperWorkspace() {
       }
     }
     return [...ids];
+  };
+  // The Skills a Turn's person picked by hand, to restore or resend as the
+  // request's manual `skillRevisionIds`. A Turn that tracks Skill usage
+  // says so per Skill. An older one only froze the merged applied set, so
+  // drop what the Agent brings itself: any revision of a Skill it pins now
+  // (by Skill, not revision) and the revisions it bundled before pinning.
+  // An older revision neither resolves is not in the enabled catalog, so
+  // the send-time catalog filter drops it anyway.
+  const manualSkillRevisionIdsOf = (
+    input: {
+      skillRevisionIds: readonly string[];
+      skillsUsed?: readonly { revisionId: string; mode: string }[];
+    },
+    agentIds: readonly string[],
+  ): string[] => {
+    if (input.skillsUsed !== undefined && input.skillsUsed.length > 0)
+      return input.skillsUsed
+        .filter((skill) => skill.mode === "manual")
+        .map((skill) => skill.revisionId);
+    const pinnedSkillIds = new Set<string>();
+    const boundRevisionIds = new Set<string>();
+    for (const agentId of agentIds) {
+      const agent = agentById.get(agentId);
+      for (const id of agent?.pinnedSkillIds ?? []) pinnedSkillIds.add(id);
+      for (const id of agent?.skillRevisionIds ?? []) boundRevisionIds.add(id);
+    }
+    return input.skillRevisionIds.filter((id) => {
+      const skillId = skillById.get(id)?.skillId;
+      return (
+        !boundRevisionIds.has(id) &&
+        (skillId === undefined || !pinnedSkillIds.has(skillId))
+      );
+    });
   };
   const activeLockedSkillIds = bundledSkillIdsFor(
     activeConversation.selectedAgentIds,
