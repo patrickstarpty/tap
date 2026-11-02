@@ -118,6 +118,23 @@ function durableTestPlanPath(): { planId: string; revisionId: string } | null {
       };
 }
 
+/** The Skills a Turn's person picked by hand. A Turn that tracks Skill usage
+ * says so per Skill; an older one only has the merged applied set, so the
+ * restored Agent's pinned Skills are subtracted from it instead. */
+function manualSkillRevisionIds(
+  input: {
+    skillRevisionIds: readonly string[];
+    skillsUsed?: readonly { revisionId: string; mode: string }[];
+  },
+  pinnedRevisionIds: readonly string[],
+): string[] {
+  if (input.skillsUsed !== undefined && input.skillsUsed.length > 0)
+    return input.skillsUsed
+      .filter((skill) => skill.mode === "manual")
+      .map((skill) => skill.revisionId);
+  return input.skillRevisionIds.filter((id) => !pinnedRevisionIds.includes(id));
+}
+
 function TurnContext({
   copy,
   turn,
@@ -131,7 +148,8 @@ function TurnContext({
 }) {
   const labels =
     turn.contextLabels ?? turn.sourceReferences.map((item) => item.name);
-  if (labels.length === 0) {
+  const skillsUsed = turn.skillsUsed ?? [];
+  if (labels.length === 0 && skillsUsed.length === 0) {
     return <p className="tap-context-notice">{copy.chat.noContextNotice}</p>;
   }
 
@@ -178,7 +196,32 @@ function TurnContext({
             )}
           </p>
         ) : null}
-        {skillLabels.length > 0 ? (
+        {skillsUsed.length > 0 ? (
+          <div>
+            <strong>{copy.chat.skillsUsed}</strong>
+            <ul aria-label={copy.chat.skillsUsed}>
+              {skillsUsed.map((skill) => (
+                <li key={`${skill.mode}-${skill.revisionId}`}>
+                  {onOpenSkillRevision !== undefined ? (
+                    <button
+                      type="button"
+                      className="tap-turn-context-revision-link"
+                      onClick={() => onOpenSkillRevision(skill.revisionId)}
+                    >
+                      {skill.label}
+                    </button>
+                  ) : (
+                    skill.label
+                  )}{" "}
+                  <span className="tap-turn-context-skill-mode">
+                    {copy.chat.skillModes[skill.mode]}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : skillLabels.length > 0 ? (
+          // A Turn recorded before Skill usage was tracked: its frozen labels.
           <p>
             <strong>Skills:</strong>{" "}
             {skillLabels.map((label, index) => {
@@ -1647,6 +1690,15 @@ export function TapperWorkspace() {
       ),
     [aiAssets.skills.data],
   );
+  const latestSkillRevisionBySkillId = useMemo(
+    () =>
+      new Map(
+        (aiAssets.skills.data ?? [])
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => [item.skillId, item.revisionId]),
+      ),
+    [aiAssets.skills.data],
+  );
   const initialDurableSelection = useRef(false);
   const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
     planId: string;
@@ -1942,6 +1994,7 @@ export function TapperWorkspace() {
         answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
         agentRevisionId: turn.input.agentRevisionId,
         skillRevisionIds: turn.input.skillRevisionIds,
+        skillsUsed: turn.input.skillsUsed,
         skillNotices: turn.input.skillNotices,
       };
     });
@@ -2019,21 +2072,13 @@ export function TapperWorkspace() {
                           (item) => item.sourceId,
                         ) ?? [],
                     selectedAgentIds: restoredAgentIds,
-                    // The frozen `input.skillRevisionIds` is the server's
-                    // already-merged set (the Agent's bound Skills plus
-                    // whatever was explicitly picked) -- restoring it
-                    // verbatim into `selectedSkillIds` would make the
-                    // Agent's bound Skills look like regular, removable
-                    // selections that outlive deselecting the Agent
-                    // (minor finding). Only the ids *not* bundled by the
-                    // restored Agent go into `selectedSkillIds`; the rest
-                    // reappear as locked chips via `bundledSkillIdsFor`.
-                    selectedSkillIds: conversationDetail.data.turns
-                      .at(-1)!
-                      .input.skillRevisionIds.filter(
-                        (id) =>
-                          !bundledSkillIdsFor(restoredAgentIds).includes(id),
-                      ),
+                    // Only the manual picks go back into `selectedSkillIds`;
+                    // the restored Agent's pinned Skills reappear as locked
+                    // chips via `bundledSkillIdsFor` (minor finding).
+                    selectedSkillIds: manualSkillRevisionIds(
+                      conversationDetail.data.turns.at(-1)!.input,
+                      bundledSkillIdsFor(restoredAgentIds),
+                    ),
                   }),
             }
           : conversation,
@@ -2330,11 +2375,17 @@ export function TapperWorkspace() {
         : (turn.catalogReferences ?? [])
             .filter((item) => item.kind === "agent")
             .map((item) => item.id),
-    skillIds:
-      turn.skillRevisionIds ??
-      (turn.catalogReferences ?? [])
-        .filter((item) => item.kind === "skill")
-        .map((item) => item.id),
+    skillIds: manualSkillRevisionIds(
+      {
+        skillRevisionIds:
+          turn.skillRevisionIds ??
+          (turn.catalogReferences ?? [])
+            .filter((item) => item.kind === "skill")
+            .map((item) => item.id),
+        skillsUsed: turn.skillsUsed,
+      },
+      [],
+    ),
   });
   const activeConversation =
     conversations.find(
@@ -2420,15 +2471,18 @@ export function TapperWorkspace() {
     );
   };
 
-  // A selected Agent's bundled Skills are never written into
-  // `selectedSkillIds` — they're derived from `selectedAgentIds` here, so
-  // deselecting the Agent (the only way to drop them) always takes them
-  // with it instead of leaving them stuck selected and still sent.
+  // A selected Agent's pinned Skills are never written into
+  // `selectedSkillIds` — they're derived from `selectedAgentIds` here (each
+  // pinned Skill's latest enabled revision, the one the server freezes) and
+  // only drive the locked chips and the budget: the server loads them from
+  // the Agent, so the request's `skillRevisionIds` carries manual picks only.
   const bundledSkillIdsFor = (agentIds: readonly string[]): string[] => {
     const ids = new Set<string>();
     for (const agentId of agentIds) {
-      for (const id of agentById.get(agentId)?.skillRevisionIds ?? [])
-        ids.add(id);
+      for (const skillId of agentById.get(agentId)?.pinnedSkillIds ?? []) {
+        const revisionId = latestSkillRevisionBySkillId.get(skillId);
+        if (revisionId !== undefined) ids.add(revisionId);
+      }
     }
     return [...ids];
   };
@@ -2725,17 +2779,11 @@ export function TapperWorkspace() {
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
       context?.agentIds ?? activeConversation.selectedAgentIds;
-    // A resend's `context.skillIds` already captures the full set the
-    // original turn used (bundled-from-Agent skills included), so it's
-    // authoritative as-is; the live path has to add the currently
-    // selected Agents' bundled skills back in itself, since they're never
-    // stored in `selectedSkillIds` (see `bundledSkillIdsFor`).
-    const selectedSkillIds = context?.skillIds ?? [
-      ...new Set([
-        ...activeConversation.selectedSkillIds,
-        ...bundledSkillIdsFor(activeConversation.selectedAgentIds),
-      ]),
-    ];
+    // Manual picks only: the selected Agent's pinned Skills are loaded
+    // server-side from the Agent (see `bundledSkillIdsFor`), and a resend's
+    // `context.skillIds` is the original turn's manual picks.
+    const selectedSkillIds =
+      context?.skillIds ?? activeConversation.selectedSkillIds;
     if (
       createConversationMutation.isPending ||
       appendConversationMutation.isPending ||

@@ -256,10 +256,10 @@ describe("AgentsWorkspace actions", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows a notice on an agent whose bundled Skill has a newer revision", () => {
+  it("shows no upgrade notice on agent cards, even for a stale hasSkillUpdates flag", () => {
     renderWorkspace();
     const row = screen.getByText("Custom helper").closest("li")!;
-    expect(row).toHaveTextContent("A bundled skill has a newer revision.");
+    expect(row).not.toHaveTextContent(/newer revision/);
   });
 
   it("opens the create dialog from New agent", async () => {

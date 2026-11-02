@@ -427,6 +427,7 @@ export function useConversationStream(
   active = true,
 ) {
   const client = useConversationClient(projectId);
+  const queryClient = useQueryClient();
   const [state, setState] = useState(createStreamState);
   const resume = useRef(0);
   const initialCursorRef = useRef(initialCursor);
@@ -478,10 +479,17 @@ export function useConversationStream(
             resume.current = Math.max(resume.current, event.sequence);
             setState((current) => reduceStreamEvent(current, event));
             if (
+              !targetTerminal &&
               event.turnId === targetTurnId &&
               isTerminalEvent(event.event.type)
-            )
+            ) {
               targetTerminal = true;
+              // Auto-activated Skills are recorded during the run, after the
+              // detail fetched on send; refetch so `skillsUsed` shows them.
+              void queryClient.invalidateQueries({
+                queryKey: conversationKeys.detail(projectId, conversationId),
+              });
+            }
           }
           if (targetTerminal) return;
           attempts += 1;
@@ -511,7 +519,15 @@ export function useConversationStream(
       stopped = true;
       controller.abort();
     };
-  }, [active, client, conversationId, generation, targetTurnId]);
+  }, [
+    active,
+    client,
+    conversationId,
+    generation,
+    projectId,
+    queryClient,
+    targetTurnId,
+  ]);
   return {
     error,
     retry: () => setGeneration((current) => current + 1),

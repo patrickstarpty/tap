@@ -37,6 +37,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function streamWrapper(queryClient = createTestQueryClient()) {
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
+
 describe("useConversationStream", () => {
   it("does not reconnect permission failures and allows an explicit recovery", async () => {
     const fetcher = vi
@@ -44,8 +50,9 @@ describe("useConversationStream", () => {
       .mockResolvedValue(
         new Response(JSON.stringify({ title: "Forbidden" }), { status: 403 }),
       );
-    const { result } = renderHook(() =>
-      useConversationStream("project-1", "conversation-1", "turn-1", 0),
+    const { result } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-1", 0),
+      { wrapper: streamWrapper() },
     );
 
     await waitFor(() => expect(result.current.error?.status).toBe(403));
@@ -64,8 +71,9 @@ describe("useConversationStream", () => {
       ),
     );
 
-    const { result } = renderHook(() =>
-      useConversationStream("project-1", "conversation-1", "turn-1", 0),
+    const { result } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-1", 0),
+      { wrapper: streamWrapper() },
     );
 
     await waitFor(() =>
@@ -80,8 +88,9 @@ describe("useConversationStream", () => {
     const fetcher = vi
       .spyOn(globalThis, "fetch")
       .mockRejectedValue(new TypeError("offline"));
-    const { result, unmount } = renderHook(() =>
-      useConversationStream("project-1", "conversation-1", "turn-1", 0),
+    const { result, unmount } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-1", 0),
+      { wrapper: streamWrapper() },
     );
 
     await act(async () => vi.advanceTimersByTimeAsync(4_000));
@@ -106,8 +115,9 @@ describe("useConversationStream", () => {
       ),
     );
 
-    const { result } = renderHook(() =>
-      useConversationStream("project-1", "conversation-1", "turn-2", 3),
+    const { result } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-2", 3),
+      { wrapper: streamWrapper() },
     );
 
     await waitFor(() =>
@@ -138,8 +148,9 @@ describe("useConversationStream", () => {
       ),
     );
 
-    const { result } = renderHook(() =>
-      useConversationStream("project-1", "conversation-1", "turn-2", 0),
+    const { result } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-2", 0),
+      { wrapper: streamWrapper() },
     );
 
     await waitFor(() => expect(result.current.state.lastSequence).toBe(6));
@@ -171,7 +182,7 @@ describe("useConversationStream", () => {
     const { result, rerender } = renderHook(
       ({ turnId }) =>
         useConversationStream("project-1", "conversation-1", turnId, 1),
-      { initialProps: { turnId: "turn-1" } },
+      { initialProps: { turnId: "turn-1" }, wrapper: streamWrapper() },
     );
     await waitFor(() => expect(result.current.state.lastSequence).toBe(6));
     rerender({ turnId: "turn-2" });
@@ -198,8 +209,9 @@ describe("useConversationStream", () => {
         ),
       );
 
-    const { result, unmount } = renderHook(() =>
-      useConversationStream("project-1", "conversation-1", "turn-2", 0),
+    const { result, unmount } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-2", 0),
+      { wrapper: streamWrapper() },
     );
     await act(async () => vi.advanceTimersByTimeAsync(250));
 
@@ -209,6 +221,39 @@ describe("useConversationStream", () => {
     expect(result.current.state.turns["turn-2"]?.answer).toBe("second answer");
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+  it("refetches conversation detail when the streamed turn reaches a terminal event", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      stream(
+        event(1, "turn-1", "turn.completed", {
+          answer: { answer: "first answer", citations: [] },
+        }),
+        event(2, "turn-2", "answer.delta", { text: "second" }),
+        event(3, "turn-2", "turn.completed", {
+          answer: { answer: "second answer", citations: [] },
+        }),
+        event(4, "turn-2", "conversation.turn.completed", {
+          outcome: "completed",
+        }),
+      ),
+    );
+    const queryClient = createTestQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { result } = renderHook(
+      () => useConversationStream("project-1", "conversation-1", "turn-2", 0),
+      { wrapper: streamWrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(result.current.state.lastSequence).toBe(4));
+    // Auto-activated Skills are written during the run, so the frozen
+    // detail fetched right after the send is stale for `skillsUsed`. Only
+    // the target turn's terminal event triggers it -- once, not for an
+    // earlier turn's replayed terminal or the trailing duplicate.
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["conversations", "project-1", "conversation-1"],
+    });
   });
 });
 

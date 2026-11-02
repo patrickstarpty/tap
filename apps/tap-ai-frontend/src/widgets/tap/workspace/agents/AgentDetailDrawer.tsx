@@ -1,17 +1,11 @@
 import { Button } from "antd";
-import { useEffect, useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 
 import {
-  aiAssetKeys,
-  AiAssetError,
-  fetchSkillRevisionDetail,
   useAgent,
   useAgentRevisions,
-  useReviseAgent,
   type AiAgentRevisionDetail,
   type SkillRevision,
-  type SkillRevisionDetail,
 } from "../../../../features/knowledge/api/aiAssets";
 import { AccessibleDialog } from "../AccessibleDialog";
 import type { WorkspaceCopy } from "../copy";
@@ -22,15 +16,13 @@ export interface AgentDetailDrawerProps {
   projectId: string;
   copy: WorkspaceCopy;
   revisionId: string;
+  /** The latest revision of every Skill in the library, any status, so a
+   * pinned or excluded Skill that was disabled since can still be named. */
   skills: readonly SkillRevision[];
   onClose: () => void;
   onUse: (revisionId: string) => void;
   onEdit: (detail: AiAgentRevisionDetail) => void;
   onCopyAsCustom: (detail: AiAgentRevisionDetail) => void;
-  /** Called after Upgrade successfully creates a new revision, with that
-   * revision's id — the caller should move the drawer onto it (otherwise
-   * it keeps showing the now-superseded revision it upgraded from). */
-  onUpgraded?: (revisionId: string) => void;
   opener: HTMLElement | null;
 }
 
@@ -43,112 +35,57 @@ export function AgentDetailDrawer({
   onUse,
   onEdit,
   onCopyAsCustom,
-  onUpgraded,
   opener,
 }: AgentDetailDrawerProps) {
   const text = copy.agentsWorkspace;
   const [tab, setTab] = useState<DetailTab>("overview");
-  const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const detailQuery = useAgent(projectId, revisionId);
   const detail = detailQuery.data;
   const revisionsQuery = useAgentRevisions(projectId, detail?.agentId ?? null);
-  const reviseAgent = useReviseAgent(projectId);
 
-  useEffect(() => {
-    setUpgradeError(null);
-  }, [revisionId]);
-
-  const attachedSkillIds = detail?.skillRevisionIds ?? [];
-  const attachedSkillQueries = useQueries({
-    queries: attachedSkillIds.map((id) => ({
-      queryKey: aiAssetKeys.skill(projectId, id),
-      queryFn: () => fetchSkillRevisionDetail(projectId, id),
-      staleTime: 30_000,
-    })),
-  });
-  const attachedSkillsPending = attachedSkillQueries.some(
-    (query) => query.isPending,
+  const skillById = useMemo(
+    () => new Map(skills.map((skill) => [skill.skillId, skill])),
+    [skills],
   );
-  const attachedSkillsErrored = attachedSkillQueries.some(
-    (query) => query.isError,
-  );
-  const attachedSkillDetails = useMemo(
-    () =>
-      attachedSkillQueries
-        .map((query) => query.data)
-        .filter((value): value is SkillRevisionDetail => value !== undefined),
-    [attachedSkillQueries],
-  );
-  // I-6: a bundled Skill disabled since the Agent was saved is still
-  // resolvable (the detail GET resolves any status) -- surface it as a
-  // warning on the drawer rather than only the unrelated "has a newer
-  // revision" notice.
-  const disabledAttachedSkillNames = useMemo(
-    () =>
-      attachedSkillDetails
-        .filter((item) => item.status === "disabled")
-        .map((item) => item.displayName),
-    [attachedSkillDetails],
-  );
-
-  const latestBySkillId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const skill of skills) map.set(skill.skillId, skill.revisionId);
-    return map;
-  }, [skills]);
-
-  // Each bundled Skill's latest revision can only be resolved once its own
-  // (currently-attached) revision's `skillId` is known, so Upgrade stays
-  // disabled until every lookup settles — upgrading from a partial set
-  // would silently drop whichever skill hadn't resolved yet.
-  // `systemInstruction` is optional on the wire (a revision whose stored
-  // value is absent still returns 200 — see the backend fix for the
-  // former 500) but `AgentReviseRequest` requires a non-empty one, so an
-  // Agent missing it can't be auto-upgraded (nothing to resubmit).
-  const systemInstructionMissing =
-    detail?.systemInstruction == null || detail.systemInstruction.length === 0;
-
-  const upgrade = () => {
-    if (
-      detail === undefined ||
-      detail.builtIn ||
-      attachedSkillsPending ||
-      attachedSkillsErrored ||
-      systemInstructionMissing
-    )
-      return;
-    setUpgradeError(null);
-    const upgradedSkillIds = attachedSkillQueries
-      .map((query) => query.data)
-      .filter((value): value is SkillRevisionDetail => value !== undefined)
-      .map(
-        (skillDetail) =>
-          latestBySkillId.get(skillDetail.skillId) ?? skillDetail.revisionId,
-      );
-    reviseAgent.mutate(
-      {
-        agentId: detail.agentId,
-        request: {
-          baseRevisionId: detail.revisionId,
-          name: detail.displayName,
-          description: detail.description ?? "",
-          systemInstruction: detail.systemInstruction ?? "",
-          defaultModelAlias: detail.defaultModelAlias ?? null,
-          skillRevisionIds: upgradedSkillIds,
-        },
-      },
-      {
-        onSuccess: (result) => onUpgraded?.(result.revisionId),
-        onError: (cause) => {
-          setUpgradeError(
-            cause instanceof AiAssetError && cause.code === "revision_conflict"
-              ? text.revisionConflict
-              : text.upgradeFailed,
-          );
-        },
-      },
-    );
+  // Pinned and excluded Skills are kept by Skill, so there is no revision
+  // to fall behind on -- a pinned Skill always loads its latest enabled
+  // revision. Only a pinned Skill disabled since is worth a warning (I-6):
+  // it is skipped when this Agent answers.
+  const describeSkill = (skillId: string) => {
+    const skill = skillById.get(skillId);
+    return {
+      skillId,
+      name: skill?.displayName ?? skillId,
+      disabled: skill === undefined || skill.status !== "enabled",
+    };
   };
+  const pinnedSkills = (detail?.pinnedSkillIds ?? []).map(describeSkill);
+  const excludedSkills = (detail?.excludedSkillIds ?? []).map(describeSkill);
+  const disabledPinnedSkillNames = pinnedSkills
+    .filter((item) => item.disabled)
+    .map((item) => item.name);
+
+  const skillList = (
+    label: string,
+    empty: string,
+    items: ReturnType<typeof describeSkill>[],
+  ) => (
+    <section>
+      <h3>{label}</h3>
+      {items.length === 0 ? (
+        <p>{empty}</p>
+      ) : (
+        <ul aria-label={label}>
+          {items.map((item) => (
+            <li key={item.skillId}>
+              {item.name}
+              {item.disabled ? ` (${text.statusDisabled})` : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 
   const tabs: { id: DetailTab; label: string }[] = [
     { id: "overview", label: text.tabs.overview },
@@ -178,35 +115,10 @@ export function AgentDetailDrawer({
         </div>
       ) : (
         <>
-          {disabledAttachedSkillNames.length > 0 ? (
+          {disabledPinnedSkillNames.length > 0 ? (
             <div role="alert" className="tap-agent-skill-disabled-warning">
-              <p>{text.boundSkillDisabledWarning}</p>
-              <p>{disabledAttachedSkillNames.join(", ")}</p>
-            </div>
-          ) : null}
-          {detail.hasSkillUpdates ? (
-            <div role="status" className="tap-agent-skill-updates">
-              <p>{text.hasSkillUpdates}</p>
-              {detail.builtIn ? null : (
-                // The server rejects revising a built-in Agent outright
-                // (agent_built_in_immutable), so Upgrade is never offered
-                // for one — "Copy as custom" (below, in the dialog
-                // actions) is the only way to build on it.
-                <Button
-                  loading={reviseAgent.isPending}
-                  disabled={
-                    attachedSkillsPending ||
-                    attachedSkillsErrored ||
-                    systemInstructionMissing
-                  }
-                  onClick={upgrade}
-                >
-                  {text.upgrade}
-                </Button>
-              )}
-              {upgradeError !== null ? (
-                <p role="alert">{upgradeError}</p>
-              ) : null}
+              <p>{text.pinnedSkillDisabledWarning}</p>
+              <p>{disabledPinnedSkillNames.join(", ")}</p>
             </div>
           ) : null}
           <div role="tablist">
@@ -237,19 +149,11 @@ export function AgentDetailDrawer({
           ) : null}
           {tab === "skills" ? (
             <div role="tabpanel">
-              {attachedSkillsErrored ? (
-                <p role="alert">{text.loadFailed}</p>
-              ) : (
-                <ul>
-                  {attachedSkillDetails.map((item) => (
-                    <li key={item.revisionId}>
-                      {item.displayName}
-                      {item.status === "disabled"
-                        ? ` (${text.statusDisabled})`
-                        : null}
-                    </li>
-                  ))}
-                </ul>
+              {skillList(text.pinnedSkills, text.noPinnedSkills, pinnedSkills)}
+              {skillList(
+                text.excludedSkills,
+                text.noExcludedSkills,
+                excludedSkills,
               )}
             </div>
           ) : null}

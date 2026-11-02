@@ -47,6 +47,8 @@ export interface WorkspaceCopy {
     noContextNotice: string;
     selectedContextNotice: string;
     selectedContext: string;
+    skillsUsed: string;
+    skillModes: { manual: string; pinned: string; auto: string };
     assistant: string;
     questionNavigation: string;
     jumpToQuestion: string;
@@ -435,7 +437,6 @@ export interface WorkspaceCopy {
     edit: string;
     enable: string;
     disable: string;
-    upgrade: string;
     close: string;
     revision: string;
     defaultModel: string;
@@ -443,8 +444,11 @@ export interface WorkspaceCopy {
     skills: string;
     toolsLabel: string;
     toolsBuiltIn: string;
-    hasSkillUpdates: string;
-    boundSkillDisabledWarning: string;
+    pinnedSkills: string;
+    excludedSkills: string;
+    noPinnedSkills: string;
+    noExcludedSkills: string;
+    pinnedSkillDisabledWarning: string;
     statusEnabled: string;
     statusDisabled: string;
     copyAsCustom: string;
@@ -452,7 +456,6 @@ export interface WorkspaceCopy {
     loading: string;
     loadFailed: string;
     retry: string;
-    upgradeFailed: string;
     revisionConflict: string;
     tabs: {
       overview: string;
@@ -468,15 +471,13 @@ export interface WorkspaceCopy {
       systemInstruction: string;
       defaultModel: string;
       defaultModelGlobal: string;
-      skills: string;
+      pinnedSkills: string;
+      pinnedSkillsHint: string;
+      excludedSkills: string;
+      excludedSkillsHint: string;
       searchSkills: string;
       noSkills: string;
-      boundSkillDisabled: string;
-      /** N-1: shown for a bound Skill whose revision is no longer latest
-       * but is still enabled (the ordinary "Skill was revised since
-       * binding" case) -- distinct from `boundSkillDisabled` so an
-       * outdated-but-enabled binding is never mislabeled as disabled. */
-      boundSkillOutdated: string;
+      skillDisabled: string;
       removeSkill: string;
       toolsLabel: string;
       toolsLoadFailed: string;
@@ -494,6 +495,8 @@ export interface WorkspaceCopy {
       largestSkills: string;
       nameConflict: string;
       revisionConflict: string;
+      skillConflict: string;
+      skillLimitExceeded: string;
       saveFailed: string;
     };
   };
@@ -918,6 +921,8 @@ export const WORKSPACE_COPY = {
       selectedContextNotice:
         "Citations identify the sources that supported this answer.",
       selectedContext: "Selected context",
+      skillsUsed: "Skills used",
+      skillModes: { manual: "Manual", pinned: "Pinned", auto: "Auto" },
       assistant: "Tapper assistant",
       questionNavigation: "Questions in this conversation",
       jumpToQuestion: "Jump to question",
@@ -1321,7 +1326,7 @@ export const WORKSPACE_COPY = {
     agentsWorkspace: {
       heading: "Agents",
       description:
-        "Focused collaborators with a system prompt, a default model and bundled skills.",
+        "Focused collaborators with a system prompt, a default model and pinned skills.",
       createAgent: "New agent",
       filterAll: "All",
       filterBuiltIn: "Built-in",
@@ -1332,7 +1337,6 @@ export const WORKSPACE_COPY = {
       edit: "Edit",
       enable: "Enable",
       disable: "Disable",
-      upgrade: "Upgrade",
       close: "Close",
       revision: "Revision",
       defaultModel: "Default model",
@@ -1340,9 +1344,12 @@ export const WORKSPACE_COPY = {
       skills: "Skills",
       toolsLabel: "Built-in tools",
       toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
-      hasSkillUpdates: "A bundled skill has a newer revision.",
-      boundSkillDisabledWarning:
-        "A bundled skill has been disabled and will be skipped when this agent answers.",
+      pinnedSkills: "Pinned Skills",
+      excludedSkills: "Excluded Skills",
+      noPinnedSkills: "No pinned skills.",
+      noExcludedSkills: "No excluded skills.",
+      pinnedSkillDisabledWarning:
+        "A pinned skill has been disabled and will be skipped when this agent answers.",
       statusEnabled: "Enabled",
       statusDisabled: "Disabled",
       copyAsCustom: "Copy as custom",
@@ -1350,7 +1357,6 @@ export const WORKSPACE_COPY = {
       loading: "Loading agents…",
       loadFailed: "Agents could not be loaded.",
       retry: "Retry",
-      upgradeFailed: "This agent could not be upgraded.",
       revisionConflict: "This content was updated elsewhere. Please refresh.",
       tabs: {
         overview: "Overview",
@@ -1366,13 +1372,16 @@ export const WORKSPACE_COPY = {
         systemInstruction: "System instruction",
         defaultModel: "Default model",
         defaultModelGlobal: "Use the global default model",
-        skills: "Skills",
+        pinnedSkills: "Pinned Skills",
+        pinnedSkillsHint:
+          "Always loaded, at their latest version, when this agent answers.",
+        excludedSkills: "Excluded Skills",
+        excludedSkillsHint:
+          "Never activated automatically when this agent answers.",
         searchSkills: "Search skills",
         noSkills: "No enabled skills available.",
-        boundSkillDisabled:
-          "This bound Skill has been disabled and will be skipped when the Agent answers.",
-        boundSkillOutdated:
-          "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
+        skillDisabled:
+          "This skill has been disabled and will be skipped when the agent answers.",
         removeSkill: "Remove",
         toolsLabel: "Tools",
         toolsLoadFailed: "Tools could not be loaded.",
@@ -1394,6 +1403,9 @@ export const WORKSPACE_COPY = {
         largestSkills: "Largest skills",
         nameConflict: "An agent with this name already exists.",
         revisionConflict: "This content was updated elsewhere. Please refresh.",
+        skillConflict: "A skill can't be both pinned and excluded.",
+        skillLimitExceeded:
+          "An agent can pin or exclude at most 64 skills each. Remove some before saving.",
         saveFailed: "This agent could not be saved.",
       },
     },
@@ -1844,6 +1856,8 @@ export const WORKSPACE_COPY = {
       noContextNotice: "此轮对话未选择知识上下文。回答仅基于当前可用信息。",
       selectedContextNotice: "引用会标明支持本次回答的知识来源。",
       selectedContext: "已选上下文",
+      skillsUsed: "本轮用到的 Skill",
+      skillModes: { manual: "手动", pinned: "常驻", auto: "自动" },
       assistant: "Tapper 助手",
       questionNavigation: "本次对话中的问题",
       jumpToQuestion: "跳转到问题",
@@ -2232,7 +2246,7 @@ export const WORKSPACE_COPY = {
     },
     agentsWorkspace: {
       heading: "智能体",
-      description: "带有系统提示词、默认模型与已绑定 Skill 的专注协作者。",
+      description: "带有系统提示词、默认模型与常驻 Skill 的专注协作者。",
       createAgent: "新建 Agent",
       filterAll: "全部",
       filterBuiltIn: "内置",
@@ -2243,7 +2257,6 @@ export const WORKSPACE_COPY = {
       edit: "编辑",
       enable: "启用",
       disable: "停用",
-      upgrade: "升级",
       close: "关闭",
       revision: "修订",
       defaultModel: "默认模型",
@@ -2251,8 +2264,12 @@ export const WORKSPACE_COPY = {
       skills: "Skill",
       toolsLabel: "内置工具",
       toolsBuiltIn: "知识检索、知识回答（始终启用）",
-      hasSkillUpdates: "已绑定的 Skill 有新修订。",
-      boundSkillDisabledWarning: "已绑定的 Skill 已停用，回答时将跳过。",
+      pinnedSkills: "常驻 Skills",
+      excludedSkills: "排除 Skills",
+      noPinnedSkills: "没有常驻 Skill。",
+      noExcludedSkills: "没有排除的 Skill。",
+      pinnedSkillDisabledWarning:
+        "有常驻 Skill 已停用，该 Agent 回答时将跳过。",
       statusEnabled: "已启用",
       statusDisabled: "已停用",
       copyAsCustom: "复制为自定义",
@@ -2260,7 +2277,6 @@ export const WORKSPACE_COPY = {
       loading: "正在加载 Agent…",
       loadFailed: "无法加载 Agent。",
       retry: "重试",
-      upgradeFailed: "无法升级该 Agent。",
       revisionConflict: "内容已被他人更新，请刷新。",
       tabs: {
         overview: "概览",
@@ -2276,12 +2292,13 @@ export const WORKSPACE_COPY = {
         systemInstruction: "系统提示词",
         defaultModel: "默认模型",
         defaultModelGlobal: "使用全局默认模型",
-        skills: "Skill",
+        pinnedSkills: "常驻 Skills",
+        pinnedSkillsHint: "该 Agent 回答时总会加载这些 Skill 的最新版本。",
+        excludedSkills: "排除 Skills",
+        excludedSkillsHint: "该 Agent 回答时不会自动激活这些 Skill。",
         searchSkills: "搜索 Skill",
         noSkills: "暂无可用的已启用 Skill。",
-        boundSkillDisabled: "此绑定的 Skill 已停用，回答时将跳过。",
-        boundSkillOutdated:
-          "此绑定的 Skill 有新修订，Agent 仍使用绑定时的修订。",
+        skillDisabled: "此 Skill 已停用，Agent 回答时将跳过。",
         removeSkill: "移除",
         toolsLabel: "工具",
         toolsLoadFailed: "工具加载失败。",
@@ -2300,6 +2317,9 @@ export const WORKSPACE_COPY = {
         largestSkills: "占用最大的 Skill",
         nameConflict: "已存在同名 Agent。",
         revisionConflict: "内容已被他人更新，请刷新。",
+        skillConflict: "同一个 Skill 不能既常驻又排除。",
+        skillLimitExceeded:
+          "每个 Agent 的常驻和排除 Skill 各最多 64 个，请先移除部分再保存。",
         saveFailed: "无法保存该 Agent。",
       },
     },

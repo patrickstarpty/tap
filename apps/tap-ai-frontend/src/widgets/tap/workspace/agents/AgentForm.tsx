@@ -21,10 +21,11 @@ import {
   utf8ByteLength,
 } from "../skills/skillMarkdown";
 
-// Selecting skills for an agent commits the project to bundling that much
-// Skill text into every turn that uses it, so the authoring form warns at
-// 90% and blocks saving past the limit — the same two-stage budget gate
-// SkillForm applies to a single SKILL.md, just summed across the set. Kept
+// Pinning skills on an agent commits the project to loading that much
+// Skill text (each pinned Skill's latest revision) into every turn that
+// uses it, so the authoring form warns at 90% and blocks saving past the
+// limit — the same two-stage budget gate SkillForm applies to a single
+// SKILL.md, just summed across the pinned set. Kept
 // as a re-export so existing imports of `AGENT_SKILLS_BUDGET_BYTES` from
 // this module don't need to change.
 export const AGENT_SKILLS_BUDGET_BYTES = SKILL_TURN_BUDGET_BYTES;
@@ -39,6 +40,9 @@ export interface AgentFormProps {
   copy: WorkspaceCopy;
   mode: "create" | "edit" | "copy";
   agent?: AiAgentRevisionDetail;
+  /** The latest revision of every Skill in the library, any status: only
+   * enabled ones are offered as picks, a disabled one is still named (and
+   * removable) when the Agent already pins or excludes it. */
   skills: readonly SkillRevision[];
   models: readonly ModelCatalogItem[];
   onClose: () => void;
@@ -71,8 +75,13 @@ export function AgentForm({
   const [defaultModelAlias, setDefaultModelAlias] = useState(
     agent?.defaultModelAlias ?? "",
   );
-  const [skillRevisionIds, setSkillRevisionIds] = useState<readonly string[]>(
-    agent?.skillRevisionIds ?? [],
+  // By Skill, not by revision: a pinned Skill always loads its latest
+  // enabled revision, so there is nothing to upgrade.
+  const [pinnedSkillIds, setPinnedSkillIds] = useState<readonly string[]>(
+    agent?.pinnedSkillIds ?? [],
+  );
+  const [excludedSkillIds, setExcludedSkillIds] = useState<readonly string[]>(
+    agent?.excludedSkillIds ?? [],
   );
   const [skillQuery, setSkillQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -133,8 +142,26 @@ export function AgentForm({
     new Set([...requiredToolIds, ...(toolIds ?? [])]),
   );
 
+  const skillById = useMemo(
+    () => new Map(skills.map((skill) => [skill.skillId, skill])),
+    [skills],
+  );
+  const enabledSkills = useMemo(
+    () => skills.filter((skill) => skill.status === "enabled"),
+    [skills],
+  );
+  // The budget sums each pinned Skill's latest enabled revision -- the one
+  // a Turn would freeze. A disabled pinned Skill is skipped at answer time,
+  // so it doesn't count.
+  const pinnedRevisionIds = pinnedSkillIds
+    .map((skillId) => skillById.get(skillId))
+    .filter(
+      (skill): skill is SkillRevision =>
+        skill !== undefined && skill.status === "enabled",
+    )
+    .map((skill) => skill.revisionId);
   const skillDetailQueries = useQueries({
-    queries: skillRevisionIds.map((revisionId) => ({
+    queries: pinnedRevisionIds.map((revisionId) => ({
       queryKey: aiAssetKeys.skill(projectId, revisionId),
       queryFn: () => fetchSkillRevisionDetail(projectId, revisionId),
       staleTime: 30_000,
@@ -170,7 +197,7 @@ export function AgentForm({
   // unknown — treating that as "0 bytes used" would let Save enable before
   // the budget is actually checked, so it's folded into `canSave` below
   // rather than only gating on `overBudget`.
-  const budgetUnknown = skillRevisionIds.length > 0 && skillSizesPending;
+  const budgetUnknown = pinnedRevisionIds.length > 0 && skillSizesPending;
   const overBudget = totalBytes > AGENT_SKILLS_BUDGET_BYTES;
   const nearBudget =
     !overBudget &&
@@ -187,11 +214,9 @@ export function AgentForm({
   const systemInstructionValid =
     systemInstruction.trim().length > 0 &&
     systemInstructionBytes <= SYSTEM_INSTRUCTION_MAX_BYTES;
-  // I-6: a bound Skill becoming disabled must not be a permanent save
-  // dead-end -- it is surfaced above with a warning and a way to remove
-  // it, not treated as a blocking error. A genuinely unresolvable bound
-  // Skill id still fails server-side validation on submit (surfaced via
-  // `form.saveFailed`).
+  // I-6: a pinned Skill becoming disabled must not be a permanent save
+  // dead-end -- it is surfaced below with a warning and a way to remove
+  // it, not treated as a blocking error.
   const canSave =
     (mode === "edit" || nameValid) &&
     descriptionValid &&
@@ -200,54 +225,34 @@ export function AgentForm({
     !budgetUnknown &&
     toolIds !== null;
 
-  const toggleSkill = (revisionId: string) => {
-    setSkillRevisionIds((current) =>
-      current.includes(revisionId)
-        ? current.filter((id) => id !== revisionId)
-        : [...current, revisionId],
-    );
-  };
-
   const visibleSkills = useMemo(() => {
     const normalized = skillQuery.trim().toLocaleLowerCase();
-    if (normalized.length === 0) return skills;
-    return skills.filter((skill) =>
+    if (normalized.length === 0) return enabledSkills;
+    return enabledSkills.filter((skill) =>
       skill.displayName.toLocaleLowerCase().includes(normalized),
     );
-  }, [skillQuery, skills]);
+  }, [skillQuery, enabledSkills]);
 
-  // I-6: a bound Skill revision that was disabled since the Agent picked
-  // it up is not in the (latest + enabled-only) `skills` picker list, so
-  // it would otherwise be an invisible, unremovable binding. Resolve its
-  // name from the already-fetched detail (now resolved regardless of
-  // status by `GET /ai/skills/{revisionId}`) so it can be shown with a
-  // warning and a way to remove it, rather than silently carried forward
-  // or blocking Save entirely.
-  //
-  // N-1: "not in the picker" is NOT the same as "disabled" -- the picker
-  // is latest-*and*-enabled, so an Agent bound to an older revision of a
-  // Skill that is still enabled (the ordinary "Skill was revised since
-  // binding" case) also falls outside it. Only the fetched detail's own
-  // `status` can tell the two apart; label and remove-affordance both
-  // still apply to both, but the wording must not falsely claim an
-  // enabled older revision is disabled.
-  const pickerSkillIds = useMemo(
-    () => new Set(skills.map((skill) => skill.revisionId)),
-    [skills],
-  );
-  const unavailableBoundSkills = skillRevisionIds
-    .filter((revisionId) => !pickerSkillIds.has(revisionId))
-    .map((revisionId, index) => {
-      const query = skillDetailQueries[skillRevisionIds.indexOf(revisionId)];
-      return {
-        revisionId,
-        detail: query?.data,
-        errored: query?.isError ?? false,
-        disabled: query?.data?.status === "disabled",
-        // Keep a stable key even while the detail is still loading.
-        key: `${revisionId}-${index}`,
-      };
-    });
+  const pickers = [
+    {
+      key: "pinned",
+      legend: form.pinnedSkills,
+      hint: form.pinnedSkillsHint,
+      selected: pinnedSkillIds,
+      setSelected: setPinnedSkillIds,
+      // A Skill can't be both pinned and excluded (the server rejects it
+      // with `agent_skill_conflict`), so each picker locks the other's picks.
+      other: excludedSkillIds,
+    },
+    {
+      key: "excluded",
+      legend: form.excludedSkills,
+      hint: form.excludedSkillsHint,
+      selected: excludedSkillIds,
+      setSelected: setExcludedSkillIds,
+      other: pinnedSkillIds,
+    },
+  ] as const;
 
   const title =
     mode === "create"
@@ -271,7 +276,8 @@ export function AgentForm({
             systemInstruction,
             defaultModelAlias:
               defaultModelAlias.length > 0 ? defaultModelAlias : null,
-            skillRevisionIds: [...skillRevisionIds],
+            pinnedSkillIds: [...pinnedSkillIds],
+            excludedSkillIds: [...excludedSkillIds],
             toolIds: submittedToolIds,
           },
         });
@@ -283,7 +289,8 @@ export function AgentForm({
           systemInstruction,
           defaultModelAlias:
             defaultModelAlias.length > 0 ? defaultModelAlias : null,
-          skillRevisionIds: [...skillRevisionIds],
+          pinnedSkillIds: [...pinnedSkillIds],
+          excludedSkillIds: [...excludedSkillIds],
           toolIds: submittedToolIds,
         });
         onSaved?.(result.revisionId);
@@ -300,6 +307,16 @@ export function AgentForm({
         cause.code === "revision_conflict"
       ) {
         setError(form.revisionConflict);
+      } else if (
+        cause instanceof AiAssetError &&
+        cause.code === "agent_skill_conflict"
+      ) {
+        setError(form.skillConflict);
+      } else if (
+        cause instanceof AiAssetError &&
+        cause.code === "agent_skill_limit_exceeded"
+      ) {
+        setError(form.skillLimitExceeded);
       } else {
         setError(form.saveFailed);
       }
@@ -379,72 +396,82 @@ export function AgentForm({
             ))}
           </select>
         </label>
-        <fieldset>
-          <legend>{form.skills}</legend>
-          <Input
-            aria-label={form.searchSkills}
-            placeholder={form.searchSkills}
-            value={skillQuery}
-            onChange={(event) => setSkillQuery(event.target.value)}
-          />
-          {skills.length === 0 ? (
-            <p>{form.noSkills}</p>
-          ) : (
-            visibleSkills.map((skill) => {
-              // An Agent is only ever used for `knowledge.answer` turns, so
-              // a Skill scoped to a different applicable task (e.g.
-              // `test-plan.generate`) can't do anything there — gray it out
-              // instead of letting it be attached and silently ignored.
-              const notApplicable =
-                !skill.applicableTasks.includes("knowledge.answer");
-              return (
-                <label key={skill.revisionId} aria-disabled={notApplicable}>
-                  <input
-                    type="checkbox"
-                    checked={skillRevisionIds.includes(skill.revisionId)}
-                    disabled={notApplicable}
-                    onChange={() => toggleSkill(skill.revisionId)}
-                  />
-                  <span>{skill.displayName}</span>
-                  <span className="tap-agent-skill-revision">
-                    {skill.revisionId}
-                  </span>
-                </label>
-              );
-            })
-          )}
-          {unavailableBoundSkills.length > 0 ? (
-            <div className="tap-agent-skills-unavailable">
-              {unavailableBoundSkills.map((item) => (
-                <div
-                  key={item.key}
-                  role={item.disabled ? "alert" : "status"}
-                  aria-disabled
-                >
-                  <span>{item.detail?.displayName ?? item.revisionId}</span>
-                  <span className="tap-agent-skill-revision">
-                    {item.revisionId}
-                  </span>
-                  {item.disabled ? (
-                    <p>{form.boundSkillDisabled}</p>
-                  ) : item.detail !== undefined ? (
-                    <p>{form.boundSkillOutdated}</p>
-                  ) : null}
-                  <Button
-                    size="small"
-                    onClick={() =>
-                      setSkillRevisionIds((current) =>
-                        current.filter((id) => id !== item.revisionId),
-                      )
-                    }
-                  >
-                    {form.removeSkill}
-                  </Button>
+        <Input
+          aria-label={form.searchSkills}
+          placeholder={form.searchSkills}
+          value={skillQuery}
+          onChange={(event) => setSkillQuery(event.target.value)}
+        />
+        {pickers.map((picker) => {
+          // A pinned/excluded Skill that is disabled now is not offered as
+          // a pick, so it would otherwise be an invisible, unremovable
+          // entry -- list it with a warning and a way to remove it.
+          const unavailable = picker.selected.filter(
+            (skillId) => skillById.get(skillId)?.status !== "enabled",
+          );
+          return (
+            <fieldset key={picker.key}>
+              <legend>{picker.legend}</legend>
+              <p className="tap-agent-skill-hint">{picker.hint}</p>
+              {enabledSkills.length === 0 ? (
+                <p>{form.noSkills}</p>
+              ) : (
+                visibleSkills.map((skill) => {
+                  // An Agent is only ever used for `knowledge.answer` turns,
+                  // so a Skill scoped to a different applicable task (e.g.
+                  // `test-plan.generate`) can't do anything there — gray it
+                  // out instead of letting it be picked and silently ignored.
+                  const notApplicable =
+                    !skill.applicableTasks.includes("knowledge.answer");
+                  const lockedByOther = picker.other.includes(skill.skillId);
+                  const checked = picker.selected.includes(skill.skillId);
+                  return (
+                    <label
+                      key={skill.skillId}
+                      aria-disabled={notApplicable || lockedByOther}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={notApplicable || lockedByOther}
+                        onChange={() =>
+                          picker.setSelected((current) =>
+                            checked
+                              ? current.filter((id) => id !== skill.skillId)
+                              : [...current, skill.skillId],
+                          )
+                        }
+                      />
+                      <span>{skill.displayName}</span>
+                    </label>
+                  );
+                })
+              )}
+              {unavailable.length > 0 ? (
+                <div className="tap-agent-skills-unavailable">
+                  {unavailable.map((skillId) => (
+                    <div key={skillId} role="alert" aria-disabled>
+                      <span>
+                        {skillById.get(skillId)?.displayName ?? skillId}
+                      </span>
+                      <p>{form.skillDisabled}</p>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          picker.setSelected((current) =>
+                            current.filter((id) => id !== skillId),
+                          )
+                        }
+                      >
+                        {form.removeSkill}
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          ) : null}
-        </fieldset>
+              ) : null}
+            </fieldset>
+          );
+        })}
         <fieldset>
           <legend>{form.toolsLabel}</legend>
           {tools.isError ? <p role="alert">{form.toolsLoadFailed}</p> : null}

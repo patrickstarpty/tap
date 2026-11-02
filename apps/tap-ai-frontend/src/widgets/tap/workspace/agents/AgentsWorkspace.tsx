@@ -68,11 +68,10 @@ export function AgentsWorkspace({
   const modelCatalog = useModelCatalog(projectId);
   const setEnabled = useSetAgentEnabled(projectId);
 
-  const enabledSkills = useMemo(
-    () =>
-      (skillsQuery.data ?? []).filter(
-        (item) => item.isLatest && item.status === "enabled",
-      ),
+  // Latest revision of every Skill, any status: the form and drawer offer
+  // only enabled ones as picks but still name a disabled pinned/excluded one.
+  const latestSkills = useMemo(
+    () => (skillsQuery.data ?? []).filter((item) => item.isLatest),
     [skillsQuery.data],
   );
   const chatModels = useMemo(
@@ -191,7 +190,6 @@ export function AgentsWorkspace({
                   </span>
                 </div>
                 {item.description ? <p>{item.description}</p> : null}
-                {item.hasSkillUpdates ? <p>{text.hasSkillUpdates}</p> : null}
               </article>
               <div className="tap-catalog-actions">
                 {item.status === "enabled" ? (
@@ -231,7 +229,7 @@ export function AgentsWorkspace({
           projectId={projectId}
           copy={copy}
           revisionId={detailRevisionId}
-          skills={enabledSkills}
+          skills={latestSkills}
           onClose={() => setDetailRevisionId(null)}
           onUse={onUse}
           onEdit={(detail) => {
@@ -242,7 +240,6 @@ export function AgentsWorkspace({
             setDetailRevisionId(null);
             setFormState({ mode: "copy", agent: detail });
           }}
-          onUpgraded={(newRevisionId) => setDetailRevisionId(newRevisionId)}
           opener={triggerRef.current}
         />
       ) : null}
@@ -253,7 +250,7 @@ export function AgentsWorkspace({
           copy={copy}
           mode={formState.mode}
           agent={formState.mode === "create" ? undefined : formState.agent}
-          skills={enabledSkills}
+          skills={latestSkills}
           models={chatModels}
           onClose={() => setFormState(null)}
           opener={triggerRef.current}

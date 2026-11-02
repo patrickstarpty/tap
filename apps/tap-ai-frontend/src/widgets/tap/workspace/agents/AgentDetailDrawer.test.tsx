@@ -1,14 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  AiAssetError,
   useAgent,
   useAgentRevisions,
-  useReviseAgent,
   type SkillRevision,
 } from "../../../../features/knowledge/api/aiAssets";
 import { WORKSPACE_COPY } from "../copy";
@@ -25,7 +23,6 @@ vi.mock(
       ...actual,
       useAgent: vi.fn(),
       useAgentRevisions: vi.fn(),
-      useReviseAgent: vi.fn(),
     };
   },
 );
@@ -51,9 +48,12 @@ const DETAIL = {
   builtIn: false,
   status: "enabled",
   isLatest: true,
+  // Deprecated: the server always sends `false` now; even a stale `true`
+  // must not bring the old upgrade prompt back.
   hasSkillUpdates: true,
   defaultModelAlias: null,
-  skillRevisionIds: ["skill-rev-old"],
+  pinnedSkillIds: ["skill-1"],
+  excludedSkillIds: ["skill-2"],
 };
 
 const BUILT_IN_DETAIL = { ...DETAIL, sourceKind: "built_in", builtIn: true };
@@ -71,37 +71,13 @@ const LATEST_SKILL: SkillRevision = {
   isLatest: true,
 } as SkillRevision;
 
-function mockFetchSkillDetail(
-  options: { pending?: boolean; status?: "enabled" | "disabled" } = {},
-) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: string) => {
-      if (options.pending === true)
-        return new Promise<Response>(() => {
-          /* never resolves */
-        });
-      const match = /\/skills\/([^/]+)$/.exec(input);
-      const revisionId = match?.[1] ?? "";
-      return new Response(
-        JSON.stringify({
-          revisionId,
-          skillId: "skill-1",
-          assetId: "skill-1",
-          displayName: "Citation skill (old)",
-          description: "",
-          instructions: "a",
-          applicableTasks: ["knowledge.answer"],
-          sourceKind: "authored",
-          builtIn: false,
-          status: options.status ?? "enabled",
-          isLatest: false,
-        }),
-        { status: 200 },
-      );
-    }),
-  );
-}
+const EXCLUDED_SKILL: SkillRevision = {
+  ...LATEST_SKILL,
+  revisionId: "skill-rev-2",
+  skillId: "skill-2",
+  assetId: "skill-2",
+  displayName: "Glossary skill",
+} as SkillRevision;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -111,11 +87,10 @@ function renderDrawer(
   overrides: {
     detail?: typeof DETAIL | undefined;
     detailError?: boolean;
+    skills?: readonly SkillRevision[];
     onEdit?: (detail: unknown) => void;
     onUse?: (revisionId: string) => void;
     onCopyAsCustom?: (detail: unknown) => void;
-    onUpgraded?: (revisionId: string) => void;
-    reviseMutate?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   vi.mocked(useAgent).mockReturnValue({
@@ -130,32 +105,23 @@ function renderDrawer(
     isPending: false,
     isError: false,
   } as never);
-  const reviseMutate = overrides.reviseMutate ?? vi.fn();
-  vi.mocked(useReviseAgent).mockReturnValue({
-    mutate: reviseMutate,
-    isPending: false,
-  } as never);
   const onEdit = overrides.onEdit ?? vi.fn();
   const onUse = overrides.onUse ?? vi.fn();
   const onCopyAsCustom = overrides.onCopyAsCustom ?? vi.fn();
-  const onUpgraded = overrides.onUpgraded ?? vi.fn();
   return {
     onEdit,
     onUse,
     onCopyAsCustom,
-    onUpgraded,
-    reviseMutate,
     ...render(
       createElement(AgentDetailDrawer, {
         projectId: "project-1",
         copy: WORKSPACE_COPY.en,
         revisionId: "rev_1",
-        skills: [LATEST_SKILL],
+        skills: overrides.skills ?? [LATEST_SKILL, EXCLUDED_SKILL],
         onClose: vi.fn(),
         onUse,
         onEdit,
         onCopyAsCustom,
-        onUpgraded,
         opener: document.body,
       }),
       { wrapper },
@@ -165,7 +131,6 @@ function renderDrawer(
 
 describe("AgentDetailDrawer", () => {
   it("shows the overview tab with default model and revision", () => {
-    mockFetchSkillDetail();
     renderDrawer();
     expect(
       screen.getByText("Helps review underwriting evidence."),
@@ -174,16 +139,27 @@ describe("AgentDetailDrawer", () => {
     expect(screen.getByText("rev_1")).toBeVisible();
   });
 
-  it("switches to the Skills tab and lists bundled skills", async () => {
-    mockFetchSkillDetail();
+  it("switches to the Skills tab and lists pinned and excluded skills", async () => {
     const user = userEvent.setup();
     renderDrawer();
     await user.click(screen.getByRole("tab", { name: "Skills" }));
-    expect(await screen.findByText("Citation skill (old)")).toBeVisible();
+    const pinned = screen.getByRole("list", { name: "Pinned Skills" });
+    const excluded = screen.getByRole("list", { name: "Excluded Skills" });
+    expect(within(pinned).getByText("Citation skill")).toBeVisible();
+    expect(within(excluded).getByText("Glossary skill")).toBeVisible();
+  });
+
+  it("shows empty pinned and excluded lists", async () => {
+    const user = userEvent.setup();
+    renderDrawer({
+      detail: { ...DETAIL, pinnedSkillIds: [], excludedSkillIds: [] },
+    });
+    await user.click(screen.getByRole("tab", { name: "Skills" }));
+    expect(screen.getByText("No pinned skills.")).toBeVisible();
+    expect(screen.getByText("No excluded skills.")).toBeVisible();
   });
 
   it("shows an error and a retry button when the Agent detail fails to load", () => {
-    mockFetchSkillDetail();
     renderDrawer({ detailError: true });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Agents could not be loaded.",
@@ -192,7 +168,6 @@ describe("AgentDetailDrawer", () => {
   });
 
   it("shows Copy as custom instead of Edit for a built-in agent", () => {
-    mockFetchSkillDetail();
     const onCopyAsCustom = vi.fn();
     renderDrawer({ detail: BUILT_IN_DETAIL, onCopyAsCustom });
     expect(
@@ -204,130 +179,27 @@ describe("AgentDetailDrawer", () => {
     );
   });
 
-  it("disables Upgrade until every bundled Skill's latest revision resolves", () => {
-    mockFetchSkillDetail({ pending: true });
+  it("shows no upgrade prompt", () => {
     renderDrawer();
-    expect(screen.getByRole("button", { name: "Upgrade" })).toBeDisabled();
-  });
-
-  it("revises the agent directly with the latest skill revision on Upgrade", async () => {
-    mockFetchSkillDetail();
-    const user = userEvent.setup();
-    const reviseMutate = vi.fn();
-    renderDrawer({ reviseMutate });
-
-    expect(
-      screen.getByText("A bundled skill has a newer revision."),
-    ).toBeVisible();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole("button", { name: "Upgrade" }));
-
-    expect(reviseMutate.mock.calls[0]![0]).toEqual({
-      agentId: "agent_1",
-      request: expect.objectContaining({
-        baseRevisionId: "rev_1",
-        systemInstruction: "Review the evidence before escalating.",
-        skillRevisionIds: ["skill-rev-new"],
-      }),
-    });
-  });
-
-  it("never offers Upgrade for a built-in agent, even with a bundled Skill update", () => {
-    mockFetchSkillDetail();
-    renderDrawer({ detail: BUILT_IN_DETAIL });
-    expect(
-      screen.getByText("A bundled skill has a newer revision."),
-    ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Upgrade" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText(/newer revision/)).not.toBeInTheDocument();
   });
 
-  it("disables Upgrade when the revision has no systemInstruction to resubmit", () => {
-    mockFetchSkillDetail();
-    renderDrawer({ detail: { ...DETAIL, systemInstruction: null } });
-    expect(screen.getByRole("button", { name: "Upgrade" })).toBeDisabled();
-  });
-
-  it("moves the drawer to the new revision when Upgrade succeeds", async () => {
-    mockFetchSkillDetail();
-    const user = userEvent.setup();
-    const reviseMutate = vi.fn();
-    const onUpgraded = vi.fn();
-    renderDrawer({ reviseMutate, onUpgraded });
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole("button", { name: "Upgrade" }));
-
-    const options = reviseMutate.mock.calls[0]![1] as {
-      onSuccess: (result: { revisionId: string }) => void;
-    };
-    options.onSuccess({ revisionId: "rev_2" });
-    expect(onUpgraded).toHaveBeenCalledWith("rev_2");
-  });
-
-  it("shows a revision-conflict message when Upgrade returns 409 revision_conflict", async () => {
-    mockFetchSkillDetail();
-    const user = userEvent.setup();
-    const reviseMutate = vi.fn();
-    renderDrawer({ reviseMutate });
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole("button", { name: "Upgrade" }));
-
-    const options = reviseMutate.mock.calls[0]![1] as {
-      onError: (cause: unknown) => void;
-    };
-    options.onError(
-      new AiAssetError({ code: "revision_conflict", detail: "stale" }),
-    );
+  it("warns when a pinned skill has been disabled (I-6)", async () => {
+    renderDrawer({
+      skills: [{ ...LATEST_SKILL, status: "disabled" } as SkillRevision],
+    });
 
     expect(
-      await screen.findByText(
-        "This content was updated elsewhere. Please refresh.",
+      screen.getByText(
+        "A pinned skill has been disabled and will be skipped when this agent answers.",
       ),
     ).toBeVisible();
-  });
-
-  it("shows a generic error message on other Upgrade failures", async () => {
-    mockFetchSkillDetail();
-    const user = userEvent.setup();
-    const reviseMutate = vi.fn();
-    renderDrawer({ reviseMutate });
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upgrade" })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole("button", { name: "Upgrade" }));
-
-    const options = reviseMutate.mock.calls[0]![1] as {
-      onError: (cause: unknown) => void;
-    };
-    options.onError(new Error("network down"));
-
-    expect(
-      await screen.findByText("This agent could not be upgraded."),
-    ).toBeVisible();
-  });
-
-  it("warns when a bound skill has been disabled, instead of only showing the unrelated newer-revision notice (I-6)", async () => {
-    mockFetchSkillDetail({ status: "disabled" });
-    renderDrawer({ detail: { ...DETAIL, hasSkillUpdates: false } });
-
-    expect(
-      await screen.findByText(
-        "A bundled skill has been disabled and will be skipped when this agent answers.",
-      ),
-    ).toBeVisible();
-    expect(screen.getByText("Citation skill (old)")).toBeVisible();
+    expect(screen.getByText("Citation skill")).toBeVisible();
 
     await userEvent.setup().click(screen.getByRole("tab", { name: "Skills" }));
-    expect(screen.getByText("Citation skill (old) (Disabled)")).toBeVisible();
+    expect(screen.getByText("Citation skill (Disabled)")).toBeVisible();
   });
 });

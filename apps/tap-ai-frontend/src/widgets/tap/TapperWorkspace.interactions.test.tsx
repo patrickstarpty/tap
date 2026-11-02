@@ -2698,12 +2698,12 @@ describe("Tap product workspace interactions", () => {
   });
 
   // `renderWorkspace()`'s `seedAgentSkillCatalog` doesn't carry
-  // `defaultModelAlias`/`skillRevisionIds` (its Agents never prefill or
-  // bundle anything), so these cases seed the composer's own catalog keys
+  // `defaultModelAlias`/`pinnedSkillIds` (its Agents never prefill or
+  // pin anything), so these cases seed the composer's own catalog keys
   // directly with an Agent that does.
   function renderWorkspaceWithComposerAgent(overrides: {
     defaultModelAlias?: string | null;
-    skillRevisionIds?: string[];
+    pinnedSkillIds?: string[];
   }) {
     const api = defaultKnowledgeClient();
     const queryClient = createTestQueryClient();
@@ -2718,7 +2718,8 @@ describe("Tap product workspace interactions", () => {
           toolAllowlist: ["knowledge.search", "knowledge.answer"],
           outputSchemaDigest: `sha256:${"8".repeat(64)}`,
           defaultModelAlias: overrides.defaultModelAlias ?? null,
-          skillRevisionIds: overrides.skillRevisionIds ?? [],
+          pinnedSkillIds: overrides.pinnedSkillIds ?? [],
+          excludedSkillIds: [],
           status: "enabled",
           isLatest: true,
         },
@@ -2729,7 +2730,8 @@ describe("Tap product workspace interactions", () => {
       [
         {
           revisionId: "rules-lookup",
-          assetId: "rules-lookup",
+          skillId: "rules-lookup-skill",
+          assetId: "rules-lookup-skill",
           displayName: "Rules lookup",
           contentDigest: `sha256:${"9".repeat(64)}`,
           applicableTasks: ["knowledge.answer"],
@@ -2742,9 +2744,11 @@ describe("Tap product workspace interactions", () => {
     return renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
   }
 
-  it("brings in the selected Agent's bundled Skill as a locked chip and drops it when the Agent is deselected", async () => {
+  it("brings in the selected Agent's pinned Skill (at its latest revision) as a locked chip and drops it when the Agent is deselected", async () => {
     const user = userEvent.setup();
-    renderWorkspaceWithComposerAgent({ skillRevisionIds: ["rules-lookup"] });
+    renderWorkspaceWithComposerAgent({
+      pinnedSkillIds: ["rules-lookup-skill"],
+    });
 
     await user.click(screen.getByRole("button", { name: "Add to message" }));
     await user.click(
@@ -2776,6 +2780,282 @@ describe("Tap product workspace interactions", () => {
     expect(
       within(composer).queryByText("Rules lookup"),
     ).not.toBeInTheDocument();
+  });
+
+  // A durable conversation API whose Agent pins "Rules lookup" by Skill.
+  // `detailTurnInput` is what the conversation detail echoes back for the
+  // created Turn; `created` captures the create request body.
+  function stubPinnedAgentConversation(
+    detailTurnInput: Record<string, unknown>,
+  ) {
+    const created: Array<Record<string, unknown>> = [];
+    const agent = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      defaultModelAlias: null,
+      pinnedSkillIds: ["rules-lookup-skill"],
+      excludedSkillIds: [],
+    };
+    const skill = (
+      revisionId: string,
+      skillId: string,
+      displayName: string,
+    ) => ({
+      revisionId,
+      skillId,
+      assetId: skillId,
+      displayName,
+      description: "",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+    });
+    const skills = [
+      skill("rules-lookup-rev-2", "rules-lookup-skill", "Rules lookup"),
+      skill("clause-finder-rev-1", "clause-finder-skill", "Clause finder"),
+      skill("glossary-rev-1", "glossary-skill", "Glossary helper"),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        // The Skill library isn't under test here; opening a Skill from the
+        // answer context just has to land there.
+        if (path.includes("/skill-hub/"))
+          return Response.json(
+            { code: "unavailable", detail: "unavailable" },
+            { status: 503 },
+          );
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [agent] });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: skills });
+        const skillDetail = /\/ai\/skills\/([^/]+)$/u.exec(path);
+        if (skillDetail !== null) {
+          const summary = skills.find(
+            (item) => item.revisionId === skillDetail[1],
+          );
+          return Response.json({ ...summary, instructions: "a", files: [] });
+        }
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          const body =
+            input instanceof Request
+              ? await input.json()
+              : JSON.parse(String(init?.body ?? "{}"));
+          created.push(body as Record<string, unknown>);
+          return Response.json(
+            {
+              conversationId: "conversation-skills",
+              turnId: "conversation-skills-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-skills")) {
+          return Response.json({
+            conversationId: "conversation-skills",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-skills-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  ...detailTurnInput,
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-skills-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-skills-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    return { created };
+  }
+
+  async function sendWithAgentAndManualSkill(
+    user: ReturnType<typeof userEvent.setup>,
+  ) {
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Skills" })).getByRole(
+        "option",
+        { name: "Clause finder" },
+      ),
+    );
+    await user.keyboard("{Escape}");
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    // The pinned Skill shows as a locked chip next to the manual pick.
+    expect(within(composer).getByText("Rules lookup")).toBeVisible();
+    expect(within(composer).getByText("Clause finder")).toBeVisible();
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    const send = screen.getByRole("button", { name: "Send" });
+    await waitFor(() => expect(send).toBeEnabled());
+    await user.click(send);
+  }
+
+  it("sends only manually selected skills", async () => {
+    const { created } = stubPinnedAgentConversation({});
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await sendWithAgentAndManualSkill(user);
+
+    await waitFor(() => expect(created).toHaveLength(1));
+    // The Agent's pinned Skill is loaded server-side from the Agent; the
+    // request carries only what the person picked.
+    expect(created[0]!.agentRevisionId).toBe("underwriting-reviewer");
+    expect(created[0]!.skillRevisionIds).toEqual(["clause-finder-rev-1"]);
+  });
+
+  it("answer context lists skills used with their modes", async () => {
+    stubPinnedAgentConversation({
+      skillRevisionIds: ["clause-finder-rev-1", "rules-lookup-rev-2"],
+      skillLabels: ["Clause finder", "Rules lookup"],
+      skillsUsed: [
+        {
+          skillId: "clause-finder-skill",
+          revisionId: "clause-finder-rev-1",
+          label: "Clause finder",
+          mode: "manual",
+        },
+        {
+          skillId: "rules-lookup-skill",
+          revisionId: "rules-lookup-rev-2",
+          label: "Rules lookup",
+          mode: "pinned",
+        },
+        {
+          skillId: "glossary-skill",
+          revisionId: "glossary-rev-1",
+          label: "Glossary helper",
+          mode: "auto",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await sendWithAgentAndManualSkill(user);
+
+    await user.click(await screen.findByText(/Sources and settings used/));
+    const used = await screen.findByRole("list", { name: "Skills used" });
+    const rows = within(used).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Clause finder Manual",
+      "Rules lookup Pinned",
+      "Glossary helper Auto",
+    ]);
+
+    // Still openable to the Skill detail, auto-activated ones included.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(
+      within(used).getByRole("button", { name: "Glossary helper" }),
+    );
+    // The Skills module opens that Skill's detail drawer.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("list", { name: "Skills used" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("answer context falls back to the legacy skill labels for an older turn without skillsUsed", async () => {
+    stubPinnedAgentConversation({
+      skillRevisionIds: ["clause-finder-rev-1"],
+      skillLabels: ["Clause finder"],
+    });
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await sendWithAgentAndManualSkill(user);
+
+    await user.click(await screen.findByText(/Sources and settings used/));
+    expect(
+      screen.queryByRole("list", { name: "Skills used" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clause finder" })).toBeVisible();
   });
 
   it("prefills the composer model from the selected Agent's default model", async () => {

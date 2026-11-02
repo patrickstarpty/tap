@@ -10,6 +10,13 @@ import type { FeedbackValue } from "../../../features/conversations/feedback/Ans
 
 export type Locale = "en" | "zh";
 
+export interface TurnSkillUse {
+  skillId: string;
+  revisionId: string;
+  label: string;
+  mode: "manual" | "pinned" | "auto";
+}
+
 export type ModelId = string;
 
 // Pre-catalog placeholder: the chat composer replaces it with the catalog's
@@ -78,6 +85,9 @@ export interface AssistantTurn {
   answerEvidenceSnapshotDigest?: string | null;
   agentRevisionId?: string | null;
   skillRevisionIds?: readonly string[];
+  /** The Skills this Turn used and how each was activated; empty or absent
+   * for a Turn recorded before that was tracked. */
+  skillsUsed?: readonly TurnSkillUse[];
   skillNotices?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
 }

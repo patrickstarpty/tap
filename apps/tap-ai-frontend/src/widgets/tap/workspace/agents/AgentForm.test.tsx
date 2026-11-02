@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -95,6 +95,46 @@ const NOT_APPLICABLE_SKILL: SkillRevision = {
   status: "enabled",
   isLatest: true,
 } as SkillRevision;
+
+const OTHER_SKILL: SkillRevision = {
+  ...APPLICABLE_SKILL,
+  revisionId: "skill-rev-3",
+  skillId: "skill-3",
+  assetId: "skill-3",
+  displayName: "Glossary skill",
+} as SkillRevision;
+
+const pinnedGroup = () => screen.getByRole("group", { name: "Pinned Skills" });
+const excludedGroup = () =>
+  screen.getByRole("group", { name: "Excluded Skills" });
+
+const EDIT_AGENT = {
+  revisionId: "agent-rev-1",
+  assetId: "agent-1",
+  agentId: "agent-1",
+  displayName: "Underwriting helper",
+  description: "Helps with underwriting.",
+  contentDigest: "digest-agent",
+  toolAllowlist: ["knowledge.search", "knowledge.answer"],
+  outputSchemaDigest: "digest-schema",
+  sourceKind: "authored",
+  builtIn: false,
+  status: "enabled",
+  isLatest: true,
+  defaultModelAlias: null,
+  pinnedSkillIds: [],
+  excludedSkillIds: [],
+  systemInstruction: "Review the evidence.",
+} as unknown as NonNullable<Parameters<typeof AgentForm>[0]["agent"]>;
+
+async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
+  await user.type(screen.getByRole("textbox", { name: "Description" }), "d");
+  await user.type(
+    screen.getByRole("textbox", { name: "System instruction" }),
+    "s",
+  );
+}
 
 function skillDetailFor(
   revisionId: string,
@@ -273,9 +313,9 @@ describe("AgentForm fields and tools", () => {
         builtIn: false,
         status: "enabled",
         isLatest: true,
-        hasSkillUpdates: false,
         defaultModelAlias: null,
-        skillRevisionIds: [],
+        pinnedSkillIds: [],
+        excludedSkillIds: [],
         systemInstruction: "Review the evidence.",
       } as Parameters<typeof AgentForm>[0]["agent"],
     });
@@ -307,12 +347,14 @@ describe("AgentForm fields and tools", () => {
   it("grays out a Skill that isn't applicable to knowledge answers", () => {
     mockFetchSkillDetail({});
     renderForm({ skills: [APPLICABLE_SKILL, NOT_APPLICABLE_SKILL] });
-    expect(
-      screen.getByRole("checkbox", { name: /Citation skill/ }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("checkbox", { name: /Test plan skill/ }),
-    ).toBeDisabled();
+    for (const group of [pinnedGroup(), excludedGroup()]) {
+      expect(
+        within(group).getByRole("checkbox", { name: /Citation skill/ }),
+      ).toBeEnabled();
+      expect(
+        within(group).getByRole("checkbox", { name: /Test plan skill/ }),
+      ).toBeDisabled();
+    }
   });
 
   it("gates Save on name, description and system instruction", async () => {
@@ -375,19 +417,26 @@ describe("AgentForm fields and tools", () => {
       screen.queryByRole("checkbox", { name: /Citation skill/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: /Test plan skill/ }),
+      within(pinnedGroup()).getByRole("checkbox", { name: /Test plan skill/ }),
+    ).toBeVisible();
+    expect(
+      within(excludedGroup()).getByRole("checkbox", {
+        name: /Test plan skill/,
+      }),
     ).toBeVisible();
   });
 });
 
 describe("AgentForm Skill budget", () => {
-  it("warns at 90% of the per-turn Skill budget without blocking save", async () => {
+  it("warns at 90% of the per-turn Skill budget (summing each pinned Skill's latest revision) without blocking save", async () => {
     const user = userEvent.setup();
     const nearBudgetSize = Math.ceil(AGENT_SKILLS_BUDGET_BYTES * 0.95);
     mockFetchSkillDetail({ "skill-rev-1": nearBudgetSize });
     renderForm({ skills: [APPLICABLE_SKILL] });
 
-    await user.click(screen.getByRole("checkbox", { name: /Citation skill/ }));
+    await user.click(
+      within(pinnedGroup()).getByRole("checkbox", { name: /Citation skill/ }),
+    );
     await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
     await user.type(screen.getByRole("textbox", { name: "Description" }), "d");
     await user.type(
@@ -409,7 +458,9 @@ describe("AgentForm Skill budget", () => {
     mockFetchSkillDetail({ "skill-rev-1": overBudgetSize });
     renderForm({ skills: [APPLICABLE_SKILL] });
 
-    await user.click(screen.getByRole("checkbox", { name: /Citation skill/ }));
+    await user.click(
+      within(pinnedGroup()).getByRole("checkbox", { name: /Citation skill/ }),
+    );
     await user.type(screen.getByRole("textbox", { name: "Name" }), "a");
     await user.type(screen.getByRole("textbox", { name: "Description" }), "d");
     await user.type(
@@ -486,48 +537,151 @@ describe("AgentForm save", () => {
     ).toBeVisible();
   });
 
-  it("shows a bound Skill that was disabled with a warning and a remove action, instead of blocking Save (I-6)", async () => {
+  it("submits pinned and excluded skill ids", async () => {
     const user = userEvent.setup();
-    // The bound revision ("skill-rev-disabled") is not in the enabled-only
-    // `skills` picker list, but its detail still resolves (the server now
-    // resolves `GET /ai/skills/{revisionId}` regardless of status) so the
-    // form can show its name rather than a bare id.
-    mockFetchSkillDetail(
-      { "skill-rev-disabled": 10 },
-      { "skill-rev-disabled": "disabled" },
+    mockFetchSkillDetail({ "skill-rev-1": 10 });
+    const createMutateAsync = vi
+      .fn()
+      .mockResolvedValue({ revisionId: "rev_new" });
+    renderForm({
+      createMutateAsync,
+      skills: [APPLICABLE_SKILL, OTHER_SKILL],
+    });
+
+    await user.click(
+      within(pinnedGroup()).getByRole("checkbox", { name: /Citation skill/ }),
     );
+    await user.click(
+      within(excludedGroup()).getByRole("checkbox", {
+        name: /Glossary skill/,
+      }),
+    );
+    await fillRequiredFields(user);
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+
+    const draft = createMutateAsync.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    // By Skill, not by revision, and never the deprecated revision list.
+    expect(draft.pinnedSkillIds).toEqual(["skill-1"]);
+    expect(draft.excludedSkillIds).toEqual(["skill-3"]);
+    expect(draft).not.toHaveProperty("skillRevisionIds");
+  });
+
+  it("re-sends the existing pinned and excluded skill ids on edit (the revision is a full replacement)", async () => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({ "skill-rev-1": 10 });
     const reviseMutateAsync = vi
       .fn()
       .mockResolvedValue({ revisionId: "agent-rev-2" });
     renderForm({
       mode: "edit",
-      skills: [APPLICABLE_SKILL],
       reviseMutateAsync,
+      skills: [APPLICABLE_SKILL, OTHER_SKILL],
       agent: {
-        revisionId: "agent-rev-1",
-        assetId: "agent-1",
-        agentId: "agent-1",
-        displayName: "Underwriting helper",
-        description: "Helps with underwriting.",
-        contentDigest: "digest-agent",
-        toolAllowlist: ["knowledge.search", "knowledge.answer"],
-        outputSchemaDigest: "digest-schema",
-        sourceKind: "authored",
-        builtIn: false,
-        status: "enabled",
-        isLatest: true,
-        hasSkillUpdates: false,
-        defaultModelAlias: null,
-        skillRevisionIds: ["skill-rev-disabled"],
-        systemInstruction: "Review the evidence.",
-      } as Parameters<typeof AgentForm>[0]["agent"],
+        ...EDIT_AGENT,
+        pinnedSkillIds: ["skill-1"],
+        excludedSkillIds: ["skill-3"],
+      },
     });
 
     expect(
-      await screen.findByText(
-        "This bound Skill has been disabled and will be skipped when the Agent answers.",
-      ),
-    ).toBeVisible();
+      within(pinnedGroup()).getByRole("checkbox", { name: /Citation skill/ }),
+    ).toBeChecked();
+    expect(
+      within(excludedGroup()).getByRole("checkbox", { name: /Glossary skill/ }),
+    ).toBeChecked();
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+
+    const call = reviseMutateAsync.mock.calls[0]![0] as {
+      request: Record<string, unknown>;
+    };
+    expect(call.request.pinnedSkillIds).toEqual(["skill-1"]);
+    expect(call.request.excludedSkillIds).toEqual(["skill-3"]);
+    expect(call.request).not.toHaveProperty("skillRevisionIds");
+  });
+
+  it("a pinned skill is disabled in the excluded picker", async () => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({ "skill-rev-1": 10 });
+    renderForm({ skills: [APPLICABLE_SKILL, OTHER_SKILL] });
+
+    await user.click(
+      within(pinnedGroup()).getByRole("checkbox", { name: /Citation skill/ }),
+    );
+    expect(
+      within(excludedGroup()).getByRole("checkbox", {
+        name: /Citation skill/,
+      }),
+    ).toBeDisabled();
+
+    // And vice versa.
+    await user.click(
+      within(excludedGroup()).getByRole("checkbox", {
+        name: /Glossary skill/,
+      }),
+    );
+    expect(
+      within(pinnedGroup()).getByRole("checkbox", { name: /Glossary skill/ }),
+    ).toBeDisabled();
+  });
+
+  it.each([
+    ["agent_skill_conflict", "A skill can't be both pinned and excluded."],
+    [
+      "agent_skill_limit_exceeded",
+      "An agent can pin or exclude at most 64 skills each. Remove some before saving.",
+    ],
+  ])("maps %s to a product message", async (code, message) => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({});
+    const createMutateAsync = vi
+      .fn()
+      .mockRejectedValue(new AiAssetError({ code, detail: "rejected" }));
+    renderForm({ createMutateAsync });
+
+    await fillRequiredFields(user);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(message)).toBeVisible();
+  });
+
+  it("shows a pinned Skill that was disabled with a warning and a remove action, instead of blocking Save (I-6)", async () => {
+    const user = userEvent.setup();
+    mockFetchSkillDetail({});
+    const reviseMutateAsync = vi
+      .fn()
+      .mockResolvedValue({ revisionId: "agent-rev-2" });
+    renderForm({
+      mode: "edit",
+      skills: [
+        APPLICABLE_SKILL,
+        {
+          ...OTHER_SKILL,
+          displayName: "Retired skill",
+          status: "disabled",
+        } as SkillRevision,
+      ],
+      reviseMutateAsync,
+      agent: { ...EDIT_AGENT, pinnedSkillIds: ["skill-3"] },
+    });
+
+    const warning = screen.getByText(
+      "This skill has been disabled and will be skipped when the agent answers.",
+    );
+    expect(warning).toBeVisible();
+    expect(within(pinnedGroup()).getByText("Retired skill")).toBeVisible();
+    // A disabled Skill isn't offered as a new pick.
+    expect(
+      within(excludedGroup()).queryByRole("checkbox", {
+        name: /Retired skill/,
+      }),
+    ).not.toBeInTheDocument();
     const save = screen.getByRole("button", { name: "Save" });
     await waitFor(() => expect(save).toBeEnabled());
 
@@ -535,65 +689,15 @@ describe("AgentForm save", () => {
     expect(reviseMutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: "agent-1",
-        request: expect.objectContaining({
-          skillRevisionIds: ["skill-rev-disabled"],
-        }),
+        request: expect.objectContaining({ pinnedSkillIds: ["skill-3"] }),
       }),
     );
 
     await user.click(screen.getByRole("button", { name: "Remove" }));
     expect(
       screen.queryByText(
-        "This bound Skill has been disabled and will be skipped when the Agent answers.",
+        "This skill has been disabled and will be skipped when the agent answers.",
       ),
     ).toBeNull();
-  });
-
-  it("shows a bound Skill pinned to an older (still enabled) revision as outdated, not disabled (N-1)", async () => {
-    // The picker (`skills`) is latest-*and*-enabled only, so a bound
-    // older revision of a Skill that is still enabled also falls outside
-    // it -- the ordinary "Skill was revised since binding" case. This
-    // must not be mislabeled as disabled.
-    mockFetchSkillDetail(
-      { "skill-rev-old": 10 },
-      { "skill-rev-old": "enabled" },
-    );
-    renderForm({
-      mode: "edit",
-      // The picker only lists the *latest* revision of the Skill
-      // ("skill-rev-latest"), not the older bound one.
-      skills: [{ ...APPLICABLE_SKILL, revisionId: "skill-rev-latest" }],
-      agent: {
-        revisionId: "agent-rev-1",
-        assetId: "agent-1",
-        agentId: "agent-1",
-        displayName: "Underwriting helper",
-        description: "Helps with underwriting.",
-        contentDigest: "digest-agent",
-        toolAllowlist: ["knowledge.search", "knowledge.answer"],
-        outputSchemaDigest: "digest-schema",
-        sourceKind: "authored",
-        builtIn: false,
-        status: "enabled",
-        isLatest: true,
-        hasSkillUpdates: false,
-        defaultModelAlias: null,
-        skillRevisionIds: ["skill-rev-old"],
-        systemInstruction: "Review the evidence.",
-      } as Parameters<typeof AgentForm>[0]["agent"],
-    });
-
-    expect(
-      await screen.findByText(
-        "This bound Skill has a newer revision; the Agent still uses the revision it was bound to.",
-      ),
-    ).toBeVisible();
-    expect(
-      screen.queryByText(
-        "This bound Skill has been disabled and will be skipped when the Agent answers.",
-      ),
-    ).toBeNull();
-    // Still removable, same as a disabled bound Skill.
-    expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
   });
 });
