@@ -98,7 +98,19 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
   expect(agent).toBeDefined();
   const skills = (await (
     await page.request.get(`${root}/ai/skills`)
-  ).json()) as { items: Array<{ revisionId: string }> };
+  ).json()) as {
+    items: Array<{
+      revisionId: string;
+      builtIn: boolean;
+      status: string;
+      isLatest: boolean;
+    }>;
+  };
+  // Earlier specs leave disabled Skills behind; a disabled one is skipped for the answer.
+  const skill = skills.items.find(
+    (item) => item.builtIn && item.status === "enabled" && item.isLatest,
+  );
+  expect(skill).toBeDefined();
   const conversation = await page.request.post(`${root}/conversations`, {
     headers: { Origin: ORIGIN, "Idempotency-Key": `test-plan-chat-${marker}` },
     data: {
@@ -107,7 +119,7 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       sourceRevisionIds: [sourceRevisionId],
       documentRevisionIds: [],
       agentRevisionId: agent!.revisionId,
-      skillRevisionIds: [skills.items[0]!.revisionId],
+      skillRevisionIds: [skill!.revisionId],
     },
   });
   expect(
