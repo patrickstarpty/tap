@@ -13,6 +13,7 @@
 .local/graph-bench/
 .local/quality-answers/
 .local/quality-intents/
+.local/quality-skill-activation/
 .venv/
 .mypy_cache/
 node_modules/

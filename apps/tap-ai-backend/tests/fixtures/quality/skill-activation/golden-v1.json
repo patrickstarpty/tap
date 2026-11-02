@@ -1,0 +1,122 @@
+{
+  "version": "skill-activation-golden-v1",
+  "skills": [
+    {
+      "name": "bdd-scenario-writer",
+      "description": "Turns a requirement or user story into Gherkin Given/When/Then scenarios covering the happy path, boundary values and negative paths.",
+      "category": "test-design"
+    },
+    {
+      "name": "claims-faq",
+      "description": "Answers policyholder questions about filing an insurance claim: required documents, submission channels, processing times and claim status.",
+      "category": "knowledge"
+    },
+    {
+      "name": "insurance-glossary",
+      "description": "Explains an insurance or testing term in plain language with a one-sentence definition and a short example, e.g. waiting period, rider, sum assured, smoke test.",
+      "category": "knowledge"
+    },
+    {
+      "name": "defect-trend-analyzer",
+      "description": "Summarizes defect counts, severity mix and open/closed trends across test runs or a defect export, and flags modules whose defects are rising.",
+      "category": "analysis"
+    },
+    {
+      "name": "citation-formatter",
+      "description": "Formats the sources behind an answer as a numbered reference list with document title, section and page. Use when the user asks for references or a bibliography.",
+      "category": "writing"
+    },
+    {
+      "name": "release-notes-drafter",
+      "description": "Drafts customer-facing release notes from a list of merged changes or tickets, grouped under New, Improved and Fixed.",
+      "category": "writing"
+    }
+  ],
+  "cases": [
+    {
+      "id": "act-01-bdd-address-change",
+      "question": "Write Gherkin scenarios for the requirement that a policyholder can update their mailing address in the customer portal.",
+      "evidence": [
+        "REQ-PORTAL-118: A logged-in policyholder can change the mailing address on an active policy. The new address must include a postal code that matches the selected country. The change takes effect for correspondence sent after the next business day.",
+        "REQ-PORTAL-118 acceptance notes: a policy in lapsed status cannot be edited; the portal shows an error and keeps the old address."
+      ],
+      "expected": ["bdd-scenario-writer"]
+    },
+    {
+      "id": "act-02-claims-hospitalization-documents",
+      "question": "What documents do I need to submit for a hospitalization claim, and how long does it usually take to process?",
+      "evidence": [
+        "Hospital claims guide, section 2: submit the completed claim form, the itemized hospital bill, the discharge summary and a copy of the policyholder's ID. Claims can be submitted through the mobile app or at any service center.",
+        "Hospital claims guide, section 4: complete claims are normally assessed within 10 working days of receipt."
+      ],
+      "expected": ["claims-faq"]
+    },
+    {
+      "id": "act-03-glossary-waiting-period",
+      "question": "In plain terms, what does 'waiting period' mean on a critical illness policy?",
+      "evidence": [
+        "Critical Illness Plan, policy wording 3.1: no benefit is payable for a covered critical illness first diagnosed within 90 days of the policy issue date or reinstatement date."
+      ],
+      "expected": ["insurance-glossary"]
+    },
+    {
+      "id": "act-04-defect-trend-regression",
+      "question": "Across the last three regression runs, which modules have a rising number of open defects, and how is severity distributed?",
+      "evidence": [
+        "Regression run R-41: 12 open defects (Policy Admin 5, Billing 4, Claims 3); severity: 2 critical, 6 major, 4 minor.",
+        "Regression run R-42: 15 open defects (Policy Admin 5, Billing 7, Claims 3); severity: 3 critical, 7 major, 5 minor.",
+        "Regression run R-43: 19 open defects (Policy Admin 4, Billing 10, Claims 5); severity: 3 critical, 10 major, 6 minor."
+      ],
+      "expected": ["defect-trend-analyzer"]
+    },
+    {
+      "id": "act-05-citations-premium-holiday",
+      "question": "Summarize the premium holiday rules for the Universal Life plan and list the sources as a numbered reference list with section and page.",
+      "evidence": [
+        "Universal Life Plan product guide, section 6.2 (page 14): after the first two policy years, the policyholder may take a premium holiday of up to 12 months while the account value covers monthly charges.",
+        "Universal Life Plan product guide, section 6.3 (page 15): the policy lapses if the account value cannot cover the monthly charges during a premium holiday."
+      ],
+      "expected": ["citation-formatter"]
+    },
+    {
+      "id": "act-06-release-notes-portal",
+      "question": "Draft customer-facing release notes for portal version 3.2 from these merged changes.",
+      "evidence": [
+        "Merged changes for portal 3.2: PORTAL-201 add e-statement download for investment-linked policies; PORTAL-207 speed up the claim status page; PORTAL-215 fix the beneficiary form rejecting names with apostrophes; PORTAL-219 fix the premium due reminder showing the wrong date for annual payers."
+      ],
+      "expected": ["release-notes-drafter"]
+    },
+    {
+      "id": "act-07-plain-grace-period-days",
+      "question": "How many days is the grace period for a missed premium on the Term Life plan?",
+      "evidence": [
+        "Term Life Plan, policy wording 5.4: a grace period of 31 days from the premium due date is allowed for each premium after the first. The policy stays in force during the grace period."
+      ],
+      "expected": []
+    },
+    {
+      "id": "act-08-plain-test-environment",
+      "question": "Which environment is the payment gateway regression suite scheduled to run on this week?",
+      "evidence": [
+        "Test schedule, week 44: the payment gateway regression suite runs nightly on the SIT-2 environment; the UAT environment is reserved for the billing migration rehearsal."
+      ],
+      "expected": []
+    },
+    {
+      "id": "act-09-distractor-coverage-physiotherapy",
+      "question": "Does the Medical Plus plan cover physiotherapy after a car accident?",
+      "evidence": [
+        "Medical Plus Plan, schedule of benefits: outpatient physiotherapy is covered up to 10 sessions per policy year when prescribed by a registered medical practitioner following a covered hospitalization or accident."
+      ],
+      "expected": []
+    },
+    {
+      "id": "act-10-distractor-failed-count",
+      "question": "How many test cases failed in yesterday's motor claims regression run?",
+      "evidence": [
+        "Motor claims regression run R-88 (yesterday): 412 test cases executed, 397 passed, 9 failed, 6 blocked."
+      ],
+      "expected": []
+    }
+  ]
+}
