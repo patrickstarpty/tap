@@ -159,7 +159,7 @@ function buildFixtureZip(): Buffer {
   return buildStoredZip(entries);
 }
 
-test("imports a Skill package, binds it to a new Agent, and uses it end to end", async ({
+test("imports a Skill package, pins it on a new Agent, and uses it end to end", async ({
   page,
 }) => {
   const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
@@ -286,7 +286,7 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
   );
   expect(importedSkill).toBeDefined();
 
-  // Step 2: build a new Agent bound to the imported Skill.
+  // Step 2: build a new Agent that pins the imported Skill.
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
@@ -306,7 +306,8 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
       "Use the claim intake checklist Skill to confirm every required field is present before answering.",
     );
   await agentDialog
-    .getByRole("checkbox", { name: new RegExp(SKILL_NAME, "u") })
+    .getByRole("group", { name: "Pinned Skills" })
+    .getByRole("checkbox", { name: SKILL_NAME, exact: true })
     .check();
   const agentCreatePending = page.waitForResponse(
     (response) =>
@@ -366,7 +367,7 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
 
   // Step 4: the answer echoes the Skill marker (proving the Skill's
   // instructions reached the model prompt), and "Sources and settings"
-  // names the Agent and the Skill revision used.
+  // names the Agent and the Skill revision used, tagged Pinned.
   const turn = page.locator(".tap-turn").filter({ hasText: prompt });
   await expect(turn).toContainText(SKILL_MARKER);
 
@@ -383,6 +384,13 @@ test("imports a Skill package, binds it to a new Agent, and uses it end to end",
     name: new RegExp(SKILL_NAME, "u"),
   });
   await expect(skillLink).toBeVisible();
+  await expect(
+    answerContext
+      .getByRole("list", { name: "Skills used" })
+      .getByRole("listitem")
+      .filter({ hasText: SKILL_NAME })
+      .getByText("Pinned", { exact: true }),
+  ).toBeVisible();
   await skillLink.click();
   const skillDetailDialog = page.getByRole("dialog", { name: SKILL_NAME });
   await expect(skillDetailDialog).toBeVisible();

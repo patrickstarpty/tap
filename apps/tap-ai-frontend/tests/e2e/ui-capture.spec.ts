@@ -12,6 +12,14 @@ import {
   CAPTURE_PUBLISHED_SOURCES,
   CAPTURE_RELATION_CONVERSATION,
 } from "./graphCaptureFixture";
+import {
+  CAPTURE_SKILLS_CONVERSATION_TITLE,
+  CAPTURE_SKILLS_QUESTION,
+  captureHubSkill,
+  captureSkillAssetsResponse,
+  captureSkillHubResponse,
+  captureSkillLibraryOf,
+} from "./skillHubCaptureFixture";
 
 // Current independently deployed AI shell, not the archived mixed-product demo.
 // No live backend or provider is contacted; these are deterministic UI captures.
@@ -102,6 +110,13 @@ test.beforeEach(async ({ page }) => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown;
     const teamBody = captureAgentTeamResponse(path);
+    // The shared default is an empty Skill library (the "captures AI Agent
+    // and Skill catalogs" empty state); Skill Hub captures reroute to the
+    // populated fixture.
+    const skillHubBody = captureSkillHubResponse(
+      path,
+      captureSkillLibraryOf([]),
+    );
     if (path === "/api/v1/runtime-mode") {
       body = {
         mode: "validation",
@@ -126,6 +141,8 @@ test.beforeEach(async ({ page }) => {
       return;
     } else if (teamBody !== undefined) {
       body = teamBody;
+    } else if (skillHubBody !== undefined) {
+      body = skillHubBody;
     } else if (/\/(ai\/(agents|skills)|conversations)$/u.test(path)) {
       body = { items: [], nextCursor: null };
     } else {
@@ -450,6 +467,20 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
     ],
   };
 
+  const skillHubLibrary = captureSkillLibraryOf([
+    captureHubSkill({
+      skillId: skillSummary.skillId,
+      latestRevisionId: skillRevisionId,
+      name: skillSummary.displayName,
+      description: skillSummary.description,
+      category: "knowledge",
+      sourceKind: "imported",
+      originKind: "zip",
+      originRef: "claim-intake-checklist.zip",
+      originImportedAt: "2026-10-18T03:20:00Z",
+    }),
+  ]);
+
   // This test's own catalogs differ from "captures AI Agent and Skill
   // catalogs" above (that one deliberately captures the empty-catalog
   // state), so it reroutes `**/api/v1/**` with its own fixture rather than
@@ -536,6 +567,12 @@ test("captures the Skill import preview, Skill detail and Agent creation form", 
     const team = captureAgentTeamResponse(path);
     if (team !== undefined && method === "GET") {
       await route.fulfill({ json: team });
+      return;
+    }
+    // The Skills page lists the library's Skill Hub records.
+    const hub = captureSkillHubResponse(path, skillHubLibrary);
+    if (hub !== undefined && method === "GET") {
+      await route.fulfill({ json: hub });
       return;
     }
     throw new Error(`Unexpected capture API request: ${method} ${path}`);
@@ -1145,4 +1182,171 @@ test("captures the Agent team report", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText("Loading team data...")).toHaveCount(0);
   await captureTeam(page, "09-agent-team-report");
+});
+
+// -- Skill Hub -------------------------------------------------------------
+
+// Hashes of the Skill Hub captures so far: each must differ from the others.
+const skillHubCaptureHashes: string[] = [];
+async function captureSkillHub(page: Page, name: string) {
+  const hash = await capture(page, name);
+  expect(skillHubCaptureHashes).not.toContain(hash);
+  skillHubCaptureHashes.push(hash);
+}
+
+/** Serves the populated Skill Hub fixture ahead of `beforeEach`'s shared
+ * routes (everything else falls through to them) and reloads the app so no
+ * query keeps the shared default's empty catalogs. */
+async function openWithSkillHubFixture(page: Page) {
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const body =
+      captureSkillHubResponse(path) ?? captureSkillAssetsResponse(path);
+    if (body === undefined) {
+      await route.fallback();
+      return;
+    }
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: body });
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("img", { name: "TAP platform", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Loading conversations…", { exact: true }),
+  ).toHaveCount(0);
+}
+
+async function openSkillLibrary(page: Page) {
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Skills", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "Skill library" })
+      .getByRole("listitem", { name: "claim-intake-checklist" }),
+  ).toBeVisible();
+}
+
+test("captures the Skill library", async ({ page }) => {
+  await openWithSkillHubFixture(page);
+  await openSkillLibrary(page);
+  const library = page.getByRole("list", { name: "Skill library" });
+  // Every category, a built-in and a disabled Skill.
+  for (const name of [
+    "underwriting-test-design",
+    "policy-api-automation",
+    "Citation skill",
+    "claim-trend-analysis",
+    "customer-letter-writer",
+    "legacy-claim-summary",
+  ])
+    await expect(library.getByRole("listitem", { name })).toBeVisible();
+  await expect(
+    library
+      .getByRole("listitem", { name: "Citation skill" })
+      .getByText("Built-in", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    library
+      .getByRole("listitem", { name: "legacy-claim-summary" })
+      .getByText("Disabled", { exact: true }),
+  ).toBeVisible();
+  // 61 automatic candidates against a limit of 60.
+  await expect(
+    page.getByRole("status").filter({ hasText: "More than 60 skills" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Library summary" }),
+  ).toContainText("64");
+  await captureSkillHub(page, "18-skill-library");
+});
+
+test("captures a Skill detail usage tab", async ({ page }) => {
+  await openWithSkillHubFixture(page);
+  await openSkillLibrary(page);
+  await page
+    .getByRole("listitem", { name: "claim-intake-checklist" })
+    .getByRole("button", { name: "claim-intake-checklist", exact: true })
+    .click();
+  const detail = page.getByRole("dialog", { name: "claim-intake-checklist" });
+  await expect(detail).toBeVisible();
+  await detail.getByRole("tab", { name: "Usage", exact: true }).click();
+  const usage = detail.getByRole("tabpanel");
+  await expect(
+    usage.getByText("Insufficient sample", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    usage.getByRole("list", { name: "Agents using it" }),
+  ).toContainText("Claims intake reviewer");
+  await expect(usage.getByText("Loading…", { exact: true })).toHaveCount(0);
+  await captureSkillHub(page, "19-skill-detail-usage");
+});
+
+test("captures the Agent form with pinned and excluded Skills", async ({
+  page,
+}) => {
+  await openWithSkillHubFixture(page);
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "New agent", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "New agent" });
+  await expect(form).toBeVisible();
+  await form
+    .getByLabel("Name", { exact: true })
+    .fill("Hospital cash claim reviewer");
+  const pinned = form.getByRole("group", { name: "Pinned Skills" });
+  const excluded = form.getByRole("group", { name: "Excluded Skills" });
+  await pinned
+    .getByRole("checkbox", { name: "claim-intake-checklist", exact: true })
+    .check();
+  await excluded
+    .getByRole("checkbox", { name: "customer-letter-writer", exact: true })
+    .check();
+  // Each picker locks the other's picks.
+  await expect(
+    excluded.getByRole("checkbox", {
+      name: "claim-intake-checklist",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(
+    form.getByText("Calculating the Skill budget…", { exact: true }),
+  ).toHaveCount(0);
+  await pinned.scrollIntoViewIfNeeded();
+  await captureSkillHub(page, "20-agent-form-skill-pickers");
+});
+
+test("captures the Skills used in an answer", async ({ page }) => {
+  await openWithSkillHubFixture(page);
+  await page
+    .getByRole("button", {
+      name: CAPTURE_SKILLS_CONVERSATION_TITLE,
+      exact: true,
+    })
+    .click();
+  const turn = page
+    .locator(".tap-turn")
+    .filter({ hasText: CAPTURE_SKILLS_QUESTION });
+  const answerContext = turn.locator(".tap-answer-context");
+  await answerContext
+    .getByText("Sources and settings used for this answer", { exact: true })
+    .click();
+  const skillsUsed = answerContext.getByRole("list", { name: "Skills used" });
+  await expect(skillsUsed.getByRole("listitem")).toHaveCount(3);
+  for (const [name, mode] of [
+    ["customer-letter-writer", "Manual"],
+    ["claim-intake-checklist", "Pinned"],
+    ["Citation skill", "Auto"],
+  ] as const)
+    await expect(
+      skillsUsed.getByRole("listitem").filter({ hasText: name }),
+    ).toContainText(mode);
+  await skillsUsed.scrollIntoViewIfNeeded();
+  await captureSkillHub(page, "21-answer-skills-used");
 });
