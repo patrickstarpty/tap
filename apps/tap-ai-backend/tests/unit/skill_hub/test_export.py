@@ -34,6 +34,7 @@ def _record(skill_id: str, *, name: str = "Test design") -> SkillRecord:
         origin_kind="zip",
         origin_ref="skills.zip",
         origin_imported_at=_NOW - timedelta(days=5),
+        origin_actor_id="creator-1",
         owner_actor_id="owner-1",
         owner_assigned_at=_NOW - timedelta(days=5),
         status="enabled",

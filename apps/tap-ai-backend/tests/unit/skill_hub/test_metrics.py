@@ -36,6 +36,7 @@ def _record(
         origin_kind="authored",
         origin_ref=None,
         origin_imported_at=None,
+        origin_actor_id="creator-1",
         owner_actor_id="owner-1",
         owner_assigned_at=_NOW,
         status=status,

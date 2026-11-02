@@ -2131,7 +2131,9 @@ class AgentTeamFeedbackResolveRequest(ContractModel):
 
 class SkillHubSkill(ContractModel):
     """A Skill and its latest revision (`SkillRecord`); `version` is the
-    display version (SemVer `metadata.version`, else `r<revisionNumber>`)."""
+    display version (SemVer `metadata.version`, else `r<revisionNumber>`).
+    `originActorId` is the importer (an imported latest revision's actor)
+    or else the creator (the first revision's actor)."""
 
     skill_id: str
     name: str
@@ -2144,6 +2146,7 @@ class SkillHubSkill(ContractModel):
     origin_kind: Literal["files", "zip", "paste", "authored", "built_in", "unknown"]
     origin_ref: str | None
     origin_imported_at: datetime | None
+    origin_actor_id: str
     owner_actor_id: str
     owner_assigned_at: datetime
     status: Literal["enabled", "disabled"]

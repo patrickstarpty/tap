@@ -10925,7 +10925,7 @@
       },
       "SkillHubSkill": {
         "additionalProperties": false,
-        "description": "A Skill and its latest revision (`SkillRecord`); `version` is the\ndisplay version (SemVer `metadata.version`, else `r<revisionNumber>`).",
+        "description": "A Skill and its latest revision (`SkillRecord`); `version` is the\ndisplay version (SemVer `metadata.version`, else `r<revisionNumber>`).\n`originActorId` is the importer (an imported latest revision's actor)\nor else the creator (the first revision's actor).",
         "properties": {
           "applicableTasks": {
             "items": {
@@ -10978,6 +10978,10 @@
           },
           "name": {
             "title": "Name",
+            "type": "string"
+          },
+          "originActorId": {
+            "title": "Originactorid",
             "type": "string"
           },
           "originImportedAt": {
@@ -11071,6 +11075,7 @@
           "originKind",
           "originRef",
           "originImportedAt",
+          "originActorId",
           "ownerActorId",
           "ownerAssignedAt",
           "status",

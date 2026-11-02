@@ -133,6 +133,7 @@ def _skill_dto(record: SkillRecord) -> SkillHubSkill:
             "origin_kind": record.origin_kind,
             "origin_ref": record.origin_ref,
             "origin_imported_at": record.origin_imported_at,
+            "origin_actor_id": record.origin_actor_id,
             "owner_actor_id": record.owner_actor_id,
             "owner_assigned_at": record.owner_assigned_at,
             "status": record.status,

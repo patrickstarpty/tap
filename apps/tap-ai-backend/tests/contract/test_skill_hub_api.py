@@ -51,6 +51,7 @@ def _record(skill_id: str, *, source_kind: str = "authored") -> SkillRecord:
         origin_kind="built_in" if source_kind == "built_in" else "authored",
         origin_ref=None,
         origin_imported_at=None,
+        origin_actor_id="creator-1",
         owner_actor_id="owner-1",
         owner_assigned_at=_NOW - timedelta(days=3),
         status="enabled",
@@ -267,6 +268,7 @@ def test_get_catalog_detail_returns_skill_detail() -> None:
     assert body["runtimeStatus"] == "ok"
     data = body["data"]
     assert data["skill"]["skillId"] == "skill-1"
+    assert data["skill"]["originActorId"] == "creator-1"
     assert data["usage"]["byMode"] == {"manual": 3, "pinned": 0, "auto": 1}
     assert data["usage"]["users"] == 2
     assert data["usage"]["satisfaction"] == 0.9

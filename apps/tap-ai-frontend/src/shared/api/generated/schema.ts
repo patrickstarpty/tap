@@ -5696,6 +5696,8 @@ export interface components {
          * SkillHubSkill
          * @description A Skill and its latest revision (`SkillRecord`); `version` is the
          *     display version (SemVer `metadata.version`, else `r<revisionNumber>`).
+         *     `originActorId` is the importer (an imported latest revision's actor)
+         *     or else the creator (the first revision's actor).
          */
         SkillHubSkill: {
             /** Applicabletasks */
@@ -5715,6 +5717,8 @@ export interface components {
             latestRevisionId: string;
             /** Name */
             name: string;
+            /** Originactorid */
+            originActorId: string;
             /** Originimportedat */
             originImportedAt: string | null;
             /**

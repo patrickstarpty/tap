@@ -90,6 +90,7 @@ async def insert_skill_maintenance_event(
 
 
 _BUILT_IN_SOURCE_KIND = "built_in"
+_IMPORTED_SOURCE_KIND = "imported"
 # Closed-set priority order (manual > pinned > auto) used to order trend points.
 _MODE_ORDER: dict[str, int] = {"manual": 0, "pinned": 1, "auto": 2}
 
@@ -167,6 +168,17 @@ class MysqlSkillHubStore:
             .group_by(skill_revision.c.skill_id)
             .subquery()
         )
+        first = skill_revision.alias("first_revision")
+        first_actor = (
+            select(first.c.actor_id)
+            .where(
+                first.c.skill_id == skill.c.skill_id,
+                first.c.project_id == skill.c.project_id,
+            )
+            .order_by(first.c.revision_number)
+            .limit(1)
+            .scalar_subquery()
+        )
         query = (
             select(
                 skill.c.skill_id,
@@ -186,6 +198,8 @@ class MysqlSkillHubStore:
                 skill_revision.c.applicable_tasks,
                 skill_revision.c.frontmatter_json,
                 skill_revision.c.created_at,
+                skill_revision.c.actor_id,
+                first_actor.label("first_actor_id"),
             )
             .select_from(
                 skill.join(
@@ -220,6 +234,13 @@ class MysqlSkillHubStore:
             origin_kind=cast(OriginKind, row["origin_kind"]),
             origin_ref=row["origin_ref"],
             origin_imported_at=_aware(imported_at) if imported_at is not None else None,
+            # Spec 1.1 "导入人": an imported latest revision names its
+            # importer; otherwise the Skill's creator (first revision).
+            origin_actor_id=(
+                row["actor_id"]
+                if row["source_kind"] == _IMPORTED_SOURCE_KIND
+                else row["first_actor_id"]
+            ),
             owner_actor_id=row["owner_actor_id"],
             owner_assigned_at=_aware(row["owner_assigned_at"]),
             status=row["status"],

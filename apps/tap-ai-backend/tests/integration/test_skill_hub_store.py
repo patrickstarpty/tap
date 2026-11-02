@@ -91,7 +91,11 @@ async def _insert_skill_revision(
     origin_imported_at: datetime | None = None,
     status: str = "enabled",
     created_at: datetime = _T0,
+    actor_id: str | None = None,
 ) -> None:
+    scope_values = _scope_values(scope)
+    if actor_id is not None:
+        scope_values["actor_id"] = actor_id
     await connection.execute(
         sa.insert(skill_revision).values(
             revision_id=f"{skill_id}-r{revision_number}",
@@ -112,7 +116,7 @@ async def _insert_skill_revision(
             status=status,
             adopted_from_revision_id=None,
             created_at=created_at,
-            **_scope_values(scope),
+            **scope_values,
         )
     )
 
@@ -606,7 +610,10 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
                 project_id=OTHER_SCOPE.project_id, enterprise_id=OTHER_SCOPE.enterprise_id
             )
         )
-        # Mine: a custom Skill with two revisions, and a built-in one.
+        for actor_id in ("importer", "editor"):
+            await _insert_actor(connection, actor_id=actor_id)
+        # Mine: a Skill whose second revision "importer" imported, an
+        # authored Skill "editor" revised, and a built-in one.
         await _insert_skill(connection, VALIDATION_SCOPE, "s-mine", category="analysis")
         await _insert_skill_revision(
             connection,
@@ -615,6 +622,7 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
             revision_number=2,
             display_name="Mine v2",
             description="second revision",
+            source_kind="imported",
             version_label="1.2.0",
             frontmatter={"name": "mine", "compatibility": "Python 3.13"},
             applicable_tasks=["test.design", "knowledge.answer"],
@@ -623,6 +631,17 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
             origin_imported_at=_T0 + timedelta(days=1),
             status="disabled",
             created_at=_T0 + timedelta(days=1),
+            actor_id="importer",
+        )
+        await _insert_skill(connection, VALIDATION_SCOPE, "s-authored")
+        await _insert_skill_revision(
+            connection,
+            VALIDATION_SCOPE,
+            "s-authored",
+            revision_number=2,
+            source_kind="authored",
+            origin_kind="authored",
+            actor_id="editor",
         )
         await _insert_skill(connection, VALIDATION_SCOPE, "s-builtin")
         await connection.execute(
@@ -655,7 +674,7 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
 
     async def check(sessions, store: MysqlSkillHubStore) -> None:
         records = {record.skill_id: record for record in await store.skills()}
-        assert records.keys() == {"s-mine", "s-builtin"}
+        assert records.keys() == {"s-mine", "s-authored", "s-builtin"}
         assert records["s-mine"] == SkillRecord(
             skill_id="s-mine",
             name="Mine v2",
@@ -664,10 +683,12 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
             version="1.2.0",
             latest_revision_id="s-mine-r2",
             revision_number=2,
-            source_kind="custom",
+            source_kind="imported",
             origin_kind="zip",
             origin_ref="mine.zip",
             origin_imported_at=(_T0 + timedelta(days=1)).replace(tzinfo=UTC),
+            # An imported Skill: the actor of its latest (importing) revision.
+            origin_actor_id="importer",
             owner_actor_id=VALIDATION_SCOPE.actor_id,
             owner_assigned_at=_T0.replace(tzinfo=UTC),
             status="disabled",
@@ -678,6 +699,9 @@ def test_queries_are_project_scoped(owned_project_mysql: IsolatedMysql) -> None:
         )
         builtin = records["s-builtin"]
         assert (builtin.built_in, builtin.version, builtin.compatibility) == (True, "r1", None)
+        # Authored/built-in Skills: the actor of the first revision.
+        assert builtin.origin_actor_id == VALIDATION_SCOPE.actor_id
+        assert records["s-authored"].origin_actor_id == VALIDATION_SCOPE.actor_id
         assert await store.skill("s-mine") == records["s-mine"]
         assert await store.skill("s-other") is None
 

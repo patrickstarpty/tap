@@ -66,6 +66,7 @@ def _record(
         origin_kind="built_in" if source_kind == "built_in" else "authored",
         origin_ref=None,
         origin_imported_at=None,
+        origin_actor_id="creator-1",
         owner_actor_id=owner_actor_id,
         owner_assigned_at=_NOW - timedelta(days=3),
         status=status,

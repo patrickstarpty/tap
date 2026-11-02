@@ -20,7 +20,10 @@ Granularity = Literal["day", "week", "month"]
 @dataclass(frozen=True, slots=True)
 class SkillRecord:
     """A Skill and its latest revision. `version` is already the display
-    version (`metadata.version` SemVer label, else `r<revision_number>`)."""
+    version (`metadata.version` SemVer label, else `r<revision_number>`).
+    `origin_actor_id` is the importer or creator (spec 1.1): the latest
+    revision's actor when that revision was imported, else the first
+    revision's actor."""
 
     skill_id: str
     name: str
@@ -33,6 +36,7 @@ class SkillRecord:
     origin_kind: OriginKind
     origin_ref: str | None
     origin_imported_at: datetime | None
+    origin_actor_id: str
     owner_actor_id: str
     owner_assigned_at: datetime
     status: str
