@@ -104,11 +104,11 @@ Working constraints:
 | 项 | 值 |
 | --- | --- |
 | Agent ID | `agent-653512e61e1d46d0` |
-| 当前修订 | `agent-rev-d6d9303ec3944d01`（共 3 个修订） |
+| 当前修订 | `agent-rev-2ee5e787da914910`（共 5 个修订；第 4–5 个只清空并恢复常驻 Skill，见第 4 节） |
 | 岗位 | Test case designer |
 | 负责人 | `li.na` |
 | 工具 | `graph.relations`、`knowledge.answer`、`knowledge.search` |
-| Skill | Citation skill（`validation-citation-skill-v2`） |
+| Skill | 常驻 Citation skill（`validation-citation-skill`） |
 
 描述：
 
@@ -227,11 +227,11 @@ Working constraints:
 | 项 | 值 |
 | --- | --- |
 | Agent ID | `agent-9afe322debda48fe` |
-| 当前修订 | `agent-rev-bf7ab80e87e7404d`（共 3 个修订） |
+| 当前修订 | `agent-rev-de96f62cb8ac4663`（共 4 个修订；第 4 个只清空常驻 Skill，见第 4 节） |
 | 岗位 | Test automation engineer |
 | 负责人 | `chen.jing` |
 | 工具 | `knowledge.answer`、`knowledge.search` |
-| Skill | webapp-testing（`skill-rev-69553a38bcfcd12c`） |
+| Skill | 无常驻；按需自动激活 webapp-testing（`skill-69553a38bcfcd12c`） |
 
 描述：
 
@@ -591,6 +591,8 @@ Working constraints:
 | Test Case Designer | `agent-rev-bef3cd064c184cf0` | `agent-rev-d6d9303ec3944d01` | 输出约定：每个 Feature 一个 gherkin 代码块、每个场景以 Then 结束、只写所请求的规则范围、边界在 Rule trace 中只表述一次 |
 | Automation Script Writer | `agent-rev-66a88bfe120d40ca` | `agent-rev-bf7ab80e87e7404d` | 给 Gherkin 时 1:1 转换；给规则范围或文字用例时先列 3–6 个用例再写测试；只在流程或环境确实不明时追问；凭据不得有字面量兜底、代码内不写证据标签 |
 | Claims FAQ Helper | `agent-rev-bd42e33de95148ee` | `agent-rev-594f61e6a3cc406c` | 原提示词后追加第 3 节的共同 `Working constraints` |
+
+Skill Hub 去常驻复跑（2026-11-02，演示库已执行 `0038_skill_hub`，经 `PUT /ai/agents/{id}/skills` 清空常驻，用第 3 轮同一批问题与知识源复跑 6 轮，真实模型 qwen-plus）：Automation Script Writer（新修订 `agent-rev-de96f62cb8ac4663`）3 轮全部以"自动"激活 `webapp-testing`，Gherkin 1:1 转换与环境约定保持第 3 轮水平，第 3 轮两次超长失败的复效流程请求本次完成，凭据字面量兜底问题依旧——保持不常驻；Test Case Designer（`agent-rev-c51e5ca44ae64322`）3 轮都没有激活 `Citation skill`，回答仍带引用、格式合格，但该 Skill 没有描述且唯一一句指令与平台引用规则重复，自动激活无从匹配，按约定恢复常驻（`agent-rev-2ee5e787da914910`）。原始记录在本机 `validation-r4-unpinned.json` 与 `answers-r4-unpinned.md`。
 
 ## 5. 验证汇总与团队视图核对
 

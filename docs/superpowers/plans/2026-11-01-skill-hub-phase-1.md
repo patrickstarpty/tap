@@ -332,7 +332,7 @@ def test_budget_boundaries():
 - [x] **Step 3:** 实现模块、脚本、夹具与 Makefile 目标。
 - [x] **Step 4:** 单测 PASS；`make quality-skill-activation` 退出 0；不设变量时 `make quality-skill-activation-real` 退出码 2。
 - [x] **Step 5:** 提交 `test: add skill activation precision fixture`
-- [ ] **Step 6（主会话）:** 授权后跑 `make quality-skill-activation-real`，两率均 ≥ 0.80；不达标则调整 `render_skill_catalog` 说明句与 `skill.activate` 工具描述后重跑，结果记入 Task 18 的交接文档。
+- [x] **Step 6（主会话）:** 授权后跑 `make quality-skill-activation-real`，两率均 ≥ 0.80；不达标则调整 `render_skill_catalog` 说明句与 `skill.activate` 工具描述后重跑，结果记入 Task 18 的交接文档。
 
 ### Task 16: e2e 旅程与截图 `[demo-e2e]`
 
@@ -343,14 +343,14 @@ def test_budget_boundaries():
 - [x] **Step 1:** 写 `skill-hub.spec.ts`：导入 `tests/e2e/fixtures/skills/claim-intake-checklist` → 库中出现该卡片 → 不手选 Skill、不选 Agent 提问（含 `[e2e-tool:skill.activate:<name>]`）→ 回答展开里该 Skill 标"自动" → 详情用量分页自动激活次数为 1 → 下载 CSV，zip 含 `library.csv`、`usage.csv` 且该 Skill 自动激活列为 1。`afterEach` 停用该 Skill 并清理会话（同 `skills-agents.spec.ts`）。
 - [x] **Step 2:** 写截图用例：库、详情（用量）、Agent 表单（常驻/排除）、对话展开；夹具覆盖 6 个类别、内置与停用 Skill、样本不足、61 个候选的超限提示。
 - [x] **Step 3:** `pnpm --filter @tap/ai-frontend exec playwright test --list tests/e2e/skill-hub.spec.ts` 列出用例；提交 `test: cover the skill hub journey and captures`
-- [ ] **Step 4（主会话）:** `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 跑 Task 6 smoke PASS；`make demo-e2e` 全部通过；`pnpm --filter @tap/ai-frontend run ui:capture`，与改动前的 Skills 页、Agent 表单、对话展开截图对比。
+- [x] **Step 4（主会话）:** `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 跑 Task 6 smoke PASS；`make demo-e2e` 全部通过；`pnpm --filter @tap/ai-frontend run ui:capture`，与改动前的 Skills 页、Agent 表单、对话展开截图对比。
 
 ### Task 17: 业务验证：名册 Agent 去常驻复跑 `[real-model]`（主会话，不写代码）
 
-- [ ] **Step 1:** 演示环境（`make demo-dev` 已运行、0038 已执行）`GET /api/v1/projects/tapper-demo/ai/agents`，确认 Test Case Designer 常驻 `Citation skill`、Automation Script Writer 常驻 `webapp-testing`（迁移映射结果），把两者当前修订 id 备份到 `~/tap-synthetic-2026-10-28/roster/`。
-- [ ] **Step 2:** 对两者 `PUT /ai/agents/{agentId}/skills`，体 `{"pinnedSkillIds": [], "excludedSkillIds": []}`（带 `Origin: http://127.0.0.1:5173` 与 `Idempotency-Key`）。
-- [ ] **Step 3:** 用真实模型复跑 [Agent 名册](../../guides/2026-10-28-agent-roster.md) 第 3.2、3.4 节的验证问题（对话带 `sourceRevisionIds`），从会话详情的 `skillsUsed` 记录每轮是否以 `auto` 激活了原常驻 Skill。
-- [ ] **Step 4:** 期望：需要该 Skill 的问题全部自动激活；回答质量（引用、结构、名册第 3 节判定要点）不低于名册记录的绑定时结论。不达标则恢复常驻并记原因。结论写入名册第 4 节一行。
+- [x] **Step 1:** 演示环境（`make demo-dev` 已运行、0038 已执行）`GET /api/v1/projects/tapper-demo/ai/agents`，确认 Test Case Designer 常驻 `Citation skill`、Automation Script Writer 常驻 `webapp-testing`（迁移映射结果），把两者当前修订 id 备份到 `~/tap-synthetic-2026-10-28/roster/`。
+- [x] **Step 2:** 对两者 `PUT /ai/agents/{agentId}/skills`，体 `{"pinnedSkillIds": [], "excludedSkillIds": []}`（带 `Origin: http://127.0.0.1:5173` 与 `Idempotency-Key`）。
+- [x] **Step 3:** 用真实模型复跑 [Agent 名册](../../guides/2026-10-28-agent-roster.md) 第 3.2、3.4 节的验证问题（对话带 `sourceRevisionIds`），从会话详情的 `skillsUsed` 记录每轮是否以 `auto` 激活了原常驻 Skill。
+- [x] **Step 4:** 期望：需要该 Skill 的问题全部自动激活；回答质量（引用、结构、名册第 3 节判定要点）不低于名册记录的绑定时结论。不达标则恢复常驻并记原因。结论写入名册第 4 节一行。
 
 ### Task 18: 文档
 

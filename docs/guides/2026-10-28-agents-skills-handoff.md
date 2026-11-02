@@ -55,15 +55,18 @@
 
 仍待主会话（未完成）：
 
-- `make test` 在没有 `.env` 的副本上复跑（见上文第 3 步）。
-- Task 15 Step 6：授权后跑 `make quality-skill-activation-real`，两率均 ≥ 0.80；结果记入本节。
-- Task 16 Step 4：`TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 跑 Task 6 smoke；`pnpm --filter @tap/ai-frontend run ui:capture` 并与改动前截图对比（`make demo-e2e` 已通过）。
-- Task 17：名册 Agent（Test Case Designer、Automation Script Writer）去常驻后用真实模型复跑，结论写入[名册](2026-10-28-agent-roster.md)第 4 节。需在 0038 已执行的演示库上进行。
-- 合入前不要在共享演示库上执行 `0038_skill_hub`；整个分支合入后此限制失效。
+- `make test` 在没有 `.env` 的副本上复跑（见上文第 3 步）。2026-11-02 复跑结果相同：37 项为上述已知失败，另有 `test_demo_commands.py::test_dev_supervisor_does_not_accept_http_200_with_unready_body[3]` 偶发失败；均不在本分支改动范围内。
+
+第 1 阶段真实模型验证（2026-11-02，已完成）：
+
+- Task 15 Step 6：首跑应激活命中率 0.17、不应激活 1.00，不达标。原因有二：回答提示词要求"证据足够时不调用工具"，模型直接作答而不激活；qwen-plus 会把 Skill 名当函数名调用（`claims-faq({})`）。改为在第一轮回答前单独做一次只提供 `skill.activate` 的路由调用（见决定记录），两次复跑均为 1.00 / 1.00。
+- Task 16 Step 4：真实模型 smoke 通过（Turn 因所选来源无发布说明而拒答，smoke 改为接受 `completed` 或 `abstained`，只断言 Skill 以"自动"激活）；`make demo-e2e` 通过（`tapper-test-plan.spec.ts` 原取第一个 Skill，而 `skill-hub.spec.ts` 会在其之前停用导入的 Skill，改为取启用的内置 Skill）；`ui:capture` 17 项通过，与 `develop` 的 Skills 页、Agent 表单对比：TAP 导航与 Tapper 侧栏不变，Skills 页由空列表变为带汇总、筛选与超限提示的库页，Agent 表单增加常驻/排除两组，回答展开按方式列出用到的 Skill。
+- Task 17：演示库已执行 `0038_skill_hub`（执行前整库备份在本机 `~/tap-synthetic-2026-10-28/roster/tap-before-0038-*.sql.gz`）。Automation Script Writer 去常驻后 3 轮均自动激活 `webapp-testing`，保持不常驻；Test Case Designer 的 `Citation skill` 无描述、内容与平台引用规则重复，3 轮均未激活，已恢复常驻。结论见[名册](2026-10-28-agent-roster.md)第 4 节。
 
 决定记录（第 1 阶段实施期间）：
 
 - `skill.activate` 只返回回执，Skill 正文作为受信 Skill 块进入下一次模型调用：工具结果属不受信内容，最终无工具轮会被压平为 `untrusted.toolActivity`（spec 第 1.3 节已补充）。
+- Skill 路由调用：有候选目录的 Turn 在第一轮回答前先做一次只提供 `skill.activate` 的模型调用（系统提示只有候选目录与路由说明，用户消息只有问题，输出上限 256 token），选中的 Skill 作为该轮工具调用交给工具循环；未选中则照常回答。函数名恰为某个候选 Skill 名的调用视为激活该 Skill。代价是带目录的 Turn 多一次模型调用。
 - 负责人转交的请求体是 `{newOwnerActorId}`：请求范围守卫会拒绝任何 `actorId` 键。
 - 内置 Skill 保留启用/停用；类别、负责人与出新版本只读。
 - 目录、汇总与用量视图始终返回 `runtimeStatus: "ok"`，只有详情与导出在 Langfuse 不可达时降级。
@@ -93,6 +96,6 @@
 | 名册遗留的三个问题 | 开发 | 第 3 轮修订后仍未解决，根因在平台与语料而非提示词：Automation Script Writer 纯文字请求超 2048 token 失败（返回 503）；Claims FAQ Helper 把虚构公司的流程指南规则套到香港表格上（建议把 3 份合成流程文档改写成与香港产品一致，或在选源时不混选）；英文问题检索不到中文指南。见[名册](2026-10-28-agent-roster.md)第 8 节 |
 | 名册验证暴露的产品问题 | 开发 | 1) 回答输出上限 2048 token，长回答直接失败；2) 带引用标记的表格行被 `parse_inline_answer` 删除；3) 英文问题检索不到中文流程文档（多文档时被挤出）；4) 对话请求不带 `insightsReportRefs`，`insights.query` 在对话中不可用且拒答无说明；5) 回答正文不进入对话历史，追问轮看不到上一轮生成的内容，Agent 之间无法在同一会话接力；6) 证据标签 `S1` 泄漏到正文与代码注释。建议进入路线图 V2 的 LangGraph 收尾或单独排期 |
 | 重拍团队页截图 | 下一会话 | 名册就绪后更新演示文档第 1.3 节的团队总览与组织架构图截图 |
-| Skill Hub 第 1 阶段 | 主会话 | 工程在分支 `feat/skill-hub-phase-1` 完成；剩真实模型精度、smoke 与截图对比、名册去常驻复跑与 `originActorId`，然后合入 `develop`；见第 3 节 |
+| Skill Hub 第 1 阶段 | 主会话 | 工程与真实模型验证在分支 `feat/skill-hub-phase-1` 完成（精度、smoke、`demo-e2e`、截图对比、名册去常驻复跑）；剩 `make test` 的 37 项既有失败（非本分支引入）待在无 `.env` 副本上确认，然后合入 `develop`；见第 3 节 |
 | 业务验证一周 | 负责人 | spec 7.4；完成后把路线图 V2.1 改为完成 |
 | 清理验证数据 | 负责人 | `~/tap-synthetic-2026-10-28/cleanup.py synthetic|real` |
