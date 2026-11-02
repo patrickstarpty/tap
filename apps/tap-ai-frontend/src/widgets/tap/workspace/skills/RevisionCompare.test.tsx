@@ -97,4 +97,56 @@ describe("RevisionCompare", () => {
     expect(useSkill).toHaveBeenCalledWith("project-1", "rev_1");
     expect(useSkill).toHaveBeenCalledWith("project-1", "rev_2");
   });
+
+  it("shows an error instead of loading when a revision fails to load", async () => {
+    const user = userEvent.setup();
+    renderCompare();
+    vi.mocked(useSkill).mockImplementation(
+      (_projectId: string, revisionId: string | null) =>
+        (revisionId === "rev_2"
+          ? { data: undefined, isPending: false, isError: true }
+          : {
+              data: REVISIONS.find((item) => item.revisionId === revisionId),
+              isPending: false,
+              isError: false,
+            }) as never,
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Left revision" }),
+      "rev_1",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Right revision" }),
+      "rev_2",
+    );
+
+    const right = screen.getByRole("region", { name: "Right revision: r2" });
+    expect(within(right).getByRole("alert")).toHaveTextContent(
+      "This skill could not be loaded.",
+    );
+    expect(within(right).queryByText("Loading…")).toBeNull();
+  });
+
+  it("shows an error when the revision list fails to load", () => {
+    vi.mocked(useSkillRevisions).mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+    } as never);
+    vi.mocked(useSkill).mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+    } as never);
+    render(
+      createElement(RevisionCompare, {
+        projectId: "project-1",
+        skillId: "skill_1",
+        copy: WORKSPACE_COPY.en,
+      }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This skill could not be loaded.",
+    );
+  });
 });

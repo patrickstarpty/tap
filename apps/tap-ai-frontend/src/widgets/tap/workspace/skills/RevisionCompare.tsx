@@ -38,7 +38,11 @@ function RevisionPane({
     <section aria-label={label} className="tap-skill-compare-pane">
       <h4>{label}</h4>
       {detail === undefined ? (
-        <p role="status">{copy.skillHub.compare.loading}</p>
+        query.isError ? (
+          <p role="alert">{copy.skillsWorkspace.loadFailed}</p>
+        ) : (
+          <p role="status">{copy.skillHub.compare.loading}</p>
+        )
       ) : (
         <pre>
           {buildSkillMarkdown({
@@ -59,7 +63,8 @@ export function RevisionCompare({
   copy,
 }: RevisionCompareProps) {
   const text = copy.skillHub.compare;
-  const revisions = useSkillRevisions(projectId, skillId).data ?? [];
+  const revisionsQuery = useSkillRevisions(projectId, skillId);
+  const revisions = revisionsQuery.data ?? [];
   const [selected, setSelected] = useState<Record<Side, string | null>>({
     left: null,
     right: null,
@@ -86,6 +91,9 @@ export function RevisionCompare({
       aria-labelledby="skill-compare-heading"
     >
       <h3 id="skill-compare-heading">{text.heading}</h3>
+      {revisionsQuery.isError ? (
+        <p role="alert">{copy.skillsWorkspace.loadFailed}</p>
+      ) : null}
       <div className="tap-skill-compare-pickers">
         {sides.map(({ side, label }) => (
           <label key={side}>
