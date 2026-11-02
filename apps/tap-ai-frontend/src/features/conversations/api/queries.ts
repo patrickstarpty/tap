@@ -488,6 +488,7 @@ export function useConversationStream(
               // detail fetched on send; refetch so `skillsUsed` shows them.
               void queryClient.invalidateQueries({
                 queryKey: conversationKeys.detail(projectId, conversationId),
+                exact: true,
               });
             }
           }

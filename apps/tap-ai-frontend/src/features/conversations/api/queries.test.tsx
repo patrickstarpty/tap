@@ -251,8 +251,10 @@ describe("useConversationStream", () => {
     // the target turn's terminal event triggers it -- once, not for an
     // earlier turn's replayed terminal or the trailing duplicate.
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
+    // `exact`: only the detail refetches, not the queries nested under it.
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: ["conversations", "project-1", "conversation-1"],
+      exact: true,
     });
   });
 });
