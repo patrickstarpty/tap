@@ -59,7 +59,10 @@ Index(
 
 
 def activation_id_for(turn_id: str, skill_id: str) -> str:
-    """Deterministic id: a Turn records each Skill at most once."""
+    """Deterministic id: a Turn records each Skill at most once.
+
+    Frozen by migration 0038 (backfilled rows use it): keep these semantics
+    unchanged."""
     return "act-" + hashlib.sha256(f"{turn_id}/{skill_id}".encode()).hexdigest()[:24]
 
 

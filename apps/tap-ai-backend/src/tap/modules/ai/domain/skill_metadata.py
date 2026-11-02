@@ -80,7 +80,10 @@ def pinned_from_bound(
     bound_revision_ids: Sequence[str], skill_of: Mapping[str, str]
 ) -> tuple[str, ...]:
     """Map bound Skill revisions to their Skill ids: order-preserving, deduped,
-    revisions without a known Skill dropped."""
+    revisions without a known Skill dropped.
+
+    Frozen by migration 0038 (the binding backfill calls it): keep these
+    semantics unchanged."""
     pinned: dict[str, None] = {}
     for revision_id in bound_revision_ids:
         skill_id = skill_of.get(revision_id)
@@ -113,6 +116,9 @@ def frozen_activations(
     fall back to the Turn's Agent revision binding: bound ids are pinned, the
     rest manual. Bytes are the UTF-8 size of the matching frozen instruction
     template, or 0 when the snapshot froze no templates.
+
+    Frozen by migration 0038 (the activation backfill calls it): keep these
+    semantics unchanged.
     """
     revision_ids = _strings(snapshot.get("skill_revision_ids"))
     templates = _strings(snapshot.get("skill_instruction_templates"))
