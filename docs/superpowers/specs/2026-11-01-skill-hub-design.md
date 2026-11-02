@@ -52,7 +52,7 @@
 ### 1.3 渐进式加载
 
 - 目录：系统提示词追加"可用 Skills"段，每个候选一行 `name — description`（描述截断到 200 字符），最多 60 个；超过 60 个时按适用任务与类别裁剪，并在库页提示"候选已超上限，部分 Skill 只能手动选用"。
-- 激活：新增工具 `skill.activate`，参数 `name`，返回该 Skill 的指令正文与已附加的参考文本；受 1.2 的上限约束；对模型说明"只在任务需要时调用"。
+- 激活：新增工具 `skill.activate`，参数 `name`，返回该 Skill 的指令正文与已附加的参考文本；受 1.2 的上限约束；对模型说明"只在任务需要时调用"。`skill.activate` 只返回回执，Skill 正文作为受信 Skill 块进入下一次模型调用，因为工具结果属不受信内容，最终无工具轮会被压平为 `untrusted.toolActivity`。
 - 工具权限：`skill.activate` 对所有 Agent 与 Tapper 默认默认开启，不进入 Agent 白名单表单（与 `knowledge.search` 同级的平台工具）。
 
 ## 2. 分阶段范围

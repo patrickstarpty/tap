@@ -9,7 +9,7 @@
 | V2.1 Agent 团队视图 | 工程完成；2026-10-28 两轮改动已合入并推送 `origin/develop`（`845d1c68`）：审查修复、分析平台式面板 v2、TAP 品牌与完整模块导航、香港语料数据重建、英文版演示文档 |
 | 演示数据 | 只用香港公开语料（8 份产品小册子、2 份理赔表、3 份合成流程文档）；真实运行 178 轮 + 仿真历史 397 次，核对 252 项一致；脚本与清理命令在 `~/tap-synthetic-2026-10-28/`（见交接文档第 2–4 节） |
 | 真实 Agent 名册 | 已建成并验证（29 个会话、37 轮真实模型），见 [Agent 名册](2026-10-28-agent-roster.md)；第 3 轮提示词修订已完成：Test Case Designer 修好；Automation Script Writer 与 Claims FAQ Helper 的剩余问题属平台与语料（见待办） |
-| Skills 模块 | [Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)已由产品负责人确认（2026-11-01）；第 1 阶段[实施计划](../superpowers/plans/2026-11-01-skill-hub-phase-1.md)已写（2026-11-01），未开工 |
+| Skills 模块 | [Skill Hub 设计](../superpowers/specs/2026-11-01-skill-hub-design.md)已由产品负责人确认（2026-11-01）；第 1 阶段[实施计划](../superpowers/plans/2026-11-01-skill-hub-phase-1.md) Task 1–16、18 的工程部分已在分支 `feat/skill-hub-phase-1` 完成（迁移 `0038_skill_hub`、`skill.activate` 自动激活、`skill_hub` 模块与接口、Langfuse `skill:` 标签、Skill 库前端、假模型激活精度门禁、e2e 旅程；`make demo-e2e` 第 1 轮通过），未合入 `develop`；待办：Task 15 真实模型精度、Task 16 真实模型 smoke 与 `ui:capture` 对比、Task 17 名册 Agent 去常驻复跑，见第 3 节 |
 | 业务验证（spec 7.4） | 未完成，仍需真实使用一周 |
 
 ## 2. 真实 Agent 名册（进行中）
@@ -30,7 +30,7 @@
 
 完成后应有：`docs/guides/2026-10-28-agent-roster.md`（每个 Agent 的完整提示词、验证问题与结论、重建方法），本地 `~/tap-synthetic-2026-10-28/roster/` 的脚本、清单与备份，以及交接文档状态节的一条链接。接手检查：`git status` 看该文档是否已生成；`GET /api/v1/projects/tapper-demo/ai/agents` 应列出 11 个 Agent；团队页组织架构图应按 9 位负责人分组。确认后由本会话之外的人审查提示词质量与验证答案，再提交合入 `develop`。
 
-## 3. Skills 模块方向（待写 spec）
+## 3. Skills 模块方向（第 1 阶段实施中）
 
 2026-10-28 晚产品负责人否决了"Skill 名册／Skill 团队"方向：Skill 是独立、灵活调用的能力包，不是成员，不该套 Agent 团队的人事模型；要求参考 Skill Hub 类产品的设计。对照 SkillHub、skills-hub.ai 与 Agent Skills 标准后的结论：
 
@@ -48,10 +48,27 @@
 
 接手步骤：
 
-1. 用 superpowers writing-plans 按 spec 第 1 阶段写 `docs/superpowers/plans/2026-11-01-skill-hub-phase-1.md`，任务按 TDD 拆分；产品负责人要求计划与实施都交给 Opus，人工只做审查。
-2. 实施顺序建议：迁移与 `turn_skill_activation` 回填 → `skill_selection` 改为"手动 ∪ 常驻" + `skill.activate` 工具与预算 → `skill_hub` 模块与接口（复用 `agent_team` 的周期/缓存/降级工具）→ 同步 worker 的 `skill:` 标签与游标重置 → 前端库页、详情、Agent 表单常驻/排除、对话展开 → 激活精度夹具与 e2e 旅程 → 名册 Agent 去常驻复跑验证。
-3. 每个任务完成后派审查员（Opus）审查，Important 以上必须修完再合入；最后跑 `make check`、`make test`、`make demo-e2e`。
-4. 合入 `develop` 后更新路线图 "Skill Hub" 行、`docs/architecture.md`（`skill_hub` 模块、`skill.activate` 工具、`skill:` 标签）与本文档。
+1. 写第 1 阶段计划：已完成（[计划](../superpowers/plans/2026-11-01-skill-hub-phase-1.md)，2026-11-01）。
+2. 按顺序实施：已完成。Task 1–14 已在分支 `feat/skill-hub-phase-1` 完成（迁移与回填 → "手动 ∪ 常驻"冻结与候选目录 → `skill.activate` 工具与预算 → `platform/reporting/` 共享报表工具 → `skill_hub` 模块与接口 → `skill:` 标签与游标重置 → 前端库页、详情、Agent 表单常驻/排除、对话"Skills used"）；Task 15 假模型夹具门禁 `make quality-skill-activation` 与 Task 16 e2e 旅程 `tests/e2e/skill-hub.spec.ts`、四个 `ui:capture` 用例已提交。
+3. 分支门禁：`make demo-e2e` 第 1 轮通过；`make check` 通过（2026-11-02）。`make test` 的前端、`apps/backend` 与 `apps/web` 部分通过；TAP AI 后端 pytest 有 37 项失败：3 项是已知的日期固定测试（`test_knowledge_review.py`），34 项是 MySQL 集成测试（`test_document_ledger.py`、`test_document_upload_recovery.py`、`test_ingestion_recovery.py`）在清表时被共享演示库的外键挡住——pymilvus 导入时加载工作副本的 `.env`，默认库地址因此指向演示库（清表事务已回滚，抽查演示库知识数据未变；其余通过的集成测试是否写过演示库未核查）；需在没有 `.env` 的副本或隔离库上复跑确认。
+4. 文档：已完成。路线图 "Skill Hub" 行（实施中）、`docs/architecture.md`（`skill_hub` 模块、`platform/reporting/`、Skill 激活数据流、`skill:` 标签）与本文档已更新；合入 `develop` 后把路线图该行改为"第 1 阶段工程完成，待业务验证"。
+
+仍待主会话（未完成）：
+
+- `make test` 在没有 `.env` 的副本上复跑（见上文第 3 步）。
+- Task 15 Step 6：授权后跑 `make quality-skill-activation-real`，两率均 ≥ 0.80；结果记入本节。
+- Task 16 Step 4：`TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 跑 Task 6 smoke；`pnpm --filter @tap/ai-frontend run ui:capture` 并与改动前截图对比（`make demo-e2e` 已通过）。
+- Task 17：名册 Agent（Test Case Designer、Automation Script Writer）去常驻后用真实模型复跑，结论写入[名册](2026-10-28-agent-roster.md)第 4 节。需在 0038 已执行的演示库上进行。
+- 导入接口的 `originActorId` 字段（来源出处的导入人）留到最后一轮修复。
+- 合入前不要在共享演示库上执行 `0038_skill_hub`；整个分支合入后此限制失效。
+
+决定记录（第 1 阶段实施期间）：
+
+- `skill.activate` 只返回回执，Skill 正文作为受信 Skill 块进入下一次模型调用：工具结果属不受信内容，最终无工具轮会被压平为 `untrusted.toolActivity`（spec 第 1.3 节已补充）。
+- 负责人转交的请求体是 `{newOwnerActorId}`：请求范围守卫会拒绝任何 `actorId` 键。
+- 内置 Skill 保留启用/停用；类别、负责人与出新版本只读。
+- 目录、汇总与用量视图始终返回 `runtimeStatus: "ok"`，只有详情与导出在 Langfuse 不可达时降级。
+- `skill.activate` 是平台工具（`platform=True`），不出现在 Agent 白名单表单与 `GET /ai/tools`；旧的 `skillRevisionIds` 写入映射为常驻，`hasSkillUpdates` 恒为 false，两者标为 deprecated。
 
 ## 4. 环境与操作要点
 
@@ -71,6 +88,6 @@
 | 名册遗留的三个问题 | 开发 | 第 3 轮修订后仍未解决，根因在平台与语料而非提示词：Automation Script Writer 纯文字请求超 2048 token 失败（返回 503）；Claims FAQ Helper 把虚构公司的流程指南规则套到香港表格上（建议把 3 份合成流程文档改写成与香港产品一致，或在选源时不混选）；英文问题检索不到中文指南。见[名册](2026-10-28-agent-roster.md)第 8 节 |
 | 名册验证暴露的产品问题 | 开发 | 1) 回答输出上限 2048 token，长回答直接失败；2) 带引用标记的表格行被 `parse_inline_answer` 删除；3) 英文问题检索不到中文流程文档（多文档时被挤出）；4) 对话请求不带 `insightsReportRefs`，`insights.query` 在对话中不可用且拒答无说明；5) 回答正文不进入对话历史，追问轮看不到上一轮生成的内容，Agent 之间无法在同一会话接力；6) 证据标签 `S1` 泄漏到正文与代码注释。建议进入路线图 V2 的 LangGraph 收尾或单独排期 |
 | 重拍团队页截图 | 下一会话 | 名册就绪后更新演示文档第 1.3 节的团队总览与组织架构图截图 |
-| Skill Hub 第 1 阶段 | 下一会话 | spec 已确认：先用 writing-plans 出计划（Opus），再 Opus 实施、人工审查；步骤见第 3 节 |
+| Skill Hub 第 1 阶段 | 主会话 | 工程在分支 `feat/skill-hub-phase-1` 完成；剩真实模型精度、smoke 与截图对比、名册去常驻复跑与 `originActorId`，然后合入 `develop`；见第 3 节 |
 | 业务验证一周 | 负责人 | spec 7.4；完成后把路线图 V2.1 改为完成 |
 | 清理验证数据 | 负责人 | `~/tap-synthetic-2026-10-28/cleanup.py synthetic|real` |
