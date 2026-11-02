@@ -165,9 +165,10 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.getByText("Loading conversations…", { exact: true }),
   ).toHaveCount(0);
+  // The product rail shows the full TAP shell, every module included.
   await expect(
     page.getByRole("button", { name: "Low Code Automation", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 });
 
 /**
