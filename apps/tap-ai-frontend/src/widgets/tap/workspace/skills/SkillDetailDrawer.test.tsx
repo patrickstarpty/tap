@@ -235,7 +235,7 @@ describe("SkillDetailDrawer", () => {
     expect(row("Applicable tasks")).toHaveTextContent("Knowledge answers");
   });
 
-  it("names the creator rather than an importer for an authored skill", async () => {
+  it("names the creator and no import method for an authored skill", async () => {
     hubSkillOverrides = { sourceKind: "authored", originKind: "authored" };
     renderDrawer();
     const panel = screen.getByRole("tabpanel");
@@ -245,6 +245,8 @@ describe("SkillDetailDrawer", () => {
     expect(createdBy.nextElementSibling).toHaveTextContent("bob");
     expect(within(panel).queryByText("Imported by")).toBeNull();
     expect(within(panel).queryByText("Imported at")).toBeNull();
+    // The import-method row is only for imported skills.
+    expect(within(panel).queryByText("Imported as")).toBeNull();
   });
 
   it("shows instructions content on the Instructions tab", async () => {

@@ -59,9 +59,11 @@ function OverviewPanel({
     [text.fields.category, hub.categories[skill.category]],
     [text.fields.version, skill.version],
     [text.fields.source, hub.sources[skill.sourceKind]],
-    [text.fields.originKind, text.originKinds[skill.originKind]],
+    // "Imported as" only describes imported Skills; authored and built-in
+    // ones already say how they came to be in the Source row.
     ...(imported
       ? ([
+          [text.fields.originKind, text.originKinds[skill.originKind]],
           [text.fields.originRef, skill.originRef ?? text.notSpecified],
           [text.fields.importedAt, time(skill.originImportedAt)],
         ] as [string, string][])
