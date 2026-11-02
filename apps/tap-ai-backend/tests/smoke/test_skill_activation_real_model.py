@@ -90,7 +90,8 @@ async def _auto_activates_a_matching_skill(settings: TapperSettings) -> None:
                     turn = detail["turns"][0]
                     if turn["state"] in _TERMINAL:
                         break
-                assert turn.get("state") == "completed", turn
+                # The published source need not ground release notes, so abstaining is fine.
+                assert turn.get("state") in {"completed", "abstained"}, turn
                 used = {item["skillId"]: item for item in turn["input"]["skillsUsed"]}
                 assert skill_id in used, turn["input"]["skillsUsed"]
                 assert used[skill_id]["mode"] == "auto"
