@@ -9,6 +9,9 @@ because it needs the same grounded-evidence fixtures (`search_hit`,
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -20,6 +23,7 @@ from tap.modules.ai.domain.models import (
     GenerationGovernance,
     ModelCallAudit,
     ModelResult,
+    ModelToolCall,
     ModelUsage,
     schema_digest,
     text_digest,
@@ -432,7 +436,8 @@ async def test_catalog_section_only_when_skill_activate_offered() -> None:
             tools=tools,
         )
 
-    offered, search_only, final_round = (request.prompt for request in provider.requests)
+    # The offered round makes a Skill-routing call before the answer call.
+    _, offered, search_only, final_round = (request.prompt for request in provider.requests)
     catalog_line = "webapp-testing — Browser checks for web apps."
     assert "Available Skills" in offered
     assert catalog_line in offered
@@ -468,9 +473,10 @@ async def test_catalog_description_cannot_close_skill_block() -> None:
         tools=("knowledge.search", "skill.activate"),
     )
 
-    prompt = provider.requests[0].prompt
-    assert "Available Skills" in prompt
-    assert prompt.count("</skill") == len(skills.blocks)
+    for request in provider.requests:
+        assert "Available Skills" in request.prompt
+    assert provider.requests[-1].prompt.count("</skill") == len(skills.blocks)
+    assert "</skill" not in provider.requests[0].prompt
 
 
 @pytest.mark.asyncio
@@ -488,7 +494,7 @@ async def test_governed_request_allows_platform_tool() -> None:
         tools=("knowledge.search", "skill.activate", "insights.query"),
     )
 
-    allowlist = provider.requests[0].tool_allowlist
+    allowlist = provider.requests[-1].tool_allowlist
     assert "skill.activate" in allowlist
     # Only platform tools widen the Agent's own allowlist.
     assert "insights.query" not in allowlist
@@ -509,6 +515,104 @@ async def test_auto_skill_name_is_stripped_as_pseudo_citation() -> None:
 
     assert "[webapp-testing]" not in result.text
     assert "按 Skill 指引执行 webapp-testing。" in result.text
+
+
+class _ScriptedGateway(_CapturingGateway):
+    """Answers each call with the next scripted `(text, tool_calls)` result."""
+
+    def __init__(self, *results: tuple[str, tuple[ModelToolCall, ...]]) -> None:
+        super().__init__()
+        self._results = list(results)
+
+    async def chat_stream(self, request):
+        output, tool_calls = self._results.pop(0)
+        self._output = output
+        async for event in super().chat_stream(request):
+            yield replace(event, tool_calls=tool_calls)
+
+
+_ACTIVATE_WEBAPP = ModelToolCall("call-1", "skill_activate", '{"name": "webapp-testing"}')
+
+
+@pytest.mark.asyncio
+async def test_skill_routing_call_precedes_answer_and_returns_its_activation() -> None:
+    provider = _ScriptedGateway(("", (_ACTIVATE_WEBAPP,)))
+    models = _gateway(provider)
+
+    result = await models.answer(
+        "Check the login page in a browser",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        skills=TurnSkillContext(catalog=(_catalog_entry("webapp-testing", "Browser checks."),)),
+        tools=("knowledge.search", "skill.activate"),
+    )
+
+    (routing,) = provider.requests
+    assert [spec.tool_id for spec in routing.tools] == ["skill.activate"]
+    assert "webapp-testing — Browser checks." in routing.prompt
+    assert json.loads(routing.context) == {"query": "Check the login page in a browser"}
+    assert routing.tool_allowlist == frozenset()
+    assert [(call.name, call.arguments_json) for call in result.tool_calls] == [
+        ("skill_activate", '{"name": "webapp-testing"}')
+    ]
+
+
+@pytest.mark.asyncio
+async def test_skill_routing_without_a_pick_falls_through_to_the_answer() -> None:
+    hallucinated = ModelToolCall("call-1", "knowledge_search", '{"query": "x"}')
+    provider = _ScriptedGateway(("NONE", (hallucinated,)), ("Grounded[S1]", ()))
+    models = _gateway(provider)
+
+    result = await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        skills=TurnSkillContext(catalog=(_catalog_entry("webapp-testing", "Browser checks."),)),
+        tools=("knowledge.search", "skill.activate"),
+    )
+
+    routing, answer = provider.requests
+    assert [spec.tool_id for spec in answer.tools] == ["knowledge.search", "skill.activate"]
+    assert routing.idempotency_key != answer.idempotency_key
+    assert result.tool_calls == ()
+    assert result.claims
+
+
+@pytest.mark.asyncio
+async def test_skill_routing_maps_a_skill_named_call_to_skill_activate() -> None:
+    """Some models call the Skill's name as the function itself."""
+    misnamed = ModelToolCall("call-1", "webapp-testing", "{}")
+    unknown = ModelToolCall("call-2", "other-skill", "{}")
+    provider = _ScriptedGateway(("", (misnamed, unknown)))
+    models = _gateway(provider)
+
+    result = await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        skills=TurnSkillContext(catalog=(_catalog_entry("webapp-testing", "Browser checks."),)),
+        tools=("knowledge.search", "skill.activate"),
+    )
+
+    assert [
+        (call.call_id, call.name, json.loads(call.arguments_json)) for call in result.tool_calls
+    ] == [("call-1", "skill_activate", {"name": "webapp-testing"})]
+
+
+@pytest.mark.asyncio
+async def test_no_skill_routing_without_a_catalog() -> None:
+    provider = _CapturingGateway()
+    models = _gateway(provider)
+
+    await models.answer(
+        "query",
+        (_claim_resolution_evidence(),),
+        "quick-hybrid-v1",
+        skills=TurnSkillContext(),
+        tools=("knowledge.search", "skill.activate"),
+    )
+
+    assert len(provider.requests) == 1
 
 
 class _DirectCapturingGateway(_CapturingGateway):

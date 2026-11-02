@@ -594,6 +594,18 @@ _TOOL_LOOP_PROMPT = (
     "call; cite only labels present in untrusted. When the evidence suffices, answer without "
     "calling tools."
 )
+# Answer prompts favour answering from sufficient evidence, which suppresses
+# implicit Skill matches; a dedicated first call only picks Skills.
+_SKILL_ROUTING_PROMPT = (
+    "Your only task is to pick Skills for the request in the user message (JSON field query); "
+    "do not answer it. A Skill fits when the user wants the kind of work its description says it "
+    "does, however they phrase it (e.g. explaining a term, showing which sources back each "
+    "point, drafting notes); sharing a topic is not enough, and a plain fact or yes/no lookup "
+    "fits no Skill. For every Skill that fits, call the skill_activate function with "
+    'arguments {"name": "<exact Skill name>"}; a Skill name is not a function. '
+    "If none fits, reply NONE."
+)
+_SKILL_ROUTING_OUTPUT_TOKENS = 256
 # Final review I-2 (spec 4.4): the final no-tools round's earlier tool activity
 # is model/tool-controlled text, so it travels only in `untrusted.toolActivity`;
 # the trusted system prompt carries just this fixed pointer to it.
@@ -825,6 +837,62 @@ class KnowledgeModelGateway:
         vectors = tuple([(await self.embed(text)).vector for text in texts])
         return EmbeddingArtifact(model_alias, self.embedding_dimension, vectors, chunk_ids)
 
+    async def _route_skills(
+        self,
+        query: str,
+        catalog: str,
+        skill_names: frozenset[str],
+        *,
+        alias: str,
+        plan_id: object,
+    ) -> AnswerGeneration | None:
+        """The `skill_activate` calls of a catalog-only routing call, as an
+        answer round's tool calls; `None` when it picks no Skill. A call named
+        after a catalog Skill itself counts as activating that Skill."""
+
+        prompt = "\n\n".join((catalog, _SKILL_ROUTING_PROMPT))
+        (spec,) = model_tool_specs(("skill.activate",))
+        request = ModelRequest(
+            self.scope,
+            alias,
+            ModelOperation.CHAT,
+            prompt,
+            text_digest(prompt),
+            json.dumps({"query": query}, ensure_ascii=False, separators=(",", ":")),
+            self.timeout_seconds,
+            str(uuid4()) if plan_id is None else f"{plan_id}:skill-routing",
+            max_output_tokens=_SKILL_ROUTING_OUTPUT_TOKENS,
+            tools=(spec,),
+        )
+        result: ModelResult | None = None
+        async for event in self.gateway.chat_stream(request):
+            if not isinstance(event, ModelTextDelta):
+                result = event
+        if result is None:
+            raise ModelGatewayUnavailable()
+        calls = tuple(
+            GeneratedToolCall(call.call_id, call.name, call.arguments_json)
+            if call.name == spec.wire_name
+            else GeneratedToolCall(
+                call.call_id, spec.wire_name, json.dumps({"name": call.name}, ensure_ascii=False)
+            )
+            for call in result.tool_calls
+            if call.name == spec.wire_name or call.name in skill_names
+        )
+        trace.get_current_span().set_attribute("tap.skill.routing.activations", len(calls))
+        if not calls:
+            return None
+        return AnswerGeneration(
+            "",
+            (),
+            alias,
+            "grounded-answer-v2",
+            result.provider_request_id,
+            gateway_call_id=result.gateway_call_id,
+            provider_model_id=result.actual_model,
+            tool_calls=calls,
+        )
+
     async def answer(
         self,
         query: str,
@@ -937,6 +1005,16 @@ class KnowledgeModelGateway:
                 task_prompts.append(_INSIGHTS_ANSWER_PROMPT)
             turn_skill_blocks, catalog_section = _turn_skill_sections(skills, tools)
             prompt_skills: tuple[PromptSkill, ...] = () if skills is None else skills.blocks
+            if catalog_section and not transcript:
+                routed = await self._route_skills(
+                    str(trusted_value["query"]),
+                    catalog_section[0],
+                    frozenset(entry.name for entry in skills.catalog) if skills else frozenset(),
+                    alias=alias if governance is None else governance.model_alias,
+                    plan_id=None if answer_input is None else answer_input.context.get("planId"),
+                )
+                if routed is not None:
+                    return routed
             customization = (*turn_skill_blocks, *catalog_section)
             prompt = "\n\n".join(
                 (
