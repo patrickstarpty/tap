@@ -41,6 +41,7 @@ function hubSkill(over: Record<string, unknown> = {}) {
     originKind: "zip",
     originRef: "policy-lookup.zip",
     originImportedAt: "2026-10-02T09:30:00Z",
+    originActorId: "bob",
     ownerActorId: "alice",
     ownerAssignedAt: "2026-10-02T09:30:00Z",
     status: "enabled",
@@ -227,9 +228,23 @@ describe("SkillDetailDrawer", () => {
     expect(row("Imported as")).toHaveTextContent("Zip package");
     expect(row("File or package")).toHaveTextContent("policy-lookup.zip");
     expect(row("Imported at")).toHaveTextContent("10/02/2026, 09:30");
+    expect(row("Imported by")).toHaveTextContent("bob");
+    expect(within(panel).queryByText("Created by")).toBeNull();
     expect(row("Owner")).toHaveTextContent("alice");
     expect(row("Compatibility")).toHaveTextContent("Requires the policy index");
     expect(row("Applicable tasks")).toHaveTextContent("Knowledge answers");
+  });
+
+  it("names the creator rather than an importer for an authored skill", async () => {
+    hubSkillOverrides = { sourceKind: "authored", originKind: "authored" };
+    renderDrawer();
+    const panel = screen.getByRole("tabpanel");
+    const createdBy = await within(panel).findByText("Created by", {
+      selector: "dt",
+    });
+    expect(createdBy.nextElementSibling).toHaveTextContent("bob");
+    expect(within(panel).queryByText("Imported by")).toBeNull();
+    expect(within(panel).queryByText("Imported at")).toBeNull();
   });
 
   it("shows instructions content on the Instructions tab", async () => {

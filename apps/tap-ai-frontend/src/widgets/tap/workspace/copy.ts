@@ -354,6 +354,8 @@ export interface WorkspaceCopy {
         originKind: string;
         originRef: string;
         importedAt: string;
+        importedBy: string;
+        createdBy: string;
         owner: string;
         ownerSince: string;
         compatibility: string;
@@ -1250,6 +1252,8 @@ export const WORKSPACE_COPY = {
           originKind: "Imported as",
           originRef: "File or package",
           importedAt: "Imported at",
+          importedBy: "Imported by",
+          createdBy: "Created by",
           owner: "Owner",
           ownerSince: "Owner since",
           compatibility: "Compatibility",
@@ -2172,6 +2176,8 @@ export const WORKSPACE_COPY = {
           originKind: "导入方式",
           originRef: "文件或包",
           importedAt: "导入时间",
+          importedBy: "导入人",
+          createdBy: "创建人",
           owner: "负责人",
           ownerSince: "负责起始",
           compatibility: "兼容性",

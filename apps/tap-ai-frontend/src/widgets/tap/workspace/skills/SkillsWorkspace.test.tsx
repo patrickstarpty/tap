@@ -57,6 +57,7 @@ function catalogItem(over: Record<string, unknown>) {
       originKind: "authored",
       originRef: null,
       originImportedAt: null,
+      originActorId: "alice",
       ownerActorId: "alice",
       ownerAssignedAt: "2026-10-01T09:00:00Z",
       status: "enabled",

@@ -54,17 +54,22 @@ function OverviewPanel({
       ? text.notSpecified
       : formatDateTime(value, view.timezone, locale);
   const taskLabels: Record<string, string> = copy.skillsWorkspace.taskLabels;
+  const imported = skill.sourceKind === "imported";
   const rows: [string, string][] = [
     [text.fields.category, hub.categories[skill.category]],
     [text.fields.version, skill.version],
     [text.fields.source, hub.sources[skill.sourceKind]],
     [text.fields.originKind, text.originKinds[skill.originKind]],
-    ...(skill.sourceKind === "imported"
+    ...(imported
       ? ([
           [text.fields.originRef, skill.originRef ?? text.notSpecified],
           [text.fields.importedAt, time(skill.originImportedAt)],
         ] as [string, string][])
       : []),
+    [
+      imported ? text.fields.importedBy : text.fields.createdBy,
+      skill.originActorId,
+    ],
     [text.fields.owner, skill.ownerActorId],
     [text.fields.ownerSince, time(skill.ownerAssignedAt)],
     [text.fields.compatibility, skill.compatibility ?? text.notSpecified],

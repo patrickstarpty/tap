@@ -26,6 +26,7 @@ function skill(over: Record<string, unknown>) {
     originKind: "zip",
     originRef: "bdd.zip",
     originImportedAt: "2026-10-01T09:00:00Z",
+    originActorId: "alice",
     ownerActorId: "alice",
     ownerAssignedAt: "2026-10-01T09:00:00Z",
     status: "enabled",

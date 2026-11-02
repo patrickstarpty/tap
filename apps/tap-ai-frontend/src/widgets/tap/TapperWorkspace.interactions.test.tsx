@@ -212,6 +212,7 @@ function seedSkillLibrary(
           originKind: "built_in",
           originRef: null,
           originImportedAt: null,
+          originActorId: "system",
           ownerActorId: "system",
           ownerAssignedAt: "2026-10-01T00:00:00Z",
           status: "enabled",
