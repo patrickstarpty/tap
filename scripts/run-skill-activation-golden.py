@@ -48,6 +48,7 @@ from tap.quality.skill_activation_golden import (
     REPORT_SCHEMA_VERSION,
     compute_activation_metrics,
     gate_passed,
+    no_skill_cases_with_any_activation,
     validate_activation_golden,
     validate_activation_observations,
 )
@@ -193,6 +194,7 @@ def evaluate(
     metrics = compute_activation_metrics(golden, observations)
     errors = observations_document.get("errors") or {}
     passed = gate_passed(metrics) and not errors
+    no_skill_hits, no_skill_total = no_skill_cases_with_any_activation(metrics)
     return {
         "version": REPORT_SCHEMA_VERSION,
         "shouldRate": metrics.should_rate,
@@ -209,6 +211,8 @@ def evaluate(
             for pair in metrics.pairs
             if not pair.hit
         ],
+        # Informational, never gated: no-skill cases with any activation.
+        "noSkillCasesWithAnyActivation": f"{no_skill_hits}/{no_skill_total}",
         "errors": dict(errors),
         "passed": passed,
     }

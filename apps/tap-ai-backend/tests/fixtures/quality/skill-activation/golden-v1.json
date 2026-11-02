@@ -35,86 +35,100 @@
   "cases": [
     {
       "id": "act-01-bdd-address-change",
-      "question": "Write Gherkin scenarios for the requirement that a policyholder can update their mailing address in the customer portal.",
+      "question": "Turn REQ-PORTAL-118 into acceptance tests our business analyst can review before sprint planning.",
       "evidence": [
         "REQ-PORTAL-118: A logged-in policyholder can change the mailing address on an active policy. The new address must include a postal code that matches the selected country. The change takes effect for correspondence sent after the next business day.",
         "REQ-PORTAL-118 acceptance notes: a policy in lapsed status cannot be edited; the portal shows an error and keeps the old address."
       ],
-      "expected": ["bdd-scenario-writer"]
+      "expected": [
+        "bdd-scenario-writer"
+      ]
     },
     {
       "id": "act-02-claims-hospitalization-documents",
-      "question": "What documents do I need to submit for a hospitalization claim, and how long does it usually take to process?",
+      "question": "My father came out of hospital last week. What do we have to send in to get the bill paid back, and when will the money arrive?",
       "evidence": [
         "Hospital claims guide, section 2: submit the completed claim form, the itemized hospital bill, the discharge summary and a copy of the policyholder's ID. Claims can be submitted through the mobile app or at any service center.",
         "Hospital claims guide, section 4: complete claims are normally assessed within 10 working days of receipt."
       ],
-      "expected": ["claims-faq"]
+      "expected": [
+        "claims-faq"
+      ]
     },
     {
-      "id": "act-03-glossary-waiting-period",
-      "question": "In plain terms, what does 'waiting period' mean on a critical illness policy?",
+      "id": "act-03-glossary-90-day-clause",
+      "question": "A new joiner on the test team keeps tripping over the 90-day clause in the critical illness wording. Explain it to them in a couple of lines they will remember.",
       "evidence": [
         "Critical Illness Plan, policy wording 3.1: no benefit is payable for a covered critical illness first diagnosed within 90 days of the policy issue date or reinstatement date."
       ],
-      "expected": ["insurance-glossary"]
+      "expected": [
+        "insurance-glossary"
+      ]
     },
     {
-      "id": "act-04-defect-trend-regression",
-      "question": "Across the last three regression runs, which modules have a rising number of open defects, and how is severity distributed?",
+      "id": "act-04-defect-trend-billing",
+      "question": "Billing feels like it gets worse every regression cycle. Is that actually true, and how serious are the problems we keep finding there?",
       "evidence": [
         "Regression run R-41: 12 open defects (Policy Admin 5, Billing 4, Claims 3); severity: 2 critical, 6 major, 4 minor.",
         "Regression run R-42: 15 open defects (Policy Admin 5, Billing 7, Claims 3); severity: 3 critical, 7 major, 5 minor.",
         "Regression run R-43: 19 open defects (Policy Admin 4, Billing 10, Claims 5); severity: 3 critical, 10 major, 6 minor."
       ],
-      "expected": ["defect-trend-analyzer"]
+      "expected": [
+        "defect-trend-analyzer"
+      ]
     },
     {
       "id": "act-05-citations-premium-holiday",
-      "question": "Summarize the premium holiday rules for the Universal Life plan and list the sources as a numbered reference list with section and page.",
+      "question": "Where did you get the premium holiday rules for the Universal Life plan? Show me exactly which parts of the product guide back each point so I can check them myself.",
       "evidence": [
         "Universal Life Plan product guide, section 6.2 (page 14): after the first two policy years, the policyholder may take a premium holiday of up to 12 months while the account value covers monthly charges.",
         "Universal Life Plan product guide, section 6.3 (page 15): the policy lapses if the account value cannot cover the monthly charges during a premium holiday."
       ],
-      "expected": ["citation-formatter"]
+      "expected": [
+        "citation-formatter"
+      ]
     },
     {
       "id": "act-06-release-notes-portal",
-      "question": "Draft customer-facing release notes for portal version 3.2 from these merged changes.",
+      "question": "Portal 3.2 ships on Friday. Write up what policyholders will notice in this build so marketing can drop it into the newsletter.",
       "evidence": [
         "Merged changes for portal 3.2: PORTAL-201 add e-statement download for investment-linked policies; PORTAL-207 speed up the claim status page; PORTAL-215 fix the beneficiary form rejecting names with apostrophes; PORTAL-219 fix the premium due reminder showing the wrong date for annual payers."
       ],
-      "expected": ["release-notes-drafter"]
+      "expected": [
+        "release-notes-drafter"
+      ]
     },
     {
-      "id": "act-07-plain-grace-period-days",
-      "question": "How many days is the grace period for a missed premium on the Term Life plan?",
+      "id": "act-07-distractor-sum-assured-grace-period",
+      "question": "What is the sum assured on Term Life policy TL-20419, and is it still payable if the insured dies during the grace period after a missed premium?",
       "evidence": [
-        "Term Life Plan, policy wording 5.4: a grace period of 31 days from the premium due date is allowed for each premium after the first. The policy stays in force during the grace period."
+        "Policy schedule TL-20419 (Term Life Plan): sum assured 1,500,000; policy term 20 years; annual premium due 1 March.",
+        "Term Life Plan, policy wording 5.4: a grace period of 31 days from the premium due date is allowed for each premium after the first. The policy stays in force during the grace period, and any death benefit paid is reduced by the unpaid premium."
       ],
       "expected": []
     },
     {
-      "id": "act-08-plain-test-environment",
-      "question": "Which environment is the payment gateway regression suite scheduled to run on this week?",
+      "id": "act-08-distractor-release-notes-contents",
+      "question": "Did the portal 3.1 release notes mention the fix for the beneficiary form, or was that left out?",
       "evidence": [
-        "Test schedule, week 44: the payment gateway regression suite runs nightly on the SIT-2 environment; the UAT environment is reserved for the billing migration rehearsal."
+        "Portal 3.1 release notes, Fixed: the payment confirmation email now shows the correct policy number; the address search no longer times out on long street names.",
+        "Ticket PORTAL-215 (fix the beneficiary form rejecting names with apostrophes) was merged after the 3.1 cut-off and is scheduled for portal 3.2."
       ],
       "expected": []
     },
     {
-      "id": "act-09-distractor-coverage-physiotherapy",
-      "question": "Does the Medical Plus plan cover physiotherapy after a car accident?",
+      "id": "act-09-distractor-coverage-before-claim",
+      "question": "Before I file a claim: does the Medical Plus plan even cover physiotherapy after a car accident?",
       "evidence": [
         "Medical Plus Plan, schedule of benefits: outpatient physiotherapy is covered up to 10 sessions per policy year when prescribed by a registered medical practitioner following a covered hospitalization or accident."
       ],
       "expected": []
     },
     {
-      "id": "act-10-distractor-failed-count",
-      "question": "How many test cases failed in yesterday's motor claims regression run?",
+      "id": "act-10-distractor-single-run-defect-count",
+      "question": "What was the defect count for the motor claims module in yesterday's regression run?",
       "evidence": [
-        "Motor claims regression run R-88 (yesterday): 412 test cases executed, 397 passed, 9 failed, 6 blocked."
+        "Motor claims regression run R-88 (yesterday): 412 test cases executed, 397 passed, 9 failed, 6 blocked; 4 new defects logged against the motor claims module (1 major, 3 minor)."
       ],
       "expected": []
     }

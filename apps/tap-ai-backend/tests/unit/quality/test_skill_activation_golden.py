@@ -14,6 +14,7 @@ from tap.quality.skill_activation_golden import (
     ActivationMetrics,
     compute_activation_metrics,
     gate_passed,
+    no_skill_cases_with_any_activation,
     validate_activation_golden,
 )
 
@@ -117,3 +118,20 @@ def test_unknown_skill_name_in_observation_counts_as_wrong_activation() -> None:
     assert len(unknown) == 1
     assert unknown[0].case_id == "c2"
     assert unknown[0].activated and not unknown[0].expected
+
+
+def test_no_skill_cases_with_any_activation_counts_cases_not_pairs() -> None:
+    golden = _golden(["alpha", "beta"], [("c1", ["alpha"]), ("c2", []), ("c3", []), ("c4", [])])
+
+    metrics = compute_activation_metrics(
+        golden,
+        {
+            # Not a no-skill case: its extra activation is not counted here.
+            "c1": frozenset({"alpha", "beta"}),
+            "c2": frozenset({"alpha", "beta"}),
+            "c3": frozenset(),
+            "c4": frozenset({"made-up-skill"}),
+        },
+    )
+
+    assert no_skill_cases_with_any_activation(metrics) == (2, 3)

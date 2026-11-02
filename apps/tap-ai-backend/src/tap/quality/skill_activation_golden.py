@@ -15,6 +15,9 @@ An observed name that is not a fixture Skill is an extra should-not-miss
 (a wrong activation). Observations are the names the model passed to
 `skill_activate` in its first tool round; this module scores whatever names
 it is given. The gate requires both rates to be at least 0.80.
+
+`no_skill_cases_with_any_activation` is an informational per-case figure
+(no-skill cases that activated anything); the gate never uses it.
 """
 
 from __future__ import annotations
@@ -181,3 +184,16 @@ def compute_activation_metrics(
 def gate_passed(metrics: ActivationMetrics) -> bool:
     """Both rates at least `GATE_THRESHOLD`."""
     return metrics.should_rate >= GATE_THRESHOLD and metrics.should_not_rate >= GATE_THRESHOLD
+
+
+def no_skill_cases_with_any_activation(metrics: ActivationMetrics) -> tuple[int, int]:
+    """`(n, N)`: of the `N` cases that expect no Skill, the `n` with any
+    observed activation (unknown names included). Informational only;
+    `gate_passed` does not use it."""
+    expects_any: dict[str, bool] = {}
+    activated_any: dict[str, bool] = {}
+    for pair in metrics.pairs:
+        expects_any[pair.case_id] = expects_any.get(pair.case_id, False) or pair.expected
+        activated_any[pair.case_id] = activated_any.get(pair.case_id, False) or pair.activated
+    no_skill = [case_id for case_id, expected in expects_any.items() if not expected]
+    return sum(activated_any[case_id] for case_id in no_skill), len(no_skill)
