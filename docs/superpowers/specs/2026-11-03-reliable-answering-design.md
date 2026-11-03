@@ -46,7 +46,7 @@
 新模块 `tap.quality.golden`：
 
 - 把 `sources` 语料按现有切片规则写入进程内检索适配器（与契约测试同一套内存实现），通过 `KnowledgeAnswerService` 正常路径回答，保证评测的是生产编排而非旁路。
-- 模型：默认 `DeterministicModelGateway`（扩展为按检索证据确定性组装回答与引用）；`TAP_GOLDEN_REAL_MODEL=1` 时使用 LiteLLM 配置的真实模型，并要求 `TAP_LITELLM_*` 配置齐全，否则报错退出。
+- 模型：默认 `DeterministicModelGateway`（扩展为按检索证据确定性组装回答与引用）；`TAP_GOLDEN_REAL_MODEL=1` 时使用 LiteLLM 配置的真实模型，并要求 `LITELLM_BASE_URL`、`LITELLM_MASTER_KEY` 配置齐全，否则报错退出。
 - 指标（按类别与总计）：`citationRecall`（命中 `citedDocuments` 的比例）、`keywordRecall`、`abstainAccuracy`、`answered`。
 - 输出 JSON 报告到 `apps/tap-ai-backend/.quality/golden-<timestamp>.json`（已 gitignore）与终端表格。
 - 回归门：假模型运行与 `baseline.fake.json` 比较，任一指标下降超过 0.0 即失败（确定性，零容忍）；真实模型只报告，不设门，可用 `--write-baseline <path>` 记录业务基线。

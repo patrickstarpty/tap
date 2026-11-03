@@ -50,18 +50,35 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 2. Relay 把 Outbox 事件转发到 Redis Stream 唤醒 worker；worker 同时按固定间隔轮询 MySQL。
 3. worker 按阶段执行解析（`tap-parser`）、切片、embedding，每阶段产物内容寻址写入对象存储。
 4. 切片投影写入 Milvus；投影可从 MySQL 与中间产物重建。
+5. 摄取任务每次认领（含租约过期回收）递增 `delivery_count`，达到上限时认领即置 `FAILED`（`lease-exhausted`）；瞬时失败（模型、对象存储、索引、解析器不可用或超时）未达上限时回到 `PENDING` 并按退避设置 `next_attempt_at`。删除任务不设投递上限。用户重试把 `delivery_count` 清零。
 
 **问答**
 
 1. 用户在 Conversation 中提交问题，生成不可变 Turn。
 2. worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片；`GraphAnswerEnricher` 按问题关键词附加最多 20 个图谱节点作为上下文。
-3. 经 LiteLLM 生成回答并校验引用，结果写回 MySQL；可选模型目录由 LiteLLM `GET /v1/model/info` 动态提供（60 秒缓存），新增模型只改 `deploy/local/litellm/config.yaml` 并重启 LiteLLM，后端无需改代码或重启。
-4. 前端经 SSE 获取 Turn 事件（服务端轮询数据库，支持 `Last-Event-ID` 续传）。
+3. 经 LiteLLM 流式生成回答（`ModelGateway.stream_structured`，首个 token 前失败退回非流式调用），完整 JSON 校验并校验引用后结果写回 MySQL；可选模型目录由 LiteLLM `GET /v1/model/info` 动态提供（60 秒缓存），新增模型只改 `deploy/local/litellm/config.yaml` 并重启 LiteLLM，后端无需改代码或重启。
+4. 前端经 SSE 获取 Turn 事件并逐段渲染回答，支持 `Last-Event-ID` 续传；`turn.completed` 后以持久化回答（含引用）替换临时文本。
+
+**流式与通知**
+
+1. 生成 worker 用 `IncrementalJsonField` 从模型流中抽取顶层 `answer` 字段增量，按 150ms 或 200 字符批量追加 `answer.delta` 事件（校验租约令牌）。
+2. Turn 被重新认领开始新 attempt 时，以及 Turn 以非完成终态结束前，写入 `answer.reset`；被撤回的增量不再出现在读取结果中。
+3. 事件事务提交后经 `ConversationEventNotifier` 发布通知：Redis 适配器使用 Pub/Sub 频道 `tap:chat:{project_id}:{chat_id}`，内存适配器供测试使用；发布失败只告警。
+4. SSE 循环读取新事件下发，会话无运行中 Turn 且已追平时结束；否则等待通知最长 15 秒，超时发送 `: keepalive` 并重新读库（通知丢失的兜底）。单连接最长 10 分钟，客户端凭 `Last-Event-ID` 续接。
 
 **图谱**
 
-1. graph worker 从已摄取文档抽取实体与关系，写入 MySQL 快照。
+1. graph worker 从已摄取文档抽取实体与关系，写入 MySQL 快照；`attempt_count` 达到上限时认领即置 `FAILED`（`attempts-exhausted`），瞬时失败（模型不可用、超时）未达上限时回到 `PENDING` 并按退避设置 `next_attempt_at`。
 2. 查询 API 读取快照，载入内存图存储后返回节点、边与证据。
+
+**重试策略与 worker 主循环**
+
+- `tap/platform/retry.py` 的 `RetryPolicy`（默认 `max_attempts=5`、`base=2s`、`cap=300s`）为摄取与图谱任务提供全抖动指数退避与上限判断。
+- `tap/platform/worker_loop.py` 的 `run_worker_loop`：单次迭代异常记录错误日志与 `worker.iteration.failed` span，按连续失败次数退避（上限 30 秒）后继续，成功一次即清零。摄取、图谱、生成、推荐问题、测试方案 worker 使用该循环；parser worker 是 socket 服务，不使用。
+
+**Golden set**
+
+`apps/tap-ai-backend/tests/quality/golden/` 存放脱敏语料、用例与确定性模型基线；`tap.quality.golden` 把语料写入进程内检索适配器后经生产回答编排评测。确定性模型回归由 `tests/quality/test_golden_regression.py` 纳入 `make test` 与 CI（`.github/workflows/ci.yml`），真实模型只报告不设门。见 [Golden set 指南](guides/2026-11-03-golden-set.md)。
 
 LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为固定的 `classify → admit → execute` 三步。
 
@@ -82,7 +99,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 
 | V1 能力 | 现状缺口 |
 | --- | --- |
-| [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 仓库内质量用例为空；SSE 为数据库轮询，无 token 级流式；摄取任务租约回收不递增 `attempt`（Turn 回收递增但无上限）、摄取瞬时失败直接永久失败、worker loop 无异常保护 |
+| [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 真实模型 golden 基线分数（30–50 条真实标注问答）尚未产出，属业务验证项 |
 | [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 每次查询把整个快照载入内存 |
 | [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；无多跳扩展、路径推理、关系边引用与路径高亮 |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
