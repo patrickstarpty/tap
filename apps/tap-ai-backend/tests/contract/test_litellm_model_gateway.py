@@ -261,8 +261,26 @@ async def test_planning_call_can_disable_transport_retries():
     assert len(calls) == 1
 
 
+def sse_response(content: str, *, model: str = "openai/gpt-5.6-sol", size: int = 4, headers=None):
+    events = [{"model": model, "choices": [{"delta": {"role": "assistant"}}]}]
+    events += [
+        {"model": model, "choices": [{"delta": {"content": content[index : index + size]}}]}
+        for index in range(0, len(content), size)
+    ]
+    events.append({"model": model, "choices": [{"delta": {}, "finish_reason": "stop"}]})
+    events.append(
+        {"model": model, "choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}
+    )
+    text = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+    return httpx.Response(
+        200, content=text.encode(), headers={"content-type": "text/event-stream", **(headers or {})}
+    )
+
+
 def success(incoming):
     payload = json.loads(incoming.content)
+    if payload.get("stream"):
+        return sse_response('{"answer":"Grounded"}')
     if incoming.url.path == "/v1/embeddings":
         return httpx.Response(
             200,
@@ -1559,3 +1577,178 @@ def test_image_payload_shape_change_never_persists_bytes():
         "operation": ModelOperation.STRUCTURED.value,
         "image": image_digest,
     }
+
+
+async def collect_stream(gateway, req):
+    from tap.modules.ai.domain.models import StreamCompleted, TextDelta
+
+    deltas: list[str] = []
+    events = [event async for event in gateway.stream_structured(req)]
+    for event in events[:-1]:
+        assert isinstance(event, TextDelta)
+        deltas.append(event.text)
+    assert isinstance(events[-1], StreamCompleted)
+    return deltas, events[-1].result
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_yields_deltas_and_records_like_generate(span_recorder):
+    sent = []
+    content = '{"answer":"Hello streaming world"}'
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return sse_response(content, headers={"x-litellm-response-cost": "0.5"})
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    deltas, result = await collect_stream(gateway, request(ModelOperation.STRUCTURED))
+
+    assert len(deltas) > 1
+    assert "".join(deltas) == content
+    assert result.output == {"answer": "Hello streaming world"}
+    assert result.usage.input_tokens == 4 and result.usage.output_tokens == 2
+    assert result.cost_usd == Decimal("0.5")
+    assert len(sent) == 1
+    assert sent[0]["stream"] is True
+    assert sent[0]["stream_options"] == {"include_usage": True}
+    assert sent[0]["response_format"]["type"] == "json_schema"
+    assert len(recorder.records) == 1
+    record = recorder.records[0]
+    assert record.status == "ok"
+    assert record.operation is ModelOperation.STRUCTURED
+    assert record.input_tokens == 4 and record.output_tokens == 2
+    assert record.response_text == content
+    assert record.call_id == result.call_id
+    assert "stream" not in json.loads(record.request_json)
+    spans = span_recorder.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes["tap.model_call_id"] == record.call_id
+    assert spans[0].attributes["gen_ai.usage.output_tokens"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_falls_back_to_non_streaming_before_first_token():
+    sent = []
+
+    def respond(incoming):
+        payload = json.loads(incoming.content)
+        sent.append(payload)
+        if payload.get("stream"):
+            return httpx.Response(500)
+        return success(incoming)
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder, max_retries=0)
+    deltas, result = await collect_stream(gateway, request(ModelOperation.STRUCTURED))
+
+    assert result.output == {"answer": "Grounded"}
+    assert deltas == []
+    assert [payload.get("stream", False) for payload in sent] == [True, False]
+    assert len(recorder.records) == 1
+    assert recorder.records[0].status == "ok"
+    assert recorder.records[0].attempts == 2
+
+
+class _BrokenStream(httpx.AsyncByteStream):
+    def __init__(self, first: bytes) -> None:
+        self._first = first
+
+    async def __aiter__(self):
+        yield self._first
+        raise httpx.RemoteProtocolError("peer closed connection")
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_disconnect_after_first_token_is_unavailable():
+    from tap.modules.ai.domain.models import TextDelta
+
+    sent = []
+    first = (
+        "data: "
+        + json.dumps({"model": "openai/gpt-5.6-sol", "choices": [{"delta": {"content": '{"an'}}]})
+        + "\n\n"
+    ).encode()
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200, stream=_BrokenStream(first), headers={"content-type": "text/event-stream"}
+        )
+
+    recorder = FakeRecorder()
+    gateway = configured_gateway(respond, recorder=recorder)
+    seen = []
+    with pytest.raises(ModelGatewayUnavailable):
+        async for event in gateway.stream_structured(request(ModelOperation.STRUCTURED)):
+            seen.append(event)
+    assert seen == [TextDelta('{"an')]
+    assert len(sent) == 1
+    assert recorder.records[0].status == "error"
+    assert recorder.records[0].error_code == "model-unavailable"
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_rejects_invalid_requests_without_transport():
+    calls = []
+
+    def respond(incoming):
+        calls.append(incoming)
+        return success(incoming)
+
+    gateway = configured_gateway(respond)
+    with pytest.raises(ModelGatewayRejected):
+        await collect_stream(gateway, replace(request(ModelOperation.STRUCTURED), alias="unknown"))
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_streams_its_structured_json_in_16_character_chunks():
+    from tap.testing.deterministic_model_gateway import DeterministicModelGateway
+
+    base = configured_gateway(success)
+    gateway = DeterministicModelGateway(base._config, scope=VALIDATION_SCOPE, redact=redact)
+    req = replace(
+        request(ModelOperation.STRUCTURED),
+        context=json.dumps(
+            {
+                "evidence": [
+                    {"label": "E1", "content": "Login requires a verified email address."},
+                    {"label": "E2", "content": "Password resets expire after one hour."},
+                ]
+            }
+        ),
+    )
+    req = replace(
+        req,
+        schema={
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"},
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "evidenceLabels": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["text", "evidenceLabels"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["answer", "claims"],
+            "additionalProperties": False,
+        },
+    )
+    from tap.modules.ai.domain.models import schema_digest
+
+    req = replace(req, schema_digest=schema_digest(req.schema))
+    generated = await gateway.generate_structured(req)
+    deltas, streamed = await collect_stream(gateway, req)
+
+    assert len(deltas) > 2
+    assert all(len(delta) <= 16 for delta in deltas)
+    assert "".join(deltas) == json.dumps(generated.output)
+    assert streamed.output == generated.output

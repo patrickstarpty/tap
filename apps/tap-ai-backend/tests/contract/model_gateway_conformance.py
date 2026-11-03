@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -62,6 +63,24 @@ async def assert_gateway_conformance(gateway):
         )
     )
     assert structured.output == {"answer": "Grounded"}
+    from tap.modules.ai.domain.models import StreamCompleted, TextDelta
+
+    events = [
+        event
+        async for event in gateway.stream_structured(
+            replace(
+                base,
+                operation=ModelOperation.STRUCTURED,
+                schema=schema,
+                schema_digest=schema_digest(schema),
+            )
+        )
+    ]
+    assert [type(event) for event in events].count(StreamCompleted) == 1
+    assert isinstance(events[-1], StreamCompleted)
+    assert all(isinstance(event, TextDelta) for event in events[:-1])
+    assert events[-1].result.output == structured.output
+    assert json.loads("".join(event.text for event in events[:-1])) == structured.output
     for result in (chat, embedding, structured):
         assert result.audit.scope == VALIDATION_SCOPE
         assert result.audit.idempotency_key == "conformance-1"

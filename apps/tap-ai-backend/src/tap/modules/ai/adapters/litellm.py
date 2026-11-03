@@ -10,7 +10,8 @@ import logging
 import math
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -37,7 +38,10 @@ from tap.modules.ai.domain.models import (
     ModelOperation,
     ModelRequest,
     ModelResult,
+    ModelStreamEvent,
     ModelUsage,
+    StreamCompleted,
+    TextDelta,
     schema_digest,
     text_digest,
 )
@@ -45,6 +49,7 @@ from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.platform.telemetry import current_binding, span
 
 Redact = Callable[[str], Awaitable[str]]
+OnText = Callable[[str], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +210,35 @@ class LiteLLMModelGateway:
     async def generate_structured(self, request: ModelRequest) -> ModelResult:
         return await self._execute(request, ModelOperation.STRUCTURED)
 
+    async def stream_structured(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
+        """Stream structured output text, then the result `generate_structured` would return.
+
+        The call runs in its own task so its deadline, span and recording never depend on how
+        quickly the consumer drains the deltas.
+        """
+
+        deltas: asyncio.Queue[str] = asyncio.Queue()
+        call = asyncio.create_task(
+            self._execute(request, ModelOperation.STRUCTURED, on_text=deltas.put)
+        )
+        try:
+            while True:
+                waiter = asyncio.ensure_future(deltas.get())
+                await asyncio.wait({waiter, call}, return_when=asyncio.FIRST_COMPLETED)
+                if waiter.done():
+                    yield TextDelta(waiter.result())
+                    continue
+                waiter.cancel()
+                break
+            while not deltas.empty():
+                yield TextDelta(deltas.get_nowait())
+            yield StreamCompleted(call.result())
+        finally:
+            if not call.done():
+                call.cancel()
+                with suppress(asyncio.CancelledError):
+                    await call
+
     async def aclose(self) -> None:
         """Close the owned transport and the catalog this gateway was built on."""
 
@@ -313,7 +347,9 @@ class LiteLLMModelGateway:
             raise ModelGatewayRejected()
         return model
 
-    async def _execute(self, request: ModelRequest, operation: ModelOperation) -> ModelResult:
+    async def _execute(
+        self, request: ModelRequest, operation: ModelOperation, *, on_text: OnText | None = None
+    ) -> ModelResult:
         call_id = str(uuid4())
         span_kind = "embeddings" if operation is ModelOperation.EMBED else "chat"
         attempts = GatewayAttempts()
@@ -425,7 +461,10 @@ class LiteLLMModelGateway:
                                     },
                                 }
                             )
-                    body, headers = await self._post(request, payload, attempts)
+                    if on_text is None:
+                        body, headers = await self._post(request, payload, attempts)
+                    else:
+                        body, headers = await self._post_stream(request, payload, attempts, on_text)
                     result = self._normalize(request, body, headers, self._upstream_model(headers))
                     gateway_call_id = result.gateway_call_id
                     provider_request_id = result.provider_request_id
@@ -516,15 +555,18 @@ class LiteLLMModelGateway:
                     except Exception:
                         logger.warning("failed to record model call", exc_info=True)
 
-    async def _post(
-        self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
-    ) -> tuple[dict[str, Any], httpx.Headers]:
+    def _transport(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self._config.timeout_seconds,
                 limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
                 transport=httpx.AsyncHTTPTransport(retries=0),
             )
+        return self._client
+
+    def _send(
+        self, request: ModelRequest, payload: dict[str, Any]
+    ) -> AbstractAsyncContextManager[httpx.Response]:
         encoded = json.dumps(
             payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
         ).encode()
@@ -533,41 +575,142 @@ class LiteLLMModelGateway:
         path = (
             "v1/embeddings" if request.operation is ModelOperation.EMBED else "v1/chat/completions"
         )
+        return self._transport().stream(
+            "POST",
+            self._config.base_url.rstrip("/") + "/" + path,
+            headers={
+                "authorization": f"Bearer {self._config.api_key}",
+                "content-type": "application/json",
+                "idempotency-key": request.idempotency_key,
+            },
+            content=encoded,
+            timeout=request.timeout_seconds,
+        )
+
+    @staticmethod
+    async def _read_json(response: httpx.Response) -> dict[str, Any]:
+        raw = bytearray()
+        async for chunk in response.aiter_bytes():
+            raw.extend(chunk)
+            if len(raw) > 1048576:
+                raise ModelGatewayUnavailable()
+        body = json.loads(raw)
+        if not isinstance(body, dict):
+            raise ModelGatewayUnavailable()
+        return body
+
+    async def _post(
+        self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
+    ) -> tuple[dict[str, Any], httpx.Headers]:
         max_retries = self._config.max_retries if request.allow_retries else 0
         for attempt in range(max_retries + 1):
             attempts.count += 1
             try:
-                async with (
-                    self._slots,
-                    self._client.stream(
-                        "POST",
-                        self._config.base_url.rstrip("/") + "/" + path,
-                        headers={
-                            "authorization": f"Bearer {self._config.api_key}",
-                            "content-type": "application/json",
-                            "idempotency-key": request.idempotency_key,
-                        },
-                        content=encoded,
-                        timeout=request.timeout_seconds,
-                    ) as response,
-                ):
+                async with self._slots, self._send(request, payload) as response:
                     if response.status_code in {408, 429} or response.status_code >= 500:
                         if attempt < max_retries:
                             continue
                     response.raise_for_status()
-                    raw = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        raw.extend(chunk)
-                        if len(raw) > 1048576:
-                            raise ModelGatewayUnavailable()
-                    body = json.loads(raw)
-                    if not isinstance(body, dict):
-                        raise ModelGatewayUnavailable()
-                    return body, response.headers
+                    return await self._read_json(response), response.headers
             except httpx.TransportError:
                 if attempt == max_retries:
                     raise ModelGatewayUnavailable() from None
         raise ModelGatewayUnavailable()
+
+    async def _post_stream(
+        self,
+        request: ModelRequest,
+        payload: dict[str, Any],
+        attempts: GatewayAttempts,
+        on_text: OnText,
+    ) -> tuple[dict[str, Any], httpx.Headers]:
+        """Stream one completion; before the first delta any failure falls back to `_post`."""
+
+        emitted = False
+
+        async def emit(text: str) -> None:
+            nonlocal emitted
+            emitted = True
+            await on_text(text)
+
+        streaming = {**payload, "stream": True, "stream_options": {"include_usage": True}}
+        try:
+            return await self._stream(request, streaming, attempts, emit)
+        except ModelGatewayRejected:
+            raise
+        except (
+            ModelGatewayUnavailable,
+            httpx.HTTPError,
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+        ):
+            if emitted:
+                raise ModelGatewayUnavailable() from None
+        return await self._post(request, payload, attempts)
+
+    async def _stream(
+        self,
+        request: ModelRequest,
+        payload: dict[str, Any],
+        attempts: GatewayAttempts,
+        on_text: OnText,
+    ) -> tuple[dict[str, Any], httpx.Headers]:
+        """Read an OpenAI-compatible SSE completion into the non-streaming body shape."""
+
+        attempts.count += 1
+        async with self._slots, self._send(request, payload) as response:
+            response.raise_for_status()
+            if response.headers.get("content-type", "").startswith("application/json"):
+                return await self._read_json(response), response.headers
+            content: list[str] = []
+            reasoning: list[str] = []
+            choice: dict[str, Any] = {}
+            body: dict[str, Any] = {}
+            size = 0
+            async for line in response.aiter_lines():
+                size += len(line)
+                if size > 1048576:
+                    raise ModelGatewayUnavailable()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                if not isinstance(chunk, dict):
+                    raise ModelGatewayUnavailable()
+                if "model" in chunk:
+                    body["model"] = chunk["model"]
+                if chunk.get("usage") is not None:
+                    body["usage"] = chunk["usage"]
+                choices = chunk.get("choices") or []
+                if not isinstance(choices, list) or len(choices) > 1:
+                    raise ModelGatewayUnavailable()
+                if not choices:
+                    continue
+                if not isinstance(choices[0], dict):
+                    raise ModelGatewayUnavailable()
+                if choices[0].get("finish_reason") is not None:
+                    choice["finish_reason"] = choices[0]["finish_reason"]
+                delta = choices[0].get("delta") or {}
+                if not isinstance(delta, dict) or delta.get("tool_calls") or delta.get("refusal"):
+                    raise ModelGatewayUnavailable()
+                if isinstance(delta.get("reasoning_content"), str):
+                    reasoning.append(delta["reasoning_content"])
+                text = delta.get("content")
+                if isinstance(text, str) and text:
+                    content.append(text)
+                    await on_text(text)
+            else:
+                # A stream that ends without its terminator was cut off.
+                raise ModelGatewayUnavailable()
+            message: dict[str, Any] = {"content": "".join(content)}
+            if reasoning:
+                message["reasoning_content"] = "".join(reasoning)
+            body["choices"] = [{**choice, "message": message}]
+            return body, response.headers
 
     def _upstream_model(self, headers: httpx.Headers) -> str | None:
         """Map LiteLLM's served deployment id to its upstream model from cached routes only."""

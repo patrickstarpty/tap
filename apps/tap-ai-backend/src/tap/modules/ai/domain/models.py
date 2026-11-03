@@ -105,6 +105,19 @@ class ModelResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TextDelta:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamCompleted:
+    result: ModelResult
+
+
+ModelStreamEvent = TextDelta | StreamCompleted
+
+
+@dataclass(frozen=True, slots=True)
 class ModelCallAudit:
     scope: ProjectScopeContext
     alias: str

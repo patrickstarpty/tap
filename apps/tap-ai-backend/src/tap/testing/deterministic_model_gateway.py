@@ -12,6 +12,7 @@ from tap.modules.ai.adapters.litellm import (
     GatewayAttempts,
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
+    OnText,
     Redact,
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
@@ -64,6 +65,19 @@ class DeterministicModelGateway(LiteLLMModelGateway):
             catalog=StaticLiteLLMCatalog(),
             recorder=recorder,
         )
+
+    async def _post_stream(
+        self,
+        request: ModelRequest,
+        payload: dict[str, Any],
+        attempts: GatewayAttempts,
+        on_text: OnText,
+    ) -> tuple[dict[str, Any], httpx.Headers]:
+        body, headers = await self._post(request, payload, attempts)
+        content = body["choices"][0]["message"]["content"]
+        for start in range(0, len(content), 16):
+            await on_text(content[start : start + 16])
+        return body, headers
 
     async def _post(
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
