@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
-
 import pytest
+
+from tests.conftest import _mysql_gate
 
 
 @pytest.mark.asyncio
@@ -280,10 +280,10 @@ async def test_mysql_seed_waits_for_paused_release_before_returning_cancelled_co
 
 
 def test_0011_migration_is_exercised_by_the_owned_upgrade_gate(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
-        pytest.skip("requires owned isolated MySQL")
+    _mysql_gate(request)
     from scripts.migration_support import BASELINE_ROWS, run_migration_gate
 
     monkeypatch.delenv("TAP_DATABASE_URL", raising=False)

@@ -41,11 +41,13 @@ from tap.modules.knowledge.ports.answers import (
 )
 from tap.modules.knowledge.ports.citations import CitationSnapshotCorrupt
 from tap.platform.db.session import create_engine_and_session_factory
+from tests.conftest import _mysql_gate
 
-pytestmark = pytest.mark.skipif(
-    os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1",
-    reason="set TAP_RUN_MYSQL_INTEGRATION=1 for real MySQL answer snapshot tests",
-)
+
+@pytest.fixture(autouse=True)
+def _require_mysql(request: pytest.FixtureRequest) -> None:
+    _mysql_gate(request)
+
 
 ANSWER_SNAPSHOT_LOCK_NAME = MysqlDocumentRepository(
     async_sessionmaker(), scope=VALIDATION_SCOPE, audit_factory=create_project_audit
