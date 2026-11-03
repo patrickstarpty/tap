@@ -203,3 +203,56 @@ async def test_deleting_the_conversation_ends_an_open_stream(monkeypatch):
         await asyncio.wait_for(stream.task, 1)
     finally:
         await stream.close()
+
+
+class _FailingPubSub:
+    async def subscribe(self, _channel):
+        raise ConnectionError("redis down")
+
+    async def aclose(self):
+        return None
+
+
+class _DownRedis:
+    async def publish(self, _channel, _message):
+        raise ConnectionError("redis down")
+
+    def pubsub(self, **_kwargs):
+        return _FailingPubSub()
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_does_not_spin_database_reads(monkeypatch):
+    from tap.platform.messaging import redis_chat_notifier
+    from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
+
+    monkeypatch.setattr(conversation_routes, "_STREAM_WAIT_SECONDS", 15.0)
+    monkeypatch.setattr(redis_chat_notifier, "_FAILURE_BACKOFF_SECONDS", 0.1)
+    notifier = RedisConversationEventNotifier(_DownRedis())
+    service = ConversationService(InMemoryConversationRepository(notifier), scope=VALIDATION_SCOPE)
+    await service.create("chat-1", "turn-1", "request-1", _input())
+    reads = 0
+    original = service.events_after
+
+    async def counting_events_after(conversation_id, sequence):
+        nonlocal reads
+        reads += 1
+        return await original(conversation_id, sequence)
+
+    monkeypatch.setattr(service, "events_after", counting_events_after)
+    stream = _Stream(_app(service), _PATH)
+    try:
+        assert await stream.next_chunk() is not None
+        await asyncio.sleep(0.5)
+        # 0.5s at a 0.1s backoff allows ~6 reads; a busy loop would perform thousands.
+        assert 1 <= reads <= 8
+        assert not stream.task.done()
+
+        await service.emit("chat-1", "turn-1", "answer.delta", {"text": "late"})
+        delivered = b""
+        while b"answer.delta" not in delivered:
+            chunk = await stream.next_chunk(timeout=1.0)
+            assert chunk is not None
+            delivered += chunk
+    finally:
+        await stream.close()

@@ -11,11 +11,15 @@ from tap.modules.chat.application.notifier import conversation_channel
 
 _LOGGER = logging.getLogger(__name__)
 
+# While Redis is unavailable, readers poll the database at most this often instead of spinning.
+_FAILURE_BACKOFF_SECONDS = 1.0
+
 
 class RedisConversationEventNotifier:
     """Publishes on `tap:chat:{project_id}:{chat_id}`; waits on an independent subscription.
 
-    A failed wait returns False so the reader falls back to reading the database.
+    A failed wait pauses for a bounded backoff, then returns False so the reader falls back to
+    reading the database without spinning while Redis is unavailable.
     """
 
     def __init__(self, redis: Any) -> None:
@@ -41,6 +45,9 @@ class RedisConversationEventNotifier:
             raise
         except Exception as error:  # noqa: BLE001 - the reader re-reads the database
             _LOGGER.warning("conversation notification wait failed: %s", type(error).__name__)
+            backoff = min(_FAILURE_BACKOFF_SECONDS, deadline - loop.time())
+            if backoff > 0:
+                await asyncio.sleep(backoff)
             return False
         finally:
             try:

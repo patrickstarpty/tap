@@ -125,13 +125,29 @@ async def test_redis_wait_times_out_to_false():
 
 
 @pytest.mark.asyncio
-async def test_redis_wait_failure_returns_false_for_database_fallback():
+async def test_redis_wait_failure_backs_off_then_returns_false_for_database_fallback():
     pubsub = _PubSub([], fail=ConnectionError("redis down"))
+    started = time.monotonic()
     assert (
-        await RedisConversationEventNotifier(_Redis(pubsub)).wait(VALIDATION_SCOPE, "chat-1", 1)
+        await RedisConversationEventNotifier(_Redis(pubsub)).wait(VALIDATION_SCOPE, "chat-1", 0.2)
         is False
     )
+    assert 0.15 <= time.monotonic() - started < 0.5
     assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_redis_wait_failure_backoff_is_bounded(monkeypatch):
+    from tap.platform.messaging import redis_chat_notifier
+
+    monkeypatch.setattr(redis_chat_notifier, "_FAILURE_BACKOFF_SECONDS", 0.1)
+    pubsub = _PubSub([], fail=ConnectionError("redis down"))
+    started = time.monotonic()
+    assert (
+        await RedisConversationEventNotifier(_Redis(pubsub)).wait(VALIDATION_SCOPE, "chat-1", 5)
+        is False
+    )
+    assert 0.08 <= time.monotonic() - started < 0.5
 
 
 class _RecordingNotifier:
