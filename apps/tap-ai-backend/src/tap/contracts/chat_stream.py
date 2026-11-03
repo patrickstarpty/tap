@@ -231,6 +231,15 @@ class AnswerDeltaEvent(StreamContractModel):
     payload: AnswerDeltaPayload
 
 
+class AnswerResetPayload(StreamContractModel):
+    attempt: Annotated[int, Field(ge=1, strict=True)]
+
+
+class AnswerResetEvent(StreamContractModel):
+    type: Literal["answer.reset"]
+    payload: AnswerResetPayload
+
+
 class CitationResolvedPayload(StreamContractModel):
     citation: Citation
 
@@ -367,6 +376,7 @@ ChatStreamEvent = Annotated[
     | RetrievalHitsReadyEvent
     | RerankCompletedEvent
     | AnswerDeltaEvent
+    | AnswerResetEvent
     | CitationResolvedEvent
     | TurnCompletedEvent
     | TurnAbstainedEvent

@@ -142,12 +142,8 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
         "retrieval.hits_ready",
         {"traceId": "trace-1", "authorizedHitCount": 0},
     )
-    assert conversations.events[3] == (
-        "conversation-1",
-        "turn-1",
-        "answer.delta",
-        {"text": "grounded"},
-    )
+    # Answer text streams provisionally; completion never repeats it as one delta.
+    assert len(conversations.events) == 3
     assert conversations.completed[0][2].outcome == "completed"
 
 
@@ -178,12 +174,18 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
     class Conversations:
         repository = Repository()
         completion = None
+        emitted: list[tuple[str, str, str, dict[str, object], object]] = []
 
         async def complete_evidence(self, *_args, **kwargs):
             self.completion = kwargs
 
+        async def emit(self, conversation_id, turn_id, event_type, payload, *, lease_token=None):
+            self.emitted.append((conversation_id, turn_id, event_type, payload, lease_token))
+
     class Knowledge:
-        async def answer(self, _request):
+        async def answer_conversation(self, _request, _frozen, *, on_delta=None):
+            await on_delta("del")
+            await on_delta("ta")
             return SimpleNamespace(
                 answer="delta",
                 citations=(),
@@ -206,9 +208,12 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
     conversations = Conversations()
     await GenerationWorker(conversations, Knowledge()).run_once(limit=1)
     assert conversations.completion["lease_token"] == "lease-1"
-    assert conversations.completion["stream_events"][-1] == (
-        "answer.delta",
-        {"text": "delta"},
+    assert conversations.emitted == [
+        ("conversation-1", "turn-1", "answer.delta", {"text": "delta"}, "lease-1")
+    ]
+    assert all(
+        event_type != "answer.delta"
+        for event_type, _payload in conversations.completion["stream_events"]
     )
 
 
@@ -459,7 +464,6 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
         "context.assembled",
         "stage.completed",
         "retrieval.hits_ready",
-        "answer.delta",
     ]
     assert conversations.terminal_event == (
         "turn.completed",
@@ -655,7 +659,6 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
         "context.assembled",
         "stage.completed",
         "retrieval.hits_ready",
-        "answer.delta",
     ]
     assert conversations.completed[0][:2] == ("turn-1", "completed")
     assert conversations.emitted == []

@@ -381,6 +381,7 @@ class ConversationEvent:
             "retrieval.hits_ready",
             "rerank.completed",
             "answer.delta",
+            "answer.reset",
             "citation.resolved",
             "turn.completed",
             "turn.abstained",

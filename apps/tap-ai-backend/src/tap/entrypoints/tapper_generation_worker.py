@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -111,6 +112,54 @@ def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
     )
 
 
+def _well_formed(text: str) -> str:
+    """Join valid surrogate pairs and replace lone UTF-16 surrogates with U+FFFD."""
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
+
+
+class DeltaBatcher:
+    """Coalesce streamed answer text into bounded, provisional `answer.delta` writes."""
+
+    def __init__(
+        self,
+        flush: Callable[[str], Awaitable[None]],
+        *,
+        max_chars: int = 200,
+        max_interval: float = 0.15,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if max_chars < 1 or max_interval <= 0:
+            raise ValueError("delta batch thresholds must be positive")
+        self._flush = flush
+        self._max_chars = max_chars
+        self._max_interval = max_interval
+        self._clock = clock
+        self._pending: list[str] = []
+        self._pending_chars = 0
+        self._last_flush = clock()
+
+    async def add(self, text: str) -> None:
+        if text:
+            self._pending.append(text)
+            self._pending_chars += len(text)
+        if self._pending_chars >= self._max_chars or (
+            self._pending and self._clock() - self._last_flush >= self._max_interval
+        ):
+            await self._drain()
+
+    async def close(self) -> None:
+        await self._drain()
+
+    async def _drain(self) -> None:
+        if not self._pending:
+            return
+        text = _well_formed("".join(self._pending))
+        self._pending.clear()
+        self._pending_chars = 0
+        self._last_flush = self._clock()
+        await self._flush(text)
+
+
 @dataclass(slots=True)
 class GenerationWorker:
     conversations: Any
@@ -121,6 +170,8 @@ class GenerationWorker:
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
     max_checkpoint_attempts: int = 3
+    delta_max_chars: int = 200
+    delta_max_interval_seconds: float = 0.15
 
     def __post_init__(self) -> None:
         if (
@@ -172,8 +223,18 @@ class GenerationWorker:
                 ],
             )
             answer_boundary = getattr(self.knowledge, "answer_conversation", None)
-            answer = (
-                await answer_boundary(
+            emit = getattr(self.conversations, "emit", None)
+            batcher = (
+                None
+                if emit is None
+                else DeltaBatcher(
+                    publish_delta,
+                    max_chars=self.delta_max_chars,
+                    max_interval=self.delta_max_interval_seconds,
+                )
+            )
+            if answer_boundary is not None:
+                answer = await answer_boundary(
                     request,
                     value,
                     **(
@@ -181,10 +242,12 @@ class GenerationWorker:
                         if active_plan is not None
                         else {}
                     ),
+                    **({} if batcher is None else {"on_delta": batcher.add}),
                 )
-                if answer_boundary is not None
-                else await self.knowledge.answer(request)
-            )
+                if batcher is not None:
+                    await batcher.close()
+            else:
+                answer = await self.knowledge.answer(request)
             answer_response = answer
             citations = (
                 await self.conversations.repository.resolve_citations(
@@ -208,6 +271,24 @@ class GenerationWorker:
                 abstained=answer.abstained,
                 answer_plan_id=None if active_plan is None else active_plan.plan_id,
             )
+
+        streaming = True
+
+        async def publish_delta(text: str) -> None:
+            nonlocal streaming
+            if not streaming:
+                return
+            try:
+                await self.conversations.emit(
+                    conversation_id,
+                    turn.turn_id,
+                    "answer.delta",
+                    {"text": text},
+                    lease_token=turn.lease_token,
+                )
+            except (ConversationConflict, ConversationNotFound):
+                # Provisional text only; the completion path settles lease loss or deletion.
+                streaming = False
 
         def stream_events(evidence, duration_ms: int) -> list[dict[str, object]]:
             if evidence.outcome == "failed":
@@ -235,8 +316,6 @@ class GenerationWorker:
                         },
                     }
                 )
-            if evidence.answer:
-                events.append({"type": "answer.delta", "payload": {"text": evidence.answer}})
             if answer_response is not None:
                 events.extend(
                     {

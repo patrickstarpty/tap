@@ -546,7 +546,8 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
             )
         assert failure_outbox_count == 1
         assert leaked_answer_count == 0
-        assert healthy_answer_count == 1
+        # Non-streaming answers settle through the terminal event without a whole-answer delta.
+        assert healthy_answer_count == 0
     finally:
         await engine.dispose()
 
@@ -849,7 +850,8 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
                 .scalars()
                 .all()
             )
-        assert ("answer.delta" in events) == (publication_state == "valid")
+        # A checkpointed result is delivered by the terminal event, never re-streamed.
+        assert "answer.delta" not in events
         assert ("turn.completed" in events) == (publication_state == "valid")
     finally:
         await engine.dispose()

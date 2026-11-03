@@ -169,6 +169,40 @@
         "title": "AnswerMode",
         "type": "string"
       },
+      "AnswerResetEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/AnswerResetPayload"
+          },
+          "type": {
+            "const": "answer.reset",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "AnswerResetEvent",
+        "type": "object"
+      },
+      "AnswerResetPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attempt"
+        ],
+        "title": "AnswerResetPayload",
+        "type": "object"
+      },
       "BddAnchor": {
         "additionalProperties": false,
         "properties": {
@@ -349,6 +383,7 @@
             "discriminator": {
               "mapping": {
                 "answer.delta": "#/components/schemas/AnswerDeltaEvent",
+                "answer.reset": "#/components/schemas/AnswerResetEvent",
                 "citation.resolved": "#/components/schemas/CitationResolvedEvent",
                 "context.assembled": "#/components/schemas/ContextAssembledEvent",
                 "conversation.turn.completed": "#/components/schemas/ConversationTurnCompletedEvent",
@@ -395,6 +430,9 @@
               },
               {
                 "$ref": "#/components/schemas/AnswerDeltaEvent"
+              },
+              {
+                "$ref": "#/components/schemas/AnswerResetEvent"
               },
               {
                 "$ref": "#/components/schemas/CitationResolvedEvent"
@@ -1097,6 +1135,7 @@
               "retrieval.hits_ready",
               "rerank.completed",
               "answer.delta",
+              "answer.reset",
               "citation.resolved",
               "turn.completed",
               "turn.abstained",

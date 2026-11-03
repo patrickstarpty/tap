@@ -91,6 +91,40 @@
       "title": "AnswerMode",
       "type": "string"
     },
+    "AnswerResetEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/AnswerResetPayload"
+        },
+        "type": {
+          "const": "answer.reset",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "AnswerResetEvent",
+      "type": "object"
+    },
+    "AnswerResetPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempt"
+      ],
+      "title": "AnswerResetPayload",
+      "type": "object"
+    },
     "BddAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -2512,6 +2546,7 @@
       "discriminator": {
         "mapping": {
           "answer.delta": "#/$defs/AnswerDeltaEvent",
+          "answer.reset": "#/$defs/AnswerResetEvent",
           "citation.resolved": "#/$defs/CitationResolvedEvent",
           "context.assembled": "#/$defs/ContextAssembledEvent",
           "conversation.turn.completed": "#/$defs/ConversationTurnCompletedEvent",
@@ -2558,6 +2593,9 @@
         },
         {
           "$ref": "#/$defs/AnswerDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/AnswerResetEvent"
         },
         {
           "$ref": "#/$defs/CitationResolvedEvent"

@@ -111,6 +111,7 @@ class ConversationRepository(Protocol):
 class InMemoryConversationRepository:
     def __init__(self):
         self.values: dict[str, Conversation] = {}
+        self.lease_expires_at: dict[str, datetime] = {}
 
     async def create_with_first_turn(self, conversation):
         if conversation.conversation_id in self.values:
@@ -249,11 +250,67 @@ class InMemoryConversationRepository:
         )
         return found
 
+    async def claim_queued(self, *, limit: int) -> tuple[tuple[str, ConversationTurn], ...]:
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be positive")
+        now = datetime.now(timezone.utc)
+        claimed: list[tuple[str, ConversationTurn]] = []
+        for conversation_id, conversation in list(self.values.items()):
+            if conversation.deleted_at is not None:
+                continue
+            for turn in conversation.turns:
+                if len(claimed) == limit:
+                    return tuple(claimed)
+                expires_at = self.lease_expires_at.get(turn.turn_id)
+                reclaimable = (
+                    turn.state == "running" and expires_at is not None and expires_at < now
+                )
+                if turn.state != "queued" and not reclaimable:
+                    continue
+                current = self.values[conversation_id]
+                running = replace(
+                    turn, state="running", attempt=turn.attempt + 1, lease_token=uuid4().hex
+                )
+                sequence = max((item.sequence for item in current.events), default=0)
+                events = [
+                    ConversationEvent(
+                        uuid4().hex,
+                        sequence + 1,
+                        "turn.started",
+                        {"state": "running"},
+                        now,
+                        turn.turn_id,
+                    )
+                ]
+                if turn.attempt > 0:
+                    events.append(
+                        ConversationEvent(
+                            uuid4().hex,
+                            sequence + 2,
+                            "answer.reset",
+                            {"attempt": running.attempt},
+                            now,
+                            turn.turn_id,
+                        )
+                    )
+                self.values[conversation_id] = replace(
+                    current,
+                    turns=tuple(
+                        running if item.turn_id == turn.turn_id else item for item in current.turns
+                    ),
+                    events=(*current.events, *events),
+                )
+                self.lease_expires_at[turn.turn_id] = now + timedelta(seconds=60)
+                claimed.append((conversation_id, running))
+        return tuple(claimed)
+
     async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
         conversation = await self.load(conversation_id)
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
         if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
             raise ConversationConflict("terminal Turn cannot accept stream events")
+        if turn.lease_token is not None and lease_token != turn.lease_token:
+            raise ConversationConflict("generation lease lost")
         event = replace(
             event,
             sequence=max(item.sequence for item in conversation.events) + 1,
@@ -279,11 +336,16 @@ class InMemoryConversationRepository:
     async def renew_processing_lease(
         self, conversation_id, turn_id, lease_token, *, lease_duration
     ):
-        del lease_token, lease_duration
         conversation = await self.load(conversation_id)
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
-        if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
+        if (
+            turn is None
+            or turn.state in {"completed", "abstained", "failed", "canceled"}
+            or (turn.lease_token is not None and turn.lease_token != lease_token)
+        ):
             raise ConversationConflict("generation lease lost")
+        if turn.lease_token is not None:
+            self.lease_expires_at[turn_id] = datetime.now(timezone.utc) + lease_duration
 
 
 class ConversationService:

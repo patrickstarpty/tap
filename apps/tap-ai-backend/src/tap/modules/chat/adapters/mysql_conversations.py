@@ -1212,19 +1212,17 @@ class MysqlConversationRepository:
                         datetime.now(timezone.utc),
                     ),
                 )
-                await session.execute(
-                    insert(chat_event).values(
-                        **scope_values(self.scope),
-                        event_id=event.event_id,
-                        turn_id=row["turn_id"],
-                        sequence=event.sequence,
-                        stream_sequence=event.sequence,
-                        event_type=event.event_type,
-                        payload=dict(event.payload),
-                        schema_version=1,
-                        occurred_at=_naive(event.occurred_at),
+                await self._stream_event(session, event, row["turn_id"])
+                if row["processing_attempt"] > 0:
+                    # A reclaimed Turn restarts its answer; clients discard provisional text.
+                    event = replace(
+                        event,
+                        event_id=uuid4().hex,
+                        sequence=event.sequence + 1,
+                        event_type="answer.reset",
+                        payload={"attempt": row["processing_attempt"] + 1},
                     )
-                )
+                    await self._stream_event(session, event, row["turn_id"])
                 await session.execute(
                     update(chat_turn)
                     .where(
