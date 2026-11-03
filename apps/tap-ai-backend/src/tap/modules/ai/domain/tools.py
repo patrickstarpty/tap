@@ -62,12 +62,32 @@ def validate_allowlist(values: Iterable[str]) -> frozenset[str]:
     return frozenset(validate_tool_id(item) for item in items)
 
 
-def _schema_depth(value: object, depth: int = 0) -> int:
-    if isinstance(value, Mapping):
-        return max((_schema_depth(item, depth + 1) for item in value.values()), default=depth + 1)
-    if isinstance(value, list):
-        return max((_schema_depth(item, depth + 1) for item in value), default=depth + 1)
-    return depth
+def well_formed_tools(values: object) -> bool:
+    if type(values) is not frozenset:
+        return False
+    try:
+        validate_allowlist(values)
+    except ToolRejected:
+        return False
+    return True
+
+
+def _within_schema_depth(value: object, limit: int) -> bool:
+    """Iteratively bound container depth so hostile schemas cannot exhaust the stack."""
+
+    pending: list[tuple[object, int]] = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        if isinstance(item, Mapping):
+            children: Iterable[object] = item.values()
+        elif isinstance(item, list | tuple):
+            children = item
+        else:
+            continue
+        if depth + 1 > limit:
+            return False
+        pending.extend((child, depth + 1) for child in children)
+    return True
 
 
 def _mapping_json(value: object) -> dict[object, object]:
@@ -79,15 +99,15 @@ def _mapping_json(value: object) -> dict[object, object]:
 def _validate_schema(value: Mapping[str, object]) -> None:
     if not isinstance(value, Mapping) or value.get("type") != "object":
         raise ToolRejected("tool-schema-invalid")
+    if not _within_schema_depth(value, _MAX_SCHEMA_DEPTH):
+        raise ToolRejected("tool-schema-invalid")
     try:
         encoded = json.dumps(
             dict(value), allow_nan=False, separators=(",", ":"), default=_mapping_json
         )
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, RecursionError) as error:
         raise ToolRejected("tool-schema-invalid") from error
-    if len(encoded.encode("utf-8")) > _MAX_SCHEMA_BYTES or _schema_depth(value) > (
-        _MAX_SCHEMA_DEPTH
-    ):
+    if len(encoded.encode("utf-8")) > _MAX_SCHEMA_BYTES:
         raise ToolRejected("tool-schema-invalid")
 
 

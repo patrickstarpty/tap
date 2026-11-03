@@ -9,7 +9,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.domain.tools import ToolRejected, validate_allowlist
+from tap.modules.ai.domain.tools import well_formed_tools
 
 
 class ModelCapability(StrEnum):
@@ -79,21 +79,11 @@ class GenerationGovernance:
                     self.skill_instructions, self.skill_instruction_digests, strict=True
                 )
             )
-            or not _well_formed_tools(self.tool_allowlist)
+            or not well_formed_tools(self.tool_allowlist)
             or self.output_schema_digest != schema_digest(self.output_schema)
             or not self.revision_digests
         ):
             raise ModelGatewayRejected()
-
-
-def _well_formed_tools(values: frozenset[str]) -> bool:
-    if type(values) is not frozenset:
-        return False
-    try:
-        validate_allowlist(values)
-    except ToolRejected:
-        return False
-    return True
 
 
 @dataclass(frozen=True, slots=True)

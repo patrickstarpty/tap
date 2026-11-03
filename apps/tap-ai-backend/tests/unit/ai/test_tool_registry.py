@@ -133,6 +133,36 @@ def test_descriptor_rejects_inconsistent_origin_and_unbounded_schema() -> None:
         )
 
 
+def test_descriptor_rejects_deeply_nested_schema_without_recursion_error() -> None:
+    nested: dict[str, object] = {}
+    cursor = nested
+    for _ in range(10_000):
+        child: dict[str, object] = {}
+        cursor["x"] = [child]
+        cursor = child
+    with pytest.raises(ToolRejected, match="tool-schema-invalid"):
+        ToolDescriptor(
+            tool_id="mcp.jira.search",
+            display_name="Search",
+            description="Search",
+            input_schema={"type": "object", "properties": nested},
+            effect=ToolEffect.READ,
+            origin=ToolOrigin.MCP,
+            server_id="jira-server",
+        )
+
+
+def test_well_formed_tools_is_shared() -> None:
+    from tap.modules.ai.adapters import litellm
+    from tap.modules.ai.domain import models, tools
+
+    assert litellm.well_formed_tools is tools.well_formed_tools
+    assert models.well_formed_tools is tools.well_formed_tools
+    assert tools.well_formed_tools(frozenset({"knowledge.search"}))
+    assert not tools.well_formed_tools({"knowledge.search"})
+    assert not tools.well_formed_tools(frozenset({"Bad Tool"}))
+
+
 @pytest.mark.asyncio
 async def test_registry_resolves_builtins_and_mcp_tools() -> None:
     mcp = _FakeMcp(

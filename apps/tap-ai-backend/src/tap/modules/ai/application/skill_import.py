@@ -13,7 +13,7 @@ from typing import Any, Protocol
 import yaml
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.application.tool_registry import ToolRegistry
+from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
 from tap.modules.ai.domain.assets import (
     MAX_REQUESTED_TOOLS,
     MAX_SKILL_DESCRIPTION_LENGTH,
@@ -25,9 +25,10 @@ from tap.modules.ai.domain.assets import (
 
 MAX_SKILL_NAME_LENGTH = 64
 _MAX_FRONT_MATTER_DEPTH = 16
+_MAX_COMPOSE_DEPTH = 32
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _FRONT_MATTER = re.compile(r"---[ \t]*\r?\n(?:(.*?)\r?\n)?---[ \t]*(?:\r?\n|\Z)(.*)\Z", re.DOTALL)
-_BUILTIN_TOOL_IDS = frozenset({"knowledge.search", "knowledge.answer"})
+BUILTIN_TOOL_IDS = frozenset(builtin_tools())
 
 
 class SkillImportRejected(ValueError):
@@ -51,7 +52,9 @@ class ParsedSkill:
 
 
 class _InertLoader(yaml.SafeLoader):
-    """Safe YAML without aliases, so a small file cannot expand into a large value."""
+    """Safe, shallow YAML without aliases, merge keys, or duplicate keys."""
+
+    _compose_depth = 0
 
     def compose_node(self, parent: Any, index: Any) -> Any:
         if self.check_event(yaml.AliasEvent):
@@ -59,7 +62,33 @@ class _InertLoader(yaml.SafeLoader):
         event = self.peek_event()
         if getattr(event, "anchor", None) is not None:
             raise SkillImportRejected("skill-front-matter-invalid")
-        return super().compose_node(parent, index)
+        # Reject before PyYAML's recursive composer can exhaust the interpreter stack.
+        if self._compose_depth >= _MAX_COMPOSE_DEPTH:
+            raise SkillImportRejected("skill-front-matter-invalid")
+        self._compose_depth += 1
+        try:
+            return super().compose_node(parent, index)
+        finally:
+            self._compose_depth -= 1
+
+    def flatten_mapping(self, node: Any) -> None:
+        for key_node, _value_node in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                raise SkillImportRejected("skill-front-matter-invalid")
+
+    def construct_mapping(self, node: Any, deep: bool = False) -> Any:
+        if isinstance(node, yaml.MappingNode):
+            self.flatten_mapping(node)
+            # Only scalar string keys survive _plain, so resolved scalar identity suffices.
+            seen: set[tuple[str, str]] = set()
+            for key_node, _value_node in node.value:
+                if not isinstance(key_node, yaml.ScalarNode):
+                    raise SkillImportRejected("skill-front-matter-invalid")
+                key = (key_node.tag, key_node.value)
+                if key in seen:
+                    raise SkillImportRejected("skill-front-matter-invalid")
+                seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 def _plain(value: object, depth: int = 0) -> object:
@@ -119,7 +148,7 @@ def _check_description(value: object) -> str:
 
 
 def parse_skill_markdown(
-    raw: bytes, *, known_tools: Collection[str] = _BUILTIN_TOOL_IDS
+    raw: bytes, *, known_tools: Collection[str] = BUILTIN_TOOL_IDS
 ) -> ParsedSkill:
     if not isinstance(raw, bytes) or len(raw) > MAX_SKILL_SOURCE_BYTES:
         raise SkillImportRejected("skill-too-large")
@@ -134,7 +163,10 @@ def parse_skill_markdown(
     try:
         # _InertLoader is a SafeLoader subclass: no Python object construction.
         loaded = yaml.load(header, Loader=_InertLoader)
-    except yaml.YAMLError as error:
+    except SkillImportRejected:
+        raise
+    except (yaml.YAMLError, ValueError, RecursionError) as error:
+        # ValueError covers int literals beyond Python's digit-conversion limit.
         raise SkillImportRejected("skill-front-matter-invalid") from error
     if not isinstance(loaded, dict):
         raise SkillImportRejected("skill-front-matter-invalid")

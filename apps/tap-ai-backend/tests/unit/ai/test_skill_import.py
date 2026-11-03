@@ -64,6 +64,14 @@ def test_missing_front_matter_is_rejected() -> None:
         b"name: a\ndescription: b\nallowed-tools: {a: b}",
         b"name: a\ndescription: b\nmetadata: [x]",
         b"name: a\ndescription: b\nblob: !!binary aGVsbG8=",
+        b"name: a\ndescription: b\nname: c",
+        b"name: a\ndescription: b\nmetadata: {owner: x, owner: y}",
+        b"name: a\ndescription: b\n<<: {extra: x}",
+        b"name: a\ndescription: b\nmetadata:\n  <<: {owner: x}",
+        b"name: a\ndescription: b\nx: " + b"[" * 5000 + b"]" * 5000,
+        b"name: a\ndescription: b\nx: " + b"{a: " * 5000 + b"1" + b"}" * 5000,
+        b"name: a\ndescription: b\nx: " + b"[" * 40 + b"]" * 40,
+        b"name: a\ndescription: b\nx: " + b"9" * 5000,
     ],
 )
 def test_unsafe_or_malformed_front_matter_is_rejected(front_matter: bytes) -> None:
@@ -132,3 +140,11 @@ def test_rendered_skill_round_trips() -> None:
     assert render_skill_markdown("round-trip", "Description: with: colons", instructions) == raw
     with pytest.raises(SkillImportRejected):
         render_skill_markdown("Bad Name", "ok", "body")
+
+
+def test_default_known_tools_follow_builtin_registry() -> None:
+    from tap.modules.ai.application.skill_import import BUILTIN_TOOL_IDS
+    from tap.modules.ai.application.tool_registry import builtin_tools
+
+    assert frozenset(builtin_tools()) == BUILTIN_TOOL_IDS
+    assert parse_skill_markdown(VALID).warnings == ("Bash",)
