@@ -186,31 +186,6 @@ function assertReadyTimeline(detail: DocumentDetail): void {
   }
 }
 
-function assertFailedTimeline(
-  detail: DocumentDetail,
-  failedStage: IngestionStage,
-  safeCode: string,
-): void {
-  expect(detail.status).toBe("failed");
-  expect(detail.stage).toBe(failedStage);
-  expect(detail.errorCode).toBe(safeCode);
-  expect(detail.stages.map((snapshot) => snapshot.stage)).toEqual(STAGES);
-  const failedIndex = STAGES.indexOf(failedStage);
-  for (const [index, snapshot] of detail.stages.entries()) {
-    if (index < failedIndex) {
-      expect(snapshot.state).toBe("completed");
-      expect(typeof snapshot.completedAt).toBe("string");
-      expect(snapshot.errorCode ?? null).toBeNull();
-    } else if (index === failedIndex) {
-      expect(snapshot.state).toBe("failed");
-      expect(snapshot.errorCode).toBe(safeCode);
-    } else {
-      expect(snapshot.state).toBe("pending");
-      expect(snapshot.errorCode ?? null).toBeNull();
-    }
-  }
-}
-
 async function assertLibraryStatus(
   page: Page,
   file: E2EFilePayload,
@@ -251,62 +226,30 @@ async function armFailure(page: Page, stage: string): Promise<void> {
   });
 }
 
-async function retryThroughApi(
-  page: Page,
-  current: DocumentReceipt,
-): Promise<DocumentReceipt> {
-  const response = await page.request.post(
-    knowledgePath(page, `documents/${current.document.documentId}/retry`),
-    {
-      headers: {
-        Origin: ORIGIN,
-        "Idempotency-Key": `retry-${current.document.documentId}`,
-      },
-    },
-  );
-  expect(response.status()).toBe(202);
-  return {
-    ...receipt((await response.json()) as unknown),
-    sourceId: current.sourceId,
-  };
-}
-
-async function failOnceThenRetry(
+// Transient stage failures are retried automatically with backoff on the same
+// job; the one-shot E2E failure control cannot arm a persistent failure, so the
+// manual retry path is covered by backend ingestion retry tests instead.
+async function failOnceThenRecover(
   page: Page,
   stage: "parsing" | "embedding" | "publishing",
-  safeCode: string,
   file: E2EFilePayload,
 ): Promise<{ detail: DocumentDetail; receipt: DocumentReceipt }> {
   await armFailure(page, stage);
-  let accepted = await upload(page, file);
+  const accepted = await upload(page, file);
   const initialDocumentId = accepted.document.documentId;
-  const initialJobId = accepted.jobId;
-  const failed = await waitForStatus(
-    page,
-    accepted.document.documentId,
-    "failed",
-  );
-  assertFailedTimeline(failed, stage, safeCode);
-
-  await assertLibraryStatus(page, file, "Failed");
-  accepted = await retryThroughApi(page, accepted);
-  expect(accepted.document.documentId).toBe(initialDocumentId);
-  expect(accepted.jobId).toBe(initialJobId);
-  const detail = await waitForStatus(
-    page,
-    accepted.document.documentId,
-    "ready",
-  );
+  const detail = await waitForStatus(page, initialDocumentId, "ready");
   assertReadyTimeline(detail);
-  const settingsResponse = await page.request.get(
-    knowledgePath(page, `documents/${initialDocumentId}/chunk-settings`),
+  expect(detail.documentId).toBe(initialDocumentId);
+  const documents = await page.request.get(
+    knowledgePath(page, "documents?limit=50"),
   );
-  expect(settingsResponse.status()).toBe(200);
-  const settings = (await settingsResponse.json()) as {
-    originalRevisionId: string;
-  };
-  expect(settings.originalRevisionId).toBe(failed.revisionId);
-  expect(detail.revisionId).not.toBe(settings.originalRevisionId);
+  expect(documents.status()).toBe(200);
+  const listed = (
+    asObject((await documents.json()) as unknown).items as Array<{
+      documentId: string;
+    }>
+  ).filter((item) => item.documentId === initialDocumentId);
+  expect(listed).toHaveLength(1);
   const originalResponse = await page.request.get(
     knowledgePath(page, `documents/${initialDocumentId}/original`),
   );
@@ -315,11 +258,7 @@ async function failOnceThenRetry(
   expect(originalBytes.equals(file.buffer)).toBe(true);
   expect(
     `sha256:${createHash("sha256").update(originalBytes).digest("hex")}`,
-  ).toBe(failed.sourceContentHash);
-  // Managed indexing has its own job; original retry checkpoint preservation is
-  // covered in backend test_managed_chunks.py::
-  // test_mutations_persist_reindex_and_fence_old_revisions (real MySQL).
-  // API retry does not invalidate the browser's terminal failed-document cache.
+  ).toBe(detail.sourceContentHash);
   await page.reload();
   await assertLibraryStatus(page, file, "Ready");
   return { detail, receipt: accepted };
@@ -620,22 +559,19 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
   }
   expect(policyPreview).toBeDefined();
 
-  const parsing = await failOnceThenRetry(
+  const parsing = await failOnceThenRecover(
     page,
     "parsing",
-    "parser-unavailable",
     fixtures.parsingFailure,
   );
-  const embedding = await failOnceThenRetry(
+  const embedding = await failOnceThenRecover(
     page,
     "embedding",
-    "embedding-unavailable",
     fixtures.embeddingFailure,
   );
-  const publishing = await failOnceThenRetry(
+  const publishing = await failOnceThenRecover(
     page,
     "publishing",
-    "index-unavailable",
     fixtures.publishingFailure,
   );
 

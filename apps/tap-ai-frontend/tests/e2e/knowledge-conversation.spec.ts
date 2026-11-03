@@ -197,7 +197,10 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     items: Array<{
       sequence: number;
       eventType: string;
-      payload: { answer?: { citations?: Array<{ citationId: string }> } };
+      payload: {
+        text?: string;
+        answer?: { citations?: Array<{ citationId: string }> };
+      };
     }>;
   };
   expect(eventPage.items.map((item) => item.eventType)).toEqual(
@@ -208,6 +211,18 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       "conversation.turn.completed",
     ]),
   );
+  // The grounded answer streams: partial text is persisted before the Turn completes.
+  const completedSequence = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  )!.sequence;
+  const deltas = eventPage.items.filter(
+    (item) => item.eventType === "answer.delta",
+  );
+  expect(deltas.length).toBeGreaterThan(0);
+  for (const delta of deltas) {
+    expect(delta.sequence).toBeLessThan(completedSequence);
+  }
+  expect(deltas.map((delta) => delta.payload.text ?? "").join("")).not.toBe("");
   const resumeFrom = eventPage.items.find(
     (item) => item.eventType === "answer.delta",
   )!.sequence;
