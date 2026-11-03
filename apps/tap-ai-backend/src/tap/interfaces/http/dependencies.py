@@ -42,6 +42,7 @@ from tap.interfaces.http.trace_service import TraceHttpService
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.application.skill_import import SkillImportService
 from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
@@ -228,6 +229,7 @@ class HttpServices:
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
     tool_registry: ToolRegistry | None = None
+    skill_imports: SkillImportService | None = None
     conversations: ConversationService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None
@@ -309,6 +311,14 @@ def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
 
 
 _BUILTIN_TOOL_REGISTRY = ToolRegistry(builtin_tools())
+
+
+def skill_import_service(request: Request) -> SkillImportService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.skill_imports if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
 
 
 def tool_registry_service(request: Request) -> ToolRegistry:

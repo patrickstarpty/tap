@@ -81,6 +81,39 @@ class SkillRevisionPage(ContractModel):
     items: Annotated[list[SkillRevisionSummary], Field(max_length=64)]
 
 
+class SkillRevisionView(SkillRevisionSummary):
+    status: Literal["enabled", "disabled"]
+    origin: Literal["seed", "import", "editor"]
+    description: Annotated[str | None, Field(max_length=1024)] = None
+    requested_tools: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    adopted_from_revision_id: Annotated[
+        str | None, Field(strict=True, min_length=1, max_length=64)
+    ] = None
+
+
+class SkillImportResult(ContractModel):
+    """An inert Skill revision; requested tools are informational and never granted."""
+
+    revision: SkillRevisionView
+    warnings: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+
+
+class SkillCreateRequest(ContractModel):
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+    instructions: Annotated[str, Field(strict=True, min_length=1, max_length=65536)]
+
+
+class SkillStatusRequest(ContractModel):
+    status: Literal["enabled", "disabled"]
+
+
 class SourceFamily(str, Enum):
     DOC = "doc"
     CODE = "code"

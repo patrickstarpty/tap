@@ -1452,6 +1452,160 @@
         {
           "properties": {
             "detail": {
+              "const": "The SKILL.md file must contain instructions after the front matter."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Skill body empty"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-body-empty"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Skill description must be non-empty and at most 1024 characters."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Skill description invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-description-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The SKILL.md front matter must contain only plain YAML values."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Skill front matter invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-front-matter-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The SKILL.md file must start with YAML front matter."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Skill front matter missing"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-front-matter-missing"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Skill name must be lowercase kebab-case of at most 64 characters."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Skill name invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-name-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The SKILL.md file is not valid UTF-8 text."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Skill not UTF-8"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-not-utf8"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The SKILL.md file exceeds the 64 KiB limit."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 413
+            },
+            "title": {
+              "const": "Skill too large"
+            },
+            "type": {
+              "const": "https://tap.example/problems/skill-too-large"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The original Source command is still in progress; retry the same key."
             },
             "failureStage": {
@@ -1702,6 +1856,13 @@
             "https://tap.example/problems/scope-mismatch",
             "https://tap.example/problems/search-execution-rejected",
             "https://tap.example/problems/search-unavailable",
+            "https://tap.example/problems/skill-body-empty",
+            "https://tap.example/problems/skill-description-invalid",
+            "https://tap.example/problems/skill-front-matter-invalid",
+            "https://tap.example/problems/skill-front-matter-missing",
+            "https://tap.example/problems/skill-name-invalid",
+            "https://tap.example/problems/skill-not-utf8",
+            "https://tap.example/problems/skill-too-large",
             "https://tap.example/problems/source-command-pending",
             "https://tap.example/problems/source-not-found",
             "https://tap.example/problems/source-selection-required",

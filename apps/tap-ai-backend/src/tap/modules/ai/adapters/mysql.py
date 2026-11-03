@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from sqlalchemy import (
     Column,
@@ -16,7 +21,7 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.dialects.mysql import DATETIME, JSON
+from sqlalchemy.dialects.mysql import DATETIME, JSON, LONGTEXT, MEDIUMTEXT
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
@@ -26,9 +31,13 @@ from tap.modules.ai.domain.assets import (
     AssetRevisionRejected,
     AssetRevisionStatus,
     SkillRevision,
+    text_digest,
 )
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
+
+if TYPE_CHECKING:
+    from tap.modules.ai.application.skill_import import ParsedSkill
 
 
 def _asset_table(name: str, id_column: str) -> Table:
@@ -116,11 +125,16 @@ skill_revision = Table(
     Column("display_name", String(128), nullable=False),
     Column("content_digest", String(71), nullable=False),
     Column("instruction_template_digest", String(71), nullable=False),
-    Column("instruction_template", String(8000)),
+    Column("instruction_template", MEDIUMTEXT),
     Column("applicable_tasks", JSON, nullable=False),
     Column("status", String(16), nullable=False),
     Column("adopted_from_revision_id", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("origin", String(16), nullable=False, server_default="seed"),
+    Column("description", String(1024)),
+    Column("requested_tools_json", JSON),
+    Column("front_matter_json", JSON),
+    Column("source_markdown", LONGTEXT),
     Column("enterprise_id", String(128), nullable=False),
     Column("project_id", String(128), nullable=False),
     Column("actor_id", String(128), nullable=False),
@@ -167,6 +181,15 @@ class MysqlAssetCatalog:
     async def seed(self, seed: ValidationAssetSeed) -> None:
         if not isinstance(seed, ValidationAssetSeed):
             raise TypeError("asset seed must be versioned server configuration")
+        async with self._catalog_session() as session:
+            for revision in seed.agents:
+                await self._seed_agent(session, revision)
+            for skill_value in seed.skills:
+                await self._seed_skill(session, skill_value)
+
+    @asynccontextmanager
+    async def _catalog_session(self) -> AsyncIterator[AsyncSession]:
+        """Serialize catalog writers for this Project and commit on success."""
         engine = self._sessions.kw.get("bind")
         if not isinstance(engine, AsyncEngine):
             raise TypeError("asset catalog requires an async engine-bound session factory")
@@ -187,10 +210,7 @@ class MysqlAssetCatalog:
             failure: BaseException | None = None
             async with self._sessions(bind=connection) as session:
                 try:
-                    for revision in seed.agents:
-                        await self._seed_agent(session, revision)
-                    for skill_value in seed.skills:
-                        await self._seed_skill(session, skill_value)
+                    yield session
                     await session.commit()
                 except BaseException as error:
                     failure = error
@@ -348,6 +368,15 @@ class MysqlAssetCatalog:
             session, skill_revision, "skill_id", revision.asset_id
         )
         await self._assert_adoption(session, skill_revision, revision.adopted_from_revision_id)
+        await self._insert_skill_revision(session, revision, revision_number, now)
+
+    async def _insert_skill_revision(
+        self,
+        session: AsyncSession,
+        revision: SkillRevision,
+        revision_number: int,
+        now: datetime,
+    ) -> None:
         await session.execute(
             skill_revision.insert().values(
                 revision_id=revision.revision_id,
@@ -361,9 +390,121 @@ class MysqlAssetCatalog:
                 status=revision.status.value,
                 adopted_from_revision_id=revision.adopted_from_revision_id,
                 created_at=now,
+                origin=revision.origin,
+                description=revision.description,
+                requested_tools_json=(
+                    list(revision.requested_tools) if revision.requested_tools else None
+                ),
+                front_matter_json=(
+                    None
+                    if revision.front_matter_json is None
+                    else json.loads(revision.front_matter_json)
+                ),
+                source_markdown=revision.source_markdown,
                 **scope_values(self._scope),
             )
         )
+
+    async def import_skill(
+        self, scope: ProjectScopeContext, parsed: ParsedSkill, *, origin: str
+    ) -> tuple[SkillRevision, bool]:
+        """Append an immutable revision unless the latest one has identical bytes."""
+        self._assert_scope(scope)
+        async with self._catalog_session() as session:
+            parent = (
+                (
+                    await session.execute(
+                        select(skill.c.skill_id)
+                        .where(
+                            *scope_predicates(skill, self._scope),
+                            skill.c.display_name == parsed.name,
+                        )
+                        .order_by(skill.c.created_at, skill.c.skill_id)
+                        .limit(1)
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
+            now = datetime.now(timezone.utc)
+            latest = None
+            if parent is None:
+                parent = uuid4().hex
+                await session.execute(
+                    skill.insert().values(
+                        skill_id=parent,
+                        display_name=parsed.name,
+                        created_at=now,
+                        **scope_values(self._scope),
+                    )
+                )
+            else:
+                latest = (
+                    (
+                        await session.execute(
+                            select(skill_revision)
+                            .where(
+                                *scope_predicates(skill_revision, self._scope),
+                                skill_revision.c.skill_id == parent,
+                            )
+                            .order_by(skill_revision.c.revision_number.desc())
+                            .limit(1)
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if latest is not None and latest["content_digest"] == parsed.content_digest:
+                    return self._skill(latest), False
+            revision = SkillRevision(
+                revision_id=uuid4().hex,
+                asset_id=parent,
+                display_name=parsed.name,
+                scope=self._scope,
+                content_digest=parsed.content_digest,
+                instruction_template_digest=text_digest(parsed.instructions),
+                applicable_tasks=frozenset({"knowledge.answer"}),
+                adopted_from_revision_id=None if latest is None else latest["revision_id"],
+                instruction_template=parsed.instructions,
+                origin=origin,
+                description=parsed.description,
+                requested_tools=parsed.requested_tools,
+                front_matter_json=json.dumps(
+                    dict(parsed.front_matter),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ),
+                source_markdown=parsed.source_markdown,
+            )
+            revision_number = await self._next_number(session, skill_revision, "skill_id", parent)
+            await self._insert_skill_revision(session, revision, revision_number, now)
+            return revision, True
+
+    async def set_skill_status(
+        self, scope: ProjectScopeContext, revision_id: str, status: AssetRevisionStatus
+    ) -> SkillRevision:
+        self._assert_scope(scope)
+        if not isinstance(status, AssetRevisionStatus):
+            raise AssetRevisionRejected()
+        async with self._sessions.begin() as session:
+            result = await session.execute(
+                update(skill_revision)
+                .where(
+                    *scope_predicates(skill_revision, self._scope),
+                    skill_revision.c.revision_id == revision_id,
+                )
+                .values(status=status.value)
+            )
+            if result.rowcount != 1:
+                raise AssetRevisionRejected()
+        return await self.get_historical_skill(scope, revision_id)
+
+    async def skill_source(self, scope: ProjectScopeContext, revision_id: str) -> bytes:
+        revision = await self.get_historical_skill(scope, revision_id)
+        if revision.source_markdown is None:
+            raise AssetRevisionRejected()
+        return revision.source_markdown.encode("utf-8")
 
     async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
         self._assert_scope(scope)
@@ -601,4 +742,18 @@ class MysqlAssetCatalog:
             applicable_tasks=frozenset(row["applicable_tasks"]),
             status=AssetRevisionStatus(row["status"]),
             adopted_from_revision_id=row["adopted_from_revision_id"],
+            origin=row["origin"],
+            description=row["description"],
+            requested_tools=tuple(row["requested_tools_json"] or ()),
+            front_matter_json=(
+                None
+                if row["front_matter_json"] is None
+                else json.dumps(
+                    row["front_matter_json"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+            ),
+            source_markdown=row["source_markdown"],
         )

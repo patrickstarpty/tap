@@ -6137,6 +6137,160 @@
           {
             "properties": {
               "detail": {
+                "const": "The SKILL.md file must contain instructions after the front matter."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Skill body empty"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-body-empty"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The Skill description must be non-empty and at most 1024 characters."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Skill description invalid"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-description-invalid"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The SKILL.md front matter must contain only plain YAML values."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Skill front matter invalid"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-front-matter-invalid"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The SKILL.md file must start with YAML front matter."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Skill front matter missing"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-front-matter-missing"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The Skill name must be lowercase kebab-case of at most 64 characters."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Skill name invalid"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-name-invalid"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The SKILL.md file is not valid UTF-8 text."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 422
+              },
+              "title": {
+                "const": "Skill not UTF-8"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-not-utf8"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The SKILL.md file exceeds the 64 KiB limit."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 413
+              },
+              "title": {
+                "const": "Skill too large"
+              },
+              "type": {
+                "const": "https://tap.example/problems/skill-too-large"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
                 "const": "The original Source command is still in progress; retry the same key."
               },
               "failureStage": {
@@ -6387,6 +6541,13 @@
               "https://tap.example/problems/scope-mismatch",
               "https://tap.example/problems/search-execution-rejected",
               "https://tap.example/problems/search-unavailable",
+              "https://tap.example/problems/skill-body-empty",
+              "https://tap.example/problems/skill-description-invalid",
+              "https://tap.example/problems/skill-front-matter-invalid",
+              "https://tap.example/problems/skill-front-matter-missing",
+              "https://tap.example/problems/skill-name-invalid",
+              "https://tap.example/problems/skill-not-utf8",
+              "https://tap.example/problems/skill-too-large",
               "https://tap.example/problems/source-command-pending",
               "https://tap.example/problems/source-not-found",
               "https://tap.example/problems/source-selection-required",
@@ -7625,6 +7786,60 @@
         "title": "RuntimeMode",
         "type": "object"
       },
+      "SkillCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "instructions": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "instructions"
+        ],
+        "title": "SkillCreateRequest",
+        "type": "object"
+      },
+      "SkillImportResult": {
+        "additionalProperties": false,
+        "description": "An inert Skill revision; requested tools are informational and never granted.",
+        "properties": {
+          "revision": {
+            "$ref": "#/components/schemas/SkillRevisionView"
+          },
+          "warnings": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "SkillImportResult",
+        "type": "object"
+      },
       "SkillRevisionPage": {
         "additionalProperties": false,
         "properties": {
@@ -7694,6 +7909,131 @@
           "applicableTasks"
         ],
         "title": "SkillRevisionSummary",
+        "type": "object"
+      },
+      "SkillRevisionView": {
+        "additionalProperties": false,
+        "properties": {
+          "adoptedFromRevisionId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adoptedfromrevisionid"
+          },
+          "applicableTasks": {
+            "items": {
+              "enum": [
+                "knowledge.answer",
+                "test-plan.generate",
+                "automation.generate"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Applicabletasks",
+            "type": "array"
+          },
+          "assetId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Assetid",
+            "type": "string"
+          },
+          "contentDigest": {
+            "maxLength": 71,
+            "minLength": 71,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "displayName": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "seed",
+              "import",
+              "editor"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "requestedTools": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Requestedtools",
+            "type": "array"
+          },
+          "revisionId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revisionId",
+          "assetId",
+          "displayName",
+          "contentDigest",
+          "applicableTasks",
+          "status",
+          "origin"
+        ],
+        "title": "SkillRevisionView",
+        "type": "object"
+      },
+      "SkillStatusRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "SkillStatusRequest",
         "type": "object"
       },
       "SourceAccepted": {
@@ -11030,6 +11370,295 @@
         "tags": [
           "ai"
         ]
+      },
+      "post": {
+        "operationId": "ai_create_skill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportResult"
+                }
+              }
+            },
+            "description": "The identical latest revision"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill too large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill rejected"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Create Skill",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills/imports": {
+      "post": {
+        "operationId": "ai_import_skill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportResult"
+                }
+              }
+            },
+            "description": "The identical latest revision"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill too large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill rejected"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Import Skill",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills/revisions/{revision_id}/status": {
+      "post": {
+        "operationId": "ai_set_skill_revision_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill revision unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Set Skill Status",
+        "tags": [
+          "ai"
+        ]
       }
     },
     "/api/v1/projects/{project_id}/ai/skills/{revision_id}": {
@@ -11110,6 +11739,89 @@
           }
         },
         "summary": "Get Skill",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills/{revision_id}/content": {
+      "get": {
+        "operationId": "ai_get_skill_content",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The original SKILL.md bytes"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill revision unavailable"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Knowledge runtime unavailable"
+          }
+        },
+        "summary": "Get Skill Content",
         "tags": [
           "ai"
         ]

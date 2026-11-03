@@ -27,6 +27,7 @@ dependencies = [
   "opentelemetry-api==1.45.0",
   "opentelemetry-sdk==1.45.0",
   "opentelemetry-exporter-otlp-proto-http==1.45.0",
+  "pyyaml==6.0.3",
 ]
 
 [tool.uv.sources]
@@ -37,9 +38,9 @@ dev = [
   "mypy==1.17.1",
   "pytest==8.4.1",
   "pytest-asyncio==1.1.0",
-  "pyyaml==6.0.3",
   "reportlab==5.0.1",
   "ruff==0.12.10",
+  "types-pyyaml==6.0.12.20250915",
 ]
 
 [build-system]

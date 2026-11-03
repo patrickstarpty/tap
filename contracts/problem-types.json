@@ -283,6 +283,62 @@
       "type": "https://tap.example/problems/search-unavailable"
     },
     {
+      "code": "skill-body-empty",
+      "detail": "The SKILL.md file must contain instructions after the front matter.",
+      "retryable": false,
+      "status": 422,
+      "title": "Skill body empty",
+      "type": "https://tap.example/problems/skill-body-empty"
+    },
+    {
+      "code": "skill-description-invalid",
+      "detail": "The Skill description must be non-empty and at most 1024 characters.",
+      "retryable": false,
+      "status": 422,
+      "title": "Skill description invalid",
+      "type": "https://tap.example/problems/skill-description-invalid"
+    },
+    {
+      "code": "skill-front-matter-invalid",
+      "detail": "The SKILL.md front matter must contain only plain YAML values.",
+      "retryable": false,
+      "status": 422,
+      "title": "Skill front matter invalid",
+      "type": "https://tap.example/problems/skill-front-matter-invalid"
+    },
+    {
+      "code": "skill-front-matter-missing",
+      "detail": "The SKILL.md file must start with YAML front matter.",
+      "retryable": false,
+      "status": 422,
+      "title": "Skill front matter missing",
+      "type": "https://tap.example/problems/skill-front-matter-missing"
+    },
+    {
+      "code": "skill-name-invalid",
+      "detail": "The Skill name must be lowercase kebab-case of at most 64 characters.",
+      "retryable": false,
+      "status": 422,
+      "title": "Skill name invalid",
+      "type": "https://tap.example/problems/skill-name-invalid"
+    },
+    {
+      "code": "skill-not-utf8",
+      "detail": "The SKILL.md file is not valid UTF-8 text.",
+      "retryable": false,
+      "status": 422,
+      "title": "Skill not UTF-8",
+      "type": "https://tap.example/problems/skill-not-utf8"
+    },
+    {
+      "code": "skill-too-large",
+      "detail": "The SKILL.md file exceeds the 64 KiB limit.",
+      "retryable": false,
+      "status": 413,
+      "title": "Skill too large",
+      "type": "https://tap.example/problems/skill-too-large"
+    },
+    {
       "code": "source-command-pending",
       "detail": "The original Source command is still in progress; retry the same key.",
       "retryable": true,

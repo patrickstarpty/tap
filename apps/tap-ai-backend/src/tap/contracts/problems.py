@@ -291,6 +291,53 @@ PROBLEM_REGISTRY = MappingProxyType(
                 False,
                 None,
             ),
+            *(
+                ProblemDefinition(code, title, status, detail, False, None)
+                for code, title, status, detail in (
+                    (
+                        "skill-too-large",
+                        "Skill too large",
+                        413,
+                        "The SKILL.md file exceeds the 64 KiB limit.",
+                    ),
+                    (
+                        "skill-not-utf8",
+                        "Skill not UTF-8",
+                        422,
+                        "The SKILL.md file is not valid UTF-8 text.",
+                    ),
+                    (
+                        "skill-front-matter-missing",
+                        "Skill front matter missing",
+                        422,
+                        "The SKILL.md file must start with YAML front matter.",
+                    ),
+                    (
+                        "skill-front-matter-invalid",
+                        "Skill front matter invalid",
+                        422,
+                        "The SKILL.md front matter must contain only plain YAML values.",
+                    ),
+                    (
+                        "skill-name-invalid",
+                        "Skill name invalid",
+                        422,
+                        "The Skill name must be lowercase kebab-case of at most 64 characters.",
+                    ),
+                    (
+                        "skill-description-invalid",
+                        "Skill description invalid",
+                        422,
+                        "The Skill description must be non-empty and at most 1024 characters.",
+                    ),
+                    (
+                        "skill-body-empty",
+                        "Skill body empty",
+                        422,
+                        "The SKILL.md file must contain instructions after the front matter.",
+                    ),
+                )
+            ),
             ProblemDefinition(
                 "automation-mapping-required",
                 "Automation mapping required",

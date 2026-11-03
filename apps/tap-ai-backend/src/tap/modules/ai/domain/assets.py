@@ -11,6 +11,10 @@ from tap.modules.access.domain.context import ProjectScopeContext, require_ident
 from tap.modules.ai.domain.tools import ToolRejected, validate_allowlist
 
 _TASKS = frozenset({"knowledge.answer", "test-plan.generate", "automation.generate"})
+SKILL_ORIGINS = frozenset({"seed", "import", "editor"})
+MAX_SKILL_SOURCE_BYTES = 64 * 1024
+MAX_SKILL_DESCRIPTION_LENGTH = 1024
+MAX_REQUESTED_TOOLS = 64
 
 
 class AssetRevisionStatus(StrEnum):
@@ -115,6 +119,11 @@ class SkillRevision:
     status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
     adopted_from_revision_id: str | None = None
     instruction_template: str | None = None
+    origin: str = "seed"
+    description: str | None = None
+    requested_tools: tuple[str, ...] = ()
+    front_matter_json: str | None = None
+    source_markdown: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -144,5 +153,37 @@ class SkillRevision:
         if (
             self.instruction_template is not None
             and text_digest(self.instruction_template) != self.instruction_template_digest
+        ):
+            raise AssetRevisionRejected()
+        self._check_import_content()
+
+    def _check_import_content(self) -> None:
+        if self.origin not in SKILL_ORIGINS:
+            raise AssetRevisionRejected()
+        if self.description is not None and (
+            not isinstance(self.description, str)
+            or len(self.description) > MAX_SKILL_DESCRIPTION_LENGTH
+        ):
+            raise AssetRevisionRejected()
+        if (
+            type(self.requested_tools) is not tuple
+            or len(self.requested_tools) > MAX_REQUESTED_TOOLS
+            or any(
+                not isinstance(item, str) or not item.strip() or len(item) > 128
+                for item in self.requested_tools
+            )
+        ):
+            raise AssetRevisionRejected()
+        if self.front_matter_json is not None:
+            try:
+                front_matter = json.loads(self.front_matter_json)
+            except (TypeError, json.JSONDecodeError) as error:
+                raise AssetRevisionRejected() from error
+            if not isinstance(front_matter, dict):
+                raise AssetRevisionRejected()
+        if self.source_markdown is not None and (
+            not isinstance(self.source_markdown, str)
+            or len(self.source_markdown.encode("utf-8")) > MAX_SKILL_SOURCE_BYTES
+            or text_digest(self.source_markdown) != self.content_digest
         ):
             raise AssetRevisionRejected()

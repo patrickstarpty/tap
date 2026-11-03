@@ -33,6 +33,23 @@ async def test_validation_identity_can_read_the_project_model_catalog() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["ai.skills.write", "ai.agents.write", "ai.tools.manage"])
+async def test_validation_identity_can_manage_skills_agents_and_tools(action: str) -> None:
+    decision = await ValidationAuthorizationPolicy(IdentityRegistry()).authorize(
+        SCOPE,
+        action,
+        ResourceRef(
+            enterprise_id=SCOPE.enterprise_id,
+            project_id=SCOPE.project_id,
+            kind="ai",
+            resource_id=None,
+        ),
+    )
+
+    assert decision.allowed
+
+
+@pytest.mark.asyncio
 async def test_request_policy_caches_only_its_principal_and_preserves_resource_denials() -> None:
     class CountingRegistry(IdentityRegistry):
         calls = 0
