@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +29,8 @@ from tap.modules.ai.domain.models import (
     ModelGatewayUnavailable,
     ModelRequest,
     ModelResult,
+    ModelStreamEvent,
+    StreamCompleted,
 )
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.application.answers import (
@@ -148,6 +150,12 @@ class CapturingModelGateway:
 
     async def generate_structured(self, request: ModelRequest) -> ModelResult:
         return await self._capture("generate_structured", request)
+
+    async def stream_structured(
+        self, request: ModelRequest
+    ) -> AsyncIterator[ModelStreamEvent]:
+        # Quality receipts attest one complete call; streaming adds no captured evidence.
+        yield StreamCompleted(await self._capture("generate_structured", request))
 
     async def _capture(self, method: str, request: ModelRequest) -> ModelResult:
         if self._active is None:
