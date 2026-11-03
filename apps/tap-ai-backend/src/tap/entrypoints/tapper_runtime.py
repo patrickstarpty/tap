@@ -1046,6 +1046,10 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
                 ),
             )
         )
+        notification_redis = _create_notification_redis(settings)
+        resources.push(notification_redis)
+        from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
+
         worker_id = settings.worker_id + "-test-design"
         worker = TestDesignWorker(
             jobs=MysqlTestPlanRepository(
@@ -1053,6 +1057,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
                 scope=scope,
                 model_alias=settings.default_chat_model,
                 knowledge_requires_publication=False,
+                notifier=RedisConversationEventNotifier(notification_redis),
             ),
             generator=generator,
             scope=scope,
@@ -1632,6 +1637,7 @@ def _assemble_http_services(
                 scope=repository.scope,  # type: ignore[arg-type]
                 model_alias=embeddings.chat_alias,
                 knowledge_requires_publication=False,
+                notifier=conversations.notifier if conversations is not None else None,
             )
         )
     knowledge_reviews = None

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -43,6 +45,8 @@ from tap.modules.chat.adapters.mysql_conversations import (
     turn_artifact_link,
     turn_input_snapshot,
 )
+from tap.modules.chat.application.conversations import publish_conversation_events
+from tap.modules.chat.application.notifier import ConversationEventNotifier
 from tap.modules.governance.adapters.mysql_audit import MysqlProjectAudit
 from tap.modules.governance.domain.audit import (
     AuditAction,
@@ -604,6 +608,9 @@ class MysqlReconciledTestDesign:
         return revision
 
 
+_NOTIFY_CONVERSATIONS = "tap.notify_conversations"
+
+
 class MysqlTestPlanRepository:
     def __init__(
         self,
@@ -612,6 +619,7 @@ class MysqlTestPlanRepository:
         scope: ProjectScopeContext,
         model_alias: str,
         knowledge_requires_publication: bool = True,
+        notifier: ConversationEventNotifier | None = None,
     ) -> None:
         self._sessions = sessions
         self.scope = require_project_scope(scope)
@@ -619,6 +627,16 @@ class MysqlTestPlanRepository:
             raise ValueError("test design model alias is required")
         self._model_alias = model_alias
         self._knowledge_requires_publication = knowledge_requires_publication
+        self.notifier = notifier
+
+    @asynccontextmanager
+    async def _chat_event_transaction(self) -> AsyncIterator[AsyncSession]:
+        """Commit, then wake stream readers for chats that received generation events."""
+        async with self._sessions() as session:
+            async with session.begin():
+                yield session
+            conversation_ids = session.info.pop(_NOTIFY_CONVERSATIONS, [])
+        await publish_conversation_events(self.notifier, self.scope, conversation_ids)
 
     def _assert_model_alias(self, model_alias: str) -> None:
         if model_alias != self._model_alias:
@@ -772,6 +790,7 @@ class MysqlTestPlanRepository:
         payload: dict[str, object],
         now: datetime,
     ) -> None:
+        session.info.setdefault(_NOTIFY_CONVERSATIONS, []).append(request.conversation_id)
         await session.execute(
             select(conversation.c.conversation_id)
             .where(
@@ -2241,7 +2260,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         instant = _naive(now)
         digest = self._write_digest("cancel", job_id, expected_version, "cancel")
-        async with self._sessions() as session, session.begin():
+        async with self._chat_event_transaction() as session:
             await self._lock_write_namespace(session, scope)
             row = (
                 (
@@ -2811,7 +2830,7 @@ class MysqlTestPlanRepository:
         ):
             raise ValueError("generated draft identity or state is invalid")
         instant = _naive(now)
-        async with self._sessions() as session, session.begin():
+        async with self._chat_event_transaction() as session:
             await self._lock_write_namespace(session, scope)
             job = (
                 (
@@ -2996,7 +3015,7 @@ class MysqlTestPlanRepository:
         scope = self._matching_scope(scope)
         if not failure_code or len(failure_code) > 64:
             raise ValueError("test design failure code is invalid")
-        async with self._sessions() as session, session.begin():
+        async with self._chat_event_transaction() as session:
             result = await session.execute(
                 update(test_plan_generation_job)
                 .where(
@@ -3058,7 +3077,7 @@ class MysqlTestPlanRepository:
         if not reason.strip() or len(reason) > 128:
             raise ValueError("test design waiting reason is invalid")
         instant = _naive(now)
-        async with self._sessions() as session, session.begin():
+        async with self._chat_event_transaction() as session:
             result = await session.execute(
                 update(test_plan_generation_job)
                 .where(
