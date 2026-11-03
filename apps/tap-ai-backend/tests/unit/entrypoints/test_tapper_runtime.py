@@ -1183,6 +1183,32 @@ def test_graph_store_uses_the_process_snapshot_index_cache() -> None:
     assert "graph_indexes=CachedSnapshotIndexes()" in inspect.getsource(module.create_api_runtime)
 
 
+def test_graph_overview_shares_the_process_snapshot_index_cache() -> None:
+    from tap.modules.graph.application.cache import CachedSnapshotIndexes
+    from tap.modules.graph.application.overview import GraphOverviewService
+
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    indexes = CachedSnapshotIndexes()
+    services = module._assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=module._create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        graph_sessions=object(),
+        graph_indexes=indexes,
+        review_sessions=object(),
+    )
+
+    assert isinstance(services.graph_overview, GraphOverviewService)
+    assert services.graph_overview._indexes is indexes
+    assert services.graph_overview._store is services.graph
+
+
 def test_runtime_has_no_legacy_combined_model_factory() -> None:
     assert not hasattr(_runtime(), "_create_model")
 

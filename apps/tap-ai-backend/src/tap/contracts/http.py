@@ -1259,6 +1259,44 @@ class GraphPathRequest(ContractModel):
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
 
 
+class GraphOverviewRequest(ContractModel):
+    node_limit: Annotated[StrictInt, Field(ge=1, le=300)] = 150
+
+
+class GraphOverviewMemberView(ContractModel):
+    snapshot_id: str
+    node_id: str
+    source_id: str
+
+
+class GraphOverviewNodeView(ContractModel):
+    overview_node_id: str
+    label: str
+    node_type: str
+    degree: int
+    members: list[GraphOverviewMemberView]
+
+
+class GraphOverviewEdgeView(ContractModel):
+    overview_edge_id: str
+    source: str
+    target: str
+    relation_type: str
+    support: int
+
+
+class GraphOverviewStatsView(ContractModel):
+    source_count: int
+    node_type_counts: dict[str, int]
+
+
+class GraphOverviewView(ContractModel):
+    nodes: list[GraphOverviewNodeView]
+    edges: list[GraphOverviewEdgeView]
+    stats: GraphOverviewStatsView
+    snapshot_ids: list[str]
+
+
 class TestPlanGenerationRequestBody(ContractModel):
     conversation_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     turn_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]

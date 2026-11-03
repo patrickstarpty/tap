@@ -47,6 +47,7 @@ from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
+from tap.modules.graph.application.overview import GraphOverviewService
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
@@ -230,6 +231,7 @@ class HttpServices:
     prompt_suggestion_store: SuggestionStore | None = None
     traces: TraceHttpService | None = None
     graph: GraphStorePort | None = None
+    graph_overview: GraphOverviewService | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
     chunk_manager: object | None = None
@@ -245,6 +247,14 @@ class GraphUnavailable(Exception):
 def graph_service(request: Request) -> GraphStorePort:
     services = getattr(request.app.state, "http_services", None)
     service = services.graph if isinstance(services, HttpServices) else None
+    if service is None:
+        raise GraphUnavailable
+    return service
+
+
+def graph_overview_service(request: Request) -> GraphOverviewService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.graph_overview if isinstance(services, HttpServices) else None
     if service is None:
         raise GraphUnavailable
     return service

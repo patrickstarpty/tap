@@ -7,13 +7,19 @@ from tap.contracts.http import (
     GraphEvidenceView,
     GraphNeighborRequest,
     GraphNodeView,
+    GraphOverviewEdgeView,
+    GraphOverviewMemberView,
+    GraphOverviewNodeView,
+    GraphOverviewRequest,
+    GraphOverviewStatsView,
+    GraphOverviewView,
     GraphPathRequest,
     GraphSearchRequest,
     GraphSnapshotPage,
     GraphSnapshotView,
     GraphSubgraphView,
 )
-from tap.interfaces.http.dependencies import graph_service
+from tap.interfaces.http.dependencies import graph_overview_service, graph_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.graph.domain.models import (
@@ -127,6 +133,53 @@ async def bounded_path(request: Request, body: GraphPathRequest) -> GraphSubgrap
         PathQuery(body.snapshot_id, body.source_node_id, body.target_node_id, body.node_limit),
     )
     return _subgraph(graph)
+
+
+@router.post(
+    "/overview",
+    operation_id="graph_overview",
+    response_model=GraphOverviewView,
+    dependencies=[Depends(project_authorization("knowledge.read"))],
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: problem_response_metadata("Graph unavailable")},
+)
+async def domain_overview(request: Request, body: GraphOverviewRequest) -> GraphOverviewView:
+    overview = await graph_overview_service(request).overview(
+        request.state.project_scope, node_limit=body.node_limit
+    )
+    return GraphOverviewView(
+        nodes=[
+            GraphOverviewNodeView(
+                overview_node_id=node.overview_node_id,
+                label=node.label,
+                node_type=node.node_type,
+                degree=node.degree,
+                members=[
+                    GraphOverviewMemberView(
+                        snapshot_id=member.snapshot_id,
+                        node_id=member.node_id,
+                        source_id=member.source_id,
+                    )
+                    for member in node.members
+                ],
+            )
+            for node in overview.nodes
+        ],
+        edges=[
+            GraphOverviewEdgeView(
+                overview_edge_id=edge.overview_edge_id,
+                source=edge.source,
+                target=edge.target,
+                relation_type=edge.relation_type,
+                support=edge.support,
+            )
+            for edge in overview.edges
+        ],
+        stats=GraphOverviewStatsView(
+            source_count=overview.source_count,
+            node_type_counts=dict(overview.node_type_counts),
+        ),
+        snapshot_ids=list(overview.snapshot_ids),
+    )
 
 
 def _subgraph(graph: GraphSubgraph) -> GraphSubgraphView:

@@ -1625,12 +1625,37 @@ def _assemble_http_services(
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
     graph = None
     graph_enricher = None
+    graph_overview = None
     if graph_sessions is not None:
         from tap.modules.graph.adapters.mysql import MysqlGraphStore
+        from tap.modules.graph.application.cache import CachedSnapshotIndexes
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
-        graph = MysqlGraphStore(graph_sessions, indexes=graph_indexes)  # type: ignore[arg-type]
+        indexes = graph_indexes if graph_indexes is not None else CachedSnapshotIndexes()
+        graph = MysqlGraphStore(graph_sessions, indexes=indexes)  # type: ignore[arg-type]
         graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
+        if review_sessions is not None:
+            from tap.modules.graph.application.overview import GraphOverviewService
+            from tap.modules.knowledge.adapters.mysql_ready_sources import (
+                MysqlReadySources as OverviewReadySources,
+            )
+            from tap.modules.knowledge.application.graph_sources import (
+                PublishedKnowledgeGraphSources,
+            )
+
+            graph_overview = GraphOverviewService(
+                graph,
+                PublishedKnowledgeGraphSources(
+                    _gated_ready_sources(
+                        OverviewReadySources(review_sessions, repository.scope).list_sources,
+                        flowchart_gate,
+                        repository.scope.project_id,
+                    ),
+                    project_id=repository.scope.project_id,
+                    authority=publication_authority,
+                ),
+                indexes,
+            )
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
@@ -1758,6 +1783,7 @@ def _assemble_http_services(
         prompt_suggestion_store=prompt_suggestion_store,
         traces=traces,
         graph=graph,
+        graph_overview=graph_overview,
         test_plans=test_plans,
         knowledge_reviews=knowledge_reviews,
         insights_knowledge_search=answer_service,

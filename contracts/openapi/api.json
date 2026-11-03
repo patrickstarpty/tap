@@ -2462,6 +2462,174 @@
         "title": "GraphNodeView",
         "type": "object"
       },
+      "GraphOverviewEdgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "overviewEdgeId": {
+            "title": "Overviewedgeid",
+            "type": "string"
+          },
+          "relationType": {
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "support": {
+            "title": "Support",
+            "type": "integer"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "overviewEdgeId",
+          "source",
+          "target",
+          "relationType",
+          "support"
+        ],
+        "title": "GraphOverviewEdgeView",
+        "type": "object"
+      },
+      "GraphOverviewMemberView": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "nodeId",
+          "sourceId"
+        ],
+        "title": "GraphOverviewMemberView",
+        "type": "object"
+      },
+      "GraphOverviewNodeView": {
+        "additionalProperties": false,
+        "properties": {
+          "degree": {
+            "title": "Degree",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/GraphOverviewMemberView"
+            },
+            "title": "Members",
+            "type": "array"
+          },
+          "nodeType": {
+            "title": "Nodetype",
+            "type": "string"
+          },
+          "overviewNodeId": {
+            "title": "Overviewnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "overviewNodeId",
+          "label",
+          "nodeType",
+          "degree",
+          "members"
+        ],
+        "title": "GraphOverviewNodeView",
+        "type": "object"
+      },
+      "GraphOverviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeLimit": {
+            "default": 150,
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Nodelimit",
+            "type": "integer"
+          }
+        },
+        "title": "GraphOverviewRequest",
+        "type": "object"
+      },
+      "GraphOverviewStatsView": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeTypeCounts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Nodetypecounts",
+            "type": "object"
+          },
+          "sourceCount": {
+            "title": "Sourcecount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sourceCount",
+          "nodeTypeCounts"
+        ],
+        "title": "GraphOverviewStatsView",
+        "type": "object"
+      },
+      "GraphOverviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphOverviewEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphOverviewNodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "snapshotIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Snapshotids",
+            "type": "array"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/GraphOverviewStatsView"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges",
+          "stats",
+          "snapshotIds"
+        ],
+        "title": "GraphOverviewView",
+        "type": "object"
+      },
       "GraphPathRequest": {
         "additionalProperties": false,
         "properties": {
@@ -14027,6 +14195,80 @@
           }
         },
         "summary": "Neighbors",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/overview": {
+      "post": {
+        "operationId": "graph_overview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphOverviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphOverviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Graph unavailable"
+          }
+        },
+        "summary": "Domain Overview",
         "tags": [
           "knowledge-graph"
         ]

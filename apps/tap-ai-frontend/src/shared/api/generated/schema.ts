@@ -571,6 +571,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/knowledge/graph/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Domain Overview */
+        post: operations["graph_overview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/knowledge/graph/path": {
         parameters: {
             query?: never;
@@ -2098,6 +2115,68 @@ export interface components {
             nodeId: string;
             /** Nodetype */
             nodeType: string;
+        };
+        /** GraphOverviewEdgeView */
+        GraphOverviewEdgeView: {
+            /** Overviewedgeid */
+            overviewEdgeId: string;
+            /** Relationtype */
+            relationType: string;
+            /** Source */
+            source: string;
+            /** Support */
+            support: number;
+            /** Target */
+            target: string;
+        };
+        /** GraphOverviewMemberView */
+        GraphOverviewMemberView: {
+            /** Nodeid */
+            nodeId: string;
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourceid */
+            sourceId: string;
+        };
+        /** GraphOverviewNodeView */
+        GraphOverviewNodeView: {
+            /** Degree */
+            degree: number;
+            /** Label */
+            label: string;
+            /** Members */
+            members: components["schemas"]["GraphOverviewMemberView"][];
+            /** Nodetype */
+            nodeType: string;
+            /** Overviewnodeid */
+            overviewNodeId: string;
+        };
+        /** GraphOverviewRequest */
+        GraphOverviewRequest: {
+            /**
+             * Nodelimit
+             * @default 150
+             */
+            nodeLimit?: number;
+        };
+        /** GraphOverviewStatsView */
+        GraphOverviewStatsView: {
+            /** Nodetypecounts */
+            nodeTypeCounts: {
+                [key: string]: number;
+            };
+            /** Sourcecount */
+            sourceCount: number;
+        };
+        /** GraphOverviewView */
+        GraphOverviewView: {
+            /** Edges */
+            edges: components["schemas"]["GraphOverviewEdgeView"][];
+            /** Nodes */
+            nodes: components["schemas"]["GraphOverviewNodeView"][];
+            /** Snapshotids */
+            snapshotIds: string[];
+            stats: components["schemas"]["GraphOverviewStatsView"];
         };
         /** GraphPathRequest */
         GraphPathRequest: {
@@ -7098,6 +7177,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphOverviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphOverviewView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Graph unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

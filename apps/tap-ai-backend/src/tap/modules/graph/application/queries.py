@@ -66,6 +66,11 @@ class InMemoryGraphStore:
         except KeyError as error:
             raise GraphFactNotFound("graph snapshot not found") from error
 
+    async def load_index(
+        self, scope: ProjectScopeContext, snapshot: GraphSnapshot
+    ) -> SnapshotIndex:
+        return self._index(scope, snapshot.snapshot_id)
+
     async def node_detail(
         self, scope: ProjectScopeContext, snapshot_id: str, node_id: str
     ) -> GraphSubgraph:

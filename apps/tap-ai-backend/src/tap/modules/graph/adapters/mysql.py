@@ -509,6 +509,15 @@ class MysqlGraphStore:
             return await load()
         return await self._indexes.get_or_load((scope.project_id, snapshot_id), load)
 
+    async def load_index(
+        self, scope: ProjectScopeContext, snapshot: GraphSnapshot
+    ) -> SnapshotIndex:
+        """Build an uncached index; callers own caching through the shared index cache."""
+        scope = require_project_scope(scope)
+        if snapshot.project_id != scope.project_id:
+            raise GraphFactNotFound("graph snapshot not found")
+        return await self._load_index(scope, snapshot)
+
     async def _load_index(
         self, scope: ProjectScopeContext, snapshot: GraphSnapshot
     ) -> SnapshotIndex:
