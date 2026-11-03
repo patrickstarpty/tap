@@ -7,7 +7,7 @@ export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-golden quality-golden-real quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e demo-down demo-reset
-.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check
+.PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check graph-bench
 
 bootstrap: ## install frozen Python and Node dependencies
 	uv sync --frozen --all-groups
@@ -40,6 +40,9 @@ test: ## unit, integration, and contract tests
 	corepack pnpm --filter @tap/ai-frontend test -- --run
 	uv run --project apps/backend pytest apps/backend/tests -q
 	corepack pnpm --filter @tap/web run test
+
+graph-bench: ## graph query latency benchmark (1e4 nodes, 5e4 edges)
+	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/perf -m perf -q -s
 
 contracts: ## export OpenAPI/SSE schema and generate TypeScript
 	uv run --project apps/tap-ai-backend python scripts/export_contracts.py
