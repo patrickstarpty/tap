@@ -137,12 +137,12 @@
   `PublishedGraphSources` 的生产实现：复用前端当前流程同一数据来源——项目内状态为已发布（ready）的知识来源及其当前来源修订（见 `routes/knowledge_sources.py` 使用的服务），每个修订以 `active_snapshot(scope, (source_revision_id,))` 取快照；按 `PublishedKnowledgeAuthority` 校验已发布与授权（无权限或已撤回的跳过）。
   HTTP：`POST /api/v1/projects/{project_id}/knowledge/graph/overview`，`operation_id="graph_overview"`，请求 `GraphOverviewRequest{nodeLimit: int = 150, 1..300}`，响应 `GraphOverviewView{nodes[{overviewNodeId,label,nodeType,degree,members[{snapshotId,nodeId,sourceId}]}], edges[{overviewEdgeId,source,target,relationType,support}], stats{sourceCount,nodeTypeCounts}, snapshotIds}`。
 
-- [ ] **Step 1: 失败测试（单元，内存存储 + 假来源）**：两个来源快照中 `(ENTITY,"login-service")` 合并为一个节点、成员两条；重复关系边合并 `support=2`；按合并后度数降序、同度数按 label 再按 ID 排序；`node_limit` 截断后只保留端点都在集合内的边；无来源 → 空图 `source_count=0`；同一快照集合与 `node_limit` 第二次调用命中结果缓存（计数）。合并节点 label 取成员中出现最多的 label，平局取字典序最小。
-- [ ] **Step 2: 实现服务**；结果缓存键 `(project_id, tuple(sorted(snapshot_ids)), node_limit)`，LRU 64。
-- [ ] **Step 3: 失败测试（契约）**：HTTP 200 结构与字段名、`nodeLimit` 越界 422、无 `knowledge.read` 403（沿用现有授权测试写法，见 `tests/contract/test_graph_http.py`）。
-- [ ] **Step 4: 路由与装配；`make contracts`**。
-- [ ] **Step 5: 运行** `pytest apps/tap-ai-backend/tests -q -k "graph or contract"` 与 `uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check`。
-- [ ] **Step 6: 提交** `feat: serve a project domain overview graph`
+- [x] **Step 1: 失败测试（单元，内存存储 + 假来源）**：两个来源快照中 `(ENTITY,"login-service")` 合并为一个节点、成员两条；重复关系边合并 `support=2`；按合并后度数降序、同度数按 label 再按 ID 排序；`node_limit` 截断后只保留端点都在集合内的边；无来源 → 空图 `source_count=0`；同一快照集合与 `node_limit` 第二次调用命中结果缓存（计数）。合并节点 label 取成员中出现最多的 label，平局取字典序最小。
+- [x] **Step 2: 实现服务**；结果缓存键 `(project_id, tuple(sorted(snapshot_ids)), node_limit)`，LRU 64。
+- [x] **Step 3: 失败测试（契约）**：HTTP 200 结构与字段名、`nodeLimit` 越界 422、无 `knowledge.read` 403（沿用现有授权测试写法，见 `tests/contract/test_graph_http.py`）。
+- [x] **Step 4: 路由与装配；`make contracts`**。
+- [x] **Step 5: 运行** `pytest apps/tap-ai-backend/tests -q -k "graph or contract"` 与 `uv run --project apps/tap-ai-backend python scripts/export_contracts.py --check`。
+- [x] **Step 6: 提交** `feat: serve a project domain overview graph`
 
 ### Task 5: 前端领域总览视图与原型同步
 
@@ -155,17 +155,17 @@
 - Consumes: `graph_overview` 生成类型。
 - Produces: 视图状态 `graphView: "overview" | "source"`，默认 `"overview"`；选中总览节点时成员列表可跳转 `graphView="source"` 并选中对应来源与节点。
 
-- [ ] **Step 1: 失败测试**：默认渲染领域总览（请求 overview）；切换到来源图谱保持现有行为；总览为空显示“尚无已发布知识生成的图谱”（英文 “No published knowledge has produced a graph yet”）；无项目显示现有“未选择项目”；点击成员跳转来源图谱并选中节点。
-- [ ] **Step 2: 实现**，沿用现有图谱渲染组件；不展示演示开关或实现说明。
-- [ ] **Step 3: 运行** `corepack pnpm --filter @tap/ai-frontend exec vitest run src/widgets/tap` 与 `corepack pnpm --filter @tap/ai-frontend run check`。
-- [ ] **Step 4: 原型核对**：启动 `corepack pnpm --filter @tap/web run dev`，打开 `/prototype` Library，截图改动前后（如有改动），保存到 `docs/assets/`（仅当有实质改动时）；`corepack pnpm --filter @tap/web run check`。
-- [ ] **Step 5: 提交** `feat: show the domain overview graph in tap ai library`
+- [x] **Step 1: 失败测试**：默认渲染领域总览（请求 overview）；切换到来源图谱保持现有行为；总览为空显示“尚无已发布知识生成的图谱”（英文 “No published knowledge has produced a graph yet”）；无项目显示现有“未选择项目”；点击成员跳转来源图谱并选中节点。
+- [x] **Step 2: 实现**，沿用现有图谱渲染组件；不展示演示开关或实现说明。
+- [x] **Step 3: 运行** `corepack pnpm --filter @tap/ai-frontend exec vitest run src/widgets/tap` 与 `corepack pnpm --filter @tap/ai-frontend run check`。
+- [x] **Step 4: 原型核对**：启动 `corepack pnpm --filter @tap/web run dev`，打开 `/prototype` Library，截图改动前后（如有改动），保存到 `docs/assets/`（仅当有实质改动时）；`corepack pnpm --filter @tap/web run check`。
+- [x] **Step 5: 提交** `feat: show the domain overview graph in tap ai library`
 
 ### Task 6: 文档与总纲
 
 **Files:**
 - Modify: `docs/architecture.md`（图谱查询缓存与领域总览）、`docs/superpowers/plans/2026-09-29-v1-roadmap.md`（能力 2 工程完成勾选；子项目 4 状态与 plan 链接）、`docs/superpowers/plans/2026-10-01-product-roadmap.md`（子项目 4 行）
 
-- [ ] **Step 1: 验证** `make check`、`make test`、`make graph-bench`（记录 p95）。
-- [ ] **Step 2: 更新文档**（基准结果写入 V1 总纲能力 2 下一行备注），`git diff --check`。
-- [ ] **Step 3: 提交** `docs: record graph query extension completion`
+- [x] **Step 1: 验证** `make check`、`make test`、`make graph-bench`（记录 p95）。
+- [x] **Step 2: 更新文档**（基准结果写入 V1 总纲能力 2 下一行备注），`git diff --check`。
+- [x] **Step 3: 提交** `docs: record graph query extension completion`

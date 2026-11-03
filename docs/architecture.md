@@ -71,7 +71,9 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 **图谱**
 
 1. graph worker 从已摄取文档抽取实体与关系，写入 MySQL 快照；`attempt_count` 达到上限时认领即置 `FAILED`（`attempts-exhausted`），瞬时失败（模型不可用、超时）未达上限时回到 `PENDING` 并按退避设置 `next_attempt_at`。
-2. 查询 API 读取快照，载入内存图存储后返回节点、边与证据。
+2. 查询 API 先按项目范围读取快照元数据，再从进程内 `CachedSnapshotIndexes`（`graph/application/cache.py`）取 `SnapshotIndex`（`graph/domain/index.py`：邻接、标签分词、证据切片反向索引与度数）后返回节点、边与证据。缓存以 `(project_id, snapshot_id)` 为键，按节点+边+证据条目数 LRU（默认 200 万条），同一快照并发未命中只加载一次，只缓存 `READY` 快照；授权与范围检查每次照常执行。每个 API 进程一份缓存，不跨进程共享。
+3. 领域总览 `POST /knowledge/graph/overview`（`graph/application/overview.py` 的 `GraphOverviewService`）取项目内已就绪来源的当前修订（与 Library 同一列表，流程图图片须已发布审核；配置了 `PublishedKnowledgeAuthority` 时跳过无权限或已撤回的修订），复用同一索引缓存合并各来源活跃快照：节点按 `(node_type, canonical_key)` 合并、边按（源、关系类型、目标）合并并记支持数，按合并后度数取前 `nodeLimit`（默认 150，上限 300）个节点。合并结果按快照 ID 集合与 `nodeLimit` 进程内缓存（LRU 64）。TAP AI 前端 Library 图谱默认显示领域总览，节点详情列出成员来源并可跳转到对应来源图谱。
+4. `make graph-bench` 运行 1 万节点、5 万边的索引查询基准（标记 `perf`，不进入 `make test`）。
 
 **重试策略与 worker 主循环**
 
@@ -102,7 +104,7 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 | V1 能力 | 现状缺口 |
 | --- | --- |
 | [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 真实模型 golden 基线分数（30–50 条真实标注问答）尚未产出，属业务验证项 |
-| [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 每次查询把整个快照载入内存 |
+| [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 工程完成；真实资料生成图谱的浏览尚待业务验证 |
 | [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；无多跳扩展、路径推理、关系边引用与路径高亮 |
 | [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
 | [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | 追踪数据无保留期与清理任务，`model_call_content` 原文永久保留会持续增长；DashScope 部分模型算不出成本，需要手动在 `deploy/local/litellm/config.yaml` 配置 `input_cost_per_token`/`output_cost_per_token` |
