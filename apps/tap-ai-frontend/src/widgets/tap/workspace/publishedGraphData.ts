@@ -8,7 +8,7 @@ import {
   type GraphNode,
 } from "./graphLayout";
 
-function sourceCommunity(name: string): GraphCommunity {
+export function sourceCommunity(name: string): GraphCommunity {
   const title = name.toLocaleLowerCase();
   if (/underwrit|risk|health|disclosure/.test(title)) return "underwriting";
   if (/beneficiar|party|approval|access/.test(title)) return "parties";

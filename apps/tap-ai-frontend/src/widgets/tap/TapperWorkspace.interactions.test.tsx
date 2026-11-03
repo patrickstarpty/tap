@@ -52,6 +52,7 @@ vi.mock("../../features/knowledge/api/client", () => ({
 vi.mock("../../features/graph/api/queries", () => ({
   useActiveGraph: vi.fn(() => defaultGraphQueryResult()),
   useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
+  useGraphOverview: vi.fn(() => defaultGraphQueryResult()),
 }));
 
 const DEFAULT_SOURCES = [
@@ -3022,6 +3023,7 @@ describe("Tap product workspace interactions", () => {
     ).toBeNull();
 
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await user.click(screen.getByText("Published source graph"));
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
@@ -3128,6 +3130,7 @@ describe("Tap product workspace interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await user.click(screen.getByText("Published source graph"));
 
     expect(
       await screen.findByText("Select a ready source to view its graph."),
@@ -3143,6 +3146,7 @@ describe("Tap product workspace interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await user.click(screen.getByText("Published source graph"));
 
     expect(
       await screen.findByText("Select a ready source to view its graph."),

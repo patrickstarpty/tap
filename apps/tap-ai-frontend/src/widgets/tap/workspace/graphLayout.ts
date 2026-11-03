@@ -23,7 +23,7 @@ export interface GraphNode {
 export interface GraphEdge {
   id: string;
   label: string;
-  provenance: GraphProvenance;
+  provenance?: GraphProvenance;
   source: string;
   target: string;
 }

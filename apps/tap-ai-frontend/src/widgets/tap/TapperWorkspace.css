@@ -3361,6 +3361,18 @@
   font: inherit;
   font-size: 12px;
 }
+.tap-graph-member-sources {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tap-graph-member-sources button {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 820px) {
   .tap-graph-workspace:has(.tap-graph-search-results) {
     --graph-communities-width: 0px;

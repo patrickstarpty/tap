@@ -5,6 +5,8 @@ import { createGraphClient } from "./client";
 export const graphKeys = {
   active: (projectId: string | null, sources: readonly string[]) =>
     ["graph", projectId, "active", ...sources] as const,
+  overview: (projectId: string | null) =>
+    ["graph", projectId, "overview"] as const,
   search: (
     projectId: string | null,
     snapshotId: string | null,
@@ -41,6 +43,19 @@ export function useGraphSearch(
     queryKey: graphKeys.search(projectId, snapshotId, query),
     enabled: client !== null && snapshotId !== null && query.trim().length > 0,
     queryFn: ({ signal }) => client!.search(snapshotId!, query, 50, signal),
+    retry: false,
+  });
+}
+
+export function useGraphOverview(projectId: string | null, enabled = true) {
+  const client = useMemo(
+    () => (projectId ? createGraphClient(projectId) : null),
+    [projectId],
+  );
+  return useQuery({
+    queryKey: graphKeys.overview(projectId),
+    enabled: client !== null && enabled,
+    queryFn: ({ signal }) => client!.overview(150, signal),
     retry: false,
   });
 }

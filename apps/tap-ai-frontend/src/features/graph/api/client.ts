@@ -3,8 +3,10 @@ import type { components, paths } from "../../../shared/api/generated/schema";
 
 export type GraphSnapshotPage = components["schemas"]["GraphSnapshotPage"];
 export type GraphSubgraph = components["schemas"]["GraphSubgraphView"];
+export type GraphOverview = components["schemas"]["GraphOverviewView"];
 
 export interface GraphClient {
+  overview(nodeLimit?: number, signal?: AbortSignal): Promise<GraphOverview>;
   active(
     sourceRevisionIds: string[],
     signal?: AbortSignal,
@@ -40,6 +42,18 @@ export function createGraphClient(
   const http = createOpenApiClient<paths>({ baseUrl });
   const pathProject = { project_id: projectId };
   return {
+    async overview(nodeLimit = 150, signal) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/graph/overview",
+        {
+          params: { path: pathProject },
+          body: { nodeLimit },
+          signal,
+        },
+      );
+      if (!result.data) throw new Error("Graph overview is unavailable.");
+      return result.data;
+    },
     async active(sourceRevisionIds, signal) {
       const result = await http.GET(
         "/api/v1/projects/{project_id}/knowledge/graph/snapshots",

@@ -17,9 +17,14 @@ vi.mock("../../../features/knowledge/api/client", () => ({
 vi.mock("../../../features/graph/api/queries", () => ({
   useActiveGraph: vi.fn(),
   useGraphSearch: vi.fn(),
+  useGraphOverview: vi.fn(() => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+  })),
 }));
 
-it("offers only the published source graph", async () => {
+it("offers the published source graph behind the view switch", async () => {
   const getSource = vi.fn(async (sourceId: string) => ({
     documents: { items: [{ status: "ready", revisionId: `rev_${sourceId}` }] },
   }));
@@ -103,12 +108,8 @@ it("offers only the published source graph", async () => {
     </QueryClientProvider>,
   );
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-  expect(
-    screen.queryByRole("button", { name: "Domain overview" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Published source graph" }),
-  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByText("Published source graph"));
+  expect(screen.getByText("Domain overview")).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Graph source" })).toBeVisible();
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
@@ -187,6 +188,7 @@ it("describes the published graph without stale wording", async () => {
     </QueryClientProvider>,
   );
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByText("Published source graph"));
   await waitFor(() =>
     expect(
       screen.getByText(
@@ -273,6 +275,7 @@ it("searches the published graph, inspects a node, and jumps to its source in th
   );
 
   await userEvent.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+  await userEvent.click(screen.getByText("Published source graph"));
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
   );

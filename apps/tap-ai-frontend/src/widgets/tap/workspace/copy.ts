@@ -156,6 +156,14 @@ export interface WorkspaceCopy {
     clearFilters: string;
     knowledgeGraphImage: string;
     graphSummary: string;
+    graphDomain: string;
+    graphPublished: string;
+    graphViewLabel: string;
+    graphOverviewEmpty: string;
+    graphOverviewLoading: string;
+    graphOverviewFailed: string;
+    graphOverviewCaption: string;
+    graphMemberSources: string;
     visibleDocuments: string;
     concepts: string;
     labeledRelationships: string;
@@ -370,6 +378,15 @@ export const WORKSPACE_COPY = {
       clearFilters: "Clear filters",
       knowledgeGraphImage: "Life insurance knowledge graph",
       graphSummary: "Knowledge graph summary",
+      graphDomain: "Domain overview",
+      graphPublished: "Published source graph",
+      graphViewLabel: "Graph view",
+      graphOverviewEmpty: "No published knowledge has produced a graph yet",
+      graphOverviewLoading: "Loading the domain overview…",
+      graphOverviewFailed: "The domain overview is temporarily unavailable.",
+      graphOverviewCaption:
+        "Domain overview · merged from {count} published sources.",
+      graphMemberSources: "Appears in sources",
       visibleDocuments: "Visible documents",
       concepts: "Concepts",
       labeledRelationships: "Labeled relationships",
@@ -576,6 +593,14 @@ export const WORKSPACE_COPY = {
       clearFilters: "清除筛选",
       knowledgeGraphImage: "寿险知识图谱",
       graphSummary: "知识图谱摘要",
+      graphDomain: "领域总览",
+      graphPublished: "已发布来源图谱",
+      graphViewLabel: "图谱视图",
+      graphOverviewEmpty: "尚无已发布知识生成的图谱",
+      graphOverviewLoading: "正在加载领域总览…",
+      graphOverviewFailed: "领域总览暂时无法加载。",
+      graphOverviewCaption: "领域总览 · 合并自 {count} 个已发布来源。",
+      graphMemberSources: "出现于来源",
       visibleDocuments: "可见文档",
       concepts: "概念",
       labeledRelationships: "已标注关系",

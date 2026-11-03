@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent,
+  ReactNode,
   PointerEvent as ReactPointerEvent,
 } from "react";
 
@@ -45,6 +46,8 @@ export function KnowledgeGraph({
   onViewSource,
   publishedData,
   publishedCaption,
+  initialSelectedNodeId = null,
+  nodeDetail,
 }: {
   copy: WorkspaceCopy;
   query: string;
@@ -52,6 +55,8 @@ export function KnowledgeGraph({
   onViewSource: (source: LibrarySource) => void;
   publishedData: { nodes: GraphNode[]; edges: GraphEdge[] };
   publishedCaption: string;
+  initialSelectedNodeId?: string | null;
+  nodeDetail?: (nodeId: string) => ReactNode;
 }) {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [communitiesOpen, setCommunitiesOpen] = useState(
@@ -79,7 +84,9 @@ export function KnowledgeGraph({
   const [activeCommunities, setActiveCommunities] = useState<
     ReadonlySet<GraphCommunity>
   >(() => new Set(COMMUNITY_ORDER));
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
+    initialSelectedNodeId,
+  );
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -791,7 +798,9 @@ export function KnowledgeGraph({
                 <h3>{selectedNode.label}</h3>
               </div>
             </div>
-            {selectedSource ? (
+            {nodeDetail ? (
+              nodeDetail(selectedNode.id)
+            ) : selectedSource ? (
               <div className="tap-graph-source-detail">
                 <p>{selectedSource.description}</p>
                 <button
@@ -829,20 +838,25 @@ export function KnowledgeGraph({
                 );
               })}
             </ul>
-            <div className="tap-graph-provenance">
-              <span>{copy.library.provenance}</span>
-              {(["extracted", "inferred"] as const)
-                .filter((provenance) =>
-                  selectedRelationships.some(
-                    (edge) => edge.provenance === provenance,
-                  ),
-                )
-                .map((provenance) => (
-                  <strong key={provenance} data-provenance={provenance}>
-                    {provenanceLabels[provenance]}
-                  </strong>
-                ))}
-            </div>
+            {selectedRelationships.length > 0 &&
+            selectedRelationships.every(
+              (edge) => edge.provenance === undefined,
+            ) ? null : (
+              <div className="tap-graph-provenance">
+                <span>{copy.library.provenance}</span>
+                {(["extracted", "inferred"] as const)
+                  .filter((provenance) =>
+                    selectedRelationships.some(
+                      (edge) => edge.provenance === provenance,
+                    ),
+                  )
+                  .map((provenance) => (
+                    <strong key={provenance} data-provenance={provenance}>
+                      {provenanceLabels[provenance]}
+                    </strong>
+                  ))}
+              </div>
+            )}
           </>
         )}
       </aside>

@@ -94,12 +94,26 @@ test("ready knowledge is published as a bounded grounded graph", async ({
       .getByRole("tabpanel", { name: /Documents|文档列表/u })
       .getByRole("button", { name: `View ${filename}`, exact: true }),
   ).toBeVisible();
+  const overviewResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/knowledge/graph/overview"),
+  );
+  await page.getByRole("tab", { name: /Graph|图谱/u }).click();
+  const overview = await overviewResponse;
+  expect(overview.status(), await overview.text()).toBe(200);
+  expect(
+    ((await overview.json()) as { snapshotIds: string[] }).snapshotIds,
+  ).toContain(snapshotId);
+  await expect(
+    page.getByRole("figure", { name: /Domain overview|领域总览/u }),
+  ).toBeVisible();
   const activeGraphResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
       new URL(response.url()).pathname.endsWith("/knowledge/graph/snapshots"),
   );
-  await page.getByRole("tab", { name: /Graph|图谱/u }).click();
+  await page.getByText(/^(Published source graph|已发布来源图谱)$/u).click();
   const activeGraph = await activeGraphResponse;
   expect(activeGraph.status(), await activeGraph.text()).toBe(200);
   expect(
@@ -131,6 +145,7 @@ test("ready knowledge is published as a bounded grounded graph", async ({
         .getByRole("button", { name: `View ${filename}`, exact: true }),
     ).toBeVisible();
     await page.getByRole("tab", { name: /Graph|图谱/u }).click();
+    await page.getByText(/^(Published source graph|已发布来源图谱)$/u).click();
     await expect(page.getByRole("alert")).toContainText(
       /published graph is temporarily unavailable|已发布图谱暂时无法加载/u,
     );

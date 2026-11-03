@@ -9,7 +9,7 @@ import {
   DownloadOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
-import { Button, Input } from "antd";
+import { Button, Input, Segmented } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import {
   useMemo,
@@ -29,8 +29,10 @@ import type { WorkspaceCopy } from "./copy";
 import { KnowledgeGraph } from "./KnowledgeGraph";
 import {
   useActiveGraph,
+  useGraphOverview,
   useGraphSearch,
 } from "../../../features/graph/api/queries";
+import { overviewGraphData } from "./overviewGraphData";
 import { publishedGraphData } from "./publishedGraphData";
 import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import type { LibrarySource } from "./model";
@@ -49,9 +51,12 @@ interface LibraryWorkspaceProps {
   locale?: "en" | "zh";
 }
 
+type GraphView = "overview" | "source";
+
 function ProjectKnowledgeGraph({
   projectId,
   sources,
+  allSources,
   locale,
   copy,
   query,
@@ -59,13 +64,152 @@ function ProjectKnowledgeGraph({
 }: {
   projectId: string;
   sources: readonly LibrarySource[];
+  allSources: readonly LibrarySource[];
   locale: "en" | "zh";
   copy: WorkspaceCopy;
   query: string;
   onViewSource: (source: LibrarySource) => void;
 }) {
-  const readySources = sources.filter((source) => source.status === "ready");
+  const [graphView, setGraphView] = useState<GraphView>("overview");
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{
+    sourceId: string;
+    nodeId: string;
+    key: number;
+  } | null>(null);
+  const overview = useGraphOverview(projectId, graphView === "overview");
+  const visibleReady = sources.filter((source) => source.status === "ready");
+  const pinned = allSources.find(
+    (source) =>
+      source.id === selectedSourceId &&
+      source.status === "ready" &&
+      !visibleReady.includes(source),
+  );
+  const readySources = pinned ? [pinned, ...visibleReady] : visibleReady;
+  const sourceNames = new Map(
+    allSources.map((source) => [source.id, source.name]),
+  );
+  const overviewData = useMemo(
+    () => (overview.data ? overviewGraphData(overview.data, allSources) : null),
+    [overview.data, allSources],
+  );
+
+  const showMember = (sourceId: string, nodeId: string) => {
+    setSelectedSourceId(sourceId);
+    setFocus((current) => ({
+      sourceId,
+      nodeId: `published-${nodeId}`,
+      key: (current?.key ?? 0) + 1,
+    }));
+    setGraphView("source");
+  };
+
+  const memberDetail = (overviewNodeId: string) => {
+    const node = overview.data?.nodes.find(
+      (item) => item.overviewNodeId === overviewNodeId,
+    );
+    const members = (node?.members ?? []).filter(
+      (member, index, all) =>
+        sourceNames.has(member.sourceId) &&
+        all.findIndex((item) => item.sourceId === member.sourceId) === index,
+    );
+    return (
+      <div className="tap-graph-source-detail">
+        <p id="tap-graph-member-sources">{copy.library.graphMemberSources}</p>
+        <ul
+          className="tap-graph-member-sources"
+          aria-labelledby="tap-graph-member-sources"
+        >
+          {members.map((member) => (
+            <li key={member.sourceId}>
+              <button
+                type="button"
+                onClick={() => showMember(member.sourceId, member.nodeId)}
+              >
+                {sourceNames.get(member.sourceId)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
+  return (
+    <div className="tap-project-graph">
+      <div className="tap-project-graph-controls">
+        <Segmented
+          aria-label={copy.library.graphViewLabel}
+          value={graphView}
+          onChange={(value) => setGraphView(value as GraphView)}
+          options={[
+            { label: copy.library.graphDomain, value: "overview" },
+            { label: copy.library.graphPublished, value: "source" },
+          ]}
+        />
+      </div>
+      {graphView === "overview" ? (
+        overview.isError ? (
+          <p role="alert">{copy.library.graphOverviewFailed}</p>
+        ) : overview.isPending ? (
+          <p role="status">{copy.library.graphOverviewLoading}</p>
+        ) : overviewData && overviewData.nodes.length > 0 ? (
+          <KnowledgeGraph
+            copy={copy}
+            query={query}
+            sources={[]}
+            onViewSource={onViewSource}
+            publishedData={overviewData}
+            publishedCaption={copy.library.graphOverviewCaption.replace(
+              "{count}",
+              String(overview.data?.stats.sourceCount ?? 0),
+            )}
+            nodeDetail={memberDetail}
+          />
+        ) : (
+          <p role="status">{copy.library.graphOverviewEmpty}</p>
+        )
+      ) : (
+        <SourceKnowledgeGraph
+          projectId={projectId}
+          readySources={readySources}
+          selectedSourceId={selectedSourceId}
+          onSelectSource={(sourceId) => {
+            setSelectedSourceId(sourceId);
+            setFocus(null);
+          }}
+          focus={focus}
+          locale={locale}
+          copy={copy}
+          query={query}
+          onViewSource={onViewSource}
+        />
+      )}
+    </div>
+  );
+}
+
+function SourceKnowledgeGraph({
+  projectId,
+  readySources,
+  selectedSourceId,
+  onSelectSource,
+  focus,
+  locale,
+  copy,
+  query,
+  onViewSource,
+}: {
+  projectId: string;
+  readySources: readonly LibrarySource[];
+  selectedSourceId: string | null;
+  onSelectSource: (sourceId: string) => void;
+  focus: { sourceId: string; nodeId: string; key: number } | null;
+  locale: "en" | "zh";
+  copy: WorkspaceCopy;
+  query: string;
+  onViewSource: (source: LibrarySource) => void;
+}) {
   const selectedId = readySources.some(
     (source) => source.id === selectedSourceId,
   )
@@ -91,16 +235,18 @@ function ProjectKnowledgeGraph({
     selectedSource && graph.data
       ? publishedGraphData(graph.data, selectedSource)
       : null;
+  const focusedNodeId =
+    focus !== null && focus.sourceId === selectedId ? focus.nodeId : null;
 
   return (
-    <div className="tap-project-graph">
+    <>
       {readySources.length > 0 ? (
         <div className="tap-project-graph-controls">
           <label className="tap-project-graph-source">
             <span>{locale === "zh" ? "图谱来源" : "Graph source"}</span>
             <select
               value={selectedId ?? ""}
-              onChange={(event) => setSelectedSourceId(event.target.value)}
+              onChange={(event) => onSelectSource(event.target.value)}
             >
               {readySources.map((source) => (
                 <option key={source.id} value={source.id}>
@@ -141,6 +287,7 @@ function ProjectKnowledgeGraph({
         </p>
       ) : published ? (
         <KnowledgeGraph
+          key={focusedNodeId === null ? "source" : `focus-${focus!.key}`}
           copy={copy}
           query={query}
           sources={selectedSource ? [selectedSource] : []}
@@ -151,6 +298,7 @@ function ProjectKnowledgeGraph({
               ? "已发布的来源图谱 · 节点与关系来自服务。"
               : "Published source graph · nodes and relationships come from the service."
           }
+          initialSelectedNodeId={focusedNodeId}
         />
       ) : (
         <p role="status">
@@ -159,7 +307,7 @@ function ProjectKnowledgeGraph({
             : "No published graph is ready for this source yet."}
         </p>
       )}
-    </div>
+    </>
   );
 }
 
@@ -509,6 +657,7 @@ export function LibraryWorkspace({
             <ProjectKnowledgeGraph
               projectId={graphProjectId}
               sources={visibleSources}
+              allSources={sources}
               locale={locale}
               copy={copy}
               query={query}
