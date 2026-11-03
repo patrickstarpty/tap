@@ -45,6 +45,54 @@ def test_valid_skill_is_parsed_with_digest_and_untrusted_tool_requests() -> None
     assert parsed.source_markdown.encode("utf-8") == VALID
 
 
+@pytest.mark.parametrize(
+    "literal",
+    [
+        b"0x" + b"f" * 5000,
+        b"0" + b"7" * 5000,
+        b"0b" + b"1" * 5000,
+        b"0x10000000000000000",
+        b"-0x8000000000000001",
+        b"9223372036854775808",
+        b"-9223372036854775809",
+        b"9" * 5000,
+        b".inf",
+        b"-.inf",
+        b".nan",
+        b"1.0e+999",
+        b"-1.0e+999",
+        b"1" + b":59" * 2000,
+    ],
+)
+def test_out_of_range_numbers_are_rejected(literal: bytes) -> None:
+    raw = b"---\nname: a\ndescription: b\nx: " + literal + b"\n---\nBody\n"
+    assert _rejected(raw) == "skill-front-matter-invalid"
+
+
+@pytest.mark.parametrize(
+    ("literal", "expected"),
+    [
+        (b"0x7fffffffffffffff", 2**63 - 1),
+        (b"-9223372036854775807", -(2**63) + 1),
+        (b"017", 15),
+        (b"0o17", "0o17"),
+        (b"0b101", 5),
+        (b"1.5", 1.5),
+    ],
+)
+def test_front_matter_is_json_serializable(literal: bytes, expected: object) -> None:
+    import json
+
+    raw = (
+        b"---\nname: a\ndescription: b\nwhen: 2026-01-02\nx: "
+        + literal
+        + b"\nmetadata: {n: [1, 2.5, true, null]}\n---\nBody\n"
+    )
+    parsed = parse_skill_markdown(raw)
+    assert parsed.front_matter["x"] == expected
+    json.dumps(dict(parsed.front_matter))
+
+
 def test_missing_front_matter_is_rejected() -> None:
     assert _rejected(b"# Release notes\n\nCite every claim.\n") == "skill-front-matter-missing"
     assert _rejected(b"---\nname: a\ndescription: b\n# no closing\n") == (

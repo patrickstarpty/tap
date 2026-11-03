@@ -26,6 +26,8 @@ from tap.modules.ai.domain.assets import (
 MAX_SKILL_NAME_LENGTH = 64
 _MAX_FRONT_MATTER_DEPTH = 16
 _MAX_COMPOSE_DEPTH = 32
+# JSON-safe signed 64-bit bound; larger ints break json.dumps (int str conversion limit).
+_MAX_INT_BITS = 63
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _FRONT_MATTER = re.compile(r"---[ \t]*\r?\n(?:(.*?)\r?\n)?---[ \t]*(?:\r?\n|\Z)(.*)\Z", re.DOTALL)
 BUILTIN_TOOL_IDS = frozenset(builtin_tools())
@@ -94,7 +96,11 @@ class _InertLoader(yaml.SafeLoader):
 def _plain(value: object, depth: int = 0) -> object:
     if depth > _MAX_FRONT_MATTER_DEPTH:
         raise SkillImportRejected("skill-front-matter-invalid")
-    if value is None or isinstance(value, bool | int | str):
+    if value is None or isinstance(value, bool | str):
+        return value
+    if isinstance(value, int):
+        if value.bit_length() > _MAX_INT_BITS:
+            raise SkillImportRejected("skill-front-matter-invalid")
         return value
     if isinstance(value, float):
         if value != value or value in {float("inf"), float("-inf")}:
