@@ -43,6 +43,7 @@ from tap.modules.knowledge.ports.documents import (
     ReserveUpload,
 )
 from tap.platform.db.session import create_engine_and_session_factory
+from tap.platform.retry import RetryPolicy
 
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
@@ -56,6 +57,16 @@ KNOWLEDGE_TABLES = (
     "knowledge_document",
     "knowledge_source",
 )
+
+
+def _terminal_failures(sessions) -> MysqlDocumentRepository:  # type: ignore[no-untyped-def]
+    """Seed a terminal failure without the transient backoff these scenarios do not cover."""
+    return MysqlDocumentRepository(
+        sessions,
+        scope=VALIDATION_SCOPE,
+        audit_factory=create_project_audit,
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
 
 
 def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_mysql) -> None:  # type: ignore[no-untyped-def]
@@ -104,7 +115,7 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
                 source_hash,
                 "parser-unavailable",
             )
-            await repository.fail_job(
+            await _terminal_failures(sessions).fail_job(
                 JobFailure(
                     first.job_id,
                     first.lease_token,
@@ -885,7 +896,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                     embeddings_locator=ArtifactLocator("artifact:embeddings"),
                 )
             )
-            await repository.fail_job(
+            await _terminal_failures(sessions).fail_job(
                 JobFailure(
                     preparation.job_id,
                     preparation.lease_token,
@@ -1047,7 +1058,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                     normalized_locator=ArtifactLocator("artifact:normalized"),
                 )
             )
-            await repository.fail_job(
+            await _terminal_failures(sessions).fail_job(
                 JobFailure(
                     preparation.job_id,
                     preparation.lease_token,

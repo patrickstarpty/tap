@@ -95,6 +95,7 @@ from tap.modules.knowledge.ports.documents import (
     MAX_JOB_LEASE,
     MAX_RESERVATION_LEASE,
     SAFE_ERROR_SUMMARIES,
+    TRANSIENT_INGESTION_ERRORS,
     ArtifactLocator,
     ClaimedIngestionJob,
     DocumentCapacityExceeded,
@@ -132,6 +133,7 @@ from tap.platform.messaging.mysql_outbox import (
     scoped_outbox_id,
     write_project_event,
 )
+from tap.platform.retry import RetryPolicy
 
 CANCELLED_OWNER_SETTLEMENT_LEASE = timedelta(seconds=60)
 ANSWER_SNAPSHOT_RETENTION = 1_000
@@ -313,6 +315,7 @@ knowledge_ingestion_job = Table(
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("updated_at", DATETIME(fsp=6), nullable=False),
     Column("completed_at", DATETIME(fsp=6)),
+    Column("delivery_count", Integer, nullable=False, server_default="0"),
     UniqueConstraint("revision_id", "kind", name="uq_knowledge_job_revision_kind"),
 )
 Index(
@@ -813,10 +816,12 @@ class MysqlDocumentRepository:
         scope: ProjectScopeContext,
         audit_factory: ProjectAuditFactory,
         ready_projection: ReadyRevisionProjection | None = None,
+        retry_policy: RetryPolicy = RetryPolicy(),
     ) -> None:
         self._scope = require_project_scope(scope)
         self._audit_factory = audit_factory
         self._ready_projection = ready_projection
+        self._retry_policy = retry_policy
         self._answer_snapshot_lock_name = (
             "tap:answer:"
             + sha256(f"{scope.enterprise_id}/{scope.project_id}".encode()).hexdigest()[:48]
@@ -3184,6 +3189,7 @@ class MysqlDocumentRepository:
                 )
                 .values(
                     attempt=attempt,
+                    delivery_count=0,
                     status=JobState.PENDING.value,
                     stage=first_incomplete.value,
                     stage_results_json=serialize_stage_results(tuple(results)),
@@ -3608,6 +3614,11 @@ class MysqlDocumentRepository:
                 )
                 if not row_is_claimable:
                     continue
+                if row["kind"] == JobKind.INGESTION.value and self._retry_policy.is_exhausted(
+                    cast(int, row["delivery_count"])
+                ):
+                    await self._exhaust_claimed_job(session, row, database_now)
+                    continue
                 token = uuid4().hex
                 lease_until = database_now + lease_duration
                 freshly_claimable = or_(
@@ -3633,6 +3644,7 @@ class MysqlDocumentRepository:
                         lease_owner=worker_id,
                         lease_token=token,
                         lease_until=lease_until,
+                        delivery_count=knowledge_ingestion_job.c.delivery_count + 1,
                         updated_at=database_now,
                     )
                 )
@@ -3654,6 +3666,68 @@ class MysqlDocumentRepository:
                     )
                 )
             return tuple(claimed)
+
+    async def _exhaust_claimed_job(
+        self, session: AsyncSession, row: RowMapping, database_now: datetime
+    ) -> None:
+        error_code = "lease-exhausted"
+        summary = SAFE_ERROR_SUMMARIES[error_code]
+        stage = JobStage(cast(str, row["stage"]))
+        results = list(deserialize_stage_results(row["stage_results_json"]))
+        results[list(JobStage).index(stage)] = StageResult(
+            stage, StageState.FAILED, database_now, error_code
+        )
+        result = await session.execute(
+            update(knowledge_ingestion_job)
+            .where(
+                *scope_predicates(knowledge_ingestion_job, self._scope),
+                knowledge_ingestion_job.c.job_id == row["job_id"],
+                knowledge_ingestion_job.c.kind == JobKind.INGESTION.value,
+                or_(
+                    and_(
+                        knowledge_ingestion_job.c.status == JobState.PENDING.value,
+                        knowledge_ingestion_job.c.next_attempt_at <= database_now,
+                    ),
+                    and_(
+                        knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
+                        knowledge_ingestion_job.c.lease_until <= database_now,
+                    ),
+                ),
+            )
+            .values(
+                status=JobState.FAILED.value,
+                stage_results_json=serialize_stage_results(tuple(results)),
+                lease_owner=None,
+                lease_token=None,
+                lease_until=None,
+                error_code=error_code,
+                error_summary=summary,
+                updated_at=database_now,
+            )
+        )
+        if result.rowcount != 1:
+            return
+        document_id = await session.scalar(
+            select(knowledge_document_revision.c.document_id).where(
+                *scope_predicates(knowledge_document_revision, self._scope),
+                knowledge_document_revision.c.revision_id == row["revision_id"],
+            )
+        )
+        await session.execute(
+            update(knowledge_document)
+            .where(
+                *scope_predicates(knowledge_document, self._scope),
+                knowledge_document.c.document_id == document_id,
+                knowledge_document.c.status != DocumentState.DELETING.value,
+            )
+            .values(
+                status=DocumentState.FAILED.value,
+                stage=stage.value,
+                error_code=error_code,
+                error_summary=summary,
+                updated_at=database_now,
+            )
+        )
 
     async def settle_cancelled_job(
         self,
@@ -4308,6 +4382,40 @@ class MysqlDocumentRepository:
                 _utc_naive(failure.failed_at),
                 failure.error_code,
             )
+            delivery_count = cast(int, row["delivery_count"])
+            if (
+                row["kind"] == JobKind.INGESTION.value
+                and failure.error_code in TRANSIENT_INGESTION_ERRORS
+                and not self._retry_policy.is_exhausted(delivery_count)
+            ):
+                # Parse inventory stays unwritten until a terminal failure so a later
+                # successful delivery of the same attempt is not fenced by it.
+                result = await session.execute(
+                    update(knowledge_ingestion_job)
+                    .where(
+                        *scope_predicates(knowledge_ingestion_job, self._scope),
+                        knowledge_ingestion_job.c.job_id == failure.job_id,
+                        knowledge_ingestion_job.c.status == JobState.PROCESSING.value,
+                        knowledge_ingestion_job.c.lease_token == failure.lease_token,
+                        knowledge_ingestion_job.c.lease_until > database_now,
+                        knowledge_ingestion_job.c.stage == failure.expected_stage.value,
+                    )
+                    .values(
+                        status=JobState.PENDING.value,
+                        stage_results_json=serialize_stage_results(tuple(results)),
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_until=None,
+                        next_attempt_at=database_now
+                        + self._retry_policy.next_delay(max(delivery_count, 1)),
+                        error_code=failure.error_code,
+                        error_summary=summary,
+                        updated_at=database_now,
+                    )
+                )
+                if result.rowcount != 1:
+                    self._raise_lease_lost(failure.job_id)
+                return
             if failure.parse_inventory:
                 if (
                     row["kind"] != JobKind.INGESTION.value
