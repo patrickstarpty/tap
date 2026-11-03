@@ -3,6 +3,8 @@
 .pnpm-store/
 .impeccable/
 .env
+.env.*
+!.env.example
 .local/milvus-active-corpus.json
 .local/milvus-embedding-cache/
 .local/milvus-ci/
