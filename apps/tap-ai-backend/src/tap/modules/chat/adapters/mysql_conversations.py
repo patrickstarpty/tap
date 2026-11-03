@@ -24,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import DATETIME, JSON
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from tap.contracts.events import ProjectEventEnvelope
 from tap.contracts.problems import build_problem
@@ -163,6 +164,8 @@ turn_artifact_link = _scoped(
 
 
 _LIKE_ESCAPE = "!"
+# Turns that ended without a completed answer; their provisional answer text is withdrawn.
+_WITHDRAWN_TURN_STATES = ("abstained", "failed", "canceled")
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -333,6 +336,41 @@ class MysqlConversationRepository:
                 occurred_at=_naive(event.occurred_at),
             )
         )
+
+    @staticmethod
+    def _visible_event() -> ColumnElement[bool]:
+        return or_(
+            chat_event.c.event_type != "answer.delta",
+            chat_turn.c.state.not_in(_WITHDRAWN_TURN_STATES),
+        )
+
+    async def _withdraw_provisional_answer(
+        self,
+        session: AsyncSession,
+        conversation_id: str,
+        turn_id: str,
+        attempt: int,
+        occurred_at: datetime,
+    ) -> None:
+        streamed = await session.scalar(
+            select(chat_event.c.event_id)
+            .where(
+                *scope_predicates(chat_event, self.scope),
+                chat_event.c.turn_id == turn_id,
+                chat_event.c.event_type == "answer.delta",
+            )
+            .limit(1)
+        )
+        if streamed is None:
+            return
+        event = await self._next_event(
+            session,
+            conversation_id,
+            ConversationEvent(
+                uuid4().hex, 1, "answer.reset", {"attempt": max(1, attempt)}, occurred_at
+            ),
+        )
+        await self._stream_event(session, event, turn_id)
 
     async def _insert_turn(self, session, conversation_id, turn, event):
         if (
@@ -606,6 +644,7 @@ class MysqlConversationRepository:
                         .where(
                             *scope_predicates(chat_event, self.scope),
                             chat_turn.c.chat_id == conversation_id,
+                            self._visible_event(),
                         )
                         .order_by(chat_event.c.stream_sequence)
                     )
@@ -927,6 +966,14 @@ class MysqlConversationRepository:
                     raise ValueError("completion stream event is invalid")
                 stream_event = await self._next_event(session, conversation_id, stream_event)
                 await self._stream_event(session, stream_event, turn_id)
+            if snapshot.value.outcome != "completed":
+                await self._withdraw_provisional_answer(
+                    session,
+                    conversation_id,
+                    turn_id,
+                    row["processing_attempt"],
+                    snapshot.created_at,
+                )
             if terminal_event is not None:
                 if terminal_event.event_type not in {
                     "turn.completed",
@@ -1292,6 +1339,9 @@ class MysqlConversationRepository:
             "conversation turn failed integrity check",
             extra={"turn_id": row["turn_id"], "reason": "input-snapshot-missing"},
         )
+        await self._withdraw_provisional_answer(
+            session, row["chat_id"], row["turn_id"], row["processing_attempt"], now
+        )
         event = await self._next_event(
             session,
             row["chat_id"],
@@ -1485,6 +1535,7 @@ class MysqlConversationRepository:
                             *scope_predicates(chat_turn, self.scope),
                             chat_turn.c.chat_id == conversation_id,
                             chat_event.c.stream_sequence > sequence,
+                            self._visible_event(),
                         )
                         .order_by(chat_event.c.stream_sequence)
                     )

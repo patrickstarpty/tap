@@ -29,6 +29,8 @@ from tap.modules.chat.domain.conversations import (
 
 _TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
 _ACTIVE_TURN_STATES = frozenset({"queued", "running"})
+# Turns that ended without a completed answer; their provisional answer text is withdrawn.
+_WITHDRAWN_TURN_STATES = frozenset({"abstained", "failed", "canceled"})
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -45,6 +47,10 @@ async def publish_conversation_events(
             await notifier.publish(scope, conversation_id)
         except Exception as error:  # noqa: BLE001 - readers fall back to reading the database
             _LOGGER.warning("conversation event notification failed: %s", type(error).__name__)
+
+
+def _last_sequence(conversation: Conversation) -> int:
+    return max((item.sequence for item in conversation.events), default=0)
 
 
 class ConversationNotFound(Exception):
@@ -157,12 +163,13 @@ class InMemoryConversationRepository:
         return conversation.turns[0]
 
     async def append_turn(self, conversation_id, turn, event):
-        conversation = await self.load(conversation_id)
+        conversation = self._stored(conversation_id)
         for existing in conversation.turns:
             if existing.client_request_id == turn.client_request_id:
                 if existing.input_snapshot.value != turn.input_snapshot.value:
                     raise ConversationConflict("idempotency-conflict")
                 return existing
+        event = replace(event, sequence=_last_sequence(conversation) + 1)
         self.values[conversation_id] = replace(
             conversation,
             turns=(*conversation.turns, turn),
@@ -200,11 +207,25 @@ class InMemoryConversationRepository:
         )
         return page, next_cursor
 
-    async def load(self, conversation_id):
+    def _stored(self, conversation_id: str) -> Conversation:
         value = self.values.get(conversation_id)
         if value is None or value.deleted_at is not None:
             raise ConversationNotFound
         return value
+
+    async def load(self, conversation_id):
+        value = self._stored(conversation_id)
+        withdrawn = {turn.turn_id for turn in value.turns if turn.state in _WITHDRAWN_TURN_STATES}
+        if not withdrawn:
+            return value
+        return replace(
+            value,
+            events=tuple(
+                event
+                for event in value.events
+                if event.event_type != "answer.delta" or event.turn_id not in withdrawn
+            ),
+        )
 
     async def ownership(self, conversation_id):
         value = self.values.get(conversation_id)
@@ -213,10 +234,10 @@ class InMemoryConversationRepository:
         return ConversationOwnership(value.actor_id or "", value.deleted_at)
 
     async def rename(self, conversation_id, title, *, updated_at):
-        value = await self.load(conversation_id)
-        renamed = replace(value, title=title, updated_at=updated_at)
-        self.values[conversation_id] = renamed
-        return renamed
+        self.values[conversation_id] = replace(
+            self._stored(conversation_id), title=title, updated_at=updated_at
+        )
+        return await self.load(conversation_id)
 
     async def soft_delete(self, conversation_id, *, actor_id, deleted_at):
         value = self.values.get(conversation_id)
@@ -237,51 +258,40 @@ class InMemoryConversationRepository:
         terminal_event=None,
         stream_events=(),
     ):
-        conversation = await self.load(conversation_id)
+        conversation = self._stored(conversation_id)
         current = next((turn for turn in conversation.turns if turn.turn_id == turn_id), None)
         if current is None:
             raise ConversationNotFound
         if current.state in {"completed", "abstained", "failed", "canceled"}:
             return current
-        turns = []
-        found = None
-        for turn in conversation.turns:
-            if turn.turn_id == turn_id:
-                found = replace(turn, state=snapshot.value.outcome, answer_snapshot=snapshot)
-                turns.append(found)
-            else:
-                turns.append(turn)
-        if found is None:
-            raise ConversationNotFound
+        found = replace(current, state=snapshot.value.outcome, answer_snapshot=snapshot)
+        pending = [replace(item, turn_id=turn_id) for item in stream_events]
+        if snapshot.value.outcome != "completed" and any(
+            item.event_type == "answer.delta" and item.turn_id == turn_id
+            for item in conversation.events
+        ):
+            pending.append(
+                ConversationEvent(
+                    uuid4().hex,
+                    1,
+                    "answer.reset",
+                    {"attempt": max(1, current.attempt)},
+                    snapshot.created_at,
+                    turn_id,
+                )
+            )
+        if terminal_event:
+            pending.append(replace(terminal_event, turn_id=turn_id))
+        pending.append(event)
+        sequence = _last_sequence(conversation)
         self.values[conversation_id] = replace(
             conversation,
-            turns=tuple(turns),
+            turns=tuple(found if turn.turn_id == turn_id else turn for turn in conversation.turns),
             events=(
                 *conversation.events,
-                *tuple(
-                    replace(
-                        stream_event,
-                        sequence=len(conversation.events) + offset,
-                        turn_id=turn_id,
-                    )
-                    for offset, stream_event in enumerate(stream_events, start=1)
-                ),
                 *(
-                    (
-                        replace(
-                            terminal_event,
-                            sequence=len(conversation.events) + len(stream_events) + 1,
-                            turn_id=turn_id,
-                        ),
-                    )
-                    if terminal_event
-                    else ()
-                ),
-                replace(
-                    event,
-                    sequence=(
-                        len(conversation.events) + len(stream_events) + (2 if terminal_event else 1)
-                    ),
+                    replace(item, sequence=sequence + offset)
+                    for offset, item in enumerate(pending, start=1)
                 ),
             ),
             updated_at=event.occurred_at,
@@ -346,7 +356,7 @@ class InMemoryConversationRepository:
         return tuple(claimed)
 
     async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
-        conversation = await self.load(conversation_id)
+        conversation = self._stored(conversation_id)
         turn = next((item for item in conversation.turns if item.turn_id == turn_id), None)
         if turn is None or turn.state in {"completed", "abstained", "failed", "canceled"}:
             raise ConversationConflict("terminal Turn cannot accept stream events")
@@ -354,7 +364,7 @@ class InMemoryConversationRepository:
             raise ConversationConflict("generation lease lost")
         event = replace(
             event,
-            sequence=max(item.sequence for item in conversation.events) + 1,
+            sequence=_last_sequence(conversation) + 1,
             turn_id=turn_id,
         )
         self.values[conversation_id] = replace(

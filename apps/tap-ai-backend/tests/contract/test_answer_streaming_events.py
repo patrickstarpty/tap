@@ -17,7 +17,12 @@ from tap.modules.chat.application.conversations import (
     ConversationService,
     InMemoryConversationRepository,
 )
-from tap.modules.chat.domain.conversations import TurnInput
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    GraphContextStatus,
+    RetrievalSummary,
+    TurnInput,
+)
 
 
 def _input() -> TurnInput:
@@ -199,3 +204,118 @@ def test_answer_reset_contract_requires_a_positive_attempt():
             ChatEventEnvelope.model_validate(
                 {**valid, "event": {"type": "answer.reset", "payload": payload}}
             )
+
+
+async def _streamed(service: ConversationService) -> str:
+    claimed = (await service.repository.claim_queued(limit=1))[0][1]
+    for text in ("provisional ", "answer"):
+        await service.emit(
+            "conversation-1",
+            "turn-1",
+            "answer.delta",
+            {"text": text},
+            lease_token=claimed.lease_token,
+        )
+    return claimed.lease_token
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "terminal_type"), [("failed", "turn.failed"), ("abstained", "turn.abstained")]
+)
+async def test_unfinished_turn_withdraws_provisional_answer_text(outcome, terminal_type):
+    service = await _accepted()
+    lease_token = await _streamed(service)
+
+    await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        AnswerEvidence("", outcome, RetrievalSummary(outcome), GraphContextStatus.NOT_REQUESTED),
+        lease_token=lease_token,
+        terminal_event=(terminal_type, {"state": outcome}),
+    )
+
+    stored = service.repository.values["conversation-1"].events
+    stored_types = [event.event_type for event in stored]
+    assert stored_types.count("answer.delta") == 2
+    reset = stored_types.index("answer.reset")
+    assert stored[reset].payload == {"attempt": 1}
+    assert stored_types[reset + 1] == terminal_type
+    assert [event.sequence for event in stored] == list(range(1, len(stored) + 1))
+
+    for events in (
+        (await service.load("conversation-1")).events,
+        await service.events_after("conversation-1", 0),
+    ):
+        types = [event.event_type for event in events]
+        assert "answer.delta" not in types
+        assert types[-3:] == ["answer.reset", terminal_type, "conversation.turn.completed"]
+        ChatEventEnvelope.model_validate(_envelope(events[-3]))
+
+
+@pytest.mark.asyncio
+async def test_canceled_turn_withdraws_provisional_answer_text():
+    service = await _accepted()
+    await _streamed(service)
+
+    await service.cancel("conversation-1", "turn-1")
+
+    stored_types = [
+        event.event_type for event in service.repository.values["conversation-1"].events
+    ]
+    assert stored_types[-2:] == ["answer.reset", "conversation.turn.completed"]
+    types = [event.event_type for event in (await service.load("conversation-1")).events]
+    assert "answer.delta" not in types
+    assert types[-2:] == ["answer.reset", "conversation.turn.completed"]
+
+
+@pytest.mark.asyncio
+async def test_unfinished_turn_without_provisional_text_writes_no_reset():
+    service = await _accepted()
+
+    await service.cancel("conversation-1", "turn-1")
+
+    types = [event.event_type for event in (await service.load("conversation-1")).events]
+    assert types == ["conversation.turn.requested", "conversation.turn.completed"]
+
+
+@pytest.mark.asyncio
+async def test_completed_turn_keeps_its_answer_text_beside_a_withdrawn_turn():
+    service = await _accepted()
+    lease_token = await _streamed(service)
+    await service.complete_evidence(
+        "conversation-1",
+        "turn-1",
+        AnswerEvidence(
+            "provisional answer",
+            "completed",
+            RetrievalSummary("completed"),
+            GraphContextStatus.NOT_REQUESTED,
+        ),
+        lease_token=lease_token,
+        terminal_event=("turn.completed", {"state": "completed"}),
+    )
+    await service.append("conversation-1", "turn-2", "request-2", _input())
+    claimed = (await service.repository.claim_queued(limit=1))[0][1]
+    assert claimed.turn_id == "turn-2"
+    await service.emit(
+        "conversation-1",
+        "turn-2",
+        "answer.delta",
+        {"text": "withdrawn"},
+        lease_token=claimed.lease_token,
+    )
+    await service.cancel("conversation-1", "turn-2")
+
+    events = (await service.load("conversation-1")).events
+    deltas = [
+        (event.turn_id, event.payload["text"])
+        for event in events
+        if event.event_type == "answer.delta"
+    ]
+    assert deltas == [("turn-1", "provisional "), ("turn-1", "answer")]
+    assert [event.event_type for event in events if event.turn_id == "turn-1"].count(
+        "answer.reset"
+    ) == 0
+    sequences = [event.sequence for event in service.repository.values["conversation-1"].events]
+    assert sequences == list(range(1, len(sequences) + 1))

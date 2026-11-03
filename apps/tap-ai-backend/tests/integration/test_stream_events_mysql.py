@@ -193,3 +193,125 @@ def test_committed_events_publish_and_incremental_reads_follow_the_ledger(owned_
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_unfinished_turns_withdraw_provisional_answer_text(owned_project_mysql):
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+            for table in _OWNED:
+                await connection.execute(text(f"DELETE FROM {table}"))
+            await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+        try:
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+
+            async def stream(turn_id: str, *texts: str) -> str:
+                claimed = (await repository.claim_queued(limit=1))[0][1]
+                assert claimed.turn_id == turn_id
+                for value in texts:
+                    await repository.append_stream_event(
+                        "chat-1",
+                        turn_id,
+                        ConversationEvent(
+                            f"{turn_id}-{value}",
+                            1,
+                            "answer.delta",
+                            {"text": value},
+                            datetime.now(UTC),
+                        ),
+                        lease_token=claimed.lease_token,
+                    )
+                return claimed.lease_token
+
+            def evidence(outcome: str, answer: str = "") -> AnswerEvidence:
+                return AnswerEvidence(
+                    answer, outcome, RetrievalSummary(outcome), GraphContextStatus.NOT_REQUESTED
+                )
+
+            await service.create("chat-1", "turn-1", "request-1", _input())
+            lease = await stream("turn-1", "kept")
+            await service.complete_evidence(
+                "chat-1",
+                "turn-1",
+                evidence("completed", "kept"),
+                lease_token=lease,
+                terminal_event=("turn.completed", {"state": "completed"}),
+            )
+            await service.append("chat-1", "turn-2", "request-2", _input())
+            lease = await stream("turn-2", "denied ", "text")
+            await service.complete_evidence(
+                "chat-1",
+                "turn-2",
+                evidence("failed"),
+                lease_token=lease,
+                terminal_event=("turn.failed", {"state": "failed"}),
+            )
+            await service.append("chat-1", "turn-3", "request-3", _input())
+            lease = await stream("turn-3", "abstained")
+            await service.complete_evidence(
+                "chat-1",
+                "turn-3",
+                evidence("abstained"),
+                lease_token=lease,
+                terminal_event=("turn.abstained", {"state": "abstained"}),
+            )
+            await service.append("chat-1", "turn-4", "request-4", _input())
+            await stream("turn-4", "canceled")
+            await service.cancel("chat-1", "turn-4")
+            await service.append("chat-1", "turn-5", "request-5", _input())
+            await service.cancel("chat-1", "turn-5")
+
+            async with engine.connect() as connection:
+                stored = (
+                    await connection.execute(
+                        text(
+                            "SELECT turn_id,event_type,payload FROM chat_event "
+                            "ORDER BY stream_sequence"
+                        )
+                    )
+                ).all()
+            stored_types = [(row[0], row[1]) for row in stored]
+            assert stored_types.count(("turn-2", "answer.delta")) == 2
+            for turn_id, terminal in (
+                ("turn-2", "turn.failed"),
+                ("turn-3", "turn.abstained"),
+                ("turn-4", "conversation.turn.completed"),
+            ):
+                index = stored_types.index((turn_id, "answer.reset"))
+                assert stored_types[index + 1] == (turn_id, terminal)
+            assert ("turn-1", "answer.reset") not in stored_types
+            assert ("turn-5", "answer.reset") not in stored_types
+
+            loaded = (await service.load("chat-1")).events
+            after = await service.events_after("chat-1", 0)
+            for events in (loaded, after):
+                deltas = [
+                    (item.turn_id, item.payload["text"])
+                    for item in events
+                    if item.event_type == "answer.delta"
+                ]
+                assert deltas == [("turn-1", "kept")]
+                assert [item.sequence for item in events] == sorted(
+                    item.sequence for item in events
+                )
+                resets = [
+                    (item.turn_id, dict(item.payload))
+                    for item in events
+                    if item.event_type == "answer.reset"
+                ]
+                assert resets == [
+                    ("turn-2", {"attempt": 1}),
+                    ("turn-3", {"attempt": 1}),
+                    ("turn-4", {"attempt": 1}),
+                ]
+            assert len(loaded) == len(stored) - 4
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
