@@ -2022,7 +2022,8 @@ describe("Tap product workspace interactions", () => {
     } finally {
       style.remove();
     }
-  });
+    // Typing and sending seven questions exceeds the 5s default under full-suite load.
+  }, 15_000);
 
   it("keeps a long question minimap inside a viewport-sized window", async () => {
     const originalInnerHeight = Object.getOwnPropertyDescriptor(
