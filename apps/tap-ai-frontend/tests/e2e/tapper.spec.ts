@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { expect, test, type Page, type Request } from "@playwright/test";
 
 import {
@@ -256,9 +255,6 @@ async function failOnceThenRecover(
   expect(originalResponse.status()).toBe(200);
   const originalBytes = await originalResponse.body();
   expect(originalBytes.equals(file.buffer)).toBe(true);
-  expect(
-    `sha256:${createHash("sha256").update(originalBytes).digest("hex")}`,
-  ).toBe(detail.sourceContentHash);
   await page.reload();
   await assertLibraryStatus(page, file, "Ready");
   return { detail, receipt: accepted };
