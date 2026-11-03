@@ -708,7 +708,8 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
         documents = MysqlDocumentRepository(
             sessions, scope=VALIDATION_SCOPE, audit_factory=lambda _: None
         )
-        authority = PublishedKnowledgeAuthority(review)
+        # Frozen after every publication change so expiry never tracks wall time.
+        authority = PublishedKnowledgeAuthority(review, now=lambda: NOW + timedelta(seconds=2))
 
         class Knowledge(KnowledgeHttpService):
             calls = 0
