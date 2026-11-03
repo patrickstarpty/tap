@@ -7,7 +7,11 @@ from tap.interfaces.http.app import create_app
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.graph.application.cache import CachedSnapshotIndexes
-from tap.modules.graph.application.overview import GraphOverviewService, PublishedSource
+from tap.modules.graph.application.overview import (
+    GraphOverviewService,
+    PublishedSource,
+    PublishedSourceListing,
+)
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.models import (
     Evidence,
@@ -63,9 +67,12 @@ def _draft(snapshot_id: str, revision: str) -> GraphSnapshotDraft:
 
 class Sources:
     async def published_source_revisions(self, scope):
-        return (
-            PublishedSource("source-a", "revision-a"),
-            PublishedSource("source-b", "revision-b"),
+        return PublishedSourceListing(
+            (
+                PublishedSource("source-a", "revision-a"),
+                PublishedSource("source-b", "revision-b"),
+            ),
+            truncated=False,
         )
 
 
@@ -92,7 +99,11 @@ def test_graph_overview_merges_published_sources():
     body = response.json()
     assert set(body) == {"nodes", "edges", "stats", "snapshotIds"}
     assert body["snapshotIds"] == ["snapshot-a", "snapshot-b"]
-    assert body["stats"] == {"sourceCount": 2, "nodeTypeCounts": {"ENTITY": 1, "SYSTEM": 1}}
+    assert body["stats"] == {
+        "sourceCount": 2,
+        "nodeTypeCounts": {"ENTITY": 1, "SYSTEM": 1},
+        "truncated": False,
+    }
     login = next(node for node in body["nodes"] if node["nodeType"] == "ENTITY")
     assert set(login) == {"overviewNodeId", "label", "nodeType", "degree", "members"}
     assert login["members"] == [

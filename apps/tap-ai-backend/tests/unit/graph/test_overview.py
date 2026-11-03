@@ -6,6 +6,7 @@ from tap.modules.graph.application.overview import (
     GraphOverviewService,
     OverviewMember,
     PublishedSource,
+    PublishedSourceListing,
 )
 from tap.modules.graph.application.queries import InMemoryGraphStore
 from tap.modules.graph.domain.models import (
@@ -63,13 +64,14 @@ def _draft(
 
 
 class Sources:
-    def __init__(self, *items: PublishedSource) -> None:
+    def __init__(self, *items: PublishedSource, truncated: bool = False) -> None:
         self.items = items
+        self.truncated = truncated
         self.calls = 0
 
     async def published_source_revisions(self, scope):
         self.calls += 1
-        return self.items
+        return PublishedSourceListing(self.items, truncated=self.truncated)
 
 
 async def _store() -> InMemoryGraphStore:
@@ -239,20 +241,116 @@ async def test_overview_rejects_out_of_range_node_limits(limit):
 
 
 @pytest.mark.asyncio
+async def test_overview_reports_truncated_source_listing():
+    service = GraphOverviewService(
+        await _store(), Sources(*SOURCES, truncated=True), CachedSnapshotIndexes()
+    )
+    assert (await service.overview(VALIDATION_SCOPE)).truncated is True
+    untruncated = GraphOverviewService(await _store(), Sources(*SOURCES), CachedSnapshotIndexes())
+    assert (await untruncated.overview(VALIDATION_SCOPE)).truncated is False
+
+
+@pytest.mark.asyncio
+async def test_overview_bounds_concurrent_active_snapshot_lookups():
+    import asyncio
+
+    store = await _store()
+
+    class CountingStore:
+        def __init__(self) -> None:
+            self.in_flight = 0
+            self.peak = 0
+
+        async def active_snapshot(self, scope, source_ids):
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            self.in_flight -= 1
+            return await store.active_snapshot(scope, source_ids)
+
+        async def load_index(self, scope, snapshot):
+            return await store.load_index(scope, snapshot)
+
+    counting = CountingStore()
+    many = tuple(PublishedSource(f"source-{i}", f"revision-{i}") for i in range(40))
+    service = GraphOverviewService(counting, Sources(*SOURCES, *many), CachedSnapshotIndexes())
+    overview = await service.overview(VALIDATION_SCOPE)
+    assert overview.source_count == len(SOURCES)
+    assert 1 < counting.peak <= 8
+
+
+def _ready_revisions(count: int, *, flowchart: int | None = None):
+    from tap.modules.knowledge.adapters.mysql_ready_sources import ReadySourceRevision
+
+    return tuple(
+        ReadySourceRevision(
+            f"source-{i}", f"revision-{i}", "flow.png" if i == flowchart else f"doc-{i}.md"
+        )
+        for i in range(count)
+    )
+
+
+@pytest.mark.asyncio
+async def test_published_knowledge_sources_include_more_than_one_hundred_sources():
+    from tap.modules.knowledge.application.graph_sources import (
+        OVERVIEW_SOURCE_CAP,
+        PublishedKnowledgeGraphSources,
+    )
+
+    limits: list[int] = []
+
+    async def list_revisions(*, limit: int):
+        limits.append(limit)
+        return _ready_revisions(min(limit, 150))
+
+    listing = await PublishedKnowledgeGraphSources(
+        list_revisions, project_id=VALIDATION_SCOPE.project_id
+    ).published_source_revisions(VALIDATION_SCOPE)
+    assert OVERVIEW_SOURCE_CAP == 2000
+    assert limits == [OVERVIEW_SOURCE_CAP + 1]
+    assert len(listing.sources) == 150
+    assert listing.truncated is False
+
+
+@pytest.mark.asyncio
+async def test_published_knowledge_sources_flag_truncation_and_gate_flowcharts(caplog):
+    from types import SimpleNamespace
+
+    from tap.modules.knowledge.application.graph_sources import PublishedKnowledgeGraphSources
+
+    async def list_revisions(*, limit: int):
+        return _ready_revisions(min(limit, 10), flowchart=1)
+
+    class Gate:
+        async def current(self, project_id):
+            return SimpleNamespace(source_revision_ids=("revision-9",))
+
+    with caplog.at_level("WARNING"):
+        listing = await PublishedKnowledgeGraphSources(
+            list_revisions, project_id=VALIDATION_SCOPE.project_id, cap=3, gate=Gate()
+        ).published_source_revisions(VALIDATION_SCOPE)
+    assert listing.truncated is True
+    assert listing.sources == (
+        PublishedSource("source-0", "revision-0"),
+        PublishedSource("source-2", "revision-2"),
+    )
+    assert "truncated" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_published_knowledge_sources_skip_denied_and_foreign_projects():
     from types import SimpleNamespace
 
     from tap.modules.access.domain.policy import AuthorizationDenied
     from tap.modules.knowledge.application.graph_sources import PublishedKnowledgeGraphSources
 
-    async def list_sources():
-        return SimpleNamespace(
-            items=[
-                SimpleNamespace(source_id="source-a", revision_id="revision-a"),
-                SimpleNamespace(source_id="source-a", revision_id="revision-a"),
-                SimpleNamespace(source_id="source-b", revision_id="revision-b"),
-            ]
-        )
+    async def list_sources(*, limit: int):
+        return [
+            SimpleNamespace(source_id="source-a", revision_id="revision-a", filename="a.md"),
+            SimpleNamespace(source_id="source-a", revision_id="revision-a", filename="a.md"),
+            SimpleNamespace(source_id="source-b", revision_id="revision-b", filename="b.md"),
+        ]
 
     class Authority:
         async def authorize_selection(self, project_id, revisions):
@@ -262,8 +360,8 @@ async def test_published_knowledge_sources_skip_denied_and_foreign_projects():
     sources = PublishedKnowledgeGraphSources(
         list_sources, project_id=VALIDATION_SCOPE.project_id, authority=Authority()
     )
-    assert await sources.published_source_revisions(VALIDATION_SCOPE) == (
+    assert (await sources.published_source_revisions(VALIDATION_SCOPE)).sources == (
         PublishedSource("source-a", "revision-a"),
     )
     foreign = PublishedKnowledgeGraphSources(list_sources, project_id="other-project")
-    assert await foreign.published_source_revisions(VALIDATION_SCOPE) == ()
+    assert (await foreign.published_source_revisions(VALIDATION_SCOPE)).sources == ()

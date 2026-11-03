@@ -2584,11 +2584,16 @@
           "sourceCount": {
             "title": "Sourcecount",
             "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
           "sourceCount",
-          "nodeTypeCounts"
+          "nodeTypeCounts",
+          "truncated"
         ],
         "title": "GraphOverviewStatsView",
         "type": "object"

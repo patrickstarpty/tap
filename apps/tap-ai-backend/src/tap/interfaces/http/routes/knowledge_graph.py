@@ -177,6 +177,7 @@ async def domain_overview(request: Request, body: GraphOverviewRequest) -> Graph
         stats=GraphOverviewStatsView(
             source_count=overview.source_count,
             node_type_counts=dict(overview.node_type_counts),
+            truncated=overview.truncated,
         ),
         snapshot_ids=list(overview.snapshot_ids),
     )

@@ -1288,6 +1288,7 @@ class GraphOverviewEdgeView(ContractModel):
 class GraphOverviewStatsView(ContractModel):
     source_count: int
     node_type_counts: dict[str, int]
+    truncated: bool
 
 
 class GraphOverviewView(ContractModel):

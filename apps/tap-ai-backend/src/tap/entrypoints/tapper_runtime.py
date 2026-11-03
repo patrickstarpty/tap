@@ -1646,12 +1646,9 @@ def _assemble_http_services(
             graph_overview = GraphOverviewService(
                 graph,
                 PublishedKnowledgeGraphSources(
-                    _gated_ready_sources(
-                        OverviewReadySources(review_sessions, repository.scope).list_sources,
-                        flowchart_gate,
-                        repository.scope.project_id,
-                    ),
+                    OverviewReadySources(review_sessions, repository.scope).list_revisions,
                     project_id=repository.scope.project_id,
+                    gate=flowchart_gate,
                     authority=publication_authority,
                 ),
                 indexes,

@@ -20,6 +20,7 @@ from tap.platform.telemetry import span
 
 MAX_OVERVIEW_NODES = 300
 _RESULT_CACHE_SIZE = 64
+_SNAPSHOT_LOOKUP_CONCURRENCY = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,10 +29,16 @@ class PublishedSource:
     source_revision_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class PublishedSourceListing:
+    sources: tuple[PublishedSource, ...]
+    truncated: bool = False
+
+
 class PublishedGraphSources(Protocol):
     async def published_source_revisions(
         self, scope: ProjectScopeContext
-    ) -> tuple[PublishedSource, ...]: ...
+    ) -> PublishedSourceListing: ...
 
 
 class OverviewGraphStore(Protocol):
@@ -75,6 +82,7 @@ class GraphOverview:
     node_type_counts: Mapping[str, int]
     source_count: int
     snapshot_ids: tuple[str, ...]
+    truncated: bool = False
 
 
 def _digest(*parts: str) -> str:
@@ -97,28 +105,35 @@ class GraphOverviewService:
         self._store = store
         self._sources = sources
         self._indexes = indexes
-        self._results: OrderedDict[tuple[str, tuple[str, ...], int], GraphOverview] = OrderedDict()
+        self._results: OrderedDict[tuple[str, tuple[str, ...], int, bool], GraphOverview] = (
+            OrderedDict()
+        )
 
     async def overview(self, scope: ProjectScopeContext, *, node_limit: int = 150) -> GraphOverview:
         if not 1 <= node_limit <= MAX_OVERVIEW_NODES:
             raise ValueError("overview node limit must be between 1 and 300")
         scope = require_project_scope(scope)
         with span("graph.overview") as current:
-            published = await self._sources.published_source_revisions(scope)
+            listing = await self._sources.published_source_revisions(scope)
+            published = listing.sources
+            lookups = asyncio.Semaphore(_SNAPSHOT_LOOKUP_CONCURRENCY)
+
+            async def active(revision_id: str) -> GraphSnapshot | None:
+                async with lookups:
+                    return await self._store.active_snapshot(scope, (revision_id,))
+
             snapshots = await asyncio.gather(
-                *(
-                    self._store.active_snapshot(scope, (item.source_revision_id,))
-                    for item in published
-                )
+                *(active(item.source_revision_id) for item in published)
             )
             selected: dict[str, tuple[GraphSnapshot, str]] = {}
             for item, snapshot in zip(published, snapshots, strict=True):
                 if snapshot is not None and snapshot.status == "READY":
                     selected.setdefault(snapshot.snapshot_id, (snapshot, item.source_id))
-            key = (scope.project_id, tuple(sorted(selected)), node_limit)
+            key = (scope.project_id, tuple(sorted(selected)), node_limit, listing.truncated)
             cached = self._results.get(key)
             current.set_attribute("tap.graph.overview_cache_hit", cached is not None)
             current.set_attribute("tap.graph.snapshot_count", len(selected))
+            current.set_attribute("tap.graph.overview_sources_truncated", listing.truncated)
             if cached is not None:
                 self._results.move_to_end(key)
                 return cached
@@ -130,14 +145,16 @@ class GraphOverviewService:
                     partial(self._store.load_index, scope, snapshot),
                 )
                 members.append((index, source_id))
-            result = _merge(members, node_limit)
+            result = _merge(members, node_limit, truncated=listing.truncated)
             self._results[key] = result
             while len(self._results) > _RESULT_CACHE_SIZE:
                 self._results.popitem(last=False)
             return result
 
 
-def _merge(indexes: list[tuple[SnapshotIndex, str]], node_limit: int) -> GraphOverview:
+def _merge(
+    indexes: list[tuple[SnapshotIndex, str]], node_limit: int, *, truncated: bool
+) -> GraphOverview:
     merged_of: dict[tuple[str, str], str] = {}
     node_types: dict[str, str] = {}
     labels: dict[str, Counter[str]] = {}
@@ -199,4 +216,5 @@ def _merge(indexes: list[tuple[SnapshotIndex, str]], node_limit: int) -> GraphOv
         node_type_counts=MappingProxyType(dict(sorted(Counter(node_types.values()).items()))),
         source_count=len({source_id for _, source_id in indexes}),
         snapshot_ids=tuple(index.snapshot.snapshot_id for index, _ in indexes),
+        truncated=truncated,
     )
