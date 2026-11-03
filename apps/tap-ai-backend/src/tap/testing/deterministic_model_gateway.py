@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import re
+import unicodedata
+from typing import Any, Literal
 
 import httpx
 
@@ -49,6 +51,82 @@ class StaticLiteLLMCatalog(LiteLLMCatalog):
         return None
 
 
+AnswerMode = Literal["first-sentence", "best-overlap"]
+
+_STOP_TERMS = frozenset(
+    {
+        "什么",
+        "哪些",
+        "哪个",
+        "多少",
+        "多久",
+        "如何",
+        "怎样",
+        "是否",
+        "需要",
+        "可以",
+        "the",
+        "is",
+        "are",
+        "what",
+        "how",
+        "does",
+        "do",
+        "of",
+        "in",
+        "to",
+        "an",
+    }
+)
+
+
+def overlap_terms(text: str) -> frozenset[str]:
+    """Lexical terms for deterministic matching: CJK bigrams and ASCII words."""
+
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    terms: set[str] = set()
+    for part in re.findall(r"[\u3400-\u9fff]+|[a-z0-9_]+", normalized):
+        if part[0] >= "\u3400":
+            terms.update(part[index : index + 2] for index in range(len(part) - 1))
+        elif len(part) > 1 or part.isdigit():
+            terms.add(part)
+    return frozenset(terms - _STOP_TERMS)
+
+
+def _sentences(content: str) -> list[str]:
+    sentences: list[str] = []
+    for line in content.splitlines():
+        start = 0
+        for index, character in enumerate(line):
+            if character in "。！？" or (
+                character in ".!?"
+                and (index + 1 == len(line) or line[index + 1].isspace())
+                and not (index > 0 and line[index - 1].isdigit())
+            ):
+                sentences.append(line[start : index + 1].strip())
+                start = index + 1
+        sentences.append(line[start:].strip())
+    return [sentence for sentence in sentences if sentence]
+
+
+def _best_overlap_answer(query: str, evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    """Cite the evidence sentence sharing the most terms with the query, or abstain."""
+
+    wanted = overlap_terms(query)
+    best: tuple[int, str, str] | None = None
+    for item in evidence:
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        for sentence in _sentences(content):
+            overlap = len(wanted & overlap_terms(sentence))
+            if best is None or overlap > best[0]:
+                best = (overlap, sentence, item["label"])
+    if best is None or best[0] < 2:
+        return {"answer": "", "claims": []}
+    return {"answer": best[1], "claims": [{"text": best[1], "evidenceLabels": [best[2]]}]}
+
+
 class DeterministicModelGateway(LiteLLMModelGateway):
     def __init__(
         self,
@@ -57,7 +135,11 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         scope: ProjectScopeContext,
         redact: Redact,
         recorder: ModelCallRecorder | None = None,
+        answer_mode: AnswerMode = "first-sentence",
     ) -> None:
+        if answer_mode not in ("first-sentence", "best-overlap"):
+            raise ValueError("unsupported deterministic answer mode")
+        self._answer_mode = answer_mode
         super().__init__(
             config,
             scope=scope,
@@ -120,6 +202,16 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     for source in data.get("sources", [])[:8]
                 ]
                 content = json.dumps({"suggestions": suggestions})
+            elif request.operation is ModelOperation.STRUCTURED and (
+                self._answer_mode == "best-overlap"
+            ):
+                try:
+                    answer_context = json.loads(request.context)
+                    query = str(answer_context.get("query", ""))
+                    evidence = list(answer_context.get("evidence", []))
+                except (ValueError, AttributeError, TypeError):
+                    query, evidence = "", []
+                content = json.dumps(_best_overlap_answer(query, evidence), ensure_ascii=False)
             elif request.operation is ModelOperation.STRUCTURED:
                 try:
                     evidence = json.loads(request.context).get("evidence", [])

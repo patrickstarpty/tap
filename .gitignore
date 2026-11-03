@@ -8,6 +8,7 @@
 .local/milvus-ci/
 .local/milvus-research/
 .local/quality-kb/
+apps/tap-ai-backend/.quality/
 .venv/
 .mypy_cache/
 node_modules/

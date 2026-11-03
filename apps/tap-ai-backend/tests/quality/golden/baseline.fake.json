@@ -1,0 +1,23 @@
+{
+  "abstain": {
+    "abstainAccuracy": 1.0
+  },
+  "fact": {
+    "abstainAccuracy": 1.0,
+    "answered": 1.0,
+    "citationRecall": 1.0,
+    "keywordRecall": 1.0
+  },
+  "procedure": {
+    "abstainAccuracy": 1.0,
+    "answered": 1.0,
+    "citationRecall": 1.0,
+    "keywordRecall": 0.8
+  },
+  "total": {
+    "abstainAccuracy": 1.0,
+    "answered": 1.0,
+    "citationRecall": 1.0,
+    "keywordRecall": 0.9444
+  }
+}
