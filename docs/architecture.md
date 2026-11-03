@@ -63,8 +63,10 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 1. 生成 worker 用 `IncrementalJsonField` 从模型流中抽取顶层 `answer` 字段增量，按 150ms 或 200 字符批量追加 `answer.delta` 事件（校验租约令牌）。
 2. Turn 被重新认领开始新 attempt 时，以及 Turn 以非完成终态结束前，写入 `answer.reset`；被撤回的增量不再出现在读取结果中。
-3. 事件事务提交后经 `ConversationEventNotifier` 发布通知：Redis 适配器使用 Pub/Sub 频道 `tap:chat:{project_id}:{chat_id}`，内存适配器供测试使用；发布失败只告警。
-4. SSE 循环读取新事件下发，会话无运行中 Turn 且已追平时结束；否则等待通知最长 15 秒，超时发送 `: keepalive` 并重新读库（通知丢失的兜底）。单连接最长 10 分钟，客户端凭 `Last-Event-ID` 续接。
+3. 事件事务提交后经 `ConversationEventNotifier` 发布通知：Redis 适配器使用 Pub/Sub 频道 `tap:chat:{project_id}:{chat_id}`，内存适配器供测试使用；发布失败只告警。对话事件与测试方案生成事件（`test-plan.generation.*`）的写入都会发布。
+4. SSE 循环读取新事件下发，会话无运行中 Turn 且已追平时结束；否则等待通知最长 15 秒，超时发送 `: keepalive` 并重新读库（通知丢失的兜底）。Redis 不可用时订阅失败会先退避（最长 1 秒，不超过本次等待剩余时间）再重新读库，不会空转查询数据库。单连接最长 10 分钟，客户端凭 `Last-Event-ID` 续接。
+5. 已知限制：读库之后、Pub/Sub 订阅真正生效之前提交的事件，其通知可能丢失；该事件最迟在 15 秒兜底重新读库时下发。
+6. 增量持久化是尽力而为：写入 `answer.delta` 遇到任何错误时记录告警并停止本 Turn 后续增量，回答本身仍正常完成并以持久化结果替换临时文本。
 
 **图谱**
 
