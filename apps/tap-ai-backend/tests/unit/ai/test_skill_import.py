@@ -120,6 +120,10 @@ def test_missing_front_matter_is_rejected() -> None:
         b"name: a\ndescription: b\nx: " + b"{a: " * 5000 + b"1" + b"}" * 5000,
         b"name: a\ndescription: b\nx: " + b"[" * 40 + b"]" * 40,
         b"name: a\ndescription: b\nx: " + b"9" * 5000,
+        b'name: a\ndescription: b\nx: "\\ud800"',
+        b'name: a\ndescription: b\n"\\udfff": x',
+        b'name: a\ndescription: b\nmetadata: {list: [ok, "\\ud800"]}',
+        b'name: a\ndescription: b\nmetadata: {nested: {"\\ud800": x}}',
     ],
 )
 def test_unsafe_or_malformed_front_matter_is_rejected(front_matter: bytes) -> None:

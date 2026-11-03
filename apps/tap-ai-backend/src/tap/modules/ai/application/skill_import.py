@@ -26,7 +26,7 @@ from tap.modules.ai.domain.assets import (
 MAX_SKILL_NAME_LENGTH = 64
 _MAX_FRONT_MATTER_DEPTH = 16
 _MAX_COMPOSE_DEPTH = 32
-# JSON-safe signed 64-bit bound; larger ints break json.dumps (int str conversion limit).
+# JSON-safe magnitude below 2**63; larger ints break json.dumps (int str conversion limit).
 _MAX_INT_BITS = 63
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _FRONT_MATTER = re.compile(r"---[ \t]*\r?\n(?:(.*?)\r?\n)?---[ \t]*(?:\r?\n|\Z)(.*)\Z", re.DOTALL)
@@ -93,10 +93,21 @@ class _InertLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
+def _utf8_encodable(value: str) -> str:
+    # YAML escapes such as "\ud800" yield lone surrogates that fail the later UTF-8 write.
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise SkillImportRejected("skill-front-matter-invalid") from error
+    return value
+
+
 def _plain(value: object, depth: int = 0) -> object:
     if depth > _MAX_FRONT_MATTER_DEPTH:
         raise SkillImportRejected("skill-front-matter-invalid")
-    if value is None or isinstance(value, bool | str):
+    if isinstance(value, str):
+        return _utf8_encodable(value)
+    if value is None or isinstance(value, bool):
         return value
     if isinstance(value, int):
         if value.bit_length() > _MAX_INT_BITS:
@@ -113,7 +124,7 @@ def _plain(value: object, depth: int = 0) -> object:
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
             raise SkillImportRejected("skill-front-matter-invalid")
-        return {key: _plain(item, depth + 1) for key, item in value.items()}
+        return {_utf8_encodable(key): _plain(item, depth + 1) for key, item in value.items()}
     raise SkillImportRejected("skill-front-matter-invalid")
 
 
