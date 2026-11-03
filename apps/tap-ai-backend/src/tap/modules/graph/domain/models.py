@@ -28,6 +28,10 @@ def source_set_digest(source_revision_ids: tuple[str, ...]) -> str:
     return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
 
 
+class GraphFactNotFound(LookupError):
+    pass
+
+
 class RelationOrigin(StrEnum):
     EXTRACTED = "EXTRACTED"
     INFERRED = "INFERRED"

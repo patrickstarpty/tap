@@ -12,10 +12,7 @@ from tap.modules.graph.domain.models import (
     NeighborQuery,
     PathQuery,
 )
-
-
-class GraphFactNotFound(LookupError):
-    pass
+from tap.modules.graph.domain.models import GraphFactNotFound as GraphFactNotFound
 
 
 class GraphStorePort(Protocol):
