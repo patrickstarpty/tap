@@ -25,7 +25,8 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.graph.application.queries import InMemoryGraphStore
+from tap.modules.graph.application.cache import CachedSnapshotIndexes
+from tap.modules.graph.domain.index import SnapshotIndex
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
@@ -415,8 +416,14 @@ async def publish_graph_snapshot(
 
 
 class MysqlGraphStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        indexes: CachedSnapshotIndexes | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._indexes = indexes if indexes is not None else CachedSnapshotIndexes()
 
     async def publish(self, scope: ProjectScopeContext, draft: GraphSnapshotDraft) -> GraphSnapshot:
         scope = require_project_scope(scope)
@@ -476,7 +483,7 @@ class MysqlGraphStore:
             )
         return None if row is None else _snapshot(row)
 
-    async def _memory(self, scope: ProjectScopeContext, snapshot_id: str) -> InMemoryGraphStore:
+    async def _index(self, scope: ProjectScopeContext, snapshot_id: str) -> SnapshotIndex:
         scope = require_project_scope(scope)
         async with self._sessions() as session:
             snapshot_row = (
@@ -491,8 +498,22 @@ class MysqlGraphStore:
                 .mappings()
                 .one_or_none()
             )
-            if snapshot_row is None:
-                raise GraphFactNotFound("graph snapshot not found")
+        if snapshot_row is None:
+            raise GraphFactNotFound("graph snapshot not found")
+        snapshot = _snapshot(snapshot_row)
+
+        async def load() -> SnapshotIndex:
+            return await self._load_index(scope, snapshot)
+
+        if snapshot.status != "READY":
+            return await load()
+        return await self._indexes.get_or_load((scope.project_id, snapshot_id), load)
+
+    async def _load_index(
+        self, scope: ProjectScopeContext, snapshot: GraphSnapshot
+    ) -> SnapshotIndex:
+        snapshot_id = snapshot.snapshot_id
+        async with self._sessions() as session:
             node_rows = (
                 (
                     await session.execute(
@@ -574,7 +595,7 @@ class MysqlGraphStore:
         for row in node_evidence_rows:
             by_node.setdefault(cast(str, row["node_id"]), []).append(cast(str, row["evidence_id"]))
         draft = GraphSnapshotDraft(
-            _snapshot(snapshot_row),
+            snapshot,
             tuple(
                 GraphNode(
                     row["node_id"],
@@ -611,34 +632,26 @@ class MysqlGraphStore:
                 for row in provenance_rows
             ),
         )
-        memory = InMemoryGraphStore()
-        await memory.publish(
-            scope, replace(draft, snapshot=replace(draft.snapshot, status="CANDIDATE"))
-        )
-        return memory
+        return SnapshotIndex.build(draft)
 
     async def search(self, scope: ProjectScopeContext, query: GraphSearchQuery) -> GraphSubgraph:
-        return await (await self._memory(scope, query.snapshot_id)).search(scope, query)
+        return (await self._index(scope, query.snapshot_id)).search(query)
 
     async def node_detail(
         self, scope: ProjectScopeContext, snapshot_id: str, node_id: str
     ) -> GraphSubgraph:
-        return await (await self._memory(scope, snapshot_id)).node_detail(
-            scope, snapshot_id, node_id
-        )
+        return (await self._index(scope, snapshot_id)).node_detail(node_id)
 
     async def evidence(
         self, scope: ProjectScopeContext, snapshot_id: str, evidence_id: str
     ) -> Evidence:
-        return await (await self._memory(scope, snapshot_id)).evidence(
-            scope, snapshot_id, evidence_id
-        )
+        return (await self._index(scope, snapshot_id)).evidence_detail(evidence_id)
 
     async def neighbors(self, scope: ProjectScopeContext, query: NeighborQuery) -> GraphSubgraph:
-        return await (await self._memory(scope, query.snapshot_id)).neighbors(scope, query)
+        return (await self._index(scope, query.snapshot_id)).neighbors(query)
 
     async def bounded_path(self, scope: ProjectScopeContext, query: PathQuery) -> GraphSubgraph:
-        return await (await self._memory(scope, query.snapshot_id)).bounded_path(scope, query)
+        return (await self._index(scope, query.snapshot_id)).bounded_path(query)
 
 
 def _snapshot(row) -> GraphSnapshot:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import io
 import json
 import logging
@@ -1155,6 +1156,31 @@ def test_review_graph_uses_configured_isolated_parser() -> None:
     parser = services.knowledge_reviews._application._parser
     assert isinstance(parser, IsolatedParser)
     assert parser.socket_path == "/tmp/tap-review-parser.sock"
+
+
+def test_graph_store_uses_the_process_snapshot_index_cache() -> None:
+    from tap.modules.graph.adapters.mysql import MysqlGraphStore
+    from tap.modules.graph.application.cache import CachedSnapshotIndexes
+
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    indexes = CachedSnapshotIndexes()
+    services = module._assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=module._create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        graph_sessions=object(),
+        graph_indexes=indexes,
+    )
+
+    assert isinstance(services.graph, MysqlGraphStore)
+    assert services.graph._indexes is indexes
+    assert "graph_indexes=CachedSnapshotIndexes()" in inspect.getsource(module.create_api_runtime)
 
 
 def test_runtime_has_no_legacy_combined_model_factory() -> None:

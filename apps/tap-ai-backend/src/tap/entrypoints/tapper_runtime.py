@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
     from tap.modules.chat.application.notifier import ConversationEventNotifier
     from tap.modules.governance.ports.audit import ProjectAuditPort
+    from tap.modules.graph.application.cache import CachedSnapshotIndexes
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
         MilvusSearchConfig,
@@ -683,6 +684,8 @@ async def create_api_runtime(
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
+        from tap.modules.graph.application.cache import CachedSnapshotIndexes
+
         engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
@@ -740,6 +743,7 @@ async def create_api_runtime(
             asset_catalog=asset_catalog,
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            graph_indexes=CachedSnapshotIndexes(),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             parser_socket=settings.parser_socket,
@@ -1528,6 +1532,7 @@ def _assemble_http_services(
     asset_catalog: object | None = None,
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
+    graph_indexes: CachedSnapshotIndexes | None = None,
     test_plan_sessions: object | None = None,
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
     parser_socket: str | None = None,
@@ -1624,7 +1629,7 @@ def _assemble_http_services(
         from tap.modules.graph.adapters.mysql import MysqlGraphStore
         from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
-        graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
+        graph = MysqlGraphStore(graph_sessions, indexes=graph_indexes)  # type: ignore[arg-type]
         graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
     test_plans = None
     if test_plan_sessions is not None:
