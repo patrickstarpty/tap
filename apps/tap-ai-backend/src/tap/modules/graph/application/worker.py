@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.graph.application.jobs import GraphJobStore
 from tap.modules.graph.domain.extraction import GraphExtractionRequest
 from tap.modules.graph.ports.extraction import GraphExtractionPort
@@ -83,12 +84,12 @@ class GraphWorker:
                     draft = await self._extractor.extract(request)
                     await self._jobs.complete(self._scope, claim, draft, now=self._now())
                     ready += 1
-                except Exception:
+                except Exception as error:
                     try:
                         await self._jobs.fail(
                             self._scope,
                             claim,
-                            failure_code="graph-extraction-failed",
+                            failure_code=_failure_code(error),
                             now=self._now(),
                         )
                         failed += 1
@@ -97,3 +98,11 @@ class GraphWorker:
         if claims:
             await flush_traces()
         return GraphWorkerRun(len(claims), ready, failed, lease_lost)
+
+
+def _failure_code(error: Exception) -> str:
+    if isinstance(error, ModelGatewayUnavailable):
+        return "model-unavailable"
+    if isinstance(error, TimeoutError):
+        return "model-timeout"
+    return "graph-extraction-failed"

@@ -31,6 +31,7 @@ from tap.modules.graph.adapters.mysql import (
     publish_graph_snapshot,
 )
 from tap.modules.graph.domain.jobs import (
+    TRANSIENT_GRAPH_FAILURES,
     ClaimedGraphJob,
     GraphJob,
     GraphJobLeaseLost,
@@ -40,11 +41,18 @@ from tap.modules.graph.domain.jobs import (
 from tap.modules.graph.domain.models import GraphSnapshot, GraphSnapshotDraft
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
+from tap.platform.retry import RetryPolicy
 
 
 class MysqlGraphJobStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        retry_policy: RetryPolicy = RetryPolicy(),
+    ) -> None:
         self._sessions = sessions
+        self._retry_policy = retry_policy
 
     async def request(
         self, scope: ProjectScopeContext, request: GraphJobRequest, *, now: datetime
@@ -148,7 +156,11 @@ class MysqlGraphJobStore:
                         .where(
                             *scope_predicates(graph_extraction_job, scope),
                             or_(
-                                graph_extraction_job.c.status == GraphJobStatus.PENDING.value,
+                                (graph_extraction_job.c.status == GraphJobStatus.PENDING.value)
+                                & or_(
+                                    graph_extraction_job.c.next_attempt_at.is_(None),
+                                    graph_extraction_job.c.next_attempt_at <= now,
+                                ),
                                 (graph_extraction_job.c.status == GraphJobStatus.RUNNING.value)
                                 & (graph_extraction_job.c.lease_expires_at <= now),
                             ),
@@ -162,6 +174,11 @@ class MysqlGraphJobStore:
                 .all()
             )
             for row in rows:
+                if self._retry_policy.is_exhausted(cast(int, row["attempt_count"])):
+                    await self._mark_failed(
+                        session, scope, dict(row), failure_code="attempts-exhausted", now=now
+                    )
+                    continue
                 token = uuid4().hex
                 expires = now + lease_duration
                 await session.execute(
@@ -289,50 +306,98 @@ class MysqlGraphJobStore:
             raise ValueError("graph failure code must be bounded")
         async with self._sessions() as session, session.begin():
             row = await self._owned_row(session, scope, claim, now)
-            current = await self._job(session, scope, row)
-            await session.execute(
-                update(graph_snapshot)
-                .where(
-                    *scope_predicates(graph_snapshot, scope),
-                    graph_snapshot.c.snapshot_id == claim.snapshot.snapshot_id,
-                    graph_snapshot.c.status == "CANDIDATE",
+            attempt_count = cast(int, row["attempt_count"])
+            if failure_code in TRANSIENT_GRAPH_FAILURES and not self._retry_policy.is_exhausted(
+                attempt_count
+            ):
+                current = await self._job(session, scope, row)
+                result = await session.execute(
+                    update(graph_extraction_job)
+                    .where(
+                        *scope_predicates(graph_extraction_job, scope),
+                        graph_extraction_job.c.job_id == claim.job_id,
+                        graph_extraction_job.c.lease_token == claim.lease_token,
+                    )
+                    .values(
+                        status=GraphJobStatus.PENDING.value,
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_expires_at=None,
+                        next_attempt_at=now + self._retry_policy.next_delay(max(attempt_count, 1)),
+                        failure_code=failure_code,
+                        updated_at=now,
+                    )
                 )
-                .values(status="FAILED")
-            )
-            result = await session.execute(
-                update(graph_extraction_job)
-                .where(
-                    *scope_predicates(graph_extraction_job, scope),
-                    graph_extraction_job.c.job_id == claim.job_id,
-                    graph_extraction_job.c.lease_token == claim.lease_token,
-                )
-                .values(
-                    status=GraphJobStatus.FAILED.value,
-                    lease_owner=None,
-                    lease_token=None,
-                    lease_expires_at=None,
-                    failure_code=failure_code,
+                if result.rowcount != 1:
+                    raise GraphJobLeaseLost(claim.job_id)
+                return replace(
+                    current,
+                    status=GraphJobStatus.PENDING,
                     updated_at=now,
+                    failure_code=failure_code,
                 )
+            failed = await self._mark_failed(
+                session, scope, row, failure_code=failure_code, now=now
             )
-            if result.rowcount != 1:
+            if failed is None:
                 raise GraphJobLeaseLost(claim.job_id)
-            failed = replace(
-                current,
-                snapshot=replace(current.snapshot, status="FAILED"),
-                status=GraphJobStatus.FAILED,
-                updated_at=now,
-                failure_code=failure_code,
-            )
-            await self._append_audit(
-                session,
-                scope,
-                failed,
-                AuditAction.GRAPH_SNAPSHOT_FAILED,
-                failed.request_digest,
-                key=f"{failed.job_id}:failed",
-            )
             return failed
+
+    async def _mark_failed(
+        self,
+        session: AsyncSession,
+        scope: ProjectScopeContext,
+        row: Mapping[str, object],
+        *,
+        failure_code: str,
+        now: datetime,
+    ) -> GraphJob | None:
+        current = await self._job(session, scope, row)
+        await session.execute(
+            update(graph_snapshot)
+            .where(
+                *scope_predicates(graph_snapshot, scope),
+                graph_snapshot.c.snapshot_id == current.snapshot.snapshot_id,
+                graph_snapshot.c.status == "CANDIDATE",
+            )
+            .values(status="FAILED")
+        )
+        result = await session.execute(
+            update(graph_extraction_job)
+            .where(
+                *scope_predicates(graph_extraction_job, scope),
+                graph_extraction_job.c.job_id == current.job_id,
+                graph_extraction_job.c.lease_token.is_(None)
+                if row["lease_token"] is None
+                else graph_extraction_job.c.lease_token == row["lease_token"],
+            )
+            .values(
+                status=GraphJobStatus.FAILED.value,
+                lease_owner=None,
+                lease_token=None,
+                lease_expires_at=None,
+                failure_code=failure_code,
+                updated_at=now,
+            )
+        )
+        if result.rowcount != 1:
+            return None
+        failed = replace(
+            current,
+            snapshot=replace(current.snapshot, status="FAILED"),
+            status=GraphJobStatus.FAILED,
+            updated_at=now,
+            failure_code=failure_code,
+        )
+        await self._append_audit(
+            session,
+            scope,
+            failed,
+            AuditAction.GRAPH_SNAPSHOT_FAILED,
+            failed.request_digest,
+            key=f"{failed.job_id}:failed",
+        )
+        return failed
 
     async def _owned_row(
         self,

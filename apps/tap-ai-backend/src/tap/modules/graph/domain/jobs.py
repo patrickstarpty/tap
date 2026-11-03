@@ -14,6 +14,7 @@ from tap.modules.graph.domain.models import GraphSnapshot
 from tap.platform.db.project_scope import require_project_scope
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+TRANSIENT_GRAPH_FAILURES = frozenset({"model-unavailable", "model-timeout"})
 
 
 class GraphJobStatus(StrEnum):

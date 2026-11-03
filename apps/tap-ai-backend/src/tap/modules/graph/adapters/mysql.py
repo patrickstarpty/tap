@@ -233,6 +233,7 @@ graph_extraction_job = _scoped(
     Column("failure_code", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("updated_at", DATETIME(fsp=6), nullable=False),
+    Column("next_attempt_at", DATETIME(fsp=6)),
     uniques=((("request_digest",), "uq_graph_extraction_request"),),
     parents=(
         (("snapshot_id",), "graph_snapshot", ("snapshot_id",), "fk_graph_extraction_snapshot"),
