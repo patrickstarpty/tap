@@ -532,7 +532,10 @@ def test_signal_removal_attempts_both_handlers_in_reverse_and_aggregates(
 
 @pytest.mark.asyncio
 async def test_lifecycle_attempts_every_cleanup_and_preserves_all_errors() -> None:
-    """A handler or late resource failure cannot strand earlier runtime resources."""
+    """A handler or late resource failure cannot strand earlier runtime resources.
+
+    Iteration failures are absorbed by the worker loop; only lifecycle errors escape.
+    """
 
     events: list[str] = []
     resources = (
@@ -574,7 +577,7 @@ async def test_lifecycle_attempts_every_cleanup_and_preserves_all_errors() -> No
         "close:first",
     ]
     errors = tuple(str(error) for error in captured.value.exceptions)
-    assert errors == ("worker-failed", "remove-handlers-failed", "close-failed:middle")
+    assert errors == ("remove-handlers-failed", "close-failed:middle")
 
 
 @pytest.mark.asyncio

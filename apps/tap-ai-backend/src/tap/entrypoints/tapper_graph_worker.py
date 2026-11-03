@@ -17,7 +17,9 @@ def main(environment: Mapping[str, str] | None = None) -> None:
     values = dict(os.environ) if environment is None else dict(environment)
     settings = TapperSettings.from_mapping(values)
     start_tracing("tap-ai-worker-graph", settings)
-    asyncio.run(run(runtime_factory=create_graph_worker_runtime, settings=settings))
+    asyncio.run(
+        run(runtime_factory=create_graph_worker_runtime, settings=settings, worker_name="graph")
+    )
 
 
 def cli(environment: Mapping[str, str] | None = None) -> int:

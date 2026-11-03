@@ -54,6 +54,7 @@ from tap.platform.telemetry import (
     flush_traces,
     span,
 )
+from tap.platform.worker_loop import run_worker_loop
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -653,14 +654,18 @@ async def main() -> None:
             loop.add_signal_handler(event, stop.set)
         except NotImplementedError:
             pass
+
+    async def iteration() -> bool:
+        return await worker.run_once(limit=settings.job_batch_size) != 0
+
+    async def idle_wait() -> None:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
+        except TimeoutError:
+            pass
+
     try:
-        while not stop.is_set():
-            processed = await worker.run_once(limit=settings.job_batch_size)
-            if processed == 0:
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
-                except TimeoutError:
-                    pass
+        await run_worker_loop("generation", iteration, idle_wait=idle_wait, stop=stop)
     finally:
         await runtime.aclose()
 

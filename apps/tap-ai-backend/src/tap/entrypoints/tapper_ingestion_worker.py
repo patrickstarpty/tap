@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.platform.messaging.redis_wakeup import WakeupConsumer
+from tap.platform.worker_loop import run_worker_loop as platform_worker_loop
 
 if TYPE_CHECKING:
     from tap.entrypoints.tapper_runtime import TapperSettings
@@ -83,36 +84,54 @@ async def run_worker_loop(
     stop: asyncio.Event,
     max_iterations: int | None = None,
     pending_work: Callable[..., Awaitable[int]] | None = None,
+    name: str = "ingestion",
 ) -> None:
     if max_iterations is not None and (type(max_iterations) is not int or max_iterations < 1):
         raise ValueError("max_iterations must be positive")
     iterations = 0
-    while not stop.is_set():
-        wakeup_failed = False
+
+    async def iteration() -> bool:
+        """Wait for a Redis wakeup (bounded by the poll interval), then scan and ACK.
+
+        Returns False only when Redis is unavailable so ``idle_wait`` keeps polling.
+        """
+
+        nonlocal iterations
         try:
-            wakeup = await wakeups.wait(
-                max_wait_seconds=min(settings.poll_seconds, settings.wakeup_seconds)
-            )
-        except Exception:
-            wakeup = None
-            wakeup_failed = True
-        if stop.is_set():
-            break
-        await worker.run_once(limit=settings.job_batch_size)
-        if pending_work is not None:
-            await pending_work(limit=settings.job_batch_size)
-        if wakeup is not None:
-            await wakeups.ack(wakeup)
-        if wakeup_failed:
             try:
-                await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
-            except TimeoutError:
-                pass
-        if stop.is_set():
-            break
-        iterations += 1
-        if max_iterations is not None and iterations >= max_iterations:
-            return
+                wakeup = await wakeups.wait(
+                    max_wait_seconds=min(settings.poll_seconds, settings.wakeup_seconds)
+                )
+            except Exception:
+                wakeup = None
+                wakeup_failed = True
+            else:
+                wakeup_failed = False
+            if stop.is_set():
+                return True
+            await worker.run_once(limit=settings.job_batch_size)
+            if pending_work is not None:
+                await pending_work(limit=settings.job_batch_size)
+            if wakeup is not None:
+                await wakeups.ack(wakeup)
+            return not wakeup_failed
+        finally:
+            iterations += 1
+            if max_iterations is not None and iterations >= max_iterations:
+                stop.set()
+
+    async def idle_wait() -> None:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.poll_seconds)
+        except TimeoutError:
+            pass
+
+    await platform_worker_loop(
+        name,
+        iteration,
+        idle_wait=idle_wait,
+        stop=stop,
+    )
 
 
 def install_signal_handlers(stop: asyncio.Event) -> Callable[[], None]:
@@ -152,6 +171,7 @@ async def run(
     settings: TapperSettings,
     signal_installer: SignalInstaller = install_signal_handlers,
     max_iterations: int | None = None,
+    worker_name: str = "ingestion",
 ) -> None:
     """Own one complete worker process lifecycle around an injected composition root."""
 
@@ -169,6 +189,7 @@ async def run(
             stop=stop,
             max_iterations=max_iterations,
             pending_work=runtime.pending_work,
+            name=worker_name,
         )
     except BaseException as error:
         errors.append(error)
