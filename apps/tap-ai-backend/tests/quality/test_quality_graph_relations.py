@@ -1162,6 +1162,10 @@ async def test_fake_pipeline_emits_edge_citations_for_the_fixture_pair():
 
 
 def test_real_mode_refuses_fake_extraction_mode(monkeypatch):
+    from tests.object_settings import S3_SETTINGS
+
+    for name, value in S3_SETTINGS.items():
+        monkeypatch.setenv(name, value)
     monkeypatch.setenv("TAPPER_GRAPH_EXTRACTION_MODE", "fake")
     with pytest.raises(ValueError, match="TAPPER_GRAPH_EXTRACTION_MODE=model"):
         asyncio.run(
@@ -1175,6 +1179,10 @@ def test_main_prints_a_clean_message_and_exits_2_on_real_mode_refusal(
     """`main()` must catch the real-mode refusal `run_real` raises (here,
     `TAPPER_GRAPH_EXTRACTION_MODE` left at its "fake" default) and exit 2 with a clean
     `error: ...` message, instead of letting it propagate as an uncaught traceback."""
+    from tests.object_settings import S3_SETTINGS
+
+    for name, value in S3_SETTINGS.items():
+        monkeypatch.setenv(name, value)
     monkeypatch.delenv("TAPPER_GRAPH_EXTRACTION_MODE", raising=False)
     monkeypatch.setattr(
         sys,
