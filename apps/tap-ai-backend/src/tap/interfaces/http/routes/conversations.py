@@ -27,7 +27,12 @@ from tap.contracts.http import (
     TurnTrace,
 )
 from tap.interfaces.http.conversation_selection import freeze_conversation_selection
-from tap.interfaces.http.dependencies import conversation_service, knowledge_service, trace_service
+from tap.interfaces.http.dependencies import (
+    conversation_service,
+    knowledge_service,
+    tool_registry_service,
+    trace_service,
+)
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
@@ -40,6 +45,7 @@ from tap.modules.ai.domain.models import (
     ModelNotSelectable,
     schema_digest,
 )
+from tap.modules.ai.domain.tools import ToolRejected
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
@@ -115,6 +121,10 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             tools=frozenset({"knowledge.answer"}),
             output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
         )
+        try:
+            await tool_registry_service(request).require_allowlist(scope, agent.tool_allowlist)
+        except ToolRejected as error:
+            raise AssetRevisionRejected() from error
         agent_digest = agent.content_digest
     skills = (
         []

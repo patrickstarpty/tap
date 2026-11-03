@@ -1336,7 +1336,7 @@ export interface components {
             /** Revisionid */
             revisionId: string;
             /** Toolallowlist */
-            toolAllowlist: ("knowledge.search" | "knowledge.answer")[];
+            toolAllowlist: string[];
         };
         /** AnswerClaim */
         AnswerClaim: {

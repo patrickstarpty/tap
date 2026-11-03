@@ -58,9 +58,7 @@ class AiAgentRevisionSummary(ContractModel):
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     content_digest: CanonicalSha256
-    tool_allowlist: Annotated[
-        list[Literal["knowledge.search", "knowledge.answer"]], Field(max_length=2)
-    ]
+    tool_allowlist: Annotated[list[ToolId], Field(max_length=32)]
     output_schema_digest: CanonicalSha256
 
 
@@ -228,6 +226,15 @@ CanonicalSha256 = Annotated[
         min_length=71,
         max_length=71,
         pattern=r"^sha256:[0-9a-f]{64}$",
+    ),
+]
+ToolId = Annotated[
+    str,
+    Field(
+        strict=True,
+        min_length=3,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*){1,3}$",
     ),
 ]
 PathValue = Annotated[

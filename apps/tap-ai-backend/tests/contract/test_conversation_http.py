@@ -574,3 +574,87 @@ def test_append_route_opens_turn_request_span(span_recorder):
     request_spans = [s for s in span_recorder.get_finished_spans() if s.name == "turn.request"]
     assert len(request_spans) == 1
     assert request_spans[0].attributes["tap.turn_id"] == turn_id
+
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_conversation_resolves_agent_tools_through_the_tool_registry(registered):
+    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
+    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+    from tap.modules.ai.domain.models import schema_digest, text_digest
+    from tap.modules.ai.domain.tools import ToolDescriptor, ToolEffect, ToolOrigin
+
+    tools = frozenset({"knowledge.answer", "mcp.jira.search_issues"})
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Models:
+        scope = VALIDATION_SCOPE
+
+        async def list_models(self, _scope):
+            return [STRUCTURED_CHAT_MODEL]
+
+    class Assets:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_agent(self, _scope, identity, *, tools: frozenset, output_schema_digest):
+            return SimpleNamespace(
+                revision_id=identity,
+                display_name="Jira agent",
+                content_digest="sha256:" + "a" * 64,
+                system_instruction="frozen agent instruction",
+                system_instruction_digest=text_digest("frozen agent instruction"),
+                tool_allowlist=frozenset({"knowledge.answer", "mcp.jira.search_issues"}),
+                output_schema_json=json.dumps(
+                    VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":")
+                ),
+                output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
+            )
+
+    class Mcp:
+        async def descriptors(self, _scope):
+            return (
+                ToolDescriptor(
+                    tool_id="mcp.jira.search_issues",
+                    display_name="Search issues",
+                    description="Search Jira issues",
+                    input_schema={"type": "object"},
+                    effect=ToolEffect.READ,
+                    origin=ToolOrigin.MCP,
+                    server_id="jira",
+                ),
+            )
+
+        async def executor(self, _scope, _tool_id):
+            raise AssertionError("conversation acceptance never invokes tools")
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        asset_catalog=Assets(),
+        authorization_policy=Allow(),
+        tool_registry=ToolRegistry(builtin_tools(), Mcp()) if registered else None,
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "question", "modelAlias": "qwen-plus", "agentRevisionId": "agent-1"},
+        headers={"Idempotency-Key": f"tools-{registered}"},
+    )
+
+    if not registered:
+        assert response.status_code == 404, response.text
+        assert response.json()["type"].endswith("/asset-revision-unavailable")
+        return
+    assert response.status_code == 202, response.text
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert frozen.agent_tool_allowlist == tuple(sorted(tools))

@@ -45,6 +45,7 @@ from tap.modules.ai.domain.models import (
     schema_digest,
     text_digest,
 )
+from tap.modules.ai.domain.tools import ToolRejected, validate_allowlist
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.platform.telemetry import current_binding, span
 
@@ -94,6 +95,16 @@ def _request_json_for_record(
             {"model": request.alias, "operation": operation.value, "image": image_digest}
         )
     return json.dumps(sanitized)
+
+
+def _well_formed_tools(values: object) -> bool:
+    if type(values) is not frozenset:
+        return False
+    try:
+        validate_allowlist(values)
+    except ToolRejected:
+        return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,8 +310,7 @@ class LiteLLMModelGateway:
             raise ModelGatewayRejected()
         governed = bool(request.governance_digests or request.tool_allowlist)
         if (
-            type(request.tool_allowlist) is not frozenset
-            or not request.tool_allowlist <= {"knowledge.search", "knowledge.answer"}
+            not _well_formed_tools(request.tool_allowlist)
             or type(request.governance_digests) is not tuple
             or any(
                 not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None

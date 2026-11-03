@@ -1763,8 +1763,11 @@ def _assemble_http_services(
             id_factory=lambda: uuid4().hex,
             clock=lambda: datetime.now(UTC),
         )
+    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(builtin_tools()),
         model_catalog=ModelCatalog(
             embeddings.gateway,
             scope=embeddings.scope,
