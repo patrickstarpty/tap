@@ -27,6 +27,7 @@ import {
 } from "../../features/knowledge/api/aiAssets";
 import {
   useAppendConversation,
+  conversationKeys,
   useCancelTurn,
   useConversationSearch,
   useDeleteConversation,
@@ -289,6 +290,22 @@ export function AnswerProgress({
       {sources}
       {action}
     </p>
+  );
+}
+
+function StreamingAnswer({ locale, text }: { locale: Locale; text: string }) {
+  return (
+    <div
+      className="tap-streaming-answer"
+      aria-busy="true"
+      aria-label={locale === "zh" ? "正在生成回答" : "Generating answer"}
+      role="region"
+    >
+      <p className="tap-streaming-text">
+        {text}
+        <span className="tap-streaming-cursor" aria-hidden="true" />
+      </p>
+    </div>
   );
 }
 
@@ -654,6 +671,13 @@ function AssistantResponse({
           </Button>
         </div>
       );
+    }
+    if (
+      (turn.status === "queued" || turn.status === "running") &&
+      turn.streamingText != null &&
+      turn.streamingText.length > 0
+    ) {
+      return <StreamingAnswer locale={turn.locale} text={turn.streamingText} />;
     }
     if (turn.status === "queued" || turn.status === "running") {
       return (
@@ -1052,6 +1076,19 @@ export function TapperWorkspace() {
     streamTargetTurnId,
     recoveredStreamState.lastSequence,
     shouldStartConversationStream,
+    {
+      onTurnTerminal: () => {
+        const conversationId =
+          activeConversationId !== "draft" ? activeConversationId : null;
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.detail(projectId, conversationId),
+          exact: true,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.events(projectId, conversationId),
+        });
+      },
+    },
   );
   const streamState = conversationStream.state;
   const hasActiveConversationTurn = isTargetTurnActive({
@@ -1282,6 +1319,7 @@ export function TapperWorkspace() {
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
+        streamingText: streamed?.streamingText ?? null,
         traceId: turn.traceId ?? null,
         attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(

@@ -284,8 +284,16 @@ export function useConversationStream(
   targetTurnId: string | null,
   initialCursor: number,
   active = true,
+  {
+    onTurnTerminal,
+  }: {
+    /** Called once per terminal Turn event so callers can refetch the persisted Turn. */
+    onTurnTerminal?: (turnId: string, type: string) => void;
+  } = {},
 ) {
   const client = useConversationClient(projectId);
+  const onTurnTerminalRef = useRef(onTurnTerminal);
+  onTurnTerminalRef.current = onTurnTerminal;
   const [state, setState] = useState(createStreamState);
   const resume = useRef(0);
   const initialCursorRef = useRef(initialCursor);
@@ -326,8 +334,11 @@ export function useConversationStream(
             controller.signal,
           )) {
             attempts = 0;
+            const fresh = event.sequence > resume.current;
             resume.current = Math.max(resume.current, event.sequence);
             setState((current) => reduceStreamEvent(current, event));
+            if (fresh && isTurnTerminalEvent(event.event.type))
+              onTurnTerminalRef.current?.(event.turnId, event.event.type);
             if (
               event.turnId === targetTurnId &&
               isTerminalEvent(event.event.type)
@@ -394,12 +405,17 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+const TURN_TERMINAL_EVENTS = [
+  "turn.completed",
+  "turn.abstained",
+  "turn.canceled",
+  "turn.failed",
+];
+
+function isTurnTerminalEvent(type: string): boolean {
+  return TURN_TERMINAL_EVENTS.includes(type);
+}
+
 function isTerminalEvent(type: string): boolean {
-  return [
-    "turn.completed",
-    "turn.abstained",
-    "turn.canceled",
-    "turn.failed",
-    "conversation.turn.completed",
-  ].includes(type);
+  return isTurnTerminalEvent(type) || type === "conversation.turn.completed";
 }

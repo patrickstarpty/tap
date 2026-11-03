@@ -4006,3 +4006,33 @@
   box-shadow: 0 22px 64px 8px rgb(17 24 39 / 24%);
   padding: 18px;
 }
+
+.tap-streaming-text {
+  margin: 0;
+  color: var(--tap-ink);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tap-streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: tap-streaming-cursor 1s steps(2, start) infinite;
+}
+
+@keyframes tap-streaming-cursor {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tap-streaming-cursor {
+    animation: none;
+  }
+}

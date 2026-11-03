@@ -39,7 +39,91 @@ describe("conversation stream reducer", () => {
     );
 
     expect(state.lastSequence).toBe(3);
-    expect(state.turns["turn-1"]?.answer).toBe("grounded");
+    expect(state.turns["turn-1"]?.streamingText).toBe("grounded");
+  });
+
+  it("accumulates provisional text, clears it on reset and drops it once the turn completes", () => {
+    const seen: (string | null | undefined)[] = [];
+    let state = createStreamState();
+    const apply = (
+      sequence: number,
+      type: string,
+      payload: Record<string, unknown>,
+    ) => {
+      state = reduceStreamEvent(
+        state,
+        envelope(sequence, "turn-1", type, payload),
+      );
+      seen.push(state.turns["turn-1"]?.streamingText);
+    };
+
+    apply(1, "turn.started", { state: "running" });
+    apply(2, "answer.delta", { text: "Verified " });
+    apply(3, "answer.delta", { text: "identity " });
+    // Withdrawn deltas leave sequence gaps; they are not errors.
+    apply(6, "answer.delta", { text: "maybe" });
+    apply(7, "answer.reset", { attempt: 2 });
+    apply(9, "answer.delta", { text: "Identity " });
+    apply(10, "answer.delta", { text: "is required." });
+    apply(11, "turn.completed", { state: "completed" });
+
+    expect(seen).toEqual([
+      null,
+      "Verified ",
+      "Verified identity ",
+      "Verified identity maybe",
+      null,
+      "Identity ",
+      "Identity is required.",
+      null,
+    ]);
+    expect(state.lastSequence).toBe(11);
+    expect(state.turns["turn-1"]).toMatchObject({
+      status: "completed",
+      streamingText: null,
+    });
+  });
+
+  it("clears provisional text and pending citations when a new attempt resets", () => {
+    let state = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "answer.delta", { text: "draft" }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(2, "turn-1", "citation.resolved", {
+        citation: { citationId: "citation-1" },
+      }),
+    );
+    state = reduceStreamEvent(
+      state,
+      envelope(3, "turn-1", "answer.reset", { attempt: 2 }),
+    );
+
+    expect(state.turns["turn-1"]).toMatchObject({
+      pendingCitations: [],
+      status: "running",
+      streamingText: null,
+    });
+  });
+
+  it.each([
+    ["turn.failed", { problem: { title: "Generation unavailable" } }],
+    [
+      "turn.abstained",
+      { answer: { answer: "Not enough evidence.", citations: [] } },
+    ],
+    ["conversation.turn.completed", { outcome: "failed" }],
+  ])("drops provisional text on a %s terminal event", (type, payload) => {
+    const state = reduceStreamEvent(
+      reduceStreamEvent(
+        createStreamState(),
+        envelope(1, "turn-1", "answer.delta", { text: "partial" }),
+      ),
+      envelope(2, "turn-1", type, payload),
+    );
+
+    expect(state.turns["turn-1"]?.streamingText).toBeNull();
   });
 
   it("closes canceled and failed turns without accepting later deltas", () => {
@@ -64,7 +148,7 @@ describe("conversation stream reducer", () => {
     );
 
     expect(failed.turns["turn-1"]).toMatchObject({
-      answer: "partial",
+      streamingText: null,
       status: "canceled",
     });
     expect(failed.turns["turn-2"]).toMatchObject({
@@ -212,7 +296,8 @@ describe("conversation stream reducer", () => {
       }),
     ).toBe(false);
     expect(
-      latestTurnState("turn-2", recoveredState, staleStreamState)?.answer,
+      latestTurnState("turn-2", recoveredState, staleStreamState)?.response
+        ?.answer,
     ).toBe("done");
     expect(
       isTargetTurnActive({

@@ -351,3 +351,141 @@ it("resolves a retrieval hit to its published document name", async () => {
     await screen.findByRole("link", { name: "policy.md" }),
   ).toBeInTheDocument();
 });
+
+function runningConversation({
+  events,
+  stream,
+  detailState = () => "running",
+}: {
+  events: readonly Record<string, unknown>[];
+  stream: () => Response;
+  detailState?: () => string;
+}) {
+  const detailRequests: string[] = [];
+  vi.stubGlobal("fetch", async (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/conversations") && request.method === "GET")
+      return json({
+        items: [
+          {
+            conversationId: "conversation-a",
+            title: "What is the rule?",
+            createdAt: "2026-09-29T08:00:00Z",
+            updatedAt: "2026-09-29T08:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      });
+    if (path.endsWith("/conversations/conversation-a")) {
+      const state = detailState();
+      detailRequests.push(state);
+      return json({
+        conversationId: "conversation-a",
+        title: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        updatedAt: "2026-09-29T08:00:01Z",
+        turns: [
+          {
+            turnId: "turn-1",
+            state,
+            attempt: 1,
+            traceId: null,
+            inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+            answerEvidenceSnapshotDigest: null,
+            input: {
+              message: "What is the rule?",
+              modelAlias: "qwen-plus",
+              sourceRevisionIds: [],
+              documentRevisionIds: [],
+              resolvedResources: [],
+              agentRevisionId: null,
+              agentLabel: null,
+              skillRevisionIds: [],
+              skillLabels: [],
+              insightsQueryId: null,
+            },
+          },
+        ],
+      });
+    }
+    if (path.endsWith("/conversations/conversation-a/events"))
+      return json({ items: events, nextCursor: null });
+    if (path.endsWith("/conversations/conversation-a/stream")) return stream();
+    throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+  });
+  renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+  return detailRequests;
+}
+
+const historyEvent = (
+  sequence: number,
+  eventType: string,
+  payload: Record<string, unknown>,
+) => ({
+  eventId: `event-${sequence}`,
+  sequence,
+  turnId: "turn-1",
+  occurredAt: "2026-09-29T08:00:00Z",
+  eventType,
+  payload,
+});
+
+const openStream = () =>
+  new Response(new ReadableStream({ start: () => undefined }), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+
+it("renders provisional answer text with a busy cursor and no citations while streaming", async () => {
+  runningConversation({
+    events: [
+      historyEvent(1, "turn.started", { state: "running" }),
+      historyEvent(2, "answer.delta", { text: "Verified identity " }),
+      historyEvent(3, "citation.resolved", {
+        citation: { citationId: "citation-1", evidenceLabel: "Rules" },
+      }),
+      historyEvent(5, "answer.delta", { text: "is required." }),
+    ],
+    stream: openStream,
+  });
+
+  const text = await screen.findByText("Verified identity is required.");
+  const answer = text.closest('[aria-busy="true"]');
+  expect(answer).not.toBeNull();
+  expect(answer!.querySelector(".tap-streaming-cursor")).not.toBeNull();
+  expect(screen.queryByText("Rules")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Generating answer…/u)).not.toBeInTheDocument();
+});
+
+it("replaces provisional text with the persisted turn after completion", async () => {
+  let completed = false;
+  const detailRequests = runningConversation({
+    events: [
+      historyEvent(1, "turn.started", { state: "running" }),
+      historyEvent(2, "answer.delta", { text: "Draft words" }),
+    ],
+    detailState: () => (completed ? "completed" : "running"),
+    stream: () => {
+      completed = true;
+      return new Response(
+        `data: ${JSON.stringify({
+          eventId: "event-3",
+          sequence: 3,
+          chatId: "conversation-a",
+          turnId: "turn-1",
+          occurredAt: "2026-09-29T08:00:01Z",
+          schemaVersion: 1,
+          event: { type: "turn.completed", payload: { answer: ANSWER } },
+        })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  expect(
+    await screen.findByRole("button", { name: "Regenerate" }),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(detailRequests).toContain("completed"));
+  expect(screen.queryByText("Draft words")).not.toBeInTheDocument();
+  expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+});

@@ -139,8 +139,12 @@ describe("useConversationStream", () => {
     );
 
     await waitFor(() => expect(result.current.state.lastSequence).toBe(6));
-    expect(result.current.state.turns["turn-1"]?.answer).toBe("first answer");
-    expect(result.current.state.turns["turn-2"]?.answer).toBe("second answer");
+    expect(result.current.state.turns["turn-1"]?.response?.answer).toBe(
+      "first answer",
+    );
+    expect(result.current.state.turns["turn-2"]?.response?.answer).toBe(
+      "second answer",
+    );
   });
 
   it("resumes a new turn in the same conversation from the consumed stream cursor", async () => {
@@ -202,7 +206,53 @@ describe("useConversationStream", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     const resumed = fetcher.mock.calls[1]![0] as Request;
     expect(resumed.headers.get("Last-Event-ID")).toBe("1");
-    expect(result.current.state.turns["turn-2"]?.answer).toBe("second answer");
+    expect(result.current.state.turns["turn-2"]?.response?.answer).toBe(
+      "second answer",
+    );
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reconnects with the latest Last-Event-ID while the turn is still running and requests the persisted turn on completion", async () => {
+    vi.useFakeTimers();
+    const onTurnTerminal = vi.fn();
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          `: keepalive\n\ndata: ${event(1, "turn-2", "turn.started", { state: "running" })}\n\n` +
+            `data: ${event(4, "turn-2", "answer.delta", { text: "Partial " })}\n\n: keepalive\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        stream(
+          event(5, "turn-2", "answer.delta", { text: "answer" }),
+          event(6, "turn-2", "turn.completed", { state: "completed" }),
+        ),
+      );
+
+    const { result, unmount } = renderHook(() =>
+      useConversationStream("project-1", "conversation-1", "turn-2", 0, true, {
+        onTurnTerminal,
+      }),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.state.turns["turn-2"]?.streamingText).toBe(
+      "Partial ",
+    );
+    expect(onTurnTerminal).not.toHaveBeenCalled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const resumed = fetcher.mock.calls[1]![0] as Request;
+    expect(resumed.headers.get("Last-Event-ID")).toBe("4");
+    expect(result.current.state.turns["turn-2"]).toMatchObject({
+      status: "completed",
+      streamingText: null,
+    });
+    expect(onTurnTerminal).toHaveBeenCalledWith("turn-2", "turn.completed");
     unmount();
     expect(vi.getTimerCount()).toBe(0);
   });

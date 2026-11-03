@@ -4,7 +4,6 @@ import type { RetrievalAnswerResponse } from "../../knowledge/api/types";
 export type ChatEventEnvelope = components["schemas"]["ChatEventEnvelope"];
 
 export interface StreamTurnState {
-  answer: string;
   error: string | null;
   lastSequence: number;
   /**
@@ -18,6 +17,12 @@ export interface StreamTurnState {
   response: RetrievalAnswerResponse | null;
   status:
     "queued" | "running" | "completed" | "abstained" | "canceled" | "failed";
+  /**
+   * Provisional answer text accumulated from `answer.delta` events. It is
+   * never authoritative: `answer.reset` and every terminal event clear it, and
+   * the persisted Turn replaces it after `turn.completed`.
+   */
+  streamingText: string | null;
 }
 
 export interface ConversationStreamState {
@@ -26,12 +31,12 @@ export interface ConversationStreamState {
 }
 
 const emptyTurn = (): StreamTurnState => ({
-  answer: "",
   error: null,
   lastSequence: 0,
   pendingCitations: [],
   response: null,
   status: "queued",
+  streamingText: null,
 });
 
 export function createStreamState(): ConversationStreamState {
@@ -116,12 +121,22 @@ export function reduceStreamEvent(
   } else if (
     event.type === "answer.delta" &&
     typeof payload.text === "string" &&
-    !["completed", "abstained", "canceled", "failed"].includes(current.status)
+    !terminalStatuses.includes(current.status)
   ) {
     next = {
       ...current,
-      answer: current.answer + payload.text,
       status: "running",
+      streamingText: (current.streamingText ?? "") + payload.text,
+    };
+  } else if (
+    event.type === "answer.reset" &&
+    !terminalStatuses.includes(current.status)
+  ) {
+    next = {
+      ...current,
+      pendingCitations: [],
+      status: "running",
+      streamingText: null,
     };
   } else if (event.type === "citation.resolved") {
     const citation = payload.citation;
@@ -139,11 +154,12 @@ export function reduceStreamEvent(
     event.type === "turn.abstained"
   ) {
     const answer = payload.answer;
+    const status = event.type === "turn.abstained" ? "abstained" : "completed";
+    next = { ...current, status, streamingText: null };
     if (typeof answer === "object" && answer !== null) {
       const response = answer as RetrievalAnswerResponse;
       next = {
-        ...current,
-        answer: response.answer,
+        ...next,
         pendingCitations: [],
         response: {
           ...response,
@@ -152,11 +168,10 @@ export function reduceStreamEvent(
               ? response.citations
               : current.pendingCitations,
         },
-        status: event.type === "turn.abstained" ? "abstained" : "completed",
       };
     }
   } else if (event.type === "turn.canceled") {
-    next = { ...current, status: "canceled" };
+    next = { ...current, status: "canceled", streamingText: null };
   } else if (event.type === "conversation.turn.completed") {
     const outcome = payload.outcome;
     if (
@@ -165,10 +180,15 @@ export function reduceStreamEvent(
       outcome === "canceled" ||
       outcome === "failed"
     ) {
-      next = { ...current, status: outcome };
+      next = { ...current, status: outcome, streamingText: null };
     }
   } else if (event.type === "turn.failed") {
-    next = { ...current, error: problemTitle(payload), status: "failed" };
+    next = {
+      ...current,
+      error: problemTitle(payload),
+      status: "failed",
+      streamingText: null,
+    };
   }
 
   return {
