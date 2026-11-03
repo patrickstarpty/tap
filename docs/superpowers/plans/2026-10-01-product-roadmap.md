@@ -48,11 +48,11 @@ flowchart LR
 | 子项目 1 基础设施收敛 | 已完成（#32） |
 | TAP AI 前端清理原型内容 | 已完成（#34） |
 | 子项目 2 可观测性（能力 5） | 已完成（#36） |
-| 推荐问题（能力 1 的一部分） | 进行中（分支 `feat/prompt-suggestions`） |
-| 子项目 3 可靠问答（能力 1） | 未设计（推荐问题部分见上一行） |
-| 子项目 4 图谱查询扩展（能力 2） | 未设计 |
-| 子项目 5 脉络分析（能力 3） | 未设计 |
-| 子项目 6 Skills/Agents（能力 4） | 未设计 |
+| 推荐问题（能力 1 的一部分） | 已完成（#38、#39） |
+| 子项目 3 可靠问答（能力 1） | 已设计（[spec](../specs/2026-11-03-reliable-answering-design.md)） |
+| 子项目 4 图谱查询扩展（能力 2） | 已设计（[spec](../specs/2026-11-03-graph-query-extension-design.md)） |
+| 子项目 5 脉络分析（能力 3） | 已设计（[spec](../specs/2026-11-03-graph-context-analysis-design.md)），依赖子项目 4、6 |
+| 子项目 6 Skills/Agents（能力 4） | 已设计（[spec](../specs/2026-11-03-skills-agents-design.md)） |
 
 ## V2：主动 Tapper（已设计）
 
