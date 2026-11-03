@@ -359,5 +359,5 @@ def test_budget_boundaries():
 
 - [x] **Step 1:** 更新三份文档；预览 Markdown 与 Mermaid。
 - [x] **Step 1b:** 在 spec 第 1.3 节"激活"条目后补一句：`skill.activate` 只返回回执，Skill 正文作为受信 Skill 块进入下一次模型调用，因为工具结果属不受信内容，最终无工具轮会被压平为 `untrusted.toolActivity`；只加这一句。
-- [ ] **Step 2:** `git diff --check`；`make check`；`make test`，全部通过。
+- [x] **Step 2:** `git diff --check`；`make check`；`make test`，全部通过。
 - [x] **Step 3:** 提交 `docs: record skill hub phase 1 in roadmap, architecture and handoff`
