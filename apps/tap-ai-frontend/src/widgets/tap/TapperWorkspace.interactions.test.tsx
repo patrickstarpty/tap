@@ -53,6 +53,11 @@ vi.mock("../../features/graph/api/queries", () => ({
   useActiveGraph: vi.fn(() => defaultGraphQueryResult()),
   useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
   useGraphOverview: vi.fn(() => defaultGraphQueryResult()),
+  useGraphNode: vi.fn(() => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+  })),
 }));
 
 const DEFAULT_SOURCES = [

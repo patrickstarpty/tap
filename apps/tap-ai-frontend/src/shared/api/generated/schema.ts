@@ -2167,6 +2167,8 @@ export interface components {
             };
             /** Sourcecount */
             sourceCount: number;
+            /** Truncated */
+            truncated: boolean;
         };
         /** GraphOverviewView */
         GraphOverviewView: {

@@ -838,8 +838,7 @@ export function KnowledgeGraph({
                 );
               })}
             </ul>
-            {selectedRelationships.length > 0 &&
-            selectedRelationships.every(
+            {selectedRelationships.every(
               (edge) => edge.provenance === undefined,
             ) ? null : (
               <div className="tap-graph-provenance">

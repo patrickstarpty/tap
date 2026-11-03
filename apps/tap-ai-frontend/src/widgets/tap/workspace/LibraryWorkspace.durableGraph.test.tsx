@@ -17,6 +17,11 @@ vi.mock("../../../features/knowledge/api/client", () => ({
 vi.mock("../../../features/graph/api/queries", () => ({
   useActiveGraph: vi.fn(),
   useGraphSearch: vi.fn(),
+  useGraphNode: vi.fn(() => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+  })),
   useGraphOverview: vi.fn(() => ({
     data: undefined,
     isPending: true,

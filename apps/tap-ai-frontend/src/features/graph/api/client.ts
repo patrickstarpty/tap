@@ -11,6 +11,11 @@ export interface GraphClient {
     sourceRevisionIds: string[],
     signal?: AbortSignal,
   ): Promise<GraphSnapshotPage>;
+  node(
+    snapshotId: string,
+    nodeId: string,
+    signal?: AbortSignal,
+  ): Promise<GraphSubgraph>;
   search(
     snapshotId: string,
     query: string,
@@ -66,6 +71,20 @@ export function createGraphClient(
         },
       );
       if (!result.data) throw new Error("Graph is unavailable.");
+      return result.data;
+    },
+    async node(snapshotId, nodeId, signal) {
+      const result = await http.GET(
+        "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}",
+        {
+          params: {
+            path: { ...pathProject, node_id: nodeId },
+            query: { snapshotId },
+          },
+          signal,
+        },
+      );
+      if (!result.data) throw new Error("Graph node is unavailable.");
       return result.data;
     },
     async search(snapshotId, query, nodeLimit = 50, signal) {

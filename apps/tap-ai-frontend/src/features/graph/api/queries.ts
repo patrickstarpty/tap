@@ -7,6 +7,11 @@ export const graphKeys = {
     ["graph", projectId, "active", ...sources] as const,
   overview: (projectId: string | null) =>
     ["graph", projectId, "overview"] as const,
+  node: (
+    projectId: string | null,
+    snapshotId: string | null,
+    nodeId: string | null,
+  ) => ["graph", projectId, snapshotId, "node", nodeId] as const,
   search: (
     projectId: string | null,
     snapshotId: string | null,
@@ -56,6 +61,23 @@ export function useGraphOverview(projectId: string | null, enabled = true) {
     queryKey: graphKeys.overview(projectId),
     enabled: client !== null && enabled,
     queryFn: ({ signal }) => client!.overview(150, signal),
+    retry: false,
+  });
+}
+
+export function useGraphNode(
+  projectId: string | null,
+  snapshotId: string | null,
+  nodeId: string | null,
+) {
+  const client = useMemo(
+    () => (projectId ? createGraphClient(projectId) : null),
+    [projectId],
+  );
+  return useQuery({
+    queryKey: graphKeys.node(projectId, snapshotId, nodeId),
+    enabled: client !== null && snapshotId !== null && nodeId !== null,
+    queryFn: ({ signal }) => client!.node(snapshotId!, nodeId!, signal),
     retry: false,
   });
 }

@@ -163,6 +163,7 @@ export interface WorkspaceCopy {
     graphOverviewLoading: string;
     graphOverviewFailed: string;
     graphOverviewCaption: string;
+    graphOverviewTruncated: string;
     graphMemberSources: string;
     visibleDocuments: string;
     concepts: string;
@@ -386,6 +387,8 @@ export const WORKSPACE_COPY = {
       graphOverviewFailed: "The domain overview is temporarily unavailable.",
       graphOverviewCaption:
         "Domain overview · merged from {count} published sources.",
+      graphOverviewTruncated:
+        "Includes only the 2,000 most recently updated sources.",
       graphMemberSources: "Appears in sources",
       visibleDocuments: "Visible documents",
       concepts: "Concepts",
@@ -600,6 +603,7 @@ export const WORKSPACE_COPY = {
       graphOverviewLoading: "正在加载领域总览…",
       graphOverviewFailed: "领域总览暂时无法加载。",
       graphOverviewCaption: "领域总览 · 合并自 {count} 个已发布来源。",
+      graphOverviewTruncated: "仅包含最近更新的 2,000 个来源。",
       graphMemberSources: "出现于来源",
       visibleDocuments: "可见文档",
       concepts: "概念",

@@ -6,6 +6,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import {
   useActiveGraph,
+  useGraphNode,
   useGraphOverview,
   useGraphSearch,
 } from "../../../features/graph/api/queries";
@@ -20,6 +21,7 @@ vi.mock("../../../features/graph/api/queries", () => ({
   useActiveGraph: vi.fn(),
   useGraphSearch: vi.fn(),
   useGraphOverview: vi.fn(),
+  useGraphNode: vi.fn(),
 }));
 
 const SOURCES: LibrarySource[] = [
@@ -72,7 +74,11 @@ const OVERVIEW = {
       support: 2,
     },
   ],
-  stats: { sourceCount: 2, nodeTypeCounts: { ENTITY: 1, SYSTEM: 1 } },
+  stats: {
+    sourceCount: 2,
+    nodeTypeCounts: { ENTITY: 1, SYSTEM: 1 },
+    truncated: false,
+  },
   snapshotIds: ["snap_rev_src_a", "snap_rev_src_b"],
 };
 
@@ -120,6 +126,29 @@ beforeEach(() => {
             }
           : undefined,
         isPending: snapshotId === null,
+        isError: false,
+      }) as never,
+  );
+  vi.mocked(useGraphNode).mockImplementation(
+    (_projectId, snapshotId, nodeId) =>
+      ({
+        data:
+          snapshotId && nodeId
+            ? {
+                snapshotId,
+                nodes: [
+                  {
+                    nodeId,
+                    nodeType: "ENTITY",
+                    label:
+                      nodeId === "a-auth" ? "Authentication" : "Login service",
+                    canonicalKey: nodeId,
+                  },
+                ],
+                edges: [],
+              }
+            : undefined,
+        isPending: !(snapshotId && nodeId),
         isError: false,
       }) as never,
   );
@@ -230,4 +259,65 @@ it("jumps from an overview member to its source graph node", async () => {
       screen.getByRole("button", { name: /Login service/, pressed: true }),
     ).toBeVisible(),
   );
+});
+
+it("loads and selects a member node outside the first source graph page", async () => {
+  vi.mocked(useGraphSearch).mockImplementation(
+    (_projectId, snapshotId) =>
+      ({
+        data: snapshotId
+          ? {
+              snapshotId,
+              nodes: Array.from({ length: 50 }, (_, index) => ({
+                nodeId: `filler-${index}`,
+                nodeType: "ENTITY",
+                label: `Filler ${index}`,
+                canonicalKey: `filler-${index}`,
+              })),
+              edges: [],
+            }
+          : undefined,
+        isPending: snapshotId === null,
+        isError: false,
+      }) as never,
+  );
+  renderLibrary();
+  await openGraph();
+
+  await userEvent.click(screen.getByRole("button", { name: /Authentication/ }));
+  const details = screen.getByRole("region", { name: "Node details" });
+  await userEvent.click(
+    within(details).getByRole("button", { name: "Underwriting rules" }),
+  );
+
+  await waitFor(() =>
+    expect(vi.mocked(useGraphNode).mock.lastCall?.slice(1)).toEqual([
+      "snap_rev_src_a",
+      "a-auth",
+    ]),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /Authentication/, pressed: true }),
+    ).toBeVisible(),
+  );
+});
+
+it("marks a truncated domain overview", async () => {
+  mockOverview({ ...OVERVIEW, stats: { ...OVERVIEW.stats, truncated: true } });
+  renderLibrary();
+  await openGraph();
+  expect(
+    screen.getByText(/only the 2,000 most recently updated sources/i),
+  ).toBeVisible();
+});
+
+it("omits the provenance row for an overview node without relationships", async () => {
+  mockOverview({ ...OVERVIEW, nodes: [OVERVIEW.nodes[0]], edges: [] });
+  renderLibrary();
+  await openGraph();
+
+  await userEvent.click(screen.getByRole("button", { name: /Login service/ }));
+  const details = screen.getByRole("region", { name: "Node details" });
+  expect(within(details).queryByText("Provenance")).not.toBeInTheDocument();
 });

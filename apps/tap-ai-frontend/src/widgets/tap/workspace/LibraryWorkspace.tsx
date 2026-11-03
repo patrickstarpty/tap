@@ -30,10 +30,12 @@ import { KnowledgeGraph } from "./KnowledgeGraph";
 import {
   useActiveGraph,
   useGraphOverview,
+  useGraphNode,
   useGraphSearch,
 } from "../../../features/graph/api/queries";
 import { overviewGraphData } from "./overviewGraphData";
 import { publishedGraphData } from "./publishedGraphData";
+import type { GraphSubgraph } from "../../../features/graph/api/client";
 import { createKnowledgeClient } from "../../../features/knowledge/api/client";
 import type { LibrarySource } from "./model";
 
@@ -98,7 +100,7 @@ function ProjectKnowledgeGraph({
     setSelectedSourceId(sourceId);
     setFocus((current) => ({
       sourceId,
-      nodeId: `published-${nodeId}`,
+      nodeId,
       key: (current?.key ?? 0) + 1,
     }));
     setGraphView("source");
@@ -160,10 +162,17 @@ function ProjectKnowledgeGraph({
             sources={[]}
             onViewSource={onViewSource}
             publishedData={overviewData}
-            publishedCaption={copy.library.graphOverviewCaption.replace(
-              "{count}",
-              String(overview.data?.stats.sourceCount ?? 0),
-            )}
+            publishedCaption={[
+              copy.library.graphOverviewCaption.replace(
+                "{count}",
+                String(overview.data?.stats.sourceCount ?? 0),
+              ),
+              overview.data?.stats.truncated
+                ? copy.library.graphOverviewTruncated
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" ")}
             nodeDetail={memberDetail}
           />
         ) : (
@@ -228,15 +237,25 @@ function SourceKnowledgeGraph({
   const active = useActiveGraph(projectId, revisionId ? [revisionId] : []);
   const snapshotId = active.data?.items[0]?.snapshotId ?? null;
   const graph = useGraphSearch(projectId, snapshotId, "*");
+  const focusedNodeId =
+    focus !== null && focus.sourceId === selectedId ? focus.nodeId : null;
+  // The first search page holds 50 nodes; fetch the focused node so it is
+  // always present and selectable.
+  const focusedNode = useGraphNode(projectId, snapshotId, focusedNodeId);
   const selectedSource = readySources.find(
     (source) => source.id === selectedId,
   );
+  const graphData = useMemo(
+    () =>
+      graph.data && focusedNode.data
+        ? mergeSubgraphs(graph.data, focusedNode.data)
+        : graph.data,
+    [graph.data, focusedNode.data],
+  );
   const published =
-    selectedSource && graph.data
-      ? publishedGraphData(graph.data, selectedSource)
+    selectedSource && graphData
+      ? publishedGraphData(graphData, selectedSource)
       : null;
-  const focusedNodeId =
-    focus !== null && focus.sourceId === selectedId ? focus.nodeId : null;
 
   return (
     <>
@@ -279,7 +298,10 @@ function SourceKnowledgeGraph({
             ? "已发布图谱暂时无法加载。"
             : "The published graph is temporarily unavailable."}
         </p>
-      ) : active.isPending || (snapshotId && graph.isPending) ? (
+      ) : active.isPending ||
+        (snapshotId &&
+          (graph.isPending ||
+            (focusedNodeId !== null && focusedNode.isPending))) ? (
         <p role="status">
           {locale === "zh"
             ? "正在加载已发布图谱…"
@@ -298,7 +320,9 @@ function SourceKnowledgeGraph({
               ? "已发布的来源图谱 · 节点与关系来自服务。"
               : "Published source graph · nodes and relationships come from the service."
           }
-          initialSelectedNodeId={focusedNodeId}
+          initialSelectedNodeId={
+            focusedNodeId === null ? null : `published-${focusedNodeId}`
+          }
         />
       ) : (
         <p role="status">
@@ -309,6 +333,25 @@ function SourceKnowledgeGraph({
       )}
     </>
   );
+}
+
+function mergeSubgraphs(
+  base: GraphSubgraph,
+  extra: GraphSubgraph,
+): GraphSubgraph {
+  const nodeIds = new Set(base.nodes.map((node) => node.nodeId));
+  const edgeIds = new Set(base.edges.map((edge) => edge.edgeId));
+  return {
+    ...base,
+    nodes: [
+      ...base.nodes,
+      ...extra.nodes.filter((node) => !nodeIds.has(node.nodeId)),
+    ],
+    edges: [
+      ...base.edges,
+      ...extra.edges.filter((edge) => !edgeIds.has(edge.edgeId)),
+    ],
+  };
 }
 
 export function LibraryWorkspace({
