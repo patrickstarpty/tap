@@ -63,7 +63,18 @@ def test_unknown_event_type_is_rejected_and_invalid_resume_never_replays():
         encode_sse([], last_event_id="-1")
 
 
-def test_http_sse_reconnect_returns_complete_envelope_for_events_added_while_disconnected():
+@pytest.fixture
+def bounded_stream(monkeypatch):
+    """Queued Turns keep the stream open; bound it so reconnect tests finish quickly."""
+    from tap.interfaces.http.routes import conversations as conversation_routes
+
+    monkeypatch.setattr(conversation_routes, "_STREAM_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(conversation_routes, "_STREAM_MAX_SECONDS", 0.2)
+
+
+def test_http_sse_reconnect_returns_complete_envelope_for_events_added_while_disconnected(
+    bounded_stream,
+):
     service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
     value = TurnInput(
         message="question",
@@ -106,7 +117,7 @@ def test_http_sse_reconnect_returns_complete_envelope_for_events_added_while_dis
     assert invalid.headers["content-type"].startswith("application/problem+json")
 
 
-def test_http_sse_reconnect_replays_generation_waiting_and_result_link() -> None:
+def test_http_sse_reconnect_replays_generation_waiting_and_result_link(bounded_stream) -> None:
     service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
     value = TurnInput(
         message="design tests",

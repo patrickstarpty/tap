@@ -35,7 +35,9 @@ from tap.modules.chat.application.conversations import (
     ConversationNotFound,
     ConversationOwnership,
     InvalidConversationCursor,
+    publish_conversation_events,
 )
+from tap.modules.chat.application.notifier import ConversationEventNotifier
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     AnswerEvidenceSnapshot,
@@ -199,9 +201,14 @@ class MysqlConversationRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
+        notifier: ConversationEventNotifier | None = None,
     ):
         self.sessions = sessions
         self.scope = require_project_scope(scope)
+        self.notifier = notifier
+
+    async def _published(self, *conversation_ids: str) -> None:
+        await publish_conversation_events(self.notifier, self.scope, conversation_ids)
 
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
@@ -406,6 +413,7 @@ class MysqlConversationRepository:
             ):
                 raise ConversationConflict("idempotency-conflict") from error
             return original
+        await self._published(value.conversation_id)
         return value.turns[0]
 
     async def append_turn(self, conversation_id, turn, event):
@@ -453,6 +461,7 @@ class MysqlConversationRepository:
                 )
                 .values(updated_at=_naive(event.occurred_at))
             )
+        await self._published(conversation_id)
         return turn
 
     async def _load_turn(self, session, row):
@@ -1074,6 +1083,7 @@ class MysqlConversationRepository:
                             },
                         ),
                     )
+        await self._published(conversation_id)
         persisted = await self.load(conversation_id)
         return next(turn for turn in persisted.turns if turn.turn_id == turn_id)
 
@@ -1083,6 +1093,7 @@ class MysqlConversationRepository:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
         claimed: list[tuple[str, ConversationTurn]] = []
+        settled: list[str] = []
         async with self.sessions() as session, session.begin():
             candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
@@ -1198,6 +1209,7 @@ class MysqlConversationRepository:
                 if not await self._has_input_snapshot(session, row["turn_id"]):
                     # A permanent fault: settle the Turn instead of wedging every claim batch.
                     await self._fail_integrity_turn(session, row, graph is not None, now)
+                    settled.append(row["chat_id"])
                     continue
                 lease_token = uuid4().hex
                 lease_until = _naive(now + timedelta(seconds=60))
@@ -1260,6 +1272,7 @@ class MysqlConversationRepository:
                 mutable["processing_lease_token"] = lease_token
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
+        await self._published(*settled, *(chat_id for chat_id, _turn in claimed))
         return tuple(claimed)
 
     async def _has_input_snapshot(self, session, turn_id: str) -> bool:
@@ -1443,7 +1456,67 @@ class MysqlConversationRepository:
                 )
                 .values(last_sequence=event.sequence)
             )
+        await self._published(conversation_id)
         return event
+
+    async def _live_conversation(self, session, conversation_id: str) -> None:
+        parent = await session.scalar(
+            select(conversation.c.conversation_id).where(
+                *scope_predicates(conversation, self.scope),
+                conversation.c.conversation_id == conversation_id,
+                conversation.c.deleted_at.is_(None),
+            )
+        )
+        if parent is None:
+            raise ConversationNotFound
+
+    async def events_after(
+        self, conversation_id: str, sequence: int
+    ) -> tuple[ConversationEvent, ...]:
+        async with self.sessions() as session:
+            await self._live_conversation(session, conversation_id)
+            rows = (
+                (
+                    await session.execute(
+                        select(chat_event)
+                        .join(chat_turn, chat_turn.c.turn_id == chat_event.c.turn_id)
+                        .where(
+                            *scope_predicates(chat_event, self.scope),
+                            *scope_predicates(chat_turn, self.scope),
+                            chat_turn.c.chat_id == conversation_id,
+                            chat_event.c.stream_sequence > sequence,
+                        )
+                        .order_by(chat_event.c.stream_sequence)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            ConversationEvent(
+                row["event_id"],
+                row["stream_sequence"],
+                row["event_type"],
+                row["payload"],
+                row["occurred_at"].replace(tzinfo=timezone.utc),
+                row["turn_id"],
+            )
+            for row in rows
+        )
+
+    async def has_active_turns(self, conversation_id: str) -> bool:
+        async with self.sessions() as session:
+            await self._live_conversation(session, conversation_id)
+            active = await session.scalar(
+                select(chat_turn.c.turn_id)
+                .where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    chat_turn.c.state.in_(("queued", "running")),
+                )
+                .limit(1)
+            )
+        return active is not None
 
     async def citation_linked(self, conversation_id, turn_id, citation_id, citation_digest):
         async with self.sessions() as session:

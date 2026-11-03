@@ -11,9 +11,16 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
+    ConversationNotFound,
     ConversationService,
 )
-from tap.modules.chat.domain.conversations import ConversationEvent, TurnInput
+from tap.modules.chat.domain.conversations import (
+    AnswerEvidence,
+    ConversationEvent,
+    GraphContextStatus,
+    RetrievalSummary,
+    TurnInput,
+)
 from tests.owned_mysql import owned_project_database_url
 
 _OWNED = (
@@ -110,6 +117,78 @@ def test_append_stream_event_requires_the_current_lease_and_reclaim_resets(owned
                     text("SELECT last_sequence FROM chat_turn WHERE turn_id='turn-1'")
                 )
             assert last_sequence == 6
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+class _RecordingNotifier:
+    def __init__(self) -> None:
+        self.published: list[str] = []
+
+    async def publish(self, scope, chat_id):
+        assert scope.project_id == VALIDATION_SCOPE.project_id
+        self.published.append(chat_id)
+        raise ConnectionError("publish failures never fail the commit")
+
+    async def wait(self, scope, chat_id, timeout):
+        return False
+
+
+def test_committed_events_publish_and_incremental_reads_follow_the_ledger(owned_project_mysql):
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with engine.begin() as connection:
+            await connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+            for table in _OWNED:
+                await connection.execute(text(f"DELETE FROM {table}"))
+            await connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+        try:
+            notifier = _RecordingNotifier()
+            repository = MysqlConversationRepository(
+                sessions, scope=VALIDATION_SCOPE, notifier=notifier
+            )
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            await service.create("chat-1", "turn-1", "request-1", _input())
+            assert await service.has_active_turns("chat-1") is True
+            claimed = (await repository.claim_queued(limit=1))[0][1]
+            await repository.append_stream_event(
+                "chat-1", "turn-1", _delta("a"), lease_token=claimed.lease_token
+            )
+            await service.complete_evidence(
+                "chat-1",
+                "turn-1",
+                AnswerEvidence(
+                    "a",
+                    "completed",
+                    RetrievalSummary("completed"),
+                    GraphContextStatus.NOT_REQUESTED,
+                ),
+                lease_token=claimed.lease_token,
+                terminal_event=("turn.completed", {"state": "completed"}),
+            )
+            assert notifier.published == ["chat-1"] * 4
+
+            assert await service.has_active_turns("chat-1") is False
+            after = await service.events_after("chat-1", 2)
+            assert [(item.sequence, item.event_type) for item in after] == [
+                (3, "answer.delta"),
+                (4, "turn.completed"),
+                (5, "conversation.turn.completed"),
+            ]
+            assert all(item.turn_id == "turn-1" for item in after)
+            assert await service.events_after("chat-1", 5) == ()
+
+            await service.delete("chat-1", actor_id=VALIDATION_SCOPE.actor_id)
+            with pytest.raises(ConversationNotFound):
+                await service.events_after("chat-1", 0)
+            with pytest.raises(ConversationNotFound):
+                await service.has_active_turns("chat-1")
         finally:
             await engine.dispose()
 

@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.modules.chat.application.notifier import ConversationEventNotifier
     from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
@@ -688,6 +689,10 @@ async def create_api_runtime(
         resources.push(artifacts)
         redis = _create_redis(settings)
         resources.push(redis)
+        notification_redis = _create_notification_redis(settings)
+        resources.push(notification_redis)
+        from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
+
         failure_controller = _create_stage_controller(settings, redis)
         embeddings = _create_embeddings(
             settings,
@@ -739,6 +744,7 @@ async def create_api_runtime(
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
+            conversation_notifier=RedisConversationEventNotifier(notification_redis),
         )
         services = replace(services, chunk_manager=chunk_manager)
         if settings.insights_base_url:
@@ -1137,6 +1143,19 @@ def _create_redis(settings: TapperSettings) -> Redis:
     )
 
 
+def _create_notification_redis(settings: TapperSettings) -> Redis:
+    """Dedicated client: each SSE wait holds a subscription for up to 15 seconds."""
+    from redis.asyncio import Redis
+
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=min(5.0, settings.ready_timeout_seconds),
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
+
+
 async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
 
@@ -1508,6 +1527,7 @@ def _assemble_http_services(
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
     parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
+    conversation_notifier: ConversationEventNotifier | None = None,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1578,13 +1598,17 @@ def _assemble_http_services(
     if conversation_sessions is not None:
         from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
         from tap.modules.chat.application.conversations import ConversationService
+        from tap.modules.chat.application.notifier import InMemoryConversationEventNotifier
 
+        notifier = conversation_notifier or InMemoryConversationEventNotifier()
         conversations = ConversationService(
             MysqlConversationRepository(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
+                notifier=notifier,
             ),
             scope=repository.scope,
+            notifier=notifier,
         )
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 

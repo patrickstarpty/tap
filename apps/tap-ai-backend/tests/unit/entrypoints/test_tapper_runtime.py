@@ -1222,6 +1222,8 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
+    notification_redis = Resource("notification-redis")
+    monkeypatch.setattr(module, "_create_notification_redis", lambda _settings: notification_redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_search", create_search)
 
@@ -1245,6 +1247,12 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     assert runtime.http_services.readiness is readiness
     assert runtime.http_services.knowledge._documents._repository is repository
     assert runtime.failure_controller is None
+    from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
+
+    conversations = runtime.http_services.conversations
+    assert isinstance(conversations.notifier, RedisConversationEventNotifier)
+    assert conversations.notifier._redis is notification_redis
+    assert conversations.repository.notifier is conversations.notifier
     await runtime.aclose()
     await runtime.aclose()
     assert runtime.http_services.chunk_manager.index is chunk_index
@@ -1252,7 +1260,15 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     search_adapter = runtime.http_services.knowledge._answers._knowledge._retrieval._search
     assert search_adapter.search_port is search
     assert search_adapter.authority is runtime.http_services.chunk_manager
-    assert events == ["chunk-index", "search", "model", "redis", "blob", "engine"]
+    assert events == [
+        "chunk-index",
+        "search",
+        "model",
+        "notification-redis",
+        "redis",
+        "blob",
+        "engine",
+    ]
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,9 @@ from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.platform.telemetry import bind_trace, span, trace_id_of
 
+_STREAM_WAIT_SECONDS = 15.0
+_STREAM_MAX_SECONDS = 600.0
+
 router = APIRouter(
     prefix="/conversations",
     tags=["conversations"],
@@ -490,16 +493,25 @@ async def stream(
 
     async def generate():
         nonlocal resume
-        idle = 0
-        while idle < 10:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _STREAM_MAX_SECONDS
+        while True:
+            # Subscribe before reading so a commit between the read and the wait still wakes us.
+            waiter = asyncio.ensure_future(
+                service.wait_for_events(
+                    conversation_id,
+                    timeout=max(0.0, min(_STREAM_WAIT_SECONDS, deadline - loop.time())),
+                )
+            )
             try:
-                value = await service.load(conversation_id)
-            except ConversationNotFound:
-                # Deleted while streaming: close the stream instead of failing mid-body.
-                return
-            fresh = [event for event in value.events if event.sequence > resume]
-            if fresh:
-                idle = 0
+                await asyncio.sleep(0)
+                try:
+                    # Check activity first: events read afterwards include any terminal ones.
+                    active = await service.has_active_turns(conversation_id)
+                    fresh = await service.events_after(conversation_id, resume)
+                except ConversationNotFound:
+                    # Deleted while streaming: close the stream instead of failing mid-body.
+                    return
                 for event in fresh:
                     turn_id = event.turn_id or str(event.payload.get("turnId") or "")
                     if not turn_id:
@@ -517,9 +529,14 @@ async def stream(
                     ).model_dump(mode="json", by_alias=True)
                     yield encode_sse((envelope,), last_event_id=str(resume))
                     resume = event.sequence
-            else:
-                idle += 1
-                await asyncio.sleep(0.1)
+                if not active or loop.time() >= deadline:
+                    return
+                if not await waiter:
+                    yield b": keepalive\n\n"
+            finally:
+                if not waiter.done():
+                    waiter.cancel()
+                    await asyncio.gather(waiter, return_exceptions=True)
 
     return StreamingResponse(
         generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}

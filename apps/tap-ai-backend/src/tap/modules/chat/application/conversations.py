@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -9,6 +11,10 @@ from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import AuthorizationDenied
+from tap.modules.chat.application.notifier import (
+    ConversationEventNotifier,
+    InMemoryConversationEventNotifier,
+)
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     AnswerEvidenceSnapshot,
@@ -22,6 +28,23 @@ from tap.modules.chat.domain.conversations import (
 )
 
 _TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
+_ACTIVE_TURN_STATES = frozenset({"queued", "running"})
+_LOGGER = logging.getLogger(__name__)
+
+
+async def publish_conversation_events(
+    notifier: ConversationEventNotifier | None,
+    scope: ProjectScopeContext | None,
+    conversation_ids,
+) -> None:
+    """Wake stream readers after a commit; a failed publish never fails the write."""
+    if notifier is None or scope is None:
+        return
+    for conversation_id in dict.fromkeys(conversation_ids):
+        try:
+            await notifier.publish(scope, conversation_id)
+        except Exception as error:  # noqa: BLE001 - readers fall back to reading the database
+            _LOGGER.warning("conversation event notification failed: %s", type(error).__name__)
 
 
 class ConversationNotFound(Exception):
@@ -91,6 +114,10 @@ class ConversationRepository(Protocol):
         event: ConversationEvent,
         lease_token: str | None = None,
     ) -> ConversationEvent: ...
+    async def events_after(
+        self, conversation_id: str, sequence: int
+    ) -> tuple[ConversationEvent, ...]: ...
+    async def has_active_turns(self, conversation_id: str) -> bool: ...
     async def citation_linked(
         self,
         conversation_id: str,
@@ -109,14 +136,24 @@ class ConversationRepository(Protocol):
 
 
 class InMemoryConversationRepository:
-    def __init__(self):
+    def __init__(self, notifier: ConversationEventNotifier | None = None):
         self.values: dict[str, Conversation] = {}
         self.lease_expires_at: dict[str, datetime] = {}
+        self.notifier = notifier or InMemoryConversationEventNotifier()
+        self.scope: ProjectScopeContext | None = None
+
+    def bind_scope(self, scope: ProjectScopeContext) -> None:
+        if self.scope is None:
+            self.scope = scope
+
+    async def _published(self, *conversation_ids: str) -> None:
+        await publish_conversation_events(self.notifier, self.scope, conversation_ids)
 
     async def create_with_first_turn(self, conversation):
         if conversation.conversation_id in self.values:
             raise ConversationConflict("idempotency-conflict")
         self.values[conversation.conversation_id] = conversation
+        await self._published(conversation.conversation_id)
         return conversation.turns[0]
 
     async def append_turn(self, conversation_id, turn, event):
@@ -132,6 +169,7 @@ class InMemoryConversationRepository:
             events=(*conversation.events, event),
             updated_at=event.occurred_at,
         )
+        await self._published(conversation_id)
         return turn
 
     async def list(self, *, limit, cursor, query=None):
@@ -248,6 +286,7 @@ class InMemoryConversationRepository:
             ),
             updated_at=event.occurred_at,
         )
+        await self._published(conversation_id)
         return found
 
     async def claim_queued(self, *, limit: int) -> tuple[tuple[str, ConversationTurn], ...]:
@@ -255,53 +294,55 @@ class InMemoryConversationRepository:
             raise ValueError("limit must be positive")
         now = datetime.now(timezone.utc)
         claimed: list[tuple[str, ConversationTurn]] = []
-        for conversation_id, conversation in list(self.values.items()):
-            if conversation.deleted_at is not None:
+        candidates = (
+            (conversation_id, turn)
+            for conversation_id, conversation in list(self.values.items())
+            if conversation.deleted_at is None
+            for turn in conversation.turns
+        )
+        for conversation_id, turn in candidates:
+            if len(claimed) == limit:
+                break
+            expires_at = self.lease_expires_at.get(turn.turn_id)
+            reclaimable = turn.state == "running" and expires_at is not None and expires_at < now
+            if turn.state != "queued" and not reclaimable:
                 continue
-            for turn in conversation.turns:
-                if len(claimed) == limit:
-                    return tuple(claimed)
-                expires_at = self.lease_expires_at.get(turn.turn_id)
-                reclaimable = (
-                    turn.state == "running" and expires_at is not None and expires_at < now
+            current = self.values[conversation_id]
+            running = replace(
+                turn, state="running", attempt=turn.attempt + 1, lease_token=uuid4().hex
+            )
+            sequence = max((item.sequence for item in current.events), default=0)
+            events = [
+                ConversationEvent(
+                    uuid4().hex,
+                    sequence + 1,
+                    "turn.started",
+                    {"state": "running"},
+                    now,
+                    turn.turn_id,
                 )
-                if turn.state != "queued" and not reclaimable:
-                    continue
-                current = self.values[conversation_id]
-                running = replace(
-                    turn, state="running", attempt=turn.attempt + 1, lease_token=uuid4().hex
-                )
-                sequence = max((item.sequence for item in current.events), default=0)
-                events = [
+            ]
+            if turn.attempt > 0:
+                events.append(
                     ConversationEvent(
                         uuid4().hex,
-                        sequence + 1,
-                        "turn.started",
-                        {"state": "running"},
+                        sequence + 2,
+                        "answer.reset",
+                        {"attempt": running.attempt},
                         now,
                         turn.turn_id,
                     )
-                ]
-                if turn.attempt > 0:
-                    events.append(
-                        ConversationEvent(
-                            uuid4().hex,
-                            sequence + 2,
-                            "answer.reset",
-                            {"attempt": running.attempt},
-                            now,
-                            turn.turn_id,
-                        )
-                    )
-                self.values[conversation_id] = replace(
-                    current,
-                    turns=tuple(
-                        running if item.turn_id == turn.turn_id else item for item in current.turns
-                    ),
-                    events=(*current.events, *events),
                 )
-                self.lease_expires_at[turn.turn_id] = now + timedelta(seconds=60)
-                claimed.append((conversation_id, running))
+            self.values[conversation_id] = replace(
+                current,
+                turns=tuple(
+                    running if item.turn_id == turn.turn_id else item for item in current.turns
+                ),
+                events=(*current.events, *events),
+            )
+            self.lease_expires_at[turn.turn_id] = now + timedelta(seconds=60)
+            claimed.append((conversation_id, running))
+        await self._published(*(conversation_id for conversation_id, _turn in claimed))
         return tuple(claimed)
 
     async def append_stream_event(self, conversation_id, turn_id, event, lease_token=None):
@@ -319,7 +360,16 @@ class InMemoryConversationRepository:
         self.values[conversation_id] = replace(
             conversation, events=(*conversation.events, event), updated_at=event.occurred_at
         )
+        await self._published(conversation_id)
         return event
+
+    async def events_after(self, conversation_id, sequence):
+        conversation = await self.load(conversation_id)
+        return tuple(event for event in conversation.events if event.sequence > sequence)
+
+    async def has_active_turns(self, conversation_id):
+        conversation = await self.load(conversation_id)
+        return any(turn.state in _ACTIVE_TURN_STATES for turn in conversation.turns)
 
     async def citation_linked(self, conversation_id, turn_id, citation_id, citation_digest):
         conversation = await self.load(conversation_id)
@@ -349,9 +399,35 @@ class InMemoryConversationRepository:
 
 
 class ConversationService:
-    def __init__(self, repository: ConversationRepository, *, scope: ProjectScopeContext):
+    def __init__(
+        self,
+        repository: ConversationRepository,
+        *,
+        scope: ProjectScopeContext,
+        notifier: ConversationEventNotifier | None = None,
+    ):
         self.repository = repository
         self.scope = scope
+        self.notifier = notifier if notifier is not None else getattr(repository, "notifier", None)
+        bind_scope = getattr(repository, "bind_scope", None)
+        if bind_scope is not None:
+            bind_scope(scope)
+
+    async def events_after(
+        self, conversation_id: str, sequence: int
+    ) -> tuple[ConversationEvent, ...]:
+        return await self.repository.events_after(conversation_id, sequence)
+
+    async def has_active_turns(self, conversation_id: str) -> bool:
+        return await self.repository.has_active_turns(conversation_id)
+
+    async def wait_for_events(self, conversation_id: str, *, timeout: float) -> bool:
+        """True when a commit may have added events; False after a quiet timeout."""
+        if self.notifier is None:
+            # Without a notifier, re-read on a short bounded interval.
+            await asyncio.sleep(min(timeout, 0.25))
+            return True
+        return await self.notifier.wait(self.scope, conversation_id, timeout)
 
     def _turn(self, conversation_id, turn_id, request_id, value, *, attempt=0, now=None):
         now = now or datetime.now(timezone.utc)
