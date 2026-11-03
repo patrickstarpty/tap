@@ -69,6 +69,7 @@ from tap.modules.knowledge.ports.models import (
 )
 from tap.modules.knowledge.ports.redaction import EgressRedactionPort
 from tap.modules.knowledge.ports.search import (
+    AnswerDeltaCallback,
     AnswerGenerationPort,
     GovernedKnowledgeModels,
     QueryEmbeddingPort,
@@ -224,6 +225,7 @@ class AuthorizedRetrieval:
         model_alias: str | None = None,
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
+        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerResponse:
         answer_input = None
         missing = False
@@ -397,11 +399,13 @@ class AuthorizedRetrieval:
                 graph_context=graph_context,
                 model_alias=model_alias,
                 **({"answer_input": answer_input} if answer_input is not None else {}),
+                **({"on_delta": on_delta} if on_delta is not None else {}),
             )
             if governance is not None
             or graph_context
             or model_alias is not None
             or answer_input is not None
+            or on_delta is not None
             else await self._answers.answer(
                 run.plan.sanitized_query,
                 run.response.evidence,

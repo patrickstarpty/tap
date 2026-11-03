@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
@@ -214,14 +215,26 @@ class KnowledgeHttpService:
         return await resolver(revision_ids)
 
     async def answer_conversation(
-        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+        self,
+        request: RetrievalAnswerRequest,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ):
+        """Answer one accepted Turn; `on_delta` receives answer text while it streams."""
+
         remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
         if remaining is not None and remaining <= 0:
             raise TimeoutError("persisted answer budget exhausted")
         async with asyncio.timeout(remaining):
             return await self._answer_conversation(
-                request, frozen_input, answer_plan=answer_plan, authorize=authorize
+                request,
+                frozen_input,
+                answer_plan=answer_plan,
+                authorize=authorize,
+                on_delta=on_delta,
             )
 
     async def authorize_planning(self, snapshot) -> None:
@@ -291,7 +304,13 @@ class KnowledgeHttpService:
                 raise AuthorizationDenied("checkpoint citation authorization changed") from error
 
     async def _answer_conversation(
-        self, request: RetrievalAnswerRequest, frozen_input, *, answer_plan=None, authorize=None
+        self,
+        request: RetrievalAnswerRequest,
+        frozen_input,
+        *,
+        answer_plan=None,
+        authorize=None,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ):
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
@@ -312,6 +331,7 @@ class KnowledgeHttpService:
             )
         )
         governance = self._generation_governance(frozen_input)
+        streaming = {} if on_delta is None else {"on_delta": on_delta}
         answer_input = None
         if answer_plan is not None:
             from tap.modules.chat.domain.answer_plan import PlanningInput
@@ -370,6 +390,7 @@ class KnowledgeHttpService:
                     if answer_plan is not None
                     else {}
                 ),
+                **streaming,
             )
             if authorize is not None:
                 await authorize()
@@ -410,6 +431,7 @@ class KnowledgeHttpService:
                 governance=governance,
                 answer_plan_id=answer_plan.plan_id,
                 answer_input=answer_input,
+                **streaming,
             )
             if authorize is not None:
                 await authorize()
@@ -446,6 +468,7 @@ class KnowledgeHttpService:
                 if answer_plan is not None
                 else {}
             ),
+            **streaming,
         )
         return answer_response_to_http(
             response,

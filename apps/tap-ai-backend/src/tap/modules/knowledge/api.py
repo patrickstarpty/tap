@@ -160,6 +160,7 @@ class KnowledgeAPI:
         model_alias=None,
         answer_execution=None,
         authorize=None,
+        on_delta=None,
     ):
         import asyncio
 
@@ -175,6 +176,7 @@ class KnowledgeAPI:
                 model_alias=model_alias,
                 answer_execution=answer_execution,
                 authorize=authorize,
+                on_delta=on_delta,
             )
 
 

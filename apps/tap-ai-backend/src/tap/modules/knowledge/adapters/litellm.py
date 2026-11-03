@@ -13,17 +13,21 @@ from tap.modules.ai.domain.models import (
     ModelGatewayUnavailable,
     ModelOperation,
     ModelRequest,
+    ModelResult,
+    TextDelta,
     schema_digest,
     text_digest,
 )
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.adapters.grounded_output import parse_grounded_answer_payload
 from tap.modules.knowledge.application.answer_templates import AssembledAnswer
+from tap.modules.knowledge.application.incremental_json import IncrementalJsonField
 from tap.modules.knowledge.domain.flowchart_paths import flowchart_evidence_record
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.errors import AnswerUnavailable, ModelUnavailable
 from tap.modules.knowledge.ports.models import AnswerGeneration, Embedding, EmbeddingUsage
+from tap.modules.knowledge.ports.search import AnswerDeltaCallback
 
 _TAPPER_PLATFORM_INSTRUCTION = (
     "You are Tapper, the platform assistant for TAP. TAP is a test-centered intelligent "
@@ -159,8 +163,13 @@ class KnowledgeModelGateway:
         governance: GenerationGovernance | None = None,
         answer_plan_id: str | None = None,
         answer_input: AssembledAnswer | None = None,
+        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerGeneration:
-        """Generate a model-only answer when the user selected no Knowledge corpus."""
+        """Generate a model-only answer when the user selected no Knowledge corpus.
+
+        `on_delta` receives answer text while a structured answer streams; plain chat does not
+        stream.
+        """
 
         if self.chat_aliases is not None and model_alias not in self.chat_aliases:
             raise AnswerUnavailable("model-unavailable")
@@ -223,7 +232,7 @@ class KnowledgeModelGateway:
                 governance_digests,
             )
             result = (
-                await self.gateway.generate_structured(request)
+                await self._structured(request, on_delta)
                 if operation is ModelOperation.STRUCTURED
                 else await self.gateway.chat(request)
             )
@@ -308,6 +317,7 @@ class KnowledgeModelGateway:
         graph_context=(),
         model_alias: str | None = None,
         answer_input: AssembledAnswer | None = None,
+        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerGeneration:
         if (
             profile_id not in {"quick-hybrid-v1", "deep-hybrid-v1", "audit-hybrid-v1"}
@@ -369,7 +379,7 @@ class KnowledgeModelGateway:
                 # A pinned template digest makes this a governed answer; declare the capability.
                 tools = tools | {"knowledge.answer"}
             plan_id = None if answer_input is None else answer_input.context.get("planId")
-            result = await self.gateway.generate_structured(
+            result = await self._structured(
                 ModelRequest(
                     self.scope,
                     alias,
@@ -383,7 +393,8 @@ class KnowledgeModelGateway:
                     schema_digest(schema),
                     tools,
                     governance_digests,
-                )
+                ),
+                on_delta,
             )
             answer, claims = parse_grounded_answer_payload(
                 result.output,
@@ -406,6 +417,27 @@ class KnowledgeModelGateway:
             raise AnswerUnavailable(str(error)) from None
         except (ModelGatewayRejected, ModelGatewayUnavailable):
             raise AnswerUnavailable("model-unavailable") from None
+
+    async def _structured(
+        self, request: ModelRequest, on_delta: AnswerDeltaCallback | None
+    ) -> ModelResult:
+        if on_delta is None:
+            return await self.gateway.generate_structured(request)
+        answer_text = IncrementalJsonField("answer")
+        stream = self.gateway.stream_structured(request)
+        try:
+            async for event in stream:
+                if isinstance(event, TextDelta):
+                    text = answer_text.feed(event.text)
+                    if text:
+                        await on_delta(text)
+                else:
+                    return event.result
+        finally:
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
+        raise ModelGatewayUnavailable()
 
     async def _evidence_payload(self, item: Evidence) -> dict[str, object]:
         payload: dict[str, object] = {"label": item.evidence_label}

@@ -15,6 +15,7 @@ from tap.modules.knowledge.ports.models import (
     Embedding,
     GeneratedClaim,
 )
+from tap.modules.knowledge.ports.search import AnswerDeltaCallback
 
 _DIMENSION = 1536
 _EMBEDDING_ALIAS = "text-embedding-v4"
@@ -124,6 +125,8 @@ class DeterministicTapperModel:
         query: str,
         evidence: tuple[Evidence, ...],
         profile_id: str,
+        *,
+        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerGeneration:
         if (
             not isinstance(query, str)
@@ -148,8 +151,11 @@ class DeterministicTapperModel:
                 break
         if not claims:
             raise ValueError("deterministic answer requires nonblank evidence")
+        text = "\n\n".join(item.text for item in claims)
+        if on_delta is not None:
+            await on_delta(text)
         return AnswerGeneration(
-            text="\n\n".join(item.text for item in claims),
+            text=text,
             claims=tuple(claims),
             model_id=_ANSWER_ALIAS,
             profile_id=profile_id,

@@ -33,6 +33,7 @@ from tap.modules.knowledge.ports.answers import (
     DocumentStateChanged,
     ReadyDocumentRevision,
 )
+from tap.modules.knowledge.ports.search import AnswerDeltaCallback
 
 __all__ = [
     "AnswerSelectionRejected",
@@ -155,6 +156,7 @@ class AnswerService:
         model_alias: str | None = None,
         answer_execution=None,
         authorize=None,
+        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerResponse:
         if (
             not revisions
@@ -177,6 +179,7 @@ class AnswerService:
         }:
             raise DocumentStateChanged("accepted retrieval authority is invalid")
         frozen_answer = getattr(self._knowledge, "answer_frozen", None)
+        streaming = {} if on_delta is None else {"on_delta": on_delta}
         if answer_execution is not None:
             if frozen_answer is None:
                 raise ValueError("planned answers require the authorized Knowledge boundary")
@@ -194,6 +197,7 @@ class AnswerService:
                 model_alias=model_alias,
                 answer_execution=answer_execution,
                 authorize=reauthorize,
+                **streaming,
             )
         elif frozen_answer is None:
             response = await self._knowledge.answer(trusted, policy)
@@ -203,6 +207,7 @@ class AnswerService:
                 policy,
                 governance=governance,
                 graph_context=graph_context,
+                **streaming,
             )
         else:
             response = await frozen_answer(
@@ -211,6 +216,7 @@ class AnswerService:
                 governance=governance,
                 graph_context=graph_context,
                 model_alias=model_alias,
+                **streaming,
             )
         await self._revalidate_publication(publication)
         try:

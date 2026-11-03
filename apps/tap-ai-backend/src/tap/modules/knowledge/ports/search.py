@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -13,6 +14,9 @@ from tap.modules.knowledge.ports.models import (
     SearchExecution,
     SearchHit,
 )
+
+AnswerDeltaCallback = Callable[[str], Awaitable[None]]
+"""Receives newly generated answer text while a structured answer streams."""
 
 
 class SearchPort(Protocol):
@@ -49,6 +53,8 @@ class AnswerGenerationPort(Protocol):
         query: str,
         evidence: tuple[Evidence, ...],
         profile_id: str,
+        *,
+        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerGeneration:
         raise NotImplementedError
 
