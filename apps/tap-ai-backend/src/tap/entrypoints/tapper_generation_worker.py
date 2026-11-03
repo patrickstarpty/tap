@@ -289,6 +289,13 @@ class GenerationWorker:
             except (ConversationConflict, ConversationNotFound):
                 # Provisional text only; the completion path settles lease loss or deletion.
                 streaming = False
+            except Exception:  # noqa: BLE001 - delta persistence is best-effort
+                _LOGGER.warning(
+                    "answer delta persistence failed; streaming disabled for turn %s",
+                    turn.turn_id,
+                    exc_info=True,
+                )
+                streaming = False
 
         def stream_events(evidence, duration_ms: int) -> list[dict[str, object]]:
             if evidence.outcome == "failed":

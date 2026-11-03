@@ -124,6 +124,36 @@ async def test_worker_persists_incremental_deltas_that_concatenate_to_the_answer
 
 
 @pytest.mark.asyncio
+async def test_delta_persistence_failure_disables_streaming_but_completes_the_answer(
+    monkeypatch, caplog
+):
+    service = await _accepted()
+    knowledge = _StreamingKnowledge()
+    original_emit = service.emit
+    attempts: list[str] = []
+
+    async def flaky_emit(conversation_id, turn_id, event_type, payload, **kwargs):
+        if event_type == "answer.delta":
+            attempts.append(payload["text"])
+            raise TimeoutError("database timeout")
+        return await original_emit(conversation_id, turn_id, event_type, payload, **kwargs)
+
+    monkeypatch.setattr(service, "emit", flaky_emit)
+    worker = GenerationWorker(service, knowledge, checkpointer=InMemorySaver(), delta_max_chars=8)
+
+    with caplog.at_level("WARNING"):
+        assert await worker.run_once(limit=1) == 1
+
+    conversation = await service.load("conversation-1")
+    assert conversation.turns[0].state == "completed"
+    assert conversation.turns[0].answer_snapshot.value.answer == knowledge.final_answers[0]
+    assert len(attempts) == 1
+    assert "answer delta persistence failed" in caplog.text
+    assert "TimeoutError" in caplog.text
+    assert not [event for event in conversation.events if event.event_type == "answer.delta"]
+
+
+@pytest.mark.asyncio
 async def test_default_batching_coalesces_a_short_answer():
     service = await _accepted()
     knowledge = _StreamingKnowledge()
