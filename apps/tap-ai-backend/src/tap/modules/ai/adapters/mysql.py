@@ -14,6 +14,7 @@ from sqlalchemy import (
     Column,
     ForeignKeyConstraint,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
@@ -78,13 +79,16 @@ ai_agent_revision = Table(
     Column("display_name", String(128), nullable=False),
     Column("content_digest", String(71), nullable=False),
     Column("system_instruction_digest", String(71), nullable=False),
-    Column("system_instruction", String(8000)),
+    Column("system_instruction", MEDIUMTEXT),
     Column("tool_allowlist", JSON, nullable=False),
     Column("output_schema_digest", String(71), nullable=False),
     Column("output_schema_json", JSON),
     Column("status", String(16), nullable=False),
     Column("adopted_from_revision_id", String(64)),
     Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("model_alias", String(128)),
+    Column("description", String(1024)),
+    Column("origin", String(16), nullable=False, server_default="seed"),
     Column("enterprise_id", String(128), nullable=False),
     Column("project_id", String(128), nullable=False),
     Column("actor_id", String(128), nullable=False),
@@ -161,6 +165,43 @@ skill_revision = Table(
         ["enterprise_id", "actor_id"],
         ["actor_principal.enterprise_id", "actor_principal.actor_id"],
         name="fk_skill_revision_scope_actor",
+    ),
+)
+
+ai_agent_revision_skill = Table(
+    "ai_agent_revision_skill",
+    metadata,
+    Column("revision_id", String(64), nullable=False),
+    Column("position", Integer, nullable=False),
+    Column("skill_revision_id", String(64), nullable=False),
+    Column("enterprise_id", String(128), nullable=False),
+    Column("project_id", String(128), nullable=False),
+    Column("actor_id", String(128), nullable=False),
+    Column("identity_mode", String(16), nullable=False),
+    Column("identity_origin", String(16), nullable=False),
+    PrimaryKeyConstraint("revision_id", "position"),
+    UniqueConstraint(
+        "project_id", "revision_id", "skill_revision_id", name="uq_ai_agent_revision_skill_once"
+    ),
+    ForeignKeyConstraint(
+        ["project_id", "revision_id"],
+        ["ai_agent_revision.project_id", "ai_agent_revision.revision_id"],
+        name="fk_ai_agent_revision_skill_agent",
+    ),
+    ForeignKeyConstraint(
+        ["project_id", "skill_revision_id"],
+        ["skill_revision.project_id", "skill_revision.revision_id"],
+        name="fk_ai_agent_revision_skill_skill",
+    ),
+    ForeignKeyConstraint(
+        ["enterprise_id", "project_id"],
+        ["project.enterprise_id", "project.project_id"],
+        name="fk_ai_agent_revision_skill_scope_project",
+    ),
+    ForeignKeyConstraint(
+        ["enterprise_id", "actor_id"],
+        ["actor_principal.enterprise_id", "actor_principal.actor_id"],
+        name="fk_ai_agent_revision_skill_scope_actor",
     ),
 )
 
@@ -271,7 +312,7 @@ class MysqlAssetCatalog:
             .one_or_none()
         )
         if existing is not None:
-            existing_revision = self._agent(existing)
+            existing_revision = await self._load_agent(session, existing)
             if self._agent_content(existing_revision) != self._agent_content(
                 revision
             ) or not self._creator_matches(existing, revision.scope):
@@ -303,6 +344,15 @@ class MysqlAssetCatalog:
             session, ai_agent_revision, "agent_id", revision.asset_id
         )
         await self._assert_adoption(session, ai_agent_revision, revision.adopted_from_revision_id)
+        await self._insert_agent_revision(session, revision, revision_number, now)
+
+    async def _insert_agent_revision(
+        self,
+        session: AsyncSession,
+        revision: AiAgentRevision,
+        revision_number: int,
+        now: datetime,
+    ) -> None:
         await session.execute(
             ai_agent_revision.insert().values(
                 revision_id=revision.revision_id,
@@ -318,9 +368,106 @@ class MysqlAssetCatalog:
                 status=revision.status.value,
                 adopted_from_revision_id=revision.adopted_from_revision_id,
                 created_at=now,
+                model_alias=revision.model_alias,
+                description=revision.description,
+                origin=revision.origin,
                 **scope_values(self._scope),
             )
         )
+        if revision.skill_revision_ids:
+            await session.execute(
+                ai_agent_revision_skill.insert(),
+                [
+                    {
+                        "revision_id": revision.revision_id,
+                        "position": position,
+                        "skill_revision_id": skill_revision_id,
+                        **scope_values(self._scope),
+                    }
+                    for position, skill_revision_id in enumerate(revision.skill_revision_ids)
+                ],
+            )
+
+    async def latest_agent_revision(
+        self, scope: ProjectScopeContext, asset_id: str
+    ) -> AiAgentRevision:
+        self._assert_scope(scope)
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(ai_agent_revision)
+                        .where(
+                            *scope_predicates(ai_agent_revision, self._scope),
+                            ai_agent_revision.c.agent_id == asset_id,
+                        )
+                        .order_by(ai_agent_revision.c.revision_number.desc())
+                        .limit(1)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise AssetRevisionRejected()
+            return await self._load_agent(session, row)
+
+    async def insert_agent_revision(
+        self, scope: ProjectScopeContext, revision: AiAgentRevision
+    ) -> AiAgentRevision:
+        """Append an authored revision only when it adopts the current latest revision."""
+        self._assert_scope(scope)
+        self._assert_scope(revision.scope)
+        async with self._catalog_session() as session:
+            latest = (
+                await session.execute(
+                    select(ai_agent_revision.c.revision_id)
+                    .where(
+                        *scope_predicates(ai_agent_revision, self._scope),
+                        ai_agent_revision.c.agent_id == revision.asset_id,
+                    )
+                    .order_by(ai_agent_revision.c.revision_number.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if latest != revision.adopted_from_revision_id:
+                raise AssetRevisionRejected()
+            now = datetime.now(timezone.utc)
+            if latest is None:
+                await session.execute(
+                    ai_agent.insert().values(
+                        agent_id=revision.asset_id,
+                        display_name=revision.display_name,
+                        created_at=now,
+                        **scope_values(self._scope),
+                    )
+                )
+            for skill_revision_id in revision.skill_revision_ids:
+                await self._assert_adoption(session, skill_revision, skill_revision_id)
+            revision_number = await self._next_number(
+                session, ai_agent_revision, "agent_id", revision.asset_id
+            )
+            await self._insert_agent_revision(session, revision, revision_number, now)
+        return revision
+
+    async def set_agent_status(
+        self, scope: ProjectScopeContext, revision_id: str, status: AssetRevisionStatus
+    ) -> AiAgentRevision:
+        self._assert_scope(scope)
+        if not isinstance(status, AssetRevisionStatus):
+            raise AssetRevisionRejected()
+        async with self._sessions.begin() as session:
+            result = await session.execute(
+                update(ai_agent_revision)
+                .where(
+                    *scope_predicates(ai_agent_revision, self._scope),
+                    ai_agent_revision.c.revision_id == revision_id,
+                )
+                .values(status=status.value)
+            )
+            if result.rowcount != 1:
+                raise AssetRevisionRejected()
+        return await self.get_historical_agent(scope, revision_id)
 
     async def _seed_skill(self, session: AsyncSession, revision: SkillRevision) -> None:
         self._assert_scope(revision.scope)
@@ -510,18 +657,23 @@ class MysqlAssetCatalog:
         self._assert_scope(scope)
         async with self._sessions() as session:
             rows = (
-                await session.execute(
-                    select(ai_agent_revision)
-                    .where(
-                        *scope_predicates(ai_agent_revision, self._scope),
-                        ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                        ai_agent_revision.c.system_instruction.is_not(None),
-                        ai_agent_revision.c.output_schema_json.is_not(None),
+                (
+                    await session.execute(
+                        select(ai_agent_revision)
+                        .where(
+                            *scope_predicates(ai_agent_revision, self._scope),
+                            ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                            ai_agent_revision.c.system_instruction.is_not(None),
+                            ai_agent_revision.c.output_schema_json.is_not(None),
+                        )
+                        .order_by(ai_agent_revision.c.revision_id)
                     )
-                    .order_by(ai_agent_revision.c.revision_id)
                 )
-            ).mappings()
-            return tuple(self._agent(row) for row in rows)
+                .mappings()
+                .all()
+            )
+            skills = await self._agent_skills(session, [row["revision_id"] for row in rows])
+            return tuple(self._agent(row, skills.get(row["revision_id"], ())) for row in rows)
 
     async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]:
         self._assert_scope(scope)
@@ -659,6 +811,10 @@ class MysqlAssetCatalog:
             value.system_instruction,
             value.output_schema_json,
             value.adopted_from_revision_id,
+            value.model_alias,
+            value.description,
+            value.skill_revision_ids,
+            value.origin,
         )
 
     @staticmethod
@@ -695,9 +851,36 @@ class MysqlAssetCatalog:
                 .mappings()
                 .one_or_none()
             )
-        if row is None:
-            raise AssetRevisionRejected()
-        return self._agent(row)
+            if row is None:
+                raise AssetRevisionRejected()
+            return await self._load_agent(session, row)
+
+    async def _load_agent(self, session: AsyncSession, row) -> AiAgentRevision:
+        skills = await self._agent_skills(session, [row["revision_id"]])
+        return self._agent(row, skills.get(row["revision_id"], ()))
+
+    async def _agent_skills(
+        self, session: AsyncSession, revision_ids: list[str]
+    ) -> dict[str, tuple[str, ...]]:
+        if not revision_ids:
+            return {}
+        rows = (
+            await session.execute(
+                select(
+                    ai_agent_revision_skill.c.revision_id,
+                    ai_agent_revision_skill.c.skill_revision_id,
+                )
+                .where(
+                    *scope_predicates(ai_agent_revision_skill, self._scope),
+                    ai_agent_revision_skill.c.revision_id.in_(revision_ids),
+                )
+                .order_by(ai_agent_revision_skill.c.revision_id, ai_agent_revision_skill.c.position)
+            )
+        ).all()
+        values: dict[str, list[str]] = {}
+        for revision_id, skill_revision_id in rows:
+            values.setdefault(revision_id, []).append(skill_revision_id)
+        return {key: tuple(items) for key, items in values.items()}
 
     def _assert_scope(self, scope: ProjectScopeContext) -> None:
         if type(scope) is not ProjectScopeContext or scope != self._scope:
@@ -713,7 +896,7 @@ class MysqlAssetCatalog:
         )
 
     @classmethod
-    def _agent(cls, row) -> AiAgentRevision:
+    def _agent(cls, row, skill_revision_ids: tuple[str, ...] = ()) -> AiAgentRevision:
         return AiAgentRevision(
             revision_id=row["revision_id"],
             asset_id=row["agent_id"],
@@ -727,6 +910,10 @@ class MysqlAssetCatalog:
             output_schema_json=row["output_schema_json"],
             status=AssetRevisionStatus(row["status"]),
             adopted_from_revision_id=row["adopted_from_revision_id"],
+            model_alias=row["model_alias"],
+            description=row["description"],
+            skill_revision_ids=skill_revision_ids,
+            origin=row["origin"],
         )
 
     @classmethod

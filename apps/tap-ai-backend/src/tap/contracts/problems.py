@@ -336,6 +336,54 @@ PROBLEM_REGISTRY = MappingProxyType(
                         422,
                         "The SKILL.md file must contain instructions after the front matter.",
                     ),
+                    (
+                        "agent-name-invalid",
+                        "Agent name invalid",
+                        422,
+                        "The Agent name must be non-empty and at most 128 characters.",
+                    ),
+                    (
+                        "agent-description-invalid",
+                        "Agent description invalid",
+                        422,
+                        "The Agent description must be at most 1024 characters.",
+                    ),
+                    (
+                        "agent-instruction-invalid",
+                        "Agent instruction invalid",
+                        422,
+                        "The system instruction must be non-empty and at most 16000 characters.",
+                    ),
+                    (
+                        "agent-skills-invalid",
+                        "Agent skills invalid",
+                        422,
+                        "An Agent binds at most 16 distinct Skill revisions.",
+                    ),
+                    (
+                        "agent-skill-unavailable",
+                        "Agent skill unavailable",
+                        422,
+                        "Every bound Skill revision must exist and be enabled in this Project.",
+                    ),
+                    (
+                        "agent-tool-unavailable",
+                        "Agent tool unavailable",
+                        422,
+                        "Every tool must be registered, enabled and within the 32-tool limit.",
+                    ),
+                    (
+                        "agent-model-unsupported",
+                        "Agent model unsupported",
+                        422,
+                        "The model must be in the catalog and support structured output.",
+                    ),
+                    (
+                        "agent-definition-invalid",
+                        "Agent definition invalid",
+                        422,
+                        "The Agent definition does not satisfy the revision contract.",
+                    ),
                 )
             ),
             ProblemDefinition(

@@ -9,7 +9,42 @@ export interface paths {
         /** List Agents */
         get: operations["ai_list_agent_revisions"];
         put?: never;
-        post?: never;
+        /** Create Agent */
+        post: operations["ai_create_agent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/revisions/{revision_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Agent Status */
+        post: operations["ai_set_agent_revision_status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/{asset_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revise Agent */
+        post: operations["ai_revise_agent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1370,6 +1405,35 @@ export interface components {
          * @enum {string}
          */
         AbstentionReason: "insufficient_evidence" | "conflicting_sources" | "revision_mismatch";
+        /**
+         * AgentDraftRequest
+         * @description Authoring input; bounds are re-checked by the service with specific problem codes.
+         */
+        AgentDraftRequest: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Displayname */
+            displayName: string;
+            /** Modelalias */
+            modelAlias?: string | null;
+            /** Skillrevisionids */
+            skillRevisionIds?: string[];
+            /** Systeminstruction */
+            systemInstruction: string;
+            /** Toolallowlist */
+            toolAllowlist?: string[];
+        };
+        /** AgentStatusRequest */
+        AgentStatusRequest: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
+        };
         /** AiAgentRevisionPage */
         AiAgentRevisionPage: {
             /** Items */
@@ -1387,6 +1451,41 @@ export interface components {
             outputSchemaDigest: string;
             /** Revisionid */
             revisionId: string;
+            /** Toolallowlist */
+            toolAllowlist: string[];
+        };
+        /** AiAgentRevisionView */
+        AiAgentRevisionView: {
+            /** Adoptedfromrevisionid */
+            adoptedFromRevisionId?: string | null;
+            /** Assetid */
+            assetId: string;
+            /** Contentdigest */
+            contentDigest: string;
+            /** Description */
+            description?: string | null;
+            /** Displayname */
+            displayName: string;
+            /** Modelalias */
+            modelAlias?: string | null;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "seed" | "editor";
+            /** Outputschemadigest */
+            outputSchemaDigest: string;
+            /** Revisionid */
+            revisionId: string;
+            /** Skillrevisionids */
+            skillRevisionIds?: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
+            /** Systeminstruction */
+            systemInstruction?: string | null;
             /** Toolallowlist */
             toolAllowlist: string[];
         };
@@ -3097,8 +3196,112 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/skill-body-empty" | "https://tap.example/problems/skill-description-invalid" | "https://tap.example/problems/skill-front-matter-invalid" | "https://tap.example/problems/skill-front-matter-missing" | "https://tap.example/problems/skill-name-invalid" | "https://tap.example/problems/skill-not-utf8" | "https://tap.example/problems/skill-too-large" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+            type: "https://tap.example/problems/agent-definition-invalid" | "https://tap.example/problems/agent-description-invalid" | "https://tap.example/problems/agent-instruction-invalid" | "https://tap.example/problems/agent-model-unsupported" | "https://tap.example/problems/agent-name-invalid" | "https://tap.example/problems/agent-skill-unavailable" | "https://tap.example/problems/agent-skills-invalid" | "https://tap.example/problems/agent-tool-unavailable" | "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/skill-body-empty" | "https://tap.example/problems/skill-description-invalid" | "https://tap.example/problems/skill-front-matter-invalid" | "https://tap.example/problems/skill-front-matter-missing" | "https://tap.example/problems/skill-name-invalid" | "https://tap.example/problems/skill-not-utf8" | "https://tap.example/problems/skill-too-large" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
         } & ({
+            /** @constant */
+            detail?: "The Agent definition does not satisfy the revision contract.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent definition invalid";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-definition-invalid";
+        } | {
+            /** @constant */
+            detail?: "The Agent description must be at most 1024 characters.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent description invalid";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-description-invalid";
+        } | {
+            /** @constant */
+            detail?: "The system instruction must be non-empty and at most 16000 characters.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent instruction invalid";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-instruction-invalid";
+        } | {
+            /** @constant */
+            detail?: "The model must be in the catalog and support structured output.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent model unsupported";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-model-unsupported";
+        } | {
+            /** @constant */
+            detail?: "The Agent name must be non-empty and at most 128 characters.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent name invalid";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-name-invalid";
+        } | {
+            /** @constant */
+            detail?: "Every bound Skill revision must exist and be enabled in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent skill unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-skill-unavailable";
+        } | {
+            /** @constant */
+            detail?: "An Agent binds at most 16 distinct Skill revisions.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent skills invalid";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-skills-invalid";
+        } | {
+            /** @constant */
+            detail?: "Every tool must be registered, enabled and within the 32-tool limit.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "Agent tool unavailable";
+            /** @constant */
+            type?: "https://tap.example/problems/agent-tool-unavailable";
+        } | {
             /** @constant */
             detail?: "The grounded answer could not be committed atomically.";
             /** @constant */
@@ -5228,6 +5431,194 @@ export interface operations {
                 };
             };
             /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_create_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_set_agent_revision_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent revision unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_revise_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent rejected */
             422: {
                 headers: {
                     [name: string]: unknown;

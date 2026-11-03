@@ -114,6 +114,42 @@ class SkillStatusRequest(ContractModel):
     status: Literal["enabled", "disabled"]
 
 
+class AgentDraftRequest(ContractModel):
+    """Authoring input; bounds are re-checked by the service with specific problem codes."""
+
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
+    description: Annotated[str, Field(strict=True, max_length=4096)] = ""
+    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=32_000)]
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    tool_allowlist: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    model_alias: Annotated[str | None, Field(strict=True, min_length=1, max_length=256)] = None
+
+
+class AiAgentRevisionView(AiAgentRevisionSummary):
+    status: Literal["enabled", "disabled"]
+    origin: Literal["seed", "editor"]
+    description: Annotated[str | None, Field(max_length=1024)] = None
+    system_instruction: Annotated[str | None, Field(max_length=16_000)] = None
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=16),
+    ] = Field(default_factory=list)
+    model_alias: Annotated[str | None, Field(strict=True, min_length=1, max_length=128)] = None
+    adopted_from_revision_id: Annotated[
+        str | None, Field(strict=True, min_length=1, max_length=64)
+    ] = None
+
+
+class AgentStatusRequest(ContractModel):
+    status: Literal["enabled", "disabled"]
+
+
 class SourceFamily(str, Enum):
     DOC = "doc"
     CODE = "code"

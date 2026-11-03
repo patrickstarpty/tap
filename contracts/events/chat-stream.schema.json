@@ -699,6 +699,182 @@
         {
           "properties": {
             "detail": {
+              "const": "The Agent definition does not satisfy the revision contract."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent definition invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-definition-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Agent description must be at most 1024 characters."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent description invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-description-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The system instruction must be non-empty and at most 16000 characters."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent instruction invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-instruction-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The model must be in the catalog and support structured output."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent model unsupported"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-model-unsupported"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Agent name must be non-empty and at most 128 characters."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent name invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-name-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "Every bound Skill revision must exist and be enabled in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent skill unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-skill-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "An Agent binds at most 16 distinct Skill revisions."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent skills invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-skills-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "Every tool must be registered, enabled and within the 32-tool limit."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Agent tool unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/agent-tool-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The grounded answer could not be committed atomically."
             },
             "failureStage": {
@@ -1823,6 +1999,14 @@
         },
         "type": {
           "enum": [
+            "https://tap.example/problems/agent-definition-invalid",
+            "https://tap.example/problems/agent-description-invalid",
+            "https://tap.example/problems/agent-instruction-invalid",
+            "https://tap.example/problems/agent-model-unsupported",
+            "https://tap.example/problems/agent-name-invalid",
+            "https://tap.example/problems/agent-skill-unavailable",
+            "https://tap.example/problems/agent-skills-invalid",
+            "https://tap.example/problems/agent-tool-unavailable",
             "https://tap.example/problems/answer-snapshot-unavailable",
             "https://tap.example/problems/answer-unavailable",
             "https://tap.example/problems/asset-revision-unavailable",

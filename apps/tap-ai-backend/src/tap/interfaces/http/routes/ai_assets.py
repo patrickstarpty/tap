@@ -11,8 +11,11 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
 
 from tap.contracts.http import (
+    AgentDraftRequest,
+    AgentStatusRequest,
     AiAgentRevisionPage,
     AiAgentRevisionSummary,
+    AiAgentRevisionView,
     SkillCreateRequest,
     SkillImportResult,
     SkillRevisionPage,
@@ -20,12 +23,18 @@ from tap.contracts.http import (
     SkillRevisionView,
     SkillStatusRequest,
 )
-from tap.interfaces.http.dependencies import asset_catalog_service, skill_import_service
+from tap.interfaces.http.dependencies import (
+    agent_authoring_service,
+    asset_catalog_service,
+    skill_import_service,
+)
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
+from tap.modules.ai.application.agent_authoring import AgentDraft
 from tap.modules.ai.application.skill_import import SkillImportRejected
 from tap.modules.ai.domain.assets import (
     MAX_SKILL_SOURCE_BYTES,
+    AiAgentRevision,
     AssetRevisionStatus,
     SkillRevision,
 )
@@ -35,6 +44,12 @@ _SKILL_WRITE_RESPONSES: dict[int | str, dict[str, object]] = {
     200: {"model": SkillImportResult, "description": "The identical latest revision"},
     413: problem_response_metadata("Skill too large"),
     422: problem_response_metadata("Skill rejected"),
+    503: problem_response_metadata("Knowledge runtime unavailable"),
+}
+
+_AGENT_WRITE_RESPONSES: dict[int | str, dict[str, object]] = {
+    404: problem_response_metadata("Agent unavailable"),
+    422: problem_response_metadata("Agent rejected"),
     503: problem_response_metadata("Knowledge runtime unavailable"),
 }
 
@@ -284,6 +299,90 @@ async def set_skill_status(
 ) -> SkillRevisionView:
     return _skill_view(
         await skill_import_service(request).set_status(
+            request.state.project_scope, revision_id, AssetRevisionStatus(body.status)
+        )
+    )
+
+
+def _agent_view(value: AiAgentRevision) -> AiAgentRevisionView:
+    return AiAgentRevisionView(
+        revision_id=value.revision_id,
+        asset_id=value.asset_id,
+        display_name=value.display_name,
+        content_digest=value.content_digest,
+        tool_allowlist=sorted(value.tool_allowlist),
+        output_schema_digest=value.output_schema_digest,
+        status=value.status.value,
+        origin=cast(Literal["seed", "editor"], value.origin),
+        description=value.description,
+        system_instruction=value.system_instruction,
+        skill_revision_ids=list(value.skill_revision_ids),
+        model_alias=value.model_alias,
+        adopted_from_revision_id=value.adopted_from_revision_id,
+    )
+
+
+def _agent_draft(body: AgentDraftRequest) -> AgentDraft:
+    return AgentDraft(
+        display_name=body.display_name,
+        description=body.description,
+        system_instruction=body.system_instruction,
+        skill_revision_ids=tuple(body.skill_revision_ids),
+        tool_allowlist=frozenset(body.tool_allowlist),
+        model_alias=body.model_alias,
+    )
+
+
+@router.post(
+    "/agents",
+    operation_id="ai_create_agent",
+    response_model=AiAgentRevisionView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(project_authorization("ai.agents.write"))],
+    responses=_AGENT_WRITE_RESPONSES,
+)
+async def create_agent(request: Request, body: AgentDraftRequest) -> AiAgentRevisionView:
+    return _agent_view(
+        await agent_authoring_service(request).create(
+            request.state.project_scope, _agent_draft(body)
+        )
+    )
+
+
+@router.post(
+    "/agents/{asset_id}/revisions",
+    operation_id="ai_revise_agent",
+    response_model=AiAgentRevisionView,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(project_authorization("ai.agents.write"))],
+    responses=_AGENT_WRITE_RESPONSES,
+)
+async def revise_agent(
+    request: Request, asset_id: str, body: AgentDraftRequest
+) -> AiAgentRevisionView:
+    return _agent_view(
+        await agent_authoring_service(request).revise(
+            request.state.project_scope, asset_id, _agent_draft(body)
+        )
+    )
+
+
+@router.post(
+    "/agents/revisions/{revision_id}/status",
+    operation_id="ai_set_agent_revision_status",
+    response_model=AiAgentRevisionView,
+    dependencies=[Depends(project_authorization("ai.agents.write"))],
+    responses={
+        404: problem_response_metadata("Agent revision unavailable"),
+        422: problem_response_metadata("Request validation failed"),
+        503: problem_response_metadata("Knowledge runtime unavailable"),
+    },
+)
+async def set_agent_status(
+    request: Request, revision_id: str, body: AgentStatusRequest
+) -> AiAgentRevisionView:
+    return _agent_view(
+        await agent_authoring_service(request).set_status(
             request.state.project_scope, revision_id, AssetRevisionStatus(body.status)
         )
     )

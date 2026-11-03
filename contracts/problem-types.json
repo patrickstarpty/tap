@@ -10,6 +10,70 @@
   ],
   "problems": [
     {
+      "code": "agent-definition-invalid",
+      "detail": "The Agent definition does not satisfy the revision contract.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent definition invalid",
+      "type": "https://tap.example/problems/agent-definition-invalid"
+    },
+    {
+      "code": "agent-description-invalid",
+      "detail": "The Agent description must be at most 1024 characters.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent description invalid",
+      "type": "https://tap.example/problems/agent-description-invalid"
+    },
+    {
+      "code": "agent-instruction-invalid",
+      "detail": "The system instruction must be non-empty and at most 16000 characters.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent instruction invalid",
+      "type": "https://tap.example/problems/agent-instruction-invalid"
+    },
+    {
+      "code": "agent-model-unsupported",
+      "detail": "The model must be in the catalog and support structured output.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent model unsupported",
+      "type": "https://tap.example/problems/agent-model-unsupported"
+    },
+    {
+      "code": "agent-name-invalid",
+      "detail": "The Agent name must be non-empty and at most 128 characters.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent name invalid",
+      "type": "https://tap.example/problems/agent-name-invalid"
+    },
+    {
+      "code": "agent-skill-unavailable",
+      "detail": "Every bound Skill revision must exist and be enabled in this Project.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent skill unavailable",
+      "type": "https://tap.example/problems/agent-skill-unavailable"
+    },
+    {
+      "code": "agent-skills-invalid",
+      "detail": "An Agent binds at most 16 distinct Skill revisions.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent skills invalid",
+      "type": "https://tap.example/problems/agent-skills-invalid"
+    },
+    {
+      "code": "agent-tool-unavailable",
+      "detail": "Every tool must be registered, enabled and within the 32-tool limit.",
+      "retryable": false,
+      "status": 422,
+      "title": "Agent tool unavailable",
+      "type": "https://tap.example/problems/agent-tool-unavailable"
+    },
+    {
       "code": "answer-snapshot-unavailable",
       "detail": "The grounded answer could not be committed atomically.",
       "failureStage": "answer",

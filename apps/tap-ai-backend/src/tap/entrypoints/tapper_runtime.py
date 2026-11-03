@@ -1763,21 +1763,30 @@ def _assemble_http_services(
             id_factory=lambda: uuid4().hex,
             clock=lambda: datetime.now(UTC),
         )
+    from tap.modules.ai.application.agent_authoring import AgentAuthoringService
     from tap.modules.ai.application.skill_import import SkillImportService
     from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
 
     tool_registry = ToolRegistry(builtin_tools())
+    model_catalog = ModelCatalog(
+        embeddings.gateway,
+        scope=embeddings.scope,
+        default_alias=embeddings.chat_alias,
+    )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
         tool_registry=tool_registry,
         skill_imports=None
         if asset_catalog is None
         else SkillImportService(asset_catalog, tool_registry),  # type: ignore[arg-type]
-        model_catalog=ModelCatalog(
-            embeddings.gateway,
-            scope=embeddings.scope,
-            default_alias=embeddings.chat_alias,
+        agent_authoring=None
+        if asset_catalog is None
+        else AgentAuthoringService(
+            asset_catalog,  # type: ignore[arg-type]
+            tool_registry,
+            model_catalog,
         ),
+        model_catalog=model_catalog,
         knowledge=knowledge_http,
         readiness=readiness,
         scope_provider=scope_provider,

@@ -15,6 +15,11 @@ SKILL_ORIGINS = frozenset({"seed", "import", "editor"})
 MAX_SKILL_SOURCE_BYTES = 64 * 1024
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
 MAX_REQUESTED_TOOLS = 64
+AGENT_ORIGINS = frozenset({"seed", "editor"})
+MAX_AGENT_DESCRIPTION_LENGTH = 1024
+MAX_AGENT_SYSTEM_INSTRUCTION_LENGTH = 16_000
+MAX_AGENT_SKILLS = 16
+MAX_MODEL_ALIAS_LENGTH = 128
 
 
 class AssetRevisionStatus(StrEnum):
@@ -63,6 +68,10 @@ class AiAgentRevision:
     adopted_from_revision_id: str | None = None
     system_instruction: str | None = None
     output_schema_json: str | None = None
+    model_alias: str | None = None
+    description: str | None = None
+    skill_revision_ids: tuple[str, ...] = ()
+    origin: str = "seed"
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -94,8 +103,12 @@ class AiAgentRevision:
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
         if self.system_instruction is not None:
-            if text_digest(self.system_instruction) != self.system_instruction_digest:
+            if (
+                len(self.system_instruction) > MAX_AGENT_SYSTEM_INSTRUCTION_LENGTH
+                or text_digest(self.system_instruction) != self.system_instruction_digest
+            ):
                 raise AssetRevisionRejected()
+        self._check_composition()
         if self.output_schema_json is not None:
             from tap.modules.ai.domain.models import schema_digest
 
@@ -105,6 +118,29 @@ class AiAgentRevision:
                 raise AssetRevisionRejected() from error
             if not isinstance(schema, dict) or schema_digest(schema) != self.output_schema_digest:
                 raise AssetRevisionRejected()
+
+    def _check_composition(self) -> None:
+        if self.origin not in AGENT_ORIGINS:
+            raise AssetRevisionRejected()
+        if self.model_alias is not None and (
+            not isinstance(self.model_alias, str)
+            or not self.model_alias.strip()
+            or len(self.model_alias) > MAX_MODEL_ALIAS_LENGTH
+        ):
+            raise AssetRevisionRejected()
+        if self.description is not None and (
+            not isinstance(self.description, str)
+            or len(self.description) > MAX_AGENT_DESCRIPTION_LENGTH
+        ):
+            raise AssetRevisionRejected()
+        if (
+            type(self.skill_revision_ids) is not tuple
+            or len(self.skill_revision_ids) > MAX_AGENT_SKILLS
+            or len(set(self.skill_revision_ids)) != len(self.skill_revision_ids)
+        ):
+            raise AssetRevisionRejected()
+        for item in self.skill_revision_ids:
+            _identity(item, "skill_revision_id")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -15,8 +15,9 @@ class _Authority:
     async def authorize(self, _scope, action, _resource):
         from tap.modules.access.domain.authorization import AuthorizationDecision
 
-        assert action in {"ai.agents.read", "ai.skills.read"}
-        return AuthorizationDecision(True, "validation-allowed")
+        return AuthorizationDecision(
+            action in {"ai.agents.read", "ai.skills.read"}, "validation-allowed"
+        )
 
 
 class _Assets:
@@ -87,7 +88,7 @@ def test_agent_and_skill_catalog_is_project_scoped_read_only_and_omits_content()
     }
     assert detail.status_code == 200
     assert "systemInstruction" not in detail.text
-    assert client.post("/api/v1/projects/tapper-demo/ai/agents", json={}).status_code in {403, 405}
+    assert client.post("/api/v1/projects/tapper-demo/ai/agents", json={}).status_code == 403
     assert denied.status_code == 403
 
 
@@ -339,3 +340,107 @@ def test_skill_writes_require_write_permission() -> None:
     assert (
         client.post(f"{base}/revisions/any/status", json={"status": "disabled"}).status_code == 403
     )
+
+
+def _agent_client(allowed: set[str]):
+    from tap.modules.ai.application.agent_authoring import AgentAuthoringService
+    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+    from tests.unit.ai.test_agent_authoring import MemoryAgentStore, Models, skill_revision
+
+    authority = _SkillAuthority(allowed)
+    store = MemoryAgentStore((skill_revision("skill-a"), skill_revision("skill-b")))
+    app = create_app(
+        HttpServices(
+            asset_catalog=_Assets(),
+            agent_authoring=AgentAuthoringService(store, ToolRegistry(builtin_tools()), Models()),
+            scope=VALIDATION_SCOPE,
+            scope_provider=authority,
+            authorization_policy=authority,
+        ),
+        allowed_origins=frozenset({_ORIGIN}),
+    )
+    return TestClient(app, headers={"Origin": _ORIGIN}), authority, store
+
+
+_AGENT = {
+    "displayName": "Release agent",
+    "description": "Answers release questions.",
+    "systemInstruction": "Answer from release notes.",
+    "skillRevisionIds": ["skill-b", "skill-a"],
+    "toolAllowlist": ["knowledge.search"],
+    "modelAlias": "qwen-plus",
+}
+
+
+def test_agent_create_revise_and_status_endpoints() -> None:
+    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
+    from tap.modules.ai.domain.models import schema_digest
+
+    client, authority, store = _agent_client({"ai.agents.read", "ai.agents.write"})
+    base = "/api/v1/projects/tapper-demo/ai/agents"
+
+    created = client.post(base, json=_AGENT)
+
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["displayName"] == "Release agent"
+    assert body["description"] == "Answers release questions."
+    assert body["systemInstruction"] == "Answer from release notes."
+    assert body["skillRevisionIds"] == ["skill-b", "skill-a"]
+    assert body["toolAllowlist"] == ["knowledge.answer", "knowledge.search"]
+    assert body["modelAlias"] == "qwen-plus"
+    assert body["status"] == "enabled" and body["origin"] == "editor"
+    assert body["adoptedFromRevisionId"] is None
+    assert body["outputSchemaDigest"] == schema_digest(VALIDATION_OUTPUT_SCHEMA)
+
+    revised = client.post(
+        f"{base}/{body['assetId']}/revisions",
+        json={**_AGENT, "modelAlias": None, "skillRevisionIds": []},
+    )
+    assert revised.status_code == 201, revised.text
+    assert revised.json()["assetId"] == body["assetId"]
+    assert revised.json()["adoptedFromRevisionId"] == body["revisionId"]
+    assert revised.json()["modelAlias"] is None
+    assert store.numbers[revised.json()["revisionId"]] == 2
+    assert client.post(f"{base}/missing/revisions", json=_AGENT).status_code == 404
+
+    disabled = client.post(
+        f"{base}/revisions/{body['revisionId']}/status", json={"status": "disabled"}
+    )
+    assert disabled.status_code == 200 and disabled.json()["status"] == "disabled"
+    assert (
+        client.post(f"{base}/revisions/missing/status", json={"status": "enabled"}).status_code
+        == 404
+    )
+    assert "ai.agents.write" in authority.actions
+
+
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        ({"displayName": " "}, "agent-name-invalid"),
+        ({"systemInstruction": "x" * 16_001}, "agent-instruction-invalid"),
+        ({"skillRevisionIds": ["missing"]}, "agent-skill-unavailable"),
+        ({"toolAllowlist": ["jira.search"]}, "agent-tool-unavailable"),
+        ({"modelAlias": "qwen-flash"}, "agent-model-unsupported"),
+    ],
+)
+def test_agent_create_rejections_use_registered_problem_types(overrides, code) -> None:
+    client, _, store = _agent_client({"ai.agents.read", "ai.agents.write"})
+
+    response = client.post("/api/v1/projects/tapper-demo/ai/agents", json={**_AGENT, **overrides})
+
+    assert response.status_code == 422, response.text
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"] == f"https://tap.example/problems/{code}"
+    assert store.agents == {}
+
+
+def test_agent_writes_require_write_permission() -> None:
+    client, _, store = _agent_client({"ai.agents.read"})
+    base = "/api/v1/projects/tapper-demo/ai/agents"
+
+    assert client.post(base, json=_AGENT).status_code == 403
+    assert client.post(f"{base}/agent/revisions", json=_AGENT).status_code == 403
+    assert client.post(f"{base}/revisions/x/status", json={"status": "enabled"}).status_code == 403
+    assert store.agents == {}

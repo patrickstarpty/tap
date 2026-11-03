@@ -14,6 +14,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from tap.contracts.problems import ProblemDetails, build_problem
 from tap.interfaces.http.dependencies import GraphUnavailable, KnowledgeRuntimeUnavailable
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.ai.application.agent_authoring import AgentAuthoringRejected
 from tap.modules.ai.application.skill_import import SkillImportRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import (
@@ -335,6 +336,12 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: AssetRevisionRejected
     ) -> JSONResponse:
         return problem_response("asset-revision-unavailable", request)
+
+    @app.exception_handler(AgentAuthoringRejected)
+    async def agent_authoring_rejected_problem(
+        request: Request, error: AgentAuthoringRejected
+    ) -> JSONResponse:
+        return problem_response(error.code, request)
 
     @app.exception_handler(SkillImportRejected)
     async def skill_import_rejected_problem(

@@ -67,20 +67,50 @@ router = APIRouter(
 )
 
 
-def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
+def _agent_selection(agent, body: ConversationCreateRequest) -> tuple[str, tuple[str, ...]]:
+    """An Agent's model overrides the request; its Skills precede extra Skills, deduplicated."""
+    if agent is None:
+        return body.model_alias, tuple(body.skill_revision_ids)
+    model_alias = getattr(agent, "model_alias", None) or body.model_alias
+    skills = tuple(
+        dict.fromkeys((*getattr(agent, "skill_revision_ids", ()), *body.skill_revision_ids))
+    )
+    return model_alias, skills
+
+
+async def _replay_selection(
+    body: ConversationCreateRequest, request: Request
+) -> tuple[str, tuple[str, ...]]:
+    if body.agent_revision_id is None:
+        return _agent_selection(None, body)
+    catalog = getattr(request.app.state.http_services, "asset_catalog", None)
+    resolve = getattr(catalog, "resolve_historical_agent", None)
+    if resolve is None:
+        return _agent_selection(None, body)
+    try:
+        agent = await resolve(request.state.project_scope, body.agent_revision_id)
+    except AssetRevisionRejected:
+        return _agent_selection(None, body)
+    return _agent_selection(agent, body)
+
+
+def _matches_replay(
+    turn, body: ConversationCreateRequest, selection: tuple[str, tuple[str, ...]]
+) -> bool:
     value = turn.input_snapshot.value
+    model_alias, skill_revision_ids = selection
     return (
         value.message == body.message
-        and value.model_alias == body.model_alias
+        and value.model_alias == model_alias
         and value.source_revision_ids == tuple(body.source_revision_ids)
         and value.document_revision_ids == tuple(body.document_revision_ids)
         and value.agent_revision_id == body.agent_revision_id
-        and value.skill_revision_ids == tuple(body.skill_revision_ids)
+        and value.skill_revision_ids == skill_revision_ids
     )
 
 
 async def _validate_replay(turn, body: ConversationCreateRequest, request: Request) -> None:
-    if not _matches_replay(turn, body):
+    if not _matches_replay(turn, body, await _replay_selection(body, request)):
         raise ConversationConflict("idempotency-conflict")
     try:
         current = await _input(body, request)
@@ -100,6 +130,7 @@ async def _validate_replay(turn, body: ConversationCreateRequest, request: Reque
 async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput:
     scope = request.state.project_scope
     services = request.app.state.http_services
+    selectable: set[str] | None = None
     if services.model_catalog is not None:
         # Grounded and Agent answers use structured output, so only those models are selectable.
         selectable = {
@@ -112,6 +143,7 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     elif body.model_alias:
         raise KnowledgeRuntimeUnavailable
     agent_digest = None
+    agent = None
     if body.agent_revision_id is not None:
         if services.asset_catalog is None:
             raise KnowledgeRuntimeUnavailable
@@ -126,6 +158,9 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         except ToolRejected as error:
             raise AssetRevisionRejected() from error
         agent_digest = agent.content_digest
+    model_alias, skill_revision_ids = _agent_selection(agent, body)
+    if model_alias != body.model_alias and (selectable is None or model_alias not in selectable):
+        raise ModelNotSelectable
     skills = (
         []
         if services.asset_catalog is None
@@ -134,10 +169,10 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
                 await services.asset_catalog.get_skill(scope, revision_id),
                 task="knowledge.answer",
             )
-            for revision_id in body.skill_revision_ids
+            for revision_id in skill_revision_ids
         ]
     )
-    if body.skill_revision_ids and services.asset_catalog is None:
+    if skill_revision_ids and services.asset_catalog is None:
         raise KnowledgeRuntimeUnavailable
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
@@ -150,38 +185,26 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         message=body.message,
         actor_id=scope.actor_id,
         identity_mode=scope.identity_mode.value,
-        model_alias=body.model_alias,
+        model_alias=model_alias,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
         resolved_resources=selection.resolved_resources,
         agent_revision_id=body.agent_revision_id,
         agent_revision_digest=agent_digest,
         agent_label=(
-            None
-            if body.agent_revision_id is None
-            else getattr(agent, "display_name", body.agent_revision_id)
+            None if agent is None else getattr(agent, "display_name", body.agent_revision_id)
         ),
-        skill_revision_ids=tuple(body.skill_revision_ids),
+        skill_revision_ids=skill_revision_ids,
         skill_revision_digests=tuple(item.content_digest for item in skills),
         skill_labels=tuple(
             getattr(item, "display_name", revision_id)
-            for item, revision_id in zip(skills, body.skill_revision_ids, strict=True)
+            for item, revision_id in zip(skills, skill_revision_ids, strict=True)
         ),
-        agent_system_instruction=(
-            None if body.agent_revision_id is None else agent.system_instruction
-        ),
-        agent_system_instruction_digest=None
-        if body.agent_revision_id is None
-        else agent.system_instruction_digest,
-        agent_tool_allowlist=()
-        if body.agent_revision_id is None
-        else tuple(sorted(agent.tool_allowlist)),
-        agent_output_schema_json=None
-        if body.agent_revision_id is None
-        else agent.output_schema_json,
-        agent_output_schema_digest=None
-        if body.agent_revision_id is None
-        else agent.output_schema_digest,
+        agent_system_instruction=(None if agent is None else agent.system_instruction),
+        agent_system_instruction_digest=None if agent is None else agent.system_instruction_digest,
+        agent_tool_allowlist=() if agent is None else tuple(sorted(agent.tool_allowlist)),
+        agent_output_schema_json=None if agent is None else agent.output_schema_json,
+        agent_output_schema_digest=None if agent is None else agent.output_schema_digest,
         skill_instruction_templates=tuple(cast(str, item.instruction_template) for item in skills),
         skill_instruction_template_digests=tuple(
             item.instruction_template_digest for item in skills

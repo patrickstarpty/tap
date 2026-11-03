@@ -658,3 +658,153 @@ def test_conversation_resolves_agent_tools_through_the_tool_registry(registered)
     assert response.status_code == 202, response.text
     frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
     assert frozen.agent_tool_allowlist == tuple(sorted(tools))
+
+
+def _authored_agent_client():
+    from tap.modules.ai.application.agent_authoring import AgentAuthoringService, AgentDraft
+    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+    from tests.unit.ai.test_agent_authoring import MemoryAgentStore, Models, skill_revision
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    class Knowledge:
+        scope = VALIDATION_SCOPE
+
+    store = MemoryAgentStore(tuple(skill_revision(name) for name in ("bound", "shared", "extra")))
+
+    class Assets:
+        scope = VALIDATION_SCOPE
+
+        async def resolve_agent(self, scope, identity, *, tools, output_schema_digest):
+            from tap.modules.ai.application.assets import resolve_agent_selection
+
+            return resolve_agent_selection(
+                await store.get_agent(scope, identity),
+                tools=tools,
+                output_schema_digest=output_schema_digest,
+            )
+
+        async def resolve_historical_agent(self, _scope, identity):
+            return store.agents[identity]
+
+        async def get_skill(self, scope, identity):
+            return await store.get_skill(scope, identity)
+
+    registry = ToolRegistry(builtin_tools())
+    authoring = AgentAuthoringService(store, registry, Models())
+    agent = asyncio.run(
+        authoring.create(
+            VALIDATION_SCOPE,
+            AgentDraft(
+                display_name="Release agent",
+                description="",
+                system_instruction="Agent instruction.",
+                skill_revision_ids=("bound", "shared"),
+                tool_allowlist=frozenset({"knowledge.search"}),
+                model_alias="qwen-max",
+            ),
+        )
+    )
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    services = replace(
+        validation_http_services(knowledge=Knowledge()),
+        conversations=conversations,
+        model_catalog=Models(),
+        asset_catalog=Assets(),
+        tool_registry=registry,
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, allowed_origins=frozenset({origin})), headers={"Origin": origin}
+    )
+    return client, conversations, store, authoring, agent
+
+
+def test_selected_agent_overrides_the_model_and_prepends_its_skills():
+    from tap.modules.ai.application.agent_authoring import AgentDraft
+
+    client, conversations, store, authoring, agent = _authored_agent_client()
+    body = {
+        "message": "question",
+        "modelAlias": "qwen-plus",
+        "agentRevisionId": agent.revision_id,
+        "skillRevisionIds": ["extra", "shared"],
+    }
+
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json=body,
+        headers={"Idempotency-Key": "agent-merge"},
+    )
+
+    assert response.status_code == 202, response.text
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert frozen.model_alias == "qwen-max"
+    assert frozen.skill_revision_ids == ("bound", "shared", "extra")
+    assert frozen.skill_instruction_templates == (
+        "bound instruction",
+        "shared instruction",
+        "extra instruction",
+    )
+    assert frozen.agent_tool_allowlist == ("knowledge.answer", "knowledge.search")
+    assert frozen.agent_system_instruction == "Agent instruction."
+
+    # A later revision never rewrites the accepted Turn, and replay stays idempotent.
+    asyncio.run(
+        authoring.revise(
+            VALIDATION_SCOPE,
+            agent.asset_id,
+            AgentDraft(
+                display_name="Release agent",
+                description="",
+                system_instruction="Changed.",
+                skill_revision_ids=(),
+                tool_allowlist=frozenset(),
+                model_alias=None,
+            ),
+        )
+    )
+    replay = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json=body,
+        headers={"Idempotency-Key": "agent-merge"},
+    )
+    assert replay.status_code == 202, replay.text
+    assert replay.json() == response.json()
+    conflict = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={**body, "skillRevisionIds": ["shared"]},
+        headers={"Idempotency-Key": "agent-merge"},
+    )
+    assert conflict.status_code == 409
+    again = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert again == frozen
+
+
+def test_agent_without_a_model_keeps_the_requested_model_and_unselectable_agent_model_fails():
+    from dataclasses import replace as replace_value
+
+    client, conversations, store, _authoring, agent = _authored_agent_client()
+    store.agents[agent.revision_id] = replace_value(agent, model_alias=None)
+
+    accepted = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "q", "modelAlias": "qwen-plus", "agentRevisionId": agent.revision_id},
+        headers={"Idempotency-Key": "agent-no-model"},
+    )
+    assert accepted.status_code == 202, accepted.text
+    frozen = next(iter(conversations.repository.values.values())).turns[0].input_snapshot.value
+    assert frozen.model_alias == "qwen-plus"
+    assert frozen.skill_revision_ids == ("bound", "shared")
+
+    store.agents[agent.revision_id] = replace_value(agent, model_alias="qwen-flash")
+    rejected = client.post(
+        "/api/v1/projects/tapper-demo/conversations",
+        json={"message": "q", "modelAlias": "qwen-plus", "agentRevisionId": agent.revision_id},
+        headers={"Idempotency-Key": "agent-chat-only-model"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["type"].endswith("/model-not-selectable")
