@@ -221,6 +221,7 @@ class LiteLLMModelGateway:
         call = asyncio.create_task(
             self._execute(request, ModelOperation.STRUCTURED, on_text=deltas.put)
         )
+        waiter: asyncio.Future[str] | None = None
         try:
             while True:
                 waiter = asyncio.ensure_future(deltas.get())
@@ -234,6 +235,10 @@ class LiteLLMModelGateway:
                 yield TextDelta(deltas.get_nowait())
             yield StreamCompleted(call.result())
         finally:
+            if waiter is not None and not waiter.done():
+                waiter.cancel()
+                with suppress(asyncio.CancelledError):
+                    await waiter
             if not call.done():
                 call.cancel()
                 with suppress(asyncio.CancelledError):

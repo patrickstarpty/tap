@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -1686,6 +1687,34 @@ async def test_stream_structured_disconnect_after_first_token_is_unavailable():
     assert len(sent) == 1
     assert recorder.records[0].status == "error"
     assert recorder.records[0].error_code == "model-unavailable"
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_cancellation_cancels_the_pending_delta_waiter(monkeypatch):
+    gateway = configured_gateway(success)
+    started = asyncio.Event()
+
+    async def hanging_execute(_request, _operation, *, on_text=None):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(gateway, "_execute", hanging_execute)
+    before = asyncio.all_tasks()
+
+    async def consume():
+        async for _event in gateway.stream_structured(request(ModelOperation.STRUCTURED)):
+            pass
+
+    consumer = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), 1)
+    await asyncio.sleep(0)
+    assert len(asyncio.all_tasks() - before) == 3  # consumer, call and delta waiter
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    await asyncio.sleep(0)
+
+    assert [task for task in asyncio.all_tasks() - before if not task.done()] == []
 
 
 @pytest.mark.asyncio
