@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import asdict
 from typing import Literal
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ from tap.contracts.http import (
 from tap.contracts.http import (
     OpenApiAnchor as HttpOpenApiAnchor,
 )
+from tap.contracts.http import RelationCitationView
 from tap.contracts.http import (
     ResourceRef as HttpResourceRef,
 )
@@ -162,6 +164,7 @@ class KnowledgeAPI:
         authorize=None,
         on_delta=None,
         tool_phase=None,
+        graph_phase=None,
     ):
         import asyncio
 
@@ -179,6 +182,7 @@ class KnowledgeAPI:
                 authorize=authorize,
                 on_delta=on_delta,
                 tool_phase=tool_phase,
+                graph_phase=graph_phase,
             )
 
 
@@ -258,6 +262,10 @@ def answer_response_to_http(
             for item in response.claims
         ],
         citations=[_citation_to_http(item) for item in response.citations],
+        relation_citations=[
+            RelationCitationView.model_validate(asdict(item))
+            for item in response.relation_citations
+        ],
         graph_context_status=graph_context_status,
         graph_snapshot_id=graph_snapshot_id,
     )

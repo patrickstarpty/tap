@@ -55,7 +55,7 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 **问答**
 
 1. 用户在 Conversation 中提交问题，生成不可变 Turn。
-2. worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片；`GraphAnswerEnricher` 按问题关键词附加最多 20 个图谱节点作为上下文。
+2. worker 在授权范围内经 Milvus 混合检索（RRF 融合）取回切片；`GraphAnswerEnricher` 在检索后经切片反向索引取种子，并补充最多 5 个问题标签命中；`GraphContextExpander` 按度数优先做 1 跳扩展，关系问题做 2 跳扩展，最多 40 节点、80 边，关系以稳定 `R` 标签进入上下文。
 3. 经 LiteLLM 流式生成回答（`ModelGateway.stream_structured`，首个 token 前失败退回非流式调用），完整 JSON 校验并校验引用后结果写回 MySQL；可选模型目录由 LiteLLM `GET /v1/model/info` 动态提供（60 秒缓存），新增模型只改 `deploy/local/litellm/config.yaml` 并重启 LiteLLM，后端无需改代码或重启。
 4. 前端经 SSE 获取 Turn 事件并逐段渲染回答，支持 `Last-Event-ID` 续传；`turn.completed` 后以持久化回答（含引用）替换临时文本。
 
@@ -84,7 +84,18 @@ HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform
 
 `apps/tap-ai-backend/tests/quality/golden/` 存放脱敏语料、用例与确定性模型基线；`tap.quality.golden` 把语料写入进程内检索适配器后经生产回答编排评测。确定性模型回归由 `tests/quality/test_golden_regression.py` 纳入 `make test` 与 CI（`.github/workflows/ci.yml`），真实模型只报告不设门。见 [Golden set 指南](guides/2026-11-03-golden-set.md)。
 
-LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为固定的 `classify → admit → execute` 三步。
+LangGraph 主交互图（`modules/ai/application/interaction_graph.py`）保持 `classify → admit → execute`。`execute` 内按 Agent 工具白名单或平台关系工具集进入 `model → tools → model` 有界子图，最多 4 步、每步最多 3 个调用，token 预算为上下文的 50%（模型未报告窗口时按 32768 token 估计）。临时工具子图显式使用 `checkpointer=False`，避免继承外层 MySQL checkpointer 并序列化执行器/注册表对象；外层 `execute` 仍保存完整 Turn 与最终证据。工具参数用 JSON Schema 2020-12 校验，不解析远程 schema 引用；到达上限后用无工具调用收束回答。
+
+**Skills、Agents 与 MCP**
+
+- Skill 导入以安全 YAML 解析 `SKILL.md`，保存原文件、摘要、请求工具与不可变修订；只保存指令文本，不执行代码或下载附件。同名同最新摘要幂等；修改新增修订。Agent 修订保存系统提示词、Skill 修订、工具白名单及模型，Turn 接受时冻结合并后的上下文。模型目录保留工具调用能力，创建和运行工具型 Agent 时均校验。
+- 对话选择目录仍只返回启用修订摘要；独立管理接口返回同项目全部修订与完整配置，包含禁用修订。历史修订可查阅、启停；旧 Turn 不受后续修改影响。
+- 工具注册表替代硬编码名称集合，内置知识检索和图谱邻居/路径工具；`knowledge.answer` 为不可调用的保留能力。MCP 工具通过 Streamable HTTP 接入，默认只允许回环主机，额外目标须由 `TAP_MCP_ALLOWED_HOSTS` 显式授权；鉴权仅保存环境变量名。服务端每次调用重新检查工具启停与 Agent 白名单，工具输出作为不可信资料。使用步骤见 [Skills/Agents/MCP 指南](guides/2026-11-04-skills-agents-mcp.md)。
+
+**图谱关系回答与历史**
+
+关系规划在当前 Turn 已授权的快照上提供 `graph.neighbors` 与 `graph.path`，初次扩展和每次工具新增事实均校验知识发布、证据条目与租约；失效知识不能通过后续探索进入回答。最终 claim 的 `relationLabels` 只能指向本 Turn 已出现且有原文支持的边，关系引用与原文引用按 claim 关联。`chat_relation_citation` 在回答完成事务中保存快照、边、端点、连续路径和 claim 索引，并参与回答证据摘要；历史及 SSE 同时还原。前端点击关系引用读取授权的不可变子图并高亮路径；历史快照显式提示图谱已更新，不替换成当前快照。
+
 
 **推荐问题**
 
@@ -105,6 +116,6 @@ LangGraph 交互图（`modules/ai/application/interaction_graph.py`）当前为�
 | --- | --- |
 | [可靠问答](superpowers/plans/2026-09-29-v1-roadmap.md#1-可靠问答) | 真实模型 golden 基线分数（30–50 条真实标注问答）尚未产出，属业务验证项 |
 | [知识图谱展示](superpowers/plans/2026-09-29-v1-roadmap.md#2-知识图谱展示) | 工程完成；真实资料生成图谱的浏览尚待业务验证 |
-| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 仅关键词取节点拼入上下文；无多跳扩展、路径推理、关系边引用与路径高亮 |
-| [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 工具白名单硬编码为 `knowledge.search` / `knowledge.answer`；无导入能力 |
+| [图谱脉络分析](superpowers/plans/2026-09-29-v1-roadmap.md#3-图谱脉络分析) | 已实现有界扩展、关系工具与引用/路径高亮；真实关系问题的人工评审仍待业务验证 |
+| [Skills/Agents](superpowers/plans/2026-09-29-v1-roadmap.md#4-skillsagents) | 已实现导入、不可变修订、组合、注册表、MCP 与工具循环；真实外部 Skill 的使用仍待业务验证，Test Insights 工具接入随 V2.2 的委托授权设计 |
 | [可观测性](superpowers/plans/2026-09-29-v1-roadmap.md#5-可观测性) | 追踪数据无保留期与清理任务，`model_call_content` 原文永久保留会持续增长；DashScope 部分模型算不出成本，需要手动在 `deploy/local/litellm/config.yaml` 配置 `input_cost_per_token`/`output_cost_per_token` |

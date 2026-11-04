@@ -17,6 +17,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/ai/agents/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Manage Agents */
+        get: operations["ai_manage_agent_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/agents/revisions/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Agent Configuration */
+        get: operations["ai_read_agent_configuration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/agents/revisions/{revision_id}/status": {
         parameters: {
             query?: never;
@@ -166,6 +200,40 @@ export interface paths {
         put?: never;
         /** Import Skill */
         post: operations["ai_import_skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Manage Skills */
+        get: operations["ai_manage_skill_revisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/skills/revisions/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Skill Configuration */
+        get: operations["ai_read_skill_configuration"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -789,6 +857,23 @@ export interface paths {
         get: operations["graph_list_active_snapshots"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/knowledge/graph/subgraph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Highlighted Subgraph */
+        post: operations["graph_get_subgraph"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1503,6 +1588,11 @@ export interface components {
              */
             status: "enabled" | "disabled";
         };
+        /** AiAgentManagementPage */
+        AiAgentManagementPage: {
+            /** Items */
+            items: components["schemas"]["AiAgentRevisionView"][];
+        };
         /** AiAgentRevisionPage */
         AiAgentRevisionPage: {
             /** Items */
@@ -1676,7 +1766,7 @@ export interface components {
             /** Chatid */
             chatId: string;
             /** Event */
-            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["AnswerResetEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
+            event: components["schemas"]["TurnStartedEvent"] | components["schemas"]["ContextAssembledEvent"] | components["schemas"]["QueryPlanReadyEvent"] | components["schemas"]["StageStartedEvent"] | components["schemas"]["StageCompletedEvent"] | components["schemas"]["RetrievalHitsReadyEvent"] | components["schemas"]["RerankCompletedEvent"] | components["schemas"]["AnswerDeltaEvent"] | components["schemas"]["AnswerResetEvent"] | components["schemas"]["CitationResolvedEvent"] | components["schemas"]["RelationCitationResolvedEvent"] | components["schemas"]["TurnCompletedEvent"] | components["schemas"]["TurnAbstainedEvent"] | components["schemas"]["TurnDegradedEvent"] | components["schemas"]["TurnCanceledEvent"] | components["schemas"]["TurnFailedEvent"] | components["schemas"]["ConversationTurnRequestedEvent"] | components["schemas"]["ConversationTurnCompletedEvent"] | components["schemas"]["TestPlanGenerationWaitingEvent"] | components["schemas"]["TestPlanGenerationResultEvent"] | components["schemas"]["TestPlanGenerationFailedEvent"] | components["schemas"]["TestPlanGenerationCanceledEvent"];
             /** Eventid */
             eventId: string;
             /** Occurredat */
@@ -1904,7 +1994,7 @@ export interface components {
              * Eventtype
              * @enum {string}
              */
-            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "rerank.completed" | "answer.delta" | "answer.reset" | "citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
+            eventType: "turn.started" | "context.assembled" | "query.plan_ready" | "stage.started" | "stage.completed" | "retrieval.hits_ready" | "rerank.completed" | "answer.delta" | "answer.reset" | "citation.resolved" | "relation_citation.resolved" | "turn.completed" | "turn.abstained" | "turn.degraded" | "turn.canceled" | "turn.failed" | "conversation.turn.requested" | "conversation.turn.completed" | "test-plan.generation.waiting" | "test-plan.generation.result_ready" | "test-plan.generation.failed" | "test-plan.generation.canceled";
             /** Occurredat */
             occurredAt: string;
             /** Payload */
@@ -2042,6 +2132,11 @@ export interface components {
             input: components["schemas"]["ConversationTurnInputView"];
             /** Inputsnapshotdigest */
             inputSnapshotDigest: string;
+            /**
+             * Relationcitations
+             * @default []
+             */
+            relationCitations?: components["schemas"]["RelationCitationView"][];
             /**
              * State
              * @enum {string}
@@ -2447,6 +2542,13 @@ export interface components {
              */
             status: "CANDIDATE" | "READY" | "FAILED";
         };
+        /** GraphSubgraphRequest */
+        GraphSubgraphRequest: {
+            /** Edgeids */
+            edgeIds: string[];
+            /** Snapshotid */
+            snapshotId: string;
+        };
         /** GraphSubgraphView */
         GraphSubgraphView: {
             /** Edges */
@@ -2456,6 +2558,11 @@ export interface components {
              * @default []
              */
             evidence?: components["schemas"]["GraphEvidenceView"][];
+            /**
+             * Isactivesnapshot
+             * @default true
+             */
+            isActiveSnapshot?: boolean;
             /** Nodes */
             nodes: components["schemas"]["GraphNodeView"][];
             /** Snapshotid */
@@ -4170,6 +4277,75 @@ export interface components {
              */
             status: "ready" | "unready";
         };
+        /** RelationCitation */
+        RelationCitation: {
+            /** Citationid */
+            citationId: string;
+            /** Claimindex */
+            claimIndex: number;
+            /** Edgeid */
+            edgeId: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "EXTRACTED" | "INFERRED";
+            /** Pathedgeids */
+            pathEdgeIds: string[];
+            /** Relationtype */
+            relationType: string;
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourcelabel */
+            sourceLabel: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetlabel */
+            targetLabel: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
+        /** RelationCitationResolvedEvent */
+        RelationCitationResolvedEvent: {
+            payload: components["schemas"]["RelationCitationResolvedPayload"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "relation_citation.resolved";
+        };
+        /** RelationCitationResolvedPayload */
+        RelationCitationResolvedPayload: {
+            citation: components["schemas"]["RelationCitation"];
+        };
+        /** RelationCitationView */
+        RelationCitationView: {
+            /** Citationid */
+            citationId: string;
+            /** Claimindex */
+            claimIndex: number;
+            /** Edgeid */
+            edgeId: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "EXTRACTED" | "INFERRED";
+            /** Pathedgeids */
+            pathEdgeIds: string[];
+            /** Relationtype */
+            relationType: string;
+            /** Snapshotid */
+            snapshotId: string;
+            /** Sourcelabel */
+            sourceLabel: string;
+            /** Sourcenodeid */
+            sourceNodeId: string;
+            /** Targetlabel */
+            targetLabel: string;
+            /** Targetnodeid */
+            targetNodeId: string;
+        };
         /** RerankCompletedEvent */
         RerankCompletedEvent: {
             payload: components["schemas"]["RerankCompletedPayload"];
@@ -4280,6 +4456,11 @@ export interface components {
             graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
+            /**
+             * Relationcitations
+             * @default []
+             */
+            relationCitations?: components["schemas"]["RelationCitationView"][];
             /** Retrievalprofileid */
             retrievalProfileId: string;
             /** Traceid */
@@ -4535,6 +4716,11 @@ export interface components {
             /** Warnings */
             warnings?: string[];
         };
+        /** SkillManagementPage */
+        SkillManagementPage: {
+            /** Items */
+            items: components["schemas"]["SkillRevisionView"][];
+        };
         /** SkillRevisionPage */
         SkillRevisionPage: {
             /** Items */
@@ -4567,6 +4753,8 @@ export interface components {
             description?: string | null;
             /** Displayname */
             displayName: string;
+            /** Instructiontemplate */
+            instructionTemplate?: string | null;
             /**
              * Origin
              * @enum {string}
@@ -5472,6 +5660,11 @@ export interface components {
             graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
+            /**
+             * Relationcitations
+             * @default []
+             */
+            relationCitations?: components["schemas"]["RelationCitation"][];
             /** Retrievalprofileid */
             retrievalProfileId: string;
             /** Traceid */
@@ -5593,6 +5786,11 @@ export interface components {
             graphSnapshotId?: string | null;
             /** Queryplanid */
             queryPlanId: string;
+            /**
+             * Relationcitations
+             * @default []
+             */
+            relationCitations?: components["schemas"]["RelationCitationView"][];
             /** Retrievalprofileid */
             retrievalProfileId: string;
             /** Traceid */
@@ -5719,6 +5917,96 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_manage_agent_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentManagementPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_read_agent_configuration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAgentRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Agent revision unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6407,6 +6695,96 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_manage_skill_revisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillManagementPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_read_skill_configuration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                revision_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRevisionView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Skill revision unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8747,6 +9125,50 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    graph_get_subgraph: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphSubgraphRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSubgraphView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

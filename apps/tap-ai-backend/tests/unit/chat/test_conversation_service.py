@@ -143,10 +143,15 @@ async def test_in_memory_completion_binds_terminal_event_and_cannot_reverse_canc
         "turn-1",
         evidence,
         terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+        stream_events=(("relation_citation.resolved", {"citation": {"citationId": "relation-1"}}),),
     )
     detail = await service.load("conversation-1")
     assert completed.state == "completed"
     assert detail.events[-2].turn_id == "turn-1"
+    relations = [
+        event for event in detail.events if event.event_type == "relation_citation.resolved"
+    ]
+    assert len(relations) == 1 and relations[0].payload["citation"] == {"citationId": "relation-1"}
 
     await service.create("conversation-2", "turn-2", "request-2", _input())
     canceled = await service.cancel("conversation-2", "turn-2")

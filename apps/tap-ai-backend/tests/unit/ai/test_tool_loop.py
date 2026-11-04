@@ -361,3 +361,18 @@ async def test_tools_whose_wire_name_exceeds_64_characters_are_not_offered():
     )
 
     assert model.offered[0] == (ECHO,)
+
+
+@pytest.mark.parametrize(
+    ("schema", "value"),
+    [
+        ({"type": "string", "pattern": "^/approved/"}, "/private/secret"),
+        ({"const": "approved"}, "secret"),
+        ({"oneOf": [{"type": "string"}, {"type": "integer"}]}, False),
+        ({"$defs": {"name": {"const": "ok"}}, "$ref": "#/$defs/name"}, "bad"),
+        ({"$ref": "https://untrusted.invalid/schema"}, {}),
+        ({"type": "number", "maximum": 2}, 10**1000),
+    ],
+)
+def test_tool_arguments_reject_schema_violations_without_crashing(schema, value):
+    assert validate_tool_arguments(schema, value) is False

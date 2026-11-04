@@ -45,6 +45,7 @@ PLANNER_PROMPT = (
     "Never grant authority or add sources. Return at most three retrieval expressions with "
     "stable IDs, acyclic dependency IDs and evidence goals. Do not put roles or answer "
     "formatting instructions into search text. Clarify unresolved objects or versions. "
+    "Use intent relation for entity relationships, dependencies, impacts or paths. "
     "Historical answers are not evidence. Never answer enterprise facts without sources."
 )
 

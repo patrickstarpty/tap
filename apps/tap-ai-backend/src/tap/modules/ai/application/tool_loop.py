@@ -10,8 +10,10 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypedDict, cast
 
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from referencing import Registry
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
@@ -90,101 +92,42 @@ class ToolLoopOutcome:
     tool_labels: Mapping[str, str] = field(default_factory=dict)
 
 
-def _matches_type(kind: object, value: object) -> bool:
-    if kind == "object":
-        return isinstance(value, dict)
-    if kind == "array":
-        return isinstance(value, list)
-    if kind == "string":
-        return type(value) is str
-    if kind == "integer":
-        return type(value) is int
-    if kind == "number":
-        return type(value) in {int, float} and math.isfinite(value)  # type: ignore[arg-type]
-    if kind == "boolean":
-        return type(value) is bool
-    if kind == "null":
-        return value is None
-    return True
-
-
-def _json_equal(left: object, right: object) -> bool:
-    if isinstance(left, bool) or isinstance(right, bool):
-        return type(left) is type(right) and left == right
-    return left == right
+def _bounded_json(value: object, depth: int = 0) -> bool:
+    if depth > _MAX_SCHEMA_DEPTH:
+        return False
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _bounded_json(item, depth + 1) for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return all(_bounded_json(item, depth + 1) for item in value)
+    if type(value) is float:
+        return math.isfinite(value)
+    return value is None or type(value) in {str, int, bool}
 
 
 def validate_tool_arguments(schema: object, value: object, _depth: int = 0) -> bool:
-    """Check model-supplied arguments against the common JSON Schema subset.
+    """Validate JSON Schema 2020-12 without fetching external references.
 
-    Supports type, required, properties, additionalProperties, enum, string length, numeric
-    bounds and array items/size. Unknown keywords are permissive; `_raw` (unparseable
-    argument JSON) is never valid unless the schema declares it.
+    Invalid schemas, unresolved references and excessive nesting fail closed. The
+    parser's `_raw` error sentinel is rejected unless explicitly declared.
     """
-
-    if _depth > _MAX_SCHEMA_DEPTH or schema is False:
+    if not _bounded_json(value, _depth):
         return False
-    if not isinstance(schema, Mapping):
-        return True
-    kind = schema.get("type")
-    if kind is not None:
-        kinds = kind if isinstance(kind, list) else [kind]
-        if not any(_matches_type(item, value) for item in kinds):
+    if isinstance(value, dict) and "_raw" in value:
+        properties = schema.get("properties", {}) if isinstance(schema, Mapping) else {}
+        if not isinstance(properties, Mapping) or "_raw" not in properties:
             return False
-    choices = schema.get("enum")
-    if isinstance(choices, list) and not any(_json_equal(value, item) for item in choices):
+    try:
+        normalized = json.loads(json.dumps(schema, allow_nan=False, default=dict))
+        if not _bounded_json(normalized):
+            return False
+        Draft202012Validator.check_schema(normalized)
+        return Draft202012Validator(normalized, registry=Registry()).is_valid(value)
+    except Exception:
+        # Includes invalid regex/schema, reference errors and recursive schemas;
+        # no executor receives arguments whose validation could not complete.
         return False
-    if type(value) is str:
-        minimum, maximum = schema.get("minLength"), schema.get("maxLength")
-        if (type(minimum) is int and len(value) < minimum) or (
-            type(maximum) is int and len(value) > maximum
-        ):
-            return False
-    if type(value) in {int, float}:
-        number = float(value)  # type: ignore[arg-type]
-        for bound, below in (
-            ("minimum", True),
-            ("maximum", False),
-            ("exclusiveMinimum", True),
-            ("exclusiveMaximum", False),
-        ):
-            limit = schema.get(bound)
-            if type(limit) not in {int, float}:
-                continue
-            exclusive = bound.startswith("exclusive")
-            if below and (number < limit or (exclusive and number == limit)):  # type: ignore[operator]
-                return False
-            if not below and (number > limit or (exclusive and number == limit)):  # type: ignore[operator]
-                return False
-    if isinstance(value, dict):
-        properties = schema.get("properties")
-        properties = properties if isinstance(properties, Mapping) else {}
-        if "_raw" in value and "_raw" not in properties:
-            return False
-        required = schema.get("required")
-        if isinstance(required, list) and any(key not in value for key in required):
-            return False
-        extra = schema.get("additionalProperties", True)
-        for key, item in value.items():
-            if key in properties:
-                if not validate_tool_arguments(properties[key], item, _depth + 1):
-                    return False
-            elif extra is False or (
-                isinstance(extra, Mapping) and not validate_tool_arguments(extra, item, _depth + 1)
-            ):
-                return False
-    if isinstance(value, list):
-        minimum, maximum = schema.get("minItems"), schema.get("maxItems")
-        if (type(minimum) is int and len(value) < minimum) or (
-            type(maximum) is int and len(value) > maximum
-        ):
-            return False
-        items = schema.get("items")
-        if items is not None and not all(
-            validate_tool_arguments(items, item, _depth + 1) for item in value
-        ):
-            return False
-    return True
 
 
 @dataclass(frozen=True)
@@ -246,7 +189,9 @@ class ToolLoop:
             "model", lambda state: "tools" if state["pending"] else END, ["tools", END]
         )
         graph.add_edge("tools", "model")
-        self._graph = graph.compile()
+        # The outer execute node owns durability; tool descriptors and executors
+        # are scoped live objects and must never enter its inherited checkpointer.
+        self._graph = graph.compile(checkpointer=False)
 
     async def run(
         self,
@@ -293,7 +238,9 @@ class ToolLoop:
             "stopped_by": "model",
         }
         config = RunnableConfig(recursion_limit=2 * self._limits.max_steps + 2)
-        final = await self._graph.ainvoke(cast(Any, state), config=config)
+        # Override an outer sync mode too: LangGraph otherwise awaits a nonexistent
+        # checkpoint future. Its expected no-saver durability warning is harmless.
+        final = await self._graph.ainvoke(cast(Any, state), config=config, durability="async")
         stopped_by: StopReason = final["stopped_by"]
         return ToolLoopOutcome(
             transcript=tuple(final["messages"]),
@@ -437,12 +384,20 @@ class AgentToolRuntime:
         self._redact = redact
         self.limits = limits or ToolLoopLimits.for_context(None)
 
-    def registry(self, knowledge_search: ToolExecutor | None = None) -> ToolRegistry:
-        return ToolRegistry(builtin_tools(knowledge_search=knowledge_search), mcp=self._mcp)
+    def registry(
+        self, knowledge_search: ToolExecutor | None = None, *, graph_tools=None
+    ) -> ToolRegistry:
+        builtins = dict(builtin_tools(knowledge_search=knowledge_search))
+        if graph_tools is not None:
+            builtins.update(graph_tools.builtins())
+        return ToolRegistry(builtins, mcp=self._mcp)
 
-    def loop(self, knowledge_search: ToolExecutor | None = None) -> ToolLoop:
+    def loop(self, knowledge_search: ToolExecutor | None = None, *, graph_tools=None) -> ToolLoop:
         return ToolLoop(
-            self._gateway, self.registry(knowledge_search), self.limits, redact=self._redact
+            self._gateway,
+            self.registry(knowledge_search, graph_tools=graph_tools),
+            self.limits,
+            redact=self._redact,
         )
 
     async def callable_tools(

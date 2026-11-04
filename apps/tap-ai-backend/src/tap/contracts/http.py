@@ -82,6 +82,7 @@ class SkillRevisionPage(ContractModel):
 
 
 class SkillRevisionView(SkillRevisionSummary):
+    instruction_template: Annotated[str | None, Field(max_length=65536)] = None
     status: Literal["enabled", "disabled"]
     origin: Literal["seed", "import", "editor"]
     description: Annotated[str | None, Field(max_length=1024)] = None
@@ -144,6 +145,14 @@ class AiAgentRevisionView(AiAgentRevisionSummary):
     adopted_from_revision_id: Annotated[
         str | None, Field(strict=True, min_length=1, max_length=64)
     ] = None
+
+
+class AiAgentManagementPage(ContractModel):
+    items: list[AiAgentRevisionView]
+
+
+class SkillManagementPage(ContractModel):
+    items: list[SkillRevisionView]
 
 
 class AgentStatusRequest(ContractModel):
@@ -1004,7 +1013,22 @@ class RetrievalSearchResponse(ContractModel):
     hits: list[RetrievalHit]
 
 
+class RelationCitationView(ContractModel):
+    citation_id: str
+    snapshot_id: str
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    source_label: str
+    target_label: str
+    relation_type: str
+    origin: Literal["EXTRACTED", "INFERRED"]
+    claim_index: Annotated[int, Field(strict=True, ge=0)]
+    path_edge_ids: Annotated[list[str], Field(min_length=1, max_length=80)]
+
+
 class RetrievalAnswerResponse(ContractModel):
+    relation_citations: list[RelationCitationView] = []
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
     context_snapshot_id: str = Field(min_length=1)
@@ -1191,6 +1215,7 @@ class ConversationTurnInputView(ContractModel):
 
 
 class ConversationTurnSummary(ContractModel):
+    relation_citations: list[RelationCitationView] = []
     turn_id: str
     state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
     attempt: StrictInt
@@ -1304,6 +1329,7 @@ class ConversationEventItem(ContractModel):
         "answer.delta",
         "answer.reset",
         "citation.resolved",
+        "relation_citation.resolved",
         "turn.completed",
         "turn.abstained",
         "turn.degraded",
@@ -1364,6 +1390,7 @@ class GraphEvidenceView(ContractModel):
 
 
 class GraphSubgraphView(ContractModel):
+    is_active_snapshot: bool = True
     snapshot_id: str
     nodes: list[GraphNodeView]
     edges: list[GraphEdgeView]
@@ -1380,6 +1407,11 @@ class GraphNeighborRequest(ContractModel):
     snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+
+
+class GraphSubgraphRequest(ContractModel):
+    snapshot_id: Annotated[str, Field(min_length=1, max_length=128)]
+    edge_ids: Annotated[list[str], Field(min_length=1, max_length=80)]
 
 
 class GraphPathRequest(ContractModel):

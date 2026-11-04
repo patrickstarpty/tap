@@ -33,6 +33,49 @@ KNOWLEDGE_SEARCH_SCHEMA: Mapping[str, object] = MappingProxyType(
 )
 
 
+def graph_builtin_tools() -> Mapping[str, tuple[ToolDescriptor, ToolExecutor | None]]:
+    string = {"type": "string", "minLength": 1, "maxLength": 512}
+    tools = {}
+    for identity, properties, required in (
+        (
+            "graph.neighbors",
+            {
+                "nodeId": string,
+                "nodeLabel": string,
+                "depth": {"type": "integer", "minimum": 1, "maximum": 2},
+            },
+            [],
+        ),
+        (
+            "graph.path",
+            {
+                "from": string,
+                "to": string,
+                "maxHops": {"type": "integer", "minimum": 1, "maximum": 4},
+            },
+            ["from", "to"],
+        ),
+    ):
+        descriptor = ToolDescriptor(
+            tool_id=identity,
+            display_name=identity,
+            description=(
+                "Explore the immutable knowledge graph authorized for this Turn; "
+                "returns citable R relations."
+            ),
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": required,
+                "properties": properties,
+            },
+            effect=ToolEffect.READ,
+            origin=ToolOrigin.BUILTIN,
+        )
+        tools[identity] = (descriptor, None)
+    return tools
+
+
 def builtin_tools(
     *, knowledge_search: ToolExecutor | None = None
 ) -> Mapping[str, tuple[ToolDescriptor, ToolExecutor | None]]:
@@ -58,6 +101,7 @@ def builtin_tools(
         {
             answer.tool_id: (answer, None),
             search.tool_id: (search, knowledge_search),
+            **graph_builtin_tools(),
         }
     )
 

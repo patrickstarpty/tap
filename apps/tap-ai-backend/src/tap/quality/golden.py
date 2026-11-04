@@ -31,7 +31,11 @@ from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 from tap.modules.knowledge.api import KnowledgeAPI
 from tap.modules.knowledge.application.answers import AnswerService
-from tap.modules.knowledge.application.demo_policy import DemoCurrentPolicyVerifier
+from tap.modules.knowledge.application.demo_policy import (
+    DemoCurrentPolicyVerifier,
+    build_demo_policy_context,
+)
+from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 from tap.modules.knowledge.domain.documents import (
     PARSER_VERSION,
     ChunkDraft,
@@ -61,6 +65,7 @@ from tap.modules.knowledge.ports.errors import (
     SearchUnavailable,
 )
 from tap.modules.knowledge.ports.models import SearchExecution, SearchHit
+from tap.quality.golden_graph import build_golden_graph
 from tap.testing.deterministic_model_gateway import DeterministicModelGateway, overlap_terms
 
 __all__ = [
@@ -76,9 +81,8 @@ __all__ = [
     "run_golden",
 ]
 
-# `relation` cases arrive with knowledge-graph answers; `relationRecall` is added then.
 CATEGORIES = ("fact", "procedure", "abstain", "relation")
-METRICS = ("citationRecall", "keywordRecall", "abstainAccuracy", "answered")
+METRICS = ("citationRecall", "keywordRecall", "relationRecall", "abstainAccuracy", "answered")
 _PHYSICAL_INDEX = "kb_doc_v1_tapper_demo"
 _SCHEMA_VERSION = "doc-schema-v1"
 
@@ -105,6 +109,7 @@ class CaseResult:
     cited_documents: tuple[str, ...]
     abstention_reason: str | None = None
     error: str | None = None
+    relation_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,7 @@ class GoldenReport:
                     "answer": item.answer,
                     "citedDocuments": list(item.cited_documents),
                     "error": item.error,
+                    "relationTypes": list(item.relation_types),
                 }
                 for item in self.cases
             ],
@@ -420,6 +426,9 @@ async def run_golden(
     revisions, chunks = await _ingest(
         corpus_dir, [source for case in cases for source in case.sources], models
     )
+    graph = GraphAnswerEnricher(
+        await build_golden_graph([(item.revision, item.draft) for item in chunks])
+    )
     repository = _GoldenRevisionRepository(revisions)
     knowledge = KnowledgeAPI(
         search=_GoldenSearchIndex(chunks),
@@ -451,7 +460,34 @@ async def run_golden(
             ),
         )
         try:
-            response = await service.answer(request)
+            if case.category == "relation":
+                selected = tuple(
+                    sorted(
+                        (revisions[source] for source in case.sources),
+                        key=lambda item: item.document_id,
+                    )
+                )
+
+                async def graph_phase(evidence):
+                    context = await graph.enrich(
+                        VALIDATION_SCOPE,
+                        tuple(item.revision_id for item in selected),
+                        case.question,
+                        chunk_ids=tuple(item.chunk_id for item in evidence),
+                        evidence_labels={item.chunk_id: item.evidence_label for item in evidence},
+                        hops=2,
+                    )
+                    return [dict(fact) for fact in context.facts]
+
+                response = await service.answer_frozen(
+                    request,
+                    selected,
+                    build_demo_policy_context(selected, corpus_version="tapper-demo-v1"),
+                    governance=None,
+                    graph_phase=graph_phase,
+                )
+            else:
+                response = await service.answer(request)
         except (AnswerUnavailable, ModelUnavailable, SearchUnavailable) as error:
             results.append(
                 CaseResult(case.id, case.category, case.question, False, "", (), None, str(error))
@@ -474,6 +510,9 @@ async def run_golden(
                 response.answer,
                 tuple(cited),
                 None if response.abstention_reason is None else response.abstention_reason.value,
+                relation_types=tuple(
+                    sorted({item.relation_type for item in response.relation_citations})
+                ),
             )
         )
     return GoldenReport(metrics=_metrics(cases, results), cases=tuple(results))
@@ -502,6 +541,14 @@ def _metrics(
                     and bool(set(result.cited_documents) & set(case.cited_documents))
                 )
                 for case, result in answerable
+            ],
+            "relationRecall": [
+                0.0
+                if result.abstained or result.error is not None
+                else len(set(case.relations) & set(result.relation_types))
+                / len(set(case.relations))
+                for case, result in answerable
+                if case.relations
             ],
             "keywordRecall": [
                 0.0

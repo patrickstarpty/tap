@@ -1,6 +1,6 @@
 # Skills/Agents Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 交付 V1 能力 4 的工程完成项：导入 `SKILL.md` 生成不可变修订、Agent 组合（提示词 + Skills + 工具 + 模型）、工具注册表、MCP server 注册与调用、有界工具循环。
 
@@ -63,10 +63,10 @@
   ```
   本任务内置注册：`knowledge.answer`（保留，不可调用，无执行器）、`knowledge.search`（`read`，执行器在 Task 6 实现，本任务注册描述符与 schema `{"query": string ≤ 500, "limit": int 1..8}`）。
 
-- [ ] **Step 1: 失败测试**：`validate_tool_id` 接受 `knowledge.search`、`mcp.jira.search_issues`，拒绝大写、空段、超长；`validate_allowlist` 拒绝 33 项；注册表 `require_allowlist` 对未知/禁用工具抛 `ToolRejected`，`system=True` 时拒绝 `external`；现有修订（白名单 `{"knowledge.search","knowledge.answer"}`）仍可加载。
-- [ ] **Step 2: 实现并替换三处硬编码**；`grep -rn '"knowledge.search", "knowledge.answer"\|_DOMAIN_TOOLS' apps/tap-ai-backend/src` 不再有集合成员校验（领域层只做格式校验）。
-- [ ] **Step 3: 运行** `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests -q -k "asset or conversation or gateway or tool"`。
-- [ ] **Step 4: 提交** `feat: resolve agent tools through a registry`
+- [x] **Step 1: 失败测试**：`validate_tool_id` 接受 `knowledge.search`、`mcp.jira.search_issues`，拒绝大写、空段、超长；`validate_allowlist` 拒绝 33 项；注册表 `require_allowlist` 对未知/禁用工具抛 `ToolRejected`，`system=True` 时拒绝 `external`；现有修订（白名单 `{"knowledge.search","knowledge.answer"}`）仍可加载。
+- [x] **Step 2: 实现并替换三处硬编码**；`grep -rn '"knowledge.search", "knowledge.answer"\|_DOMAIN_TOOLS' apps/tap-ai-backend/src` 不再有集合成员校验（领域层只做格式校验）。
+- [x] **Step 3: 运行** `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests -q -k "asset or conversation or gateway or tool"`。
+- [x] **Step 4: 提交** `feat: resolve agent tools through a registry`
 
 ### Task 2: Skill 导入、创建与启停
 
@@ -93,12 +93,12 @@
   ```
   HTTP（前缀同现有 `ai_assets` 路由）：`POST /ai/skills/imports`（multipart 字段 `file`，权限 `ai.skills.write`，201 新建 / 200 幂等，响应 `SkillRevisionView` + `warnings`）、`POST /ai/skills`（JSON `{name, description, instructions}`，同上）、`GET /ai/skills/{revision_id}/content`（`text/markdown`，`ai.skills.read`）、`POST /ai/skills/revisions/{revision_id}/status`（`{status}`，`ai.skills.write`）。错误用现有 problem details，类型码即 `SkillImportRejected.code`。`allowed-tools` 中注册表未知的名称进入 `warnings`。
 
-- [ ] **Step 1: 失败测试（解析）**：合法文件；缺 front matter；YAML 含 `!!python/object` 标签被拒；名称 `My Skill` 被拒；65 KiB 被拒；非 UTF-8 被拒；正文含 ```` ```bash rm -rf / ``` ```` 与 `<script>` 原样保存；`allowed-tools: [knowledge.search, Bash]` → `requested_tools` 两项、`warnings` 含 `Bash`；`render_skill_markdown` 往返解析一致。
-- [ ] **Step 2: 失败测试（MySQL 集成）**：首次导入创建 Skill 与修订 1；同内容再导入返回同修订且不新增行；改正文再导入得修订 2 且 `adopted_from_revision_id` 为修订 1；同名不同项目互不影响；停用后 `resolve_skill` 拒绝。
-- [ ] **Step 3: 失败测试（契约）**：四个端点状态码、无写权限 403、错误类型码；导入过程中断言未创建子进程（monkeypatch `asyncio.create_subprocess_exec`、`subprocess.Popen` 抛错）且无外部 HTTP 调用。
-- [ ] **Step 4: 实现**（解析用 `yaml.safe_load`，并拒绝非 `dict` 顶层与非字符串键）；`make contracts`。
-- [ ] **Step 5: 运行** 上述测试与 `-k "asset or skill"`。
-- [ ] **Step 6: 提交** `feat: import skill markdown as immutable revisions`
+- [x] **Step 1: 失败测试（解析）**：合法文件；缺 front matter；YAML 含 `!!python/object` 标签被拒；名称 `My Skill` 被拒；65 KiB 被拒；非 UTF-8 被拒；正文含 ```` ```bash rm -rf / ``` ```` 与 `<script>` 原样保存；`allowed-tools: [knowledge.search, Bash]` → `requested_tools` 两项、`warnings` 含 `Bash`；`render_skill_markdown` 往返解析一致。
+- [x] **Step 2: 失败测试（MySQL 集成）**：首次导入创建 Skill 与修订 1；同内容再导入返回同修订且不新增行；改正文再导入得修订 2 且 `adopted_from_revision_id` 为修订 1；同名不同项目互不影响；停用后 `resolve_skill` 拒绝。
+- [x] **Step 3: 失败测试（契约）**：四个端点状态码、无写权限 403、错误类型码；导入过程中断言未创建子进程（monkeypatch `asyncio.create_subprocess_exec`、`subprocess.Popen` 抛错）且无外部 HTTP 调用。
+- [x] **Step 4: 实现**（解析用 `yaml.safe_load`，并拒绝非 `dict` 顶层与非字符串键）；`make contracts`。
+- [x] **Step 5: 运行** 上述测试与 `-k "asset or skill"`。
+- [x] **Step 6: 提交** `feat: import skill markdown as immutable revisions`
 
 ### Task 3: Agent 创建、修订与会话运行
 
@@ -123,10 +123,10 @@
   HTTP（`ai.agents.write`）：`POST /ai/agents`、`POST /ai/agents/{asset_id}/revisions`、`POST /ai/agents/revisions/{revision_id}/status`；请求 `{displayName, description, systemInstruction, skillRevisionIds[], toolAllowlist[], modelAlias?}`。校验：显示名 1..128、系统提示词 1..16000、Skills ≤ 16 且均启用、工具经注册表、`modelAlias` 在目录中且支持结构化输出（白名单含可调用工具时还需目录标记支持工具调用；目录无该标记时以 `structured` 能力代替并在报告中说明）。输出 schema 用平台默认回答 schema（与现有种子 Agent 相同摘要）。
   会话：选中 Agent 时 `model_alias = agent.model_alias or 请求的 model_alias`；Skills = Agent 绑定 ∪ 请求的额外 Skills（去重保序，Agent 在前）；其余快照逻辑不变。
 
-- [ ] **Step 1: 失败测试**：服务校验（未知 Skill、停用 Skill、未知工具、未知模型、超长提示词）；修订号递增与 `adopted_from_revision_id`；会话选 Agent 后 `TurnInput` 的模型、Skills 顺序与白名单符合规则；历史 Turn 快照不因新修订改变（MySQL 集成）。
-- [ ] **Step 2: 实现；`make contracts`。**
-- [ ] **Step 3: 运行** `-k "agent or asset or conversation"`（含 MySQL 集成）。
-- [ ] **Step 4: 提交** `feat: author agents from instructions, skills, tools and a model`
+- [x] **Step 1: 失败测试**：服务校验（未知 Skill、停用 Skill、未知工具、未知模型、超长提示词）；修订号递增与 `adopted_from_revision_id`；会话选 Agent 后 `TurnInput` 的模型、Skills 顺序与白名单符合规则；历史 Turn 快照不因新修订改变（MySQL 集成）。
+- [x] **Step 2: 实现；`make contracts`。**
+- [x] **Step 3: 运行** `-k "agent or asset or conversation"`（含 MySQL 集成）。
+- [x] **Step 4: 提交** `feat: author agents from instructions, skills, tools and a model`
 
 ### Task 4: MCP server 注册、同步与调用
 
@@ -156,12 +156,12 @@
   HTTP（`ai.tools.manage`）：`POST /ai/mcp-servers`、`POST /ai/mcp-servers/{server_id}/sync`、`PATCH /ai/mcp-servers/{server_id}`（`{enabled}`）、`GET /ai/mcp-servers`；`GET /ai/tools`（`ai.agents.read`）返回注册表全量 `ToolView{toolId, displayName, description, effect, origin, serverId?, enabled, callable}`。
   鉴权头：`auth_header_env` 指向的环境变量值作为 `Authorization` 头（变量缺失时同步失败并记录 `last_error="mcp-auth-missing"`）。
 
-- [ ] **Step 1: 失败测试（策略）**：`http://127.0.0.1:9000/mcp` 允许；`http://example.com/mcp` 拒绝；`TAP_MCP_ALLOWED_HOSTS=mcp.internal` 后允许；`file://`、`ftp://` 拒绝；slug 校验。
-- [ ] **Step 2: 失败测试（契约，假 MCP server 暴露 `echo`（readOnlyHint）与 `create_ticket`）**：注册后 `GET /ai/tools` 出现 `mcp.{slug}.echo`（`read`）与 `mcp.{slug}.create_ticket`（`external`）；停用 server 后工具 `enabled=false` 且 `require_allowlist` 拒绝；调用 `echo` 返回内容；超过 16 KiB 结果被截断标记；服务端超时映射 `is_error`；工具数 65 时同步失败。
-- [ ] **Step 3: 失败测试（MySQL 集成）**：重新同步替换工具集；项目隔离。
-- [ ] **Step 4: 实现**；每次调用 span `tool.mcp.call`（属性 server、tool、耗时、状态）。
-- [ ] **Step 5: 运行** 上述测试；`make contracts`。
-- [ ] **Step 6: 提交** `feat: register mcp servers as agent tool sources`
+- [x] **Step 1: 失败测试（策略）**：`http://127.0.0.1:9000/mcp` 允许；`http://example.com/mcp` 拒绝；`TAP_MCP_ALLOWED_HOSTS=mcp.internal` 后允许；`file://`、`ftp://` 拒绝；slug 校验。
+- [x] **Step 2: 失败测试（契约，假 MCP server 暴露 `echo`（readOnlyHint）与 `create_ticket`）**：注册后 `GET /ai/tools` 出现 `mcp.{slug}.echo`（`read`）与 `mcp.{slug}.create_ticket`（`external`）；停用 server 后工具 `enabled=false` 且 `require_allowlist` 拒绝；调用 `echo` 返回内容；超过 16 KiB 结果被截断标记；服务端超时映射 `is_error`；工具数 65 时同步失败。
+- [x] **Step 3: 失败测试（MySQL 集成）**：重新同步替换工具集；项目隔离。
+- [x] **Step 4: 实现**；每次调用 span `tool.mcp.call`（属性 server、tool、耗时、状态）。
+- [x] **Step 5: 运行** 上述测试；`make contracts`。
+- [x] **Step 6: 提交** `feat: register mcp servers as agent tool sources`
 
 ### Task 5: 网关工具调用
 
@@ -184,10 +184,10 @@
   ```
   OpenAI 兼容 `tools=[{"type":"function","function":{...}}]`、`tool_choice="auto"`（`tools` 为空时不传）；工具名在线上用 `__` 替换 `.`（如 `knowledge__search`），解析时还原；参数 JSON 解析失败的调用以 `arguments={"_raw": ...}` 返回并由循环报错。记录 `model_call`（operation `chat`）与 span，同现有路径共享代码。确定性网关：构造参数 `tool_script: Sequence[ToolTurnScript] | None`，按顺序返回预设调用，脚本耗尽后返回文本。
 
-- [ ] **Step 1: 失败测试**：假 HTTP 返回 `tool_calls` 被解析并还原名称；返回文本无调用；畸形参数；`model_call` 记录一行；确定性脚本按序返回。
-- [ ] **Step 2: 实现。**
-- [ ] **Step 3: 运行** `-k gateway` 与 `make check` 的 mypy 部分（`uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/run-quality-kb-real.py`）。
-- [ ] **Step 4: 提交** `feat: let the model gateway request tool calls`
+- [x] **Step 1: 失败测试**：假 HTTP 返回 `tool_calls` 被解析并还原名称；返回文本无调用；畸形参数；`model_call` 记录一行；确定性脚本按序返回。
+- [x] **Step 2: 实现。**
+- [x] **Step 3: 运行** `-k gateway` 与 `make check` 的 mypy 部分（`uv run --project apps/tap-ai-backend mypy apps/tap-ai-backend/src/tap scripts/run-quality-kb-real.py`）。
+- [x] **Step 4: 提交** `feat: let the model gateway request tool calls`
 
 ### Task 6: 有界工具循环与内置执行器
 
@@ -210,11 +210,11 @@
   ```
   LangGraph `StateGraph`：`model` → 条件边（有调用且未达上限 → `tools`，否则 END）→ `tools` → `model`；`recursion_limit = 2*max_steps+2`；每步 span `tool.loop.step`、每次调用 span `tool.{tool_id}`；未知/未授权工具返回 `ToolResult(is_error=True, content="tool-not-allowed")` 不执行；单步调用超出 3 个时只执行前 3 个、其余返回 `tool-call-limit`；工具结果以 `T1..Tn` 标签包裹为不可信数据。回答阶段：证据 = 初始检索证据 ∪ 工具证据（去重，≤ 20），走现有结构化回答与引用校验。
 
-- [ ] **Step 1: 失败测试（单元，确定性脚本）**：两步调用后给出文本；第 5 步被强制无工具；未知工具不执行；并行 4 个调用只执行 3 个；预算耗尽停止；工具抛异常转为 `is_error` 结果继续。
-- [ ] **Step 2: 失败测试（契约）**：选中白名单含 `mcp.{slug}.echo` 的 Agent 的会话，脚本调用 echo，回答成功、trace 中有 `tool.loop.step` 与 `tool.mcp.call` span；白名单只有 `knowledge.answer` 的会话路径与现状一致（不进入循环）。
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行** `-k "tool or agent or conversation or generation"` 与全量后端一次。
-- [ ] **Step 5: 提交** `feat: run a bounded tool loop for agent turns`
+- [x] **Step 1: 失败测试（单元，确定性脚本）**：两步调用后给出文本；第 5 步被强制无工具；未知工具不执行；并行 4 个调用只执行 3 个；预算耗尽停止；工具抛异常转为 `is_error` 结果继续。
+- [x] **Step 2: 失败测试（契约）**：选中白名单含 `mcp.{slug}.echo` 的 Agent 的会话，脚本调用 echo，回答成功、trace 中有 `tool.loop.step` 与 `tool.mcp.call` span；白名单只有 `knowledge.answer` 的会话路径与现状一致（不进入循环）。
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行** `-k "tool or agent or conversation or generation"` 与全量后端一次。
+- [x] **Step 5: 提交** `feat: run a bounded tool loop for agent turns`
 
 ### Task 7: 前端 Skills 页
 
@@ -225,10 +225,10 @@
 **Interfaces:**
 - Consumes: Task 2 生成类型与端点。
 
-- [ ] **Step 1: 失败测试**：列表来自后端；“导入 SKILL.md”选文件 → 显示解析出的名称、描述、请求工具与警告 → 确认后列表出现；“新建”提交表单调用创建接口；详情显示修订历史与原文；启停切换；下载使用服务端原文；无 `localStorage` 读写（断言 `localStorage.setItem` 未被调用）。导入前预览：前端用同一规则本地解析 front matter 仅用于预览，提交以服务端结果为准。
-- [ ] **Step 2: 实现。**
-- [ ] **Step 3: 运行** `corepack pnpm --filter @tap/ai-frontend exec vitest run src/widgets/tap src/features/knowledge` 与 `run check`。
-- [ ] **Step 4: 提交** `feat: manage skills from the tap ai backend`
+- [x] **Step 1: 失败测试**：列表来自后端；“导入 SKILL.md”选文件 → 显示解析出的名称、描述、请求工具与警告 → 确认后列表出现；“新建”提交表单调用创建接口；详情显示修订历史与原文；启停切换；下载使用服务端原文；无 `localStorage` 读写（断言 `localStorage.setItem` 未被调用）。导入前预览：前端用同一规则本地解析 front matter 仅用于预览，提交以服务端结果为准。
+- [x] **Step 2: 实现。**
+- [x] **Step 3: 运行** `corepack pnpm --filter @tap/ai-frontend exec vitest run src/widgets/tap src/features/knowledge` 与 `run check`。
+- [x] **Step 4: 提交** `feat: manage skills from the tap ai backend`
 
 ### Task 8: 前端 Agents 页与工具页签
 
@@ -239,29 +239,41 @@
 **Interfaces:**
 - Consumes: Task 3、Task 4 端点与类型。
 
-- [ ] **Step 1: 失败测试**：Agent 列表；编辑器字段（名称、描述、系统提示词、Skills 多选、工具多选按来源分组并显示效果标签、模型选择）保存后生成新修订；“工具”页签列出内置工具与 MCP server，可注册（slug、名称、URL、鉴权环境变量名）、同步、启停，错误码显示为可读文案（如 `mcp-url-not-allowed`）。
-- [ ] **Step 2: 实现。**
-- [ ] **Step 3: 运行** 同上。
-- [ ] **Step 4: 提交** `feat: compose agents with skills, tools and models in tap ai`
+- [x] **Step 1: 失败测试**：Agent 列表；编辑器字段（名称、描述、系统提示词、Skills 多选、工具多选按来源分组并显示效果标签、模型选择）保存后生成新修订；“工具”页签列出内置工具与 MCP server，可注册（slug、名称、URL、鉴权环境变量名）、同步、启停，错误码显示为可读文案（如 `mcp-url-not-allowed`）。
+- [x] **Step 2: 实现。**
+- [x] **Step 3: 运行** 同上。
+- [x] **Step 4: 提交** `feat: compose agents with skills, tools and models in tap ai`
 
 ### Task 9: 原型同步
 
 **Files:**
 - Modify: `apps/web/src/widgets/tap/TapProductPrototype.tsx`（Skills 导入流程、Agent 编辑器的工具与模型、工具/MCP 页签；fixture 数据）
-- Create: `docs/assets/2026-11-03-skills-agents-prototype-before.png`、`...-after.png`
+- Create: `docs/assets/v1-completion-2026-11-04/`（Agents/Skills 前后对照、编辑器、工具页与导入预览）
 
-- [ ] **Step 1: 截取改动前** `/prototype` Skills 与 Agents 屏（Playwright，`corepack pnpm --filter @tap/web run dev`）。
-- [ ] **Step 2: 实现**，不加演示开关或实现说明；保留全部既有模块与跨模块链接。
-- [ ] **Step 3: 截取改动后**，核对模块导航与跨模块旅程；`corepack pnpm --filter @tap/web run check` 与 `run test`。
-- [ ] **Step 4: 提交** `feat: show skill import and agent tools in the prototype`
+- [x] **Step 1: 截取改动前** `/prototype` Skills 与 Agents 屏（Playwright，`corepack pnpm --filter @tap/web run dev`）。
+- [x] **Step 2: 实现**，不加演示开关或实现说明；保留全部既有模块与跨模块链接。
+- [x] **Step 3: 截取改动后**，核对模块导航与跨模块旅程；`corepack pnpm --filter @tap/web run check` 与 `run test`。
+- [x] **Step 4: 提交** `feat: show skill import and agent tools in the prototype`
 
 ### Task 10: 文档、指南与 E2E
 
 **Files:**
-- Create: `docs/guides/2026-11-03-skills-agents-mcp.md`（导入 Skill、组合 Agent、注册 MCP、安全边界）
+- Create: `docs/guides/2026-11-04-skills-agents-mcp.md`（导入 Skill、组合 Agent、注册 MCP、安全边界）
 - Modify: `docs/architecture.md`、`docs/superpowers/plans/2026-09-29-v1-roadmap.md`（能力 4 工程完成勾选；子项目 6 状态与 plan 链接）、`docs/superpowers/plans/2026-10-01-product-roadmap.md`、`apps/tap-ai-frontend/tests/e2e/`（新增或扩展：导入 Skill → 创建 Agent → 在会话中选择该 Agent 提问得到回答）、`.env.example`（`TAP_MCP_ALLOWED_HOSTS=`）
 
-- [ ] **Step 1: E2E 用例**并运行 `make demo-e2e`。
-- [ ] **Step 2: 验证** `make check`、`make test`。
-- [ ] **Step 3: 文档**，`git diff --check`。
-- [ ] **Step 4: 提交** `docs: record skills and agents completion`
+- [x] **Step 1: E2E 用例**并运行 `make demo-e2e`。
+- [x] **Step 2: 验证** `make check`、`make test`。
+- [x] **Step 3: 文档**，`git diff --check`。
+- [x] **Step 4: 提交** `docs: record skills and agents completion`
+
+
+## 2026-11-04 续接说明
+
+- 新增独立的完整修订管理列表/详情；会话选择目录仍只列启用摘要。管理接口、禁用/重启/历史读取与项目范围契约通过。
+- 前端移除本地草稿，导入/创建/修订/启停/历史/下载调用后端，保留原始文件字节；已停用或失效的依赖可以从 Agent 中移除。
+- 工具参数使用完整 JSON Schema 2020-12 验证，远程 schema 引用不可获取；模型目录保留工具调用能力，创建与运行时都校验。
+- 工具循环显式关闭父检查点继承，并覆盖同步持久化策略；真实 MySQL 嵌套回归验证执行成功且只保存外层检查点。当前 LangGraph 对无 saver 子图的显式策略给出预期告警，不影响外层持久化。
+- `insights.query` 按 V1 总纲的 Test Insights 非目标移至 V2.2，避免把项目上下文错误当作指标委托身份；设计和产品路线图已同步。
+- 最终门禁与前后对照见 [V1 增量验证记录](../../guides/2026-11-04-v1-completion-validation.md)。
+
+最终验收：`make check`、完整 `make test`、完整隔离 `make demo-e2e` 通过。步骤由本轮综合交付提交统一收束；真实资料的业务验证不在这些勾选中。

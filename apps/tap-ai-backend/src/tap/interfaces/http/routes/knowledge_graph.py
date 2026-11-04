@@ -17,12 +17,14 @@ from tap.contracts.http import (
     GraphSearchRequest,
     GraphSnapshotPage,
     GraphSnapshotView,
+    GraphSubgraphRequest,
     GraphSubgraphView,
 )
 from tap.interfaces.http.dependencies import graph_overview_service, graph_service
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.graph.domain.models import (
+    GraphFactNotFound,
     GraphSearchQuery,
     GraphSubgraph,
     NeighborQuery,
@@ -133,6 +135,32 @@ async def bounded_path(request: Request, body: GraphPathRequest) -> GraphSubgrap
         PathQuery(body.snapshot_id, body.source_node_id, body.target_node_id, body.node_limit),
     )
     return _subgraph(graph)
+
+
+@router.post(
+    "/subgraph",
+    operation_id="graph_get_subgraph",
+    response_model=GraphSubgraphView,
+    dependencies=[Depends(project_authorization("knowledge.read"))],
+)
+async def highlighted_subgraph(request: Request, body: GraphSubgraphRequest) -> GraphSubgraphView:
+    store = graph_service(request)
+    scope = request.state.project_scope
+    snapshot = await store.get_snapshot(scope, body.snapshot_id)
+    if snapshot is None or snapshot.status != "READY":
+        raise GraphFactNotFound("graph snapshot not found")
+    index = await store.load_index(scope, snapshot)
+    if any(identity not in index.edges for identity in body.edge_ids):
+        raise GraphFactNotFound("graph edge not found")
+    nodes = {
+        identity
+        for key in body.edge_ids
+        for identity in (index.edges[key].source_node_id, index.edges[key].target_node_id)
+    }
+    result = _subgraph(index._subgraph(nodes, set(body.edge_ids)))
+    active = await store.active_snapshot(scope, snapshot.source_revision_ids)
+    result.is_active_snapshot = active is not None and active.snapshot_id == snapshot.snapshot_id
+    return result
 
 
 @router.post(

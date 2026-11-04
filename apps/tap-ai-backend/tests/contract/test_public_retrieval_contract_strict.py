@@ -211,6 +211,7 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "citations",
             "graphContextStatus",
             "graphSnapshotId",
+            "relationCitations",
         },
     ),
 )

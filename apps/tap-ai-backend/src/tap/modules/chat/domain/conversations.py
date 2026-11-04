@@ -280,6 +280,36 @@ class CitationEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class RelationCitationEvidence:
+    citation_id: str
+    snapshot_id: str
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    source_label: str
+    target_label: str
+    relation_type: str
+    origin: str
+    claim_index: int
+    path_edge_ids: tuple[str, ...]
+    original_citation_ids: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if (
+            self.origin not in {"EXTRACTED", "INFERRED"}
+            or type(self.claim_index) is not int
+            or self.claim_index < 0
+        ):
+            raise ValueError("invalid relation citation provenance")
+        if (
+            not isinstance(self.path_edge_ids, tuple)
+            or not 1 <= len(self.path_edge_ids) <= 80
+            or self.edge_id not in self.path_edge_ids
+        ):
+            raise ValueError("invalid relation citation path")
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerEvidence:
     answer: str
     outcome: str
@@ -289,6 +319,7 @@ class AnswerEvidence:
     citations: tuple[CitationEvidence, ...] = ()
     diagnostics: tuple[str, ...] = ()
     insights_explanation: dict[str, object] | None = None
+    relation_citations: tuple[RelationCitationEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if self.outcome not in {"completed", "abstained", "canceled", "failed"}:
@@ -331,6 +362,8 @@ class AnswerEvidenceSnapshot:
     @classmethod
     def _evidence_material(cls, value: AnswerEvidence) -> dict[str, object]:
         material = asdict(value)
+        if not value.relation_citations:
+            material.pop("relation_citations")
         if value.insights_explanation is None:
             material.pop("insights_explanation")
         return material
@@ -387,6 +420,7 @@ class ConversationEvent:
             "answer.delta",
             "answer.reset",
             "citation.resolved",
+            "relation_citation.resolved",
             "turn.completed",
             "turn.abstained",
             "turn.degraded",

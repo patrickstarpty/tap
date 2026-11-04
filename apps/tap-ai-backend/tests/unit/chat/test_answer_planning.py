@@ -473,3 +473,81 @@ async def test_recent_user_context_requires_matching_authorized_source_lineage()
     other = snapshot("other", "其他规范 v2，上一版是 v1", replace(resource, source_id="source-b"))
     rejected = await module.AnswerPlanner().plan(module.planning_input(current, history=(other,)))
     assert rejected.route == "clarify"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "question",
+    ["服务 A 与服务 B 有什么依赖关系？", "What is the path from Service A to Service B?"],
+)
+async def test_relation_questions_get_two_hop_execution_intent(question):
+    from tap.modules.chat.application.plan_answer import authorized_execution
+
+    plan = await planning().AnswerPlanner().plan(context(question))
+    assert plan.intent == "relation"
+    assert authorized_execution(plan).intent == "relation"
+
+
+def test_relation_citation_is_bound_into_checkpoint_and_evidence_digest():
+    from datetime import datetime, timezone
+
+    from tap.entrypoints.tapper_generation_worker import (
+        _evidence_checkpoint,
+        _evidence_from_checkpoint,
+    )
+    from tap.modules.chat.domain.conversations import (
+        AnswerEvidence,
+        AnswerEvidenceSnapshot,
+        GraphContextStatus,
+        RelationCitationEvidence,
+        RetrievalSummary,
+    )
+
+    relation = RelationCitationEvidence(
+        "r1", "s", "e", "a", "b", "A", "B", "DEPENDS_ON", "EXTRACTED", 0, ("e",), ("c1",)
+    )
+    value = AnswerEvidence(
+        "A depends on B.",
+        "completed",
+        RetrievalSummary("completed"),
+        GraphContextStatus.APPLIED,
+        "s",
+        relation_citations=(relation,),
+    )
+    assert _evidence_from_checkpoint(_evidence_checkpoint(value)) == value
+    first = AnswerEvidenceSnapshot.create(
+        snapshot_id="a",
+        project_id="p",
+        turn_id="t",
+        input_digest="sha256:" + "a" * 64,
+        value=value,
+        now=datetime.now(timezone.utc),
+    )
+    changed = replace(
+        value, relation_citations=(replace(relation, edge_id="other", path_edge_ids=("other",)),)
+    )
+    second = AnswerEvidenceSnapshot.create(
+        snapshot_id="b",
+        project_id="p",
+        turn_id="t",
+        input_digest="sha256:" + "a" * 64,
+        value=changed,
+        now=datetime.now(timezone.utc),
+    )
+    assert first.digest != second.digest
+
+
+@pytest.mark.asyncio
+async def test_legacy_plan_missing_intent_defaults_to_fact_after_digest_validation():
+    from tap.modules.chat.domain.answer_plan import AnswerPlan
+    from tap.modules.chat.domain.conversations import content_digest
+
+    plan = await planning().AnswerPlanner().plan(context("What is the policy?"))
+    raw = plan.to_dict()
+    raw.pop("intent")
+    raw.pop("digest")
+    raw["digest"] = content_digest(raw)
+    assert AnswerPlan.from_dict(raw).intent == "fact"
+    raw["standalone_query"] = "tampered"
+    with pytest.raises(ValueError, match="digest"):
+        AnswerPlan.from_dict(raw)

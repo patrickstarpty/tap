@@ -14,6 +14,7 @@ def parse_grounded_answer_payload(
     max_claims: int,
     max_claim_chars: int,
     max_labels_per_claim: int,
+    relation_context=(),
 ) -> tuple[str, tuple[GeneratedClaim, ...]]:
     """Validate one closed grounded payload without provider-specific behavior."""
 
@@ -30,15 +31,51 @@ def parse_grounded_answer_payload(
     if not isinstance(raw_claims, list) or not 1 <= len(raw_claims) <= max_claims:
         raise ValueError("claim count is outside the closed bound")
 
+    relations = {
+        item["relationLabel"]: item for item in relation_context if "relationLabel" in item
+    }
+    filtered = False
     allowed_labels = {item.evidence_label for item in evidence}
     answer_paragraphs = answer.split("\n\n")
     claims: list[GeneratedClaim] = []
     seen_claims: set[str] = set()
     all_claims_are_unique_paragraphs = True
     for raw in raw_claims:
-        if not isinstance(raw, dict) or set(raw) != {"text", "evidenceLabels"}:
+        if not isinstance(raw, dict) or not {"text", "evidenceLabels"} <= set(raw) <= {
+            "text",
+            "evidenceLabels",
+            "relationLabels",
+        }:
             raise ValueError("claim must use the closed schema")
         text, labels = raw["text"], raw["evidenceLabels"]
+        relation_labels = raw.get("relationLabels", [])
+        if (
+            not isinstance(relation_labels, list)
+            or len(relation_labels) > max_labels_per_claim
+            or any(
+                not isinstance(label, str) or label not in relations for label in relation_labels
+            )
+            or len(set(relation_labels)) != len(relation_labels)
+        ):
+            filtered = True
+            continue
+        if relation_labels and isinstance(labels, list):
+            labels = list(
+                dict.fromkeys(
+                    [
+                        *labels,
+                        *(
+                            label
+                            for relation in relation_labels
+                            for label in relations[relation].get("evidenceLabels", [])
+                            if label in allowed_labels
+                        ),
+                    ]
+                )
+            )
+            if not labels:
+                filtered = True
+                continue
         if not _bounded_utf8_string(text, maximum=max_claim_chars) or "\n\n" in text:
             raise ValueError("claim text is outside the closed bound")
         is_unique_paragraph = answer_paragraphs.count(text) == 1
@@ -63,9 +100,15 @@ def parse_grounded_answer_payload(
         if len(set(labels)) != len(labels):
             raise ValueError("claim evidence labels are duplicated")
         seen_claims.add(text)
-        claims.append(GeneratedClaim(text=text, evidence_labels=tuple(labels)))
+        claims.append(
+            GeneratedClaim(
+                text=text, evidence_labels=tuple(labels), relation_labels=tuple(relation_labels)
+            )
+        )
     canonical_answer = (
-        answer if all_claims_are_unique_paragraphs else "\n\n".join(claim.text for claim in claims)
+        answer
+        if all_claims_are_unique_paragraphs and not filtered
+        else "\n\n".join(claim.text for claim in claims)
     )
     return canonical_answer, tuple(claims)
 

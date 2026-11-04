@@ -73,6 +73,12 @@ class ApprovedAssetCatalog:
         self._agents = agents
         self._skills = skills
 
+    async def list_agent_revisions(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
+        return tuple(item for item in self._agents if _same_project(item.scope, scope))
+
+    async def list_skill_revisions(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]:
+        return tuple(item for item in self._skills if _same_project(item.scope, scope))
+
     async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
         return tuple(
             item

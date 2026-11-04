@@ -191,6 +191,19 @@ class ModelCatalogHttpService(Protocol):
 
 
 class AssetCatalogHttpService(Protocol):
+    async def list_agent_revisions(
+        self, scope: ProjectScopeContext
+    ) -> tuple[AiAgentRevision, ...]: ...
+    async def list_skill_revisions(
+        self, scope: ProjectScopeContext
+    ) -> tuple[SkillRevision, ...]: ...
+    async def resolve_historical_agent(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> AiAgentRevision: ...
+    async def resolve_historical_skill(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> SkillRevision: ...
+
     @property
     def scope(self) -> ProjectScopeContext: ...
 

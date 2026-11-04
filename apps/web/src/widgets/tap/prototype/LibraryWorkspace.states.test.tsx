@@ -51,13 +51,9 @@ it("retries loading Library", () => {
 
   expect(screen.getByText("Library could not be loaded.")).toBeVisible();
   expect(screen.getByRole("alert")).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Add source" }),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add source" })).toBeVisible();
 
-  fireEvent.click(
-    screen.getAllByRole("button", { name: "Retry" })[0],
-  );
+  fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
 
   expect(
     screen.queryByText("Library could not be loaded."),
@@ -99,5 +95,24 @@ it("distinguishes an empty Library from no search results", () => {
   });
 
   expect(screen.getByText("No matching sources")).toBeVisible();
-  expect(screen.queryByText("No knowledge sources yet")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("No knowledge sources yet"),
+  ).not.toBeInTheDocument();
+});
+
+it("returns from a cited historical snapshot to the current graph", () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/prototype?snapshot=prototype-health-disclosure&highlight=application-health&graphSource=ready-1",
+  );
+  renderWorkspace([{ ...readySource, hasPublishedGraph: true }]);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Back to current graph" }),
+  );
+  expect(window.location.search).not.toContain("snapshot=");
+  expect(
+    screen.queryByRole("button", { name: "Back to current graph" }),
+  ).not.toBeInTheDocument();
+  window.history.replaceState(null, "", "/");
 });

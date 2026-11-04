@@ -9,7 +9,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `corpus/*.md` | 固定语料，脱敏、可公开 |
-| `kb-golden.v1.jsonl` | 每行一条用例（当前 23 条：`fact` 13、`procedure` 5、`abstain` 5） |
+| `kb-golden.v1.jsonl` | 每行一条用例（当前 31 条：`fact` 13、`procedure` 5、`abstain` 5、`relation` 8） |
 | `baseline.fake.json` | 确定性模型基线分数，按类别与 `total` 记录 |
 
 用例示例：
@@ -21,7 +21,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | `id` | 稳定 ID，如 `kb-fact-001` |
-| `category` | `fact` / `procedure` / `abstain` / `relation`（`relation` 预留给图谱脉络分析） |
+| `category` | `fact` / `procedure` / `abstain` / `relation` |
 | `question` | 问题 |
 | `sources` | 参与检索的语料文件名 |
 | `expect.abstain` | 是否应拒答 |
@@ -33,8 +33,11 @@
 
 - `citationRecall`：应作答用例中，回答引用命中 `citedDocuments` 的比例。
 - `keywordRecall`：应作答且有 `mustContain` 的用例中，关键词命中比例的平均值。
+- `relationRecall`：具有 `expect.relations` 的应答用例中，实际关系引用命中的关系类型比例；不根据答案中出现的文字推测关系引用。
 - `abstainAccuracy`：拒答与否与 `expect.abstain` 一致的比例。
 - `answered`：应作答用例中未拒答且未出错的比例。
+
+关系用例的 `service-relations.md` 同时含自然语言说明与明确的 `主体 --RELATION--> 客体` 语句。运行器用确定性抽取夹具生成不可变快照，经生产 `GraphAnswerEnricher`、切片反向索引和回答引用校验作答；期望值不参与抽取或模型生成。这里度量关系回答与引用链路，不代表真实模型的图谱抽取质量。
 
 ## 2. 命令
 

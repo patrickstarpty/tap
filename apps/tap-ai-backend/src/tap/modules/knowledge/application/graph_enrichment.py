@@ -9,8 +9,9 @@ from typing import Mapping
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import AuthorizationDenied
-from tap.modules.graph.domain.models import GraphSearchQuery
+from tap.modules.graph.domain.index import SnapshotIndex
 from tap.modules.graph.ports.store import GraphFactNotFound, GraphStorePort
+from tap.modules.knowledge.application.graph_expansion import GraphContextExpander
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.platform.telemetry import span
 
@@ -28,6 +29,7 @@ class GraphAnswerContext:
     status: GraphContextStatus
     snapshot_id: str | None = None
     facts: tuple[Mapping[str, object], ...] = ()
+    index: SnapshotIndex | None = None
 
     def __post_init__(self) -> None:
         if (self.status is GraphContextStatus.APPLIED) != bool(self.snapshot_id):
@@ -55,11 +57,51 @@ class GraphAnswerEnricher:
         self._node_limit = node_limit
         self._publication_authority = publication_authority
 
+    async def authorize_facts(
+        self,
+        scope: ProjectScopeContext,
+        index: SnapshotIndex,
+        edge_ids: tuple[str, ...],
+    ) -> None:
+        """Reopen publication authority for every edge and endpoint a tool will expose."""
+        if index.snapshot.project_id != scope.project_id:
+            raise AuthorizationDenied("graph snapshot is outside Turn scope")
+        evidence_ids: set[str] = set()
+        for identity in edge_ids:
+            edge = index.edges[identity]
+            evidence_ids.update(edge.evidence_ids)
+            evidence_ids.update(index.nodes[edge.source_node_id].evidence_ids)
+            evidence_ids.update(index.nodes[edge.target_node_id].evidence_ids)
+        evidence = [index.evidence[identity] for identity in sorted(evidence_ids)]
+        if any(
+            item.source_revision_id not in index.snapshot.source_revision_ids
+            or item.document_revision_id not in index.snapshot.document_revision_ids
+            for item in evidence
+        ):
+            raise AuthorizationDenied("graph evidence is outside Turn snapshot")
+        if self._publication_authority is not None:
+            publication = await self._publication_authority.authorize_selection(
+                scope.project_id, index.snapshot.source_revision_ids
+            )
+            for item in evidence:
+                approved = item.anchor.get("inventoryItemId")
+                await self._publication_authority.authorize_evidence(
+                    scope.project_id,
+                    source_revision_id=item.source_revision_id,
+                    document_revision_id=item.document_revision_id,
+                    approved_item_id=approved if isinstance(approved, str) else None,
+                )
+            await self._publication_authority.revalidate(publication)
+
     async def enrich(
         self,
         scope: ProjectScopeContext,
         source_revision_ids: tuple[str, ...],
         query: str,
+        *,
+        chunk_ids: tuple[str, ...] = (),
+        evidence_labels: Mapping[str, str] | None = None,
+        hops: int = 1,
     ) -> GraphAnswerContext:
         with span("graph.enrich") as current_span:
             if not source_revision_ids:
@@ -75,10 +117,8 @@ class GraphAnswerEnricher:
                 snapshot = await self._store.active_snapshot(scope, source_revision_ids)
                 if snapshot is None:
                     return GraphAnswerContext(GraphContextStatus.NOT_READY)
-                graph = await self._store.search(
-                    scope,
-                    GraphSearchQuery(snapshot.snapshot_id, query, self._node_limit),
-                )
+                index = await self._store.load_index(scope, snapshot)
+                graph = GraphContextExpander().expand(index, chunk_ids, query, hops=hops)
             except GraphFactNotFound:
                 return GraphAnswerContext(GraphContextStatus.FAILED)
             except AuthorizationDenied:
@@ -125,10 +165,24 @@ class GraphAnswerEnricher:
                         ],
                     }
                 )
-            for edge in graph.edges:
+            nodes = {item.node_id: item for item in graph.nodes}
+            for position, edge in enumerate(graph.edges, 1):
                 facts.append(
                     {
                         "kind": "edge",
+                        "relationLabel": f"R{position}",
+                        "snapshotId": snapshot.snapshot_id,
+                        "sourceLabel": nodes[edge.source_node_id].label,
+                        "targetLabel": nodes[edge.target_node_id].label,
+                        "confidence": edge.confidence,
+                        "evidenceLabels": list(
+                            dict.fromkeys(
+                                (evidence_labels or {})[evidence[item].chunk_id]
+                                for item in edge.evidence_ids
+                                if item in evidence
+                                and evidence[item].chunk_id in (evidence_labels or {})
+                            )
+                        ),
                         "id": edge.edge_id,
                         "sourceNodeId": edge.source_node_id,
                         "targetNodeId": edge.target_node_id,
@@ -148,6 +202,7 @@ class GraphAnswerEnricher:
                 GraphContextStatus.APPLIED,
                 snapshot.snapshot_id,
                 tuple(facts),
+                index,
             )
 
 

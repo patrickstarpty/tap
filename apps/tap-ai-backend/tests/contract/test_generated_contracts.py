@@ -165,6 +165,7 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "answer.delta",
         "answer.reset",
         "citation.resolved",
+        "relation_citation.resolved",
         "conversation.turn.requested",
         "conversation.turn.completed",
         "turn.completed",

@@ -25,6 +25,8 @@ _TEMPLATE = {
     "general_chat": "general",
     "transform_text": "general",
     "factual_lookup": "factual",
+    "fact": "factual",
+    "relation": "explanation",
     "explanation": "explanation",
     "comparison": "comparison",
     "procedural": "procedural",
@@ -58,6 +60,7 @@ def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
         plan.evidence_limit,
         remaining,
         plan.output_requirements,
+        plan.intent,
     )
 
 
@@ -149,7 +152,13 @@ class AnswerPlanner:
             else:
                 if ambiguous:
                     standalone = value.authorized_referents[0] + "：" + original
-                if complex_query:
+                if re.search(
+                    r"关系|依赖|影响|路径|\b(?:relationship|relation|depend\w*|impact|path)\b",
+                    original,
+                    re.I,
+                ):
+                    intent = "relation"
+                elif complex_query:
                     intent = "comparison"
                 elif re.search(r"如何|步骤|how to", original, re.I):
                     intent = "procedural"

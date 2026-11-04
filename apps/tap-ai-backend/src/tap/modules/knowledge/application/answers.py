@@ -158,6 +158,7 @@ class AnswerService:
         authorize=None,
         on_delta: AnswerDeltaCallback | None = None,
         tool_phase: ToolPhase | None = None,
+        graph_phase=None,
     ) -> AnswerResponse:
         if (
             not revisions
@@ -181,6 +182,8 @@ class AnswerService:
             raise DocumentStateChanged("accepted retrieval authority is invalid")
         frozen_answer = getattr(self._knowledge, "answer_frozen", None)
         streaming: dict[str, object] = {} if on_delta is None else {"on_delta": on_delta}
+        if graph_phase is not None:
+            streaming["graph_phase"] = graph_phase
         if tool_phase is not None:
             if frozen_answer is None:
                 raise ValueError("agent tools require the authorized Knowledge boundary")

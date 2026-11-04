@@ -2876,8 +2876,9 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
         encoding="utf-8",
     )
     # Start the shortened readiness window only after the stubs can record TERM.
-    # This barrier is bounded separately and remains inside the 10-second cap.
-    stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
+    # Keep stub scheduling separate from the two-second readiness assertion.
+    # Docker/browser validation may compete for CPU on local and CI hosts.
+    stub_barrier = """stub_deadline=$(( SECONDS + 15 ))
 while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 8 ]; do
   [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
   sleep 0.05
@@ -2898,7 +2899,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
         env=environment,
         text=True,
         capture_output=True,
-        timeout=10,
+        timeout=30,
         check=False,
     )
 

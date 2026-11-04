@@ -47,6 +47,7 @@ from tap.modules.knowledge.domain.models import (
     ModelCallProvenance,
     OpenApiAnchor,
     QueryPlan,
+    RelationCitation,
     ResolvedResourceRef,
     ResourceMode,
     ResourceRef,
@@ -176,6 +177,74 @@ def _resolve_generated_claims(
     return tuple(claims)
 
 
+def _ground_relation_claims(generation, context, evidence):
+    if not any(item.relation_labels for item in generation.claims):
+        return generation
+    relations = {item["relationLabel"]: item for item in context if "relationLabel" in item}
+    allowed = {item.evidence_label for item in evidence}
+    claims = []
+    for claim in generation.claims:
+        if any(label not in relations for label in claim.relation_labels):
+            continue
+        labels = tuple(
+            dict.fromkeys(
+                (
+                    *claim.evidence_labels,
+                    *(
+                        label
+                        for key in claim.relation_labels
+                        for label in relations[key].get("evidenceLabels", ())
+                        if label in allowed
+                    ),
+                )
+            )
+        )
+        if not labels or any(label not in allowed for label in labels):
+            continue
+        claims.append(replace(claim, evidence_labels=labels))
+    return replace(generation, text="\n\n".join(item.text for item in claims), claims=tuple(claims))
+
+
+def _relation_citations(generation, context, id_factory):
+    relations = {item["relationLabel"]: item for item in context if "relationLabel" in item}
+    citations = []
+    for claim_index, claim in enumerate(generation.claims):
+        selected = [relations[label] for label in claim.relation_labels if label in relations]
+        paths = []
+        path = []
+        endpoints = set()
+        for item in selected:
+            source, target = item["sourceNodeId"], item["targetNodeId"]
+            next_endpoints = ({target} if source in endpoints else set()) | (
+                {source} if target in endpoints else set()
+            )
+            if path and not next_endpoints:
+                paths.append(path)
+                path = []
+            endpoints = next_endpoints if path else {source, target}
+            path.append(item)
+        if path:
+            paths.append(path)
+        for item in selected:
+            path = next(group for group in paths if item in group)
+            citations.append(
+                RelationCitation(
+                    id_factory(),
+                    str(item["snapshotId"]),
+                    str(item["id"]),
+                    str(item["sourceNodeId"]),
+                    str(item["targetNodeId"]),
+                    str(item["sourceLabel"]),
+                    str(item["targetLabel"]),
+                    str(item["relationType"]),
+                    str(item["origin"]),
+                    claim_index,
+                    tuple(str(edge["id"]) for edge in path),
+                )
+            )
+    return tuple(citations)
+
+
 class AuthorizedRetrieval:
     def __init__(
         self,
@@ -228,6 +297,7 @@ class AuthorizedRetrieval:
         authorize=None,
         on_delta: AnswerDeltaCallback | None = None,
         tool_phase: ToolPhase | None = None,
+        graph_phase=None,
     ) -> AnswerResponse:
         answer_input = None
         missing = False
@@ -371,6 +441,8 @@ class AuthorizedRetrieval:
             )
             answer_input.context["planId"] = answer_execution.plan_id
             missing = bool(answer_input.context["missingEvidence"])
+        if graph_phase is not None:
+            graph_context = await graph_phase(run.response.evidence)
         tool_results: tuple[Mapping[str, object], ...] = ()
         if tool_phase is not None:
             run, tool_results = await self._run_tool_phase(
@@ -381,6 +453,23 @@ class AuthorizedRetrieval:
                 frozen_policy=frozen_policy,
                 answer_plan_id=None if answer_execution is None else answer_execution.plan_id,
                 authorize=authorize,
+            )
+        if graph_context:
+            labels_by_chunk = {item.chunk_id: item.evidence_label for item in run.response.evidence}
+            graph_context = tuple(
+                {
+                    **fact,
+                    "evidenceLabels": list(
+                        dict.fromkeys(
+                            labels_by_chunk[item["chunkId"]]
+                            for item in cast(Any, fact.get("evidence", ()))
+                            if item["chunkId"] in labels_by_chunk
+                        )
+                    ),
+                }
+                if fact.get("kind") == "edge"
+                else fact
+                for fact in graph_context
             )
         required = tuple(
             resource for resource in run.plan.resources if resource.mode is ResourceMode.REQUIRED
@@ -433,6 +522,7 @@ class AuthorizedRetrieval:
         self._validate_binding(current, run.plan, run.context_snapshot)
         if self._publication_authority is not None and run.publication is not None:
             await self._publication_authority.revalidate(run.publication)
+        generation = _ground_relation_claims(generation, graph_context, run.response.evidence)
         if flow_context and any(
             not flowchart_claim_is_consistent(claim.evidence_labels, flow_context)
             for claim in generation.claims
@@ -457,6 +547,7 @@ class AuthorizedRetrieval:
             answer=generation.text,
             abstained=False,
             claims=claims,
+            relation_citations=_relation_citations(generation, graph_context, self._id_factory),
             citations=tuple(self._citation(item) for item in run.response.evidence),
             embedding_provenance=run.response.embedding_provenance,
             answer_provenance=self._generation_provenance(generation),

@@ -106,6 +106,12 @@ async def test_mysql_skill_import_is_idempotent_versioned_and_project_scoped(
             VALIDATION_SCOPE, second.revision_id, AssetRevisionStatus.DISABLED
         )
         assert disabled.status is AssetRevisionStatus.DISABLED
+        managed = await catalog.list_skill_revisions(VALIDATION_SCOPE)
+        assert disabled in managed
+        assert foreign not in managed
+        assert disabled not in await catalog.list_skills(VALIDATION_SCOPE)
+        history = [item for item in managed if item.asset_id == first.asset_id]
+        assert [item.revision_id for item in history] == [second.revision_id, first.revision_id]
         with pytest.raises(AssetRevisionRejected):
             await catalog.resolve_skill(VALIDATION_SCOPE, second.revision_id)
         enabled = await service.set_status(

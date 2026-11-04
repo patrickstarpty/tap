@@ -7,6 +7,7 @@ model_list:
     model_info:
       mode: chat
       supports_response_schema: true
+      supports_function_calling: true
       tapper_display_name: Qwen Plus
   - model_name: qwen-flash
     litellm_params:
@@ -16,6 +17,7 @@ model_list:
     model_info:
       mode: chat
       supports_response_schema: true
+      supports_function_calling: true
       tapper_display_name: Qwen Flash
   - model_name: qwen-max
     litellm_params:
@@ -25,6 +27,7 @@ model_list:
     model_info:
       mode: chat
       supports_response_schema: true
+      supports_function_calling: true
       tapper_display_name: Qwen Max
   - model_name: qwen3-vl-plus
     litellm_params:
@@ -35,6 +38,7 @@ model_list:
       mode: chat
       supports_vision: true
       supports_response_schema: true
+      supports_function_calling: true
       tapper_display_name: Qwen3 VL Plus
   - model_name: text-embedding-v4
     litellm_params:

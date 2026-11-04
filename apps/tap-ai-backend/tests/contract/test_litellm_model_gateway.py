@@ -74,7 +74,11 @@ def model_entry(name: str, mode: str, **model_info: object) -> dict[str, object]
 
 DEFAULT_MODELS = (
     model_entry(
-        "qwen-plus", "chat", supports_response_schema=True, tapper_display_name="Qwen Plus"
+        "qwen-plus",
+        "chat",
+        supports_response_schema=True,
+        supports_function_calling=True,
+        tapper_display_name="Qwen Plus",
     ),
     model_entry("qwen-flash", "chat"),
     model_entry(
@@ -1041,7 +1045,11 @@ async def test_catalog_lists_chat_models_and_embedding():
         success,
         models=(
             model_entry(
-                "qwen-plus", "chat", supports_response_schema=True, tapper_display_name="Qwen Plus"
+                "qwen-plus",
+                "chat",
+                supports_response_schema=True,
+                supports_function_calling=True,
+                tapper_display_name="Qwen Plus",
             ),
             model_entry("qwen-flash", "chat"),
             model_entry("text-embedding-v4", "embedding"),
@@ -1053,6 +1061,7 @@ async def test_catalog_lists_chat_models_and_embedding():
             "qwen-plus",
             "Qwen Plus",
             frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+            supports_tool_calls=True,
         ),
         ModelDescriptor("qwen-flash", "qwen-flash", frozenset({ModelCapability.CHAT})),
         ModelDescriptor(
@@ -2030,3 +2039,27 @@ async def test_deterministic_gateway_follows_tool_script_then_answers_text():
     assert len({call.call_id for call in (*first.tool_calls, *second.tool_calls)}) == 3
     assert third.tool_calls == () and third.text
     assert [record.operation for record in recorder.records] == [ModelOperation.CHAT] * 3
+
+
+@pytest.mark.asyncio
+async def test_tool_chat_rejects_a_model_without_function_calling_before_transport():
+    def forbidden(_request):
+        raise AssertionError("unsupported tool model must not reach transport")
+
+    gateway = configured_gateway(
+        forbidden,
+        models=(
+            model_entry(
+                "qwen-plus",
+                "chat",
+                supports_response_schema=True,
+                supports_function_calling=False,
+            ),
+        ),
+    )
+    req = tool_request()
+    try:
+        with pytest.raises(ModelGatewayRejected):
+            await gateway.chat_with_tools(req, opening(req), (SEARCH_TOOL,))
+    finally:
+        await gateway.aclose()

@@ -165,10 +165,96 @@ function seedAgentSkillCatalog(
   );
 }
 
+function stubCatalogManagement(
+  queryClient: ReturnType<typeof createTestQueryClient>,
+  projectId: string,
+) {
+  const originalFetch = fetch;
+  type Row = {
+    revisionId: string;
+    assetId: string;
+    displayName: string;
+    description?: string;
+    systemInstruction?: string;
+    instructionTemplate?: string;
+    origin: string;
+    status: string;
+  };
+  let agents = (
+    (queryClient.getQueryData(["ai-agent-catalog", projectId]) as Row[]) ?? []
+  ).map((row) => ({
+    ...row,
+    description: "Searches sources · Answers questions",
+    systemInstruction: "Use approved evidence.",
+    origin: "seed",
+    status: "enabled",
+  }));
+  let skills = (
+    (queryClient.getQueryData(["skill-catalog", projectId]) as Row[]) ?? []
+  ).map((row) => ({
+    ...row,
+    description: "For knowledge answers",
+    instructionTemplate: "Cite evidence.",
+    origin: "seed",
+    status: "enabled",
+  }));
+  vi.stubGlobal(
+    "fetch",
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/ai/agents/revisions"))
+        return Response.json({ items: agents });
+      if (url.endsWith("/ai/skills/revisions"))
+        return Response.json({ items: skills });
+      if (url.endsWith("/ai/tools") || url.endsWith("/ai/mcp-servers"))
+        return Response.json({ items: [] });
+      if (url.endsWith("/ai/models"))
+        return Response.json({
+          defaultAlias: "tapper-chat",
+          items: [
+            {
+              alias: "tapper-chat",
+              displayName: "Chat",
+              capabilities: ["chat", "structured"],
+            },
+          ],
+        });
+      if (
+        init?.method === "POST" &&
+        /\/ai\/(agents|skills)(?:\/[^/]+\/revisions)?$/.test(url)
+      ) {
+        const body = JSON.parse(init.body as string);
+        const isAgent = url.includes("/agents");
+        const match = /\/agents\/([^/]+)\/revisions$/.exec(url);
+        const assetId = match?.[1] ?? (isAgent ? body.displayName : body.name);
+        const row = {
+          ...body,
+          applicableTasks: ["knowledge.answer"],
+          toolAllowlist: body.toolAllowlist ?? [],
+          assetId,
+          revisionId: `${assetId}-${Date.now()}`,
+          displayName: isAgent ? body.displayName : body.name,
+          instructionTemplate: body.instructions,
+          origin: "editor",
+          status: "enabled",
+        };
+        if (isAgent) agents = [row, ...agents];
+        else
+          skills = [row, ...skills.filter((item) => item.assetId !== assetId)];
+        return Response.json(isAgent ? row : { revision: row, warnings: [] });
+      }
+      if (url.endsWith("/ai/agents")) return Response.json({ items: agents });
+      if (url.endsWith("/ai/skills")) return Response.json({ items: skills });
+      return originalFetch(input, init);
+    },
+  );
+}
+
 function renderWorkspace() {
   const api = defaultKnowledgeClient();
   const queryClient = createTestQueryClient();
   seedAgentSkillCatalog(queryClient, api.projectId);
+  stubCatalogManagement(queryClient, api.projectId);
   // Switching to Test Management in durable/api mode mounts the real
   // TestPlanLibrary, whose Ant Design Spin uses a deprecated `tip` prop that
   // logs a console warning while its test-plans query is pending (a
@@ -468,6 +554,7 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
       },
     ],
   );
+  stubCatalogManagement(queryClient, api.projectId);
   renderKnowledgeApp(<TapperWorkspace />, {
     api,
     queryClient,
@@ -2507,12 +2594,7 @@ describe("Tap product workspace interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  // The Agents and Skills catalogs manage custom items as downloadable
-  // local Markdown draft files: the create/edit dialog requires a
-  // kebab-case Name plus a non-empty Description (not just Instructions)
-  // before Save enables, custom items show a "Local draft" badge and a
-  // "Download Markdown" action instead of "Custom" and "Use in chat", and
-  // built-in (approved) items have no Edit button.
+  // Catalog edits persist immutable revisions through the management API.
   it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -2523,16 +2605,14 @@ describe("Tap product workspace interactions", () => {
       screen.getByRole("textbox", { name: "Search agents" }),
       "underwriting",
     );
-    await user.click(
-      screen.getByRole("button", { name: "Create agent draft" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
 
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     expect(
       within(createDialog).getByRole("button", { name: "Save agent" }),
     ).toBeDisabled();
     await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
+      within(createDialog).getByRole("textbox", { name: "Name" }),
       "life-underwriting-reviewer",
     );
     await user.type(
@@ -2546,7 +2626,7 @@ describe("Tap product workspace interactions", () => {
     await user.click(
       within(createDialog).getByRole("button", { name: "Save agent" }),
     );
-    const customAgent = screen.getByRole("listitem", {
+    const customAgent = await screen.findByRole("listitem", {
       name: "life-underwriting-reviewer",
     });
     expect(
@@ -2554,7 +2634,7 @@ describe("Tap product workspace interactions", () => {
         name: "life-underwriting-reviewer",
       }),
     ).toBeVisible();
-    expect(within(customAgent).getByText("Local draft")).toBeVisible();
+    expect(within(customAgent).getByText("Custom")).toBeVisible();
     expect(
       within(customAgent).getByText(
         "Review the selected evidence before escalating an application.",
@@ -2583,7 +2663,7 @@ describe("Tap product workspace interactions", () => {
       within(editDialog).getByRole("button", { name: "Save agent" }),
     );
     expect(
-      screen.getByText("Escalates high-risk life applications."),
+      await screen.findByText("Escalates high-risk life applications."),
     ).toBeVisible();
     expect(
       screen.getByText(
@@ -2591,18 +2671,12 @@ describe("Tap product workspace interactions", () => {
       ),
     ).toBeVisible();
 
-    // A local draft has no "Use in chat" action in durable/api mode — it is
-    // a downloadable file, not yet an approved, chat-usable Agent revision.
     expect(
-      screen.queryByRole("button", {
+      screen.getByRole("button", {
         name: "Use life-underwriting-reviewer in chat",
       }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(customAgent).getByRole("button", { name: "Download Markdown" }),
     ).toBeVisible();
   });
-
   it("localizes catalog list labels instead of composing English aria text", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -2620,16 +2694,12 @@ describe("Tap product workspace interactions", () => {
     const { container } = renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
-    // Durable/api mode's create trigger reads "Create agent draft" (local
-    // Markdown draft file), but the dialog itself keeps the plain "Create
-    // agent" accessible name (CatalogWorkspace.tsx:323 only ever passes
-    // createLabel, without the "draft" suffix, as the dialog's aria-label).
-    const trigger = screen.getByRole("button", { name: "Create agent draft" });
+    const trigger = screen.getByRole("button", { name: "Create agent" });
     await user.click(trigger);
 
     const dialog = screen.getByRole("dialog", { name: "Create agent" });
     const name = within(dialog).getByRole("textbox", {
-      name: "Name (kebab-case)",
+      name: "Name",
     });
     const cancel = within(dialog).getByRole("button", { name: "Cancel" });
     expect(name).toHaveFocus();
@@ -2652,20 +2722,16 @@ describe("Tap product workspace interactions", () => {
     );
   });
 
-  // Built-in (approved) catalog items have no Edit action at all — only a
-  // locally-created draft can be edited, so this case first creates one
-  // instead of editing the seeded "Life Underwriting Analyst" built-in.
+  // Built-in items remain read-only; saved custom revisions can be edited.
   it("contains edit-dialog focus and restores the exact Edit trigger", async () => {
     const user = userEvent.setup();
     const { container } = renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
-    await user.click(
-      screen.getByRole("button", { name: "Create agent draft" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
     const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
+      within(createDialog).getByRole("textbox", { name: "Name" }),
       "life-underwriting-reviewer",
     );
     await user.type(
@@ -2680,14 +2746,14 @@ describe("Tap product workspace interactions", () => {
       within(createDialog).getByRole("button", { name: "Save agent" }),
     );
 
-    const trigger = screen.getByRole("button", {
+    const trigger = await screen.findByRole("button", {
       name: "Edit life-underwriting-reviewer",
     });
     await user.click(trigger);
 
     const dialog = screen.getByRole("dialog", { name: "Edit agent" });
     const name = within(dialog).getByRole("textbox", {
-      name: "Name (kebab-case)",
+      name: "Name",
     });
     const save = within(dialog).getByRole("button", { name: "Save agent" });
     expect(name).toHaveFocus();
@@ -2706,8 +2772,7 @@ describe("Tap product workspace interactions", () => {
     expect(trigger).toHaveFocus();
   });
 
-  // Same durable/api draft-file behavior as the Agents case above, applied
-  // to Skills.
+  // Skill revisions use the same backend workflow.
   it("searches, creates, and edits reusable underwriting skills", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -2718,9 +2783,7 @@ describe("Tap product workspace interactions", () => {
       screen.getByRole("textbox", { name: "Search skills" }),
       "underwriting",
     );
-    await user.click(
-      screen.getByRole("button", { name: "Create skill draft" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Create skill" }));
 
     const createDialog = screen.getByRole("dialog", { name: "Create skill" });
     expect(
@@ -2741,7 +2804,7 @@ describe("Tap product workspace interactions", () => {
     await user.click(
       within(createDialog).getByRole("button", { name: "Save skill" }),
     );
-    const customSkill = screen.getByRole("listitem", {
+    const customSkill = await screen.findByRole("listitem", {
       name: "underwriting-rules-lookup",
     });
     expect(
@@ -2749,7 +2812,7 @@ describe("Tap product workspace interactions", () => {
         name: "underwriting-rules-lookup",
       }),
     ).toBeVisible();
-    expect(within(customSkill).getByText("Local draft")).toBeVisible();
+    expect(within(customSkill).getByText("Custom")).toBeVisible();
     expect(
       within(customSkill).getByText(
         "Find relevant rules and cite the selected source.",
@@ -2783,25 +2846,18 @@ describe("Tap product workspace interactions", () => {
       within(editDialog).getByRole("button", { name: "Save skill" }),
     );
     expect(
-      screen.getByText("Retrieves rule evidence before a decision."),
+      await screen.findByText("Retrieves rule evidence before a decision."),
     ).toBeVisible();
     expect(
       screen.getByText("Find relevant rules and cite the selected source."),
     ).toBeVisible();
 
-    // A local draft skill has no "Use in chat" action in durable/api mode —
-    // it is a downloadable SKILL.md file, not yet an approved, chat-usable
-    // Skill revision.
     expect(
-      screen.queryByRole("button", {
+      screen.getByRole("button", {
         name: "Use underwriting-rules-lookup in chat",
       }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(customSkill).getByRole("button", { name: "Download Markdown" }),
     ).toBeVisible();
   });
-
   it("uploads a Library file without making processing documents selectable", async () => {
     const user = userEvent.setup();
     renderWorkspace();

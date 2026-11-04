@@ -84,7 +84,9 @@ it("validates the name and previews SKILL.md while creating", () => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: copy.catalog.createSkill }));
+  fireEvent.click(
+    screen.getByRole("button", { name: copy.catalog.createSkill }),
+  );
 
   const nameInput = screen.getByLabelText(copy.catalog.name);
   const saveButton = screen.getByRole("button", {
@@ -121,8 +123,42 @@ it("does not show a SKILL.md preview while creating an agent", () => {
     screen.getByRole("button", { name: copy.catalog.createAgent }),
   );
 
+  expect(screen.queryByLabelText("SKILL.md preview")).not.toBeInTheDocument();
   expect(
-    screen.queryByLabelText("SKILL.md preview"),
+    screen.queryByText(copy.catalog.previewHeading),
   ).not.toBeInTheDocument();
-  expect(screen.queryByText(copy.catalog.previewHeading)).not.toBeInTheDocument();
+});
+
+it("offers Skill import and Agent composition in the existing catalog", () => {
+  const view = render(
+    <CatalogWorkspace
+      copy={copy}
+      items={items}
+      kind="skill"
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onUse={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText("Import SKILL.md")).toHaveAttribute(
+    "type",
+    "file",
+  );
+  view.rerender(
+    <CatalogWorkspace
+      copy={copy}
+      items={items}
+      kind="agent"
+      onCreate={vi.fn()}
+      onUpdate={vi.fn()}
+      onUse={vi.fn()}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: copy.catalog.createAgent }),
+  );
+  expect(screen.getByLabelText("Model")).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", { name: /Knowledge search/ }),
+  ).toBeVisible();
 });

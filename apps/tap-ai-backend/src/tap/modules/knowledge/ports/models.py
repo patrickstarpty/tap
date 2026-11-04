@@ -120,6 +120,7 @@ class RedactionResult:
 class GeneratedClaim:
     text: str
     evidence_labels: tuple[str, ...]
+    relation_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

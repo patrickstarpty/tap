@@ -306,3 +306,39 @@ def test_grounded_output_rejects_malformed_unknown_partial_or_duplicate_payloads
             max_claim_chars=4_000,
             max_labels_per_claim=16,
         )
+
+
+def test_relation_claims_complete_original_evidence_and_filter_unknown_relations():
+    answer, claims = parse_grounded_answer_payload(
+        {
+            "answer": "A depends on B.\n\nInvented path.",
+            "claims": [
+                {"text": "A depends on B.", "evidenceLabels": [], "relationLabels": ["R1"]},
+                {"text": "Invented path.", "evidenceLabels": ["S1"], "relationLabels": ["R99"]},
+            ],
+        },
+        (evidence(),),
+        relation_context=({"relationLabel": "R1", "evidenceLabels": ["S1"]},),
+        max_answer_chars=16000,
+        max_claims=64,
+        max_claim_chars=4000,
+        max_labels_per_claim=16,
+    )
+    assert answer == "A depends on B."
+    assert claims[0].evidence_labels == ("S1",)
+    assert claims[0].relation_labels == ("R1",)
+
+
+def test_relation_without_original_evidence_is_removed():
+    assert parse_grounded_answer_payload(
+        {
+            "answer": "A implies B.",
+            "claims": [{"text": "A implies B.", "evidenceLabels": [], "relationLabels": ["R1"]}],
+        },
+        (evidence(),),
+        relation_context=({"relationLabel": "R1", "evidenceLabels": []},),
+        max_answer_chars=16000,
+        max_claims=64,
+        max_claim_chars=4000,
+        max_labels_per_claim=16,
+    ) == ("", ())

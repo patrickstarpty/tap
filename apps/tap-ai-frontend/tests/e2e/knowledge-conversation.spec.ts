@@ -61,6 +61,39 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   expect(revision).toBeDefined();
   preparePublishedFixture([revision!.revisionId]);
 
+  const skillName = `conversation-skill-${Date.now()}`;
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
+  await page.getByLabel("Import SKILL.md").setInputFiles({
+    name: "SKILL.md",
+    mimeType: "text/markdown",
+    buffer: Buffer.from(
+      `---\nname: ${skillName}\ndescription: Check underwriting evidence.\n---\nUse published evidence and cite sources.`,
+    ),
+  });
+  const importDialog = page.getByRole("dialog", { name: "Import SKILL.md" });
+  await expect(importDialog).toContainText(skillName);
+  await importDialog.getByRole("button", { name: "Confirm import" }).click();
+  await expect(page.getByRole("listitem", { name: skillName })).toBeVisible();
+  const agentName = `Conversation reviewer ${Date.now()}`;
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  const agentDialog = page.getByRole("dialog", { name: "Create agent" });
+  await agentDialog
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill(agentName);
+  await agentDialog
+    .getByRole("textbox", { name: "Description" })
+    .fill("Review underwriting evidence.");
+  await agentDialog
+    .getByRole("textbox", { name: "Instructions" })
+    .fill("Answer from published knowledge and cite evidence.");
+  await agentDialog
+    .getByRole("checkbox", { name: new RegExp(skillName) })
+    .check();
+  await agentDialog.getByRole("button", { name: "Save agent" }).click();
+  await expect(page.getByRole("listitem", { name: agentName })).toBeVisible();
+
   const [agentsResponse, skillsResponse, modelsResponse] = await Promise.all([
     page.request.get(`${root}/ai/agents`),
     page.request.get(`${root}/ai/skills`),
@@ -79,6 +112,14 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     defaultAlias: string;
     items: Array<{ alias: string; displayName: string }>;
   };
+  const selectedAgent = agents.items.find(
+    (item) => item.displayName === agentName,
+  )!;
+  const selectedSkill = skills.items.find(
+    (item) => item.displayName === skillName,
+  )!;
+  expect(selectedAgent).toBeDefined();
+  expect(selectedSkill).toBeDefined();
   const defaultModel = models.items.find(
     (model) => model.alias === models.defaultAlias,
   );
@@ -93,14 +134,10 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     .check();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Agents" }).click();
-  await page
-    .getByRole("option", { name: agents.items[0]!.displayName })
-    .click();
+  await page.getByRole("option", { name: selectedAgent.displayName }).click();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Skills" }).click();
-  await page
-    .getByRole("option", { name: skills.items[0]!.displayName })
-    .click();
+  await page.getByRole("option", { name: selectedSkill.displayName }).click();
   await page
     .getByRole("button", {
       name: `Select model, current model ${defaultModel!.displayName}`,
@@ -427,12 +464,12 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       .getByText(prompt, { exact: true }),
   ).toBeVisible();
   await writeConversationState({
-    agentLabel: agents.items[0]!.displayName,
+    agentLabel: selectedAgent.displayName,
     citationId: citationId!,
     conversationId: accepted.conversationId,
     modelAlias: models.defaultAlias,
     prompt,
-    skillLabel: skills.items[0]!.displayName,
+    skillLabel: selectedSkill.displayName,
     sourceId: createdSourceId,
     sourceLabel: sourceFilename,
     turnId: accepted.turnId,

@@ -29,6 +29,8 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-http==1.45.0",
   "pyyaml==6.0.3",
   "mcp==1.30.0",
+  "jsonschema==4.26.0",
+  "referencing==0.37.0",
 ]
 
 [tool.uv.sources]

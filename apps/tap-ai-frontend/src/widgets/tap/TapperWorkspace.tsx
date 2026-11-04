@@ -1,3 +1,8 @@
+import {
+  relationGraphUrl,
+  relationGraphSelection,
+  type RelationCitation,
+} from "../../features/graph/model/relationCitation";
 import { Button } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -548,9 +553,11 @@ function AssistantResponse({
   onResend,
   onGenerateTestPlan,
   activityEvents = [],
+  onOpenRelation,
 }: {
   contentCopy: WorkspaceCopy;
   turn: AssistantTurn;
+  onOpenRelation?: (citation: RelationCitation) => void;
   insightsClient?: ConversationClient | null;
   conversationId?: string;
   projectId?: string | null;
@@ -637,6 +644,7 @@ function AssistantResponse({
           <GroundedAnswer
             response={turn.response}
             locale={turn.locale}
+            onOpenRelation={onOpenRelation}
             citationNumbering="shown-order"
             onOpenCitation={onOpenCitation}
           />
@@ -952,8 +960,31 @@ export function TapperWorkspace() {
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
   const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    durableTestPlanPath() !== null ? "test-management" : "tapper",
+    relationGraphSelection() !== null
+      ? "library"
+      : durableTestPlanPath() !== null
+        ? "test-management"
+        : "tapper",
   );
+  const [, setNavigationVersion] = useState(0);
+  useEffect(() => {
+    const restoreModule = () => {
+      setNavigationVersion((version) => version + 1);
+      const module = new URLSearchParams(window.location.search).get("module");
+      setActiveModule(
+        module &&
+          ["tapper", "agents", "skills", "library", "test-management"].includes(
+            module,
+          )
+          ? (module as ProductModule)
+          : durableTestPlanPath() !== null
+            ? "test-management"
+            : "tapper",
+      );
+    };
+    window.addEventListener("popstate", restoreModule);
+    return () => window.removeEventListener("popstate", restoreModule);
+  }, []);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -2287,6 +2318,14 @@ export function TapperWorkspace() {
                   activityEvents={(conversationEvents.data?.items ?? []).filter(
                     (event) => event.turnId === turn.id,
                   )}
+                  onOpenRelation={(citation) => {
+                    window.history.pushState(
+                      null,
+                      "",
+                      relationGraphUrl(citation),
+                    );
+                    setActiveModule("library");
+                  }}
                   onOpenCitation={(citationId, trigger) => {
                     const citation = turn.response?.citations.find(
                       (item) => item.citationId === citationId,
@@ -2407,6 +2446,12 @@ export function TapperWorkspace() {
             items={agents}
             onUse={(itemId) => useCatalogItem("agent", itemId)}
             projectId={projectId ?? undefined}
+            onChanged={async () => {
+              await Promise.all([
+                aiAssets.agents.refetch(),
+                aiAssets.skills.refetch(),
+              ]);
+            }}
           />
         ) : null}
         {activeModule === "skills" ? (
@@ -2416,12 +2461,18 @@ export function TapperWorkspace() {
             items={skills}
             onUse={(itemId) => useCatalogItem("skill", itemId)}
             projectId={projectId ?? undefined}
+            onChanged={async () => {
+              await Promise.all([
+                aiAssets.agents.refetch(),
+                aiAssets.skills.refetch(),
+              ]);
+            }}
           />
         ) : null}
         {activeModule === "library" ? (
           projectId !== null ? (
             <ProjectLibraryWorkspace
-              key={projectId}
+              key={`${projectId}:${window.location.search}`}
               projectId={projectId}
               graphProjectId={projectId}
               locale={locale}

@@ -91,6 +91,23 @@
         "title": "AgentStatusRequest",
         "type": "object"
       },
+      "AiAgentManagementPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AiAgentRevisionView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AiAgentManagementPage",
+        "type": "object"
+      },
       "AiAgentRevisionPage": {
         "additionalProperties": false,
         "properties": {
@@ -605,6 +622,7 @@
                 "conversation.turn.completed": "#/components/schemas/ConversationTurnCompletedEvent",
                 "conversation.turn.requested": "#/components/schemas/ConversationTurnRequestedEvent",
                 "query.plan_ready": "#/components/schemas/QueryPlanReadyEvent",
+                "relation_citation.resolved": "#/components/schemas/RelationCitationResolvedEvent",
                 "rerank.completed": "#/components/schemas/RerankCompletedEvent",
                 "retrieval.hits_ready": "#/components/schemas/RetrievalHitsReadyEvent",
                 "stage.completed": "#/components/schemas/StageCompletedEvent",
@@ -652,6 +670,9 @@
               },
               {
                 "$ref": "#/components/schemas/CitationResolvedEvent"
+              },
+              {
+                "$ref": "#/components/schemas/RelationCitationResolvedEvent"
               },
               {
                 "$ref": "#/components/schemas/TurnCompletedEvent"
@@ -1353,6 +1374,7 @@
               "answer.delta",
               "answer.reset",
               "citation.resolved",
+              "relation_citation.resolved",
               "turn.completed",
               "turn.abstained",
               "turn.degraded",
@@ -1800,6 +1822,14 @@
             "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Inputsnapshotdigest",
             "type": "string"
+          },
+          "relationCitations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RelationCitationView"
+            },
+            "title": "Relationcitations",
+            "type": "array"
           },
           "state": {
             "enum": [
@@ -2983,6 +3013,32 @@
         "title": "GraphSnapshotView",
         "type": "object"
       },
+      "GraphSubgraphRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "edgeIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 80,
+            "minItems": 1,
+            "title": "Edgeids",
+            "type": "array"
+          },
+          "snapshotId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Snapshotid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "edgeIds"
+        ],
+        "title": "GraphSubgraphRequest",
+        "type": "object"
+      },
       "GraphSubgraphView": {
         "additionalProperties": false,
         "properties": {
@@ -3000,6 +3056,11 @@
             },
             "title": "Evidence",
             "type": "array"
+          },
+          "isActiveSnapshot": {
+            "default": true,
+            "title": "Isactivesnapshot",
+            "type": "boolean"
           },
           "nodes": {
             "items": {
@@ -7512,6 +7573,184 @@
         "title": "ReadyHealth",
         "type": "object"
       },
+      "RelationCitation": {
+        "additionalProperties": false,
+        "properties": {
+          "citationId": {
+            "title": "Citationid",
+            "type": "string"
+          },
+          "claimIndex": {
+            "minimum": 0.0,
+            "title": "Claimindex",
+            "type": "integer"
+          },
+          "edgeId": {
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "EXTRACTED",
+              "INFERRED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "pathEdgeIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pathedgeids",
+            "type": "array"
+          },
+          "relationType": {
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceLabel": {
+            "title": "Sourcelabel",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetLabel": {
+            "title": "Targetlabel",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citationId",
+          "snapshotId",
+          "edgeId",
+          "sourceNodeId",
+          "targetNodeId",
+          "sourceLabel",
+          "targetLabel",
+          "relationType",
+          "origin",
+          "claimIndex",
+          "pathEdgeIds"
+        ],
+        "title": "RelationCitation",
+        "type": "object"
+      },
+      "RelationCitationResolvedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/RelationCitationResolvedPayload"
+          },
+          "type": {
+            "const": "relation_citation.resolved",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ],
+        "title": "RelationCitationResolvedEvent",
+        "type": "object"
+      },
+      "RelationCitationResolvedPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "citation": {
+            "$ref": "#/components/schemas/RelationCitation"
+          }
+        },
+        "required": [
+          "citation"
+        ],
+        "title": "RelationCitationResolvedPayload",
+        "type": "object"
+      },
+      "RelationCitationView": {
+        "additionalProperties": false,
+        "properties": {
+          "citationId": {
+            "title": "Citationid",
+            "type": "string"
+          },
+          "claimIndex": {
+            "minimum": 0,
+            "title": "Claimindex",
+            "type": "integer"
+          },
+          "edgeId": {
+            "title": "Edgeid",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "EXTRACTED",
+              "INFERRED"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "pathEdgeIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 80,
+            "minItems": 1,
+            "title": "Pathedgeids",
+            "type": "array"
+          },
+          "relationType": {
+            "title": "Relationtype",
+            "type": "string"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceLabel": {
+            "title": "Sourcelabel",
+            "type": "string"
+          },
+          "sourceNodeId": {
+            "title": "Sourcenodeid",
+            "type": "string"
+          },
+          "targetLabel": {
+            "title": "Targetlabel",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "title": "Targetnodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citationId",
+          "snapshotId",
+          "edgeId",
+          "sourceNodeId",
+          "targetNodeId",
+          "sourceLabel",
+          "targetLabel",
+          "relationType",
+          "origin",
+          "claimIndex",
+          "pathEdgeIds"
+        ],
+        "title": "RelationCitationView",
+        "type": "object"
+      },
       "RerankCompletedEvent": {
         "additionalProperties": false,
         "properties": {
@@ -7800,6 +8039,14 @@
             "minLength": 1,
             "title": "Queryplanid",
             "type": "string"
+          },
+          "relationCitations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RelationCitationView"
+            },
+            "title": "Relationcitations",
+            "type": "array"
           },
           "retrievalProfileId": {
             "minLength": 1,
@@ -8528,6 +8775,23 @@
         "title": "SkillImportResult",
         "type": "object"
       },
+      "SkillManagementPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SkillRevisionView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SkillManagementPage",
+        "type": "object"
+      },
       "SkillRevisionPage": {
         "additionalProperties": false,
         "properties": {
@@ -8659,6 +8923,18 @@
             "minLength": 1,
             "title": "Displayname",
             "type": "string"
+          },
+          "instructionTemplate": {
+            "anyOf": [
+              {
+                "maxLength": 65536,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructiontemplate"
           },
           "origin": {
             "enum": [
@@ -11360,6 +11636,14 @@
             "title": "Queryplanid",
             "type": "string"
           },
+          "relationCitations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RelationCitation"
+            },
+            "title": "Relationcitations",
+            "type": "array"
+          },
           "retrievalProfileId": {
             "minLength": 1,
             "title": "Retrievalprofileid",
@@ -11810,6 +12094,14 @@
             "title": "Queryplanid",
             "type": "string"
           },
+          "relationCitations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RelationCitationView"
+            },
+            "title": "Relationcitations",
+            "type": "array"
+          },
           "retrievalProfileId": {
             "minLength": 1,
             "title": "Retrievalprofileid",
@@ -12016,6 +12308,133 @@
           }
         },
         "summary": "Create Agent",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/revisions": {
+      "get": {
+        "operationId": "ai_manage_agent_revisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentManagementPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Manage Agents",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/agents/revisions/{revision_id}": {
+      "get": {
+        "operationId": "ai_read_agent_configuration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAgentRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Agent revision unavailable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Agent Configuration",
         "tags": [
           "ai"
         ]
@@ -12961,6 +13380,133 @@
           }
         },
         "summary": "Import Skill",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills/revisions": {
+      "get": {
+        "operationId": "ai_manage_skill_revisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillManagementPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Manage Skills",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/ai/skills/revisions/{revision_id}": {
+      "get": {
+        "operationId": "ai_read_skill_configuration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRevisionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Skill revision unavailable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Skill Configuration",
         "tags": [
           "ai"
         ]
@@ -16653,6 +17199,70 @@
           }
         },
         "summary": "List Active Snapshots",
+        "tags": [
+          "knowledge-graph"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/graph/subgraph": {
+      "post": {
+        "operationId": "graph_get_subgraph",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphSubgraphRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSubgraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Highlighted Subgraph",
         "tags": [
           "knowledge-graph"
         ]

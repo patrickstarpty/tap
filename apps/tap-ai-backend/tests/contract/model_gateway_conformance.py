@@ -26,6 +26,7 @@ async def assert_catalog_conformance(gateway: object) -> None:
             display_name="Qwen Plus",
             capabilities=frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
             enabled=True,
+            supports_tool_calls=True,
         )
     )
 

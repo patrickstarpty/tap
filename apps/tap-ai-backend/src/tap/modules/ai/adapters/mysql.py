@@ -654,6 +654,14 @@ class MysqlAssetCatalog:
         return revision.source_markdown.encode("utf-8")
 
     async def list_agents(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
+        return await self._list_agents(scope, enabled_only=True)
+
+    async def list_agent_revisions(self, scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
+        return await self._list_agents(scope, enabled_only=False)
+
+    async def _list_agents(
+        self, scope: ProjectScopeContext, *, enabled_only: bool
+    ) -> tuple[AiAgentRevision, ...]:
         self._assert_scope(scope)
         async with self._sessions() as session:
             rows = (
@@ -662,11 +670,26 @@ class MysqlAssetCatalog:
                         select(ai_agent_revision)
                         .where(
                             *scope_predicates(ai_agent_revision, self._scope),
-                            ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
-                            ai_agent_revision.c.system_instruction.is_not(None),
-                            ai_agent_revision.c.output_schema_json.is_not(None),
+                            *(
+                                (
+                                    ai_agent_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                                    ai_agent_revision.c.system_instruction.is_not(None),
+                                    ai_agent_revision.c.output_schema_json.is_not(None),
+                                )
+                                if enabled_only
+                                else ()
+                            ),
                         )
-                        .order_by(ai_agent_revision.c.revision_id)
+                        .order_by(
+                            *(
+                                (ai_agent_revision.c.revision_id,)
+                                if enabled_only
+                                else (
+                                    ai_agent_revision.c.agent_id,
+                                    ai_agent_revision.c.revision_number.desc(),
+                                )
+                            )
+                        )
                     )
                 )
                 .mappings()
@@ -676,6 +699,14 @@ class MysqlAssetCatalog:
             return tuple(self._agent(row, skills.get(row["revision_id"], ())) for row in rows)
 
     async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]:
+        return await self._list_skills(scope, enabled_only=True)
+
+    async def list_skill_revisions(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]:
+        return await self._list_skills(scope, enabled_only=False)
+
+    async def _list_skills(
+        self, scope: ProjectScopeContext, *, enabled_only: bool
+    ) -> tuple[SkillRevision, ...]:
         self._assert_scope(scope)
         async with self._sessions() as session:
             rows = (
@@ -683,9 +714,22 @@ class MysqlAssetCatalog:
                     select(skill_revision)
                     .where(
                         *scope_predicates(skill_revision, self._scope),
-                        skill_revision.c.status == AssetRevisionStatus.ENABLED.value,
+                        *(
+                            (skill_revision.c.status == AssetRevisionStatus.ENABLED.value,)
+                            if enabled_only
+                            else ()
+                        ),
                     )
-                    .order_by(skill_revision.c.revision_id)
+                    .order_by(
+                        *(
+                            (skill_revision.c.revision_id,)
+                            if enabled_only
+                            else (
+                                skill_revision.c.skill_id,
+                                skill_revision.c.revision_number.desc(),
+                            )
+                        )
+                    )
                 )
             ).mappings()
             return tuple(self._skill(row) for row in rows)

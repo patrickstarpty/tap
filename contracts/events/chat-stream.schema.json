@@ -2209,6 +2209,110 @@
       "title": "QueryPlanReadyPayload",
       "type": "object"
     },
+    "RelationCitation": {
+      "additionalProperties": false,
+      "properties": {
+        "citationId": {
+          "title": "Citationid",
+          "type": "string"
+        },
+        "claimIndex": {
+          "minimum": 0,
+          "title": "Claimindex",
+          "type": "integer"
+        },
+        "edgeId": {
+          "title": "Edgeid",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "EXTRACTED",
+            "INFERRED"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "pathEdgeIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pathedgeids",
+          "type": "array"
+        },
+        "relationType": {
+          "title": "Relationtype",
+          "type": "string"
+        },
+        "snapshotId": {
+          "title": "Snapshotid",
+          "type": "string"
+        },
+        "sourceLabel": {
+          "title": "Sourcelabel",
+          "type": "string"
+        },
+        "sourceNodeId": {
+          "title": "Sourcenodeid",
+          "type": "string"
+        },
+        "targetLabel": {
+          "title": "Targetlabel",
+          "type": "string"
+        },
+        "targetNodeId": {
+          "title": "Targetnodeid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "citationId",
+        "snapshotId",
+        "edgeId",
+        "sourceNodeId",
+        "targetNodeId",
+        "sourceLabel",
+        "targetLabel",
+        "relationType",
+        "origin",
+        "claimIndex",
+        "pathEdgeIds"
+      ],
+      "title": "RelationCitation",
+      "type": "object"
+    },
+    "RelationCitationResolvedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/RelationCitationResolvedPayload"
+        },
+        "type": {
+          "const": "relation_citation.resolved",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "RelationCitationResolvedEvent",
+      "type": "object"
+    },
+    "RelationCitationResolvedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "$ref": "#/$defs/RelationCitation"
+        }
+      },
+      "required": [
+        "citation"
+      ],
+      "title": "RelationCitationResolvedPayload",
+      "type": "object"
+    },
     "RerankCompletedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2342,6 +2446,14 @@
           "minLength": 1,
           "title": "Queryplanid",
           "type": "string"
+        },
+        "relationCitations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RelationCitation"
+          },
+          "title": "Relationcitations",
+          "type": "array"
         },
         "retrievalProfileId": {
           "minLength": 1,
@@ -2989,6 +3101,7 @@
           "conversation.turn.completed": "#/$defs/ConversationTurnCompletedEvent",
           "conversation.turn.requested": "#/$defs/ConversationTurnRequestedEvent",
           "query.plan_ready": "#/$defs/QueryPlanReadyEvent",
+          "relation_citation.resolved": "#/$defs/RelationCitationResolvedEvent",
           "rerank.completed": "#/$defs/RerankCompletedEvent",
           "retrieval.hits_ready": "#/$defs/RetrievalHitsReadyEvent",
           "stage.completed": "#/$defs/StageCompletedEvent",
@@ -3036,6 +3149,9 @@
         },
         {
           "$ref": "#/$defs/CitationResolvedEvent"
+        },
+        {
+          "$ref": "#/$defs/RelationCitationResolvedEvent"
         },
         {
           "$ref": "#/$defs/TurnCompletedEvent"

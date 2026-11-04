@@ -583,6 +583,21 @@ class SearchResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class RelationCitation:
+    citation_id: str
+    snapshot_id: str
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    source_label: str
+    target_label: str
+    relation_type: str
+    origin: str
+    claim_index: int
+    path_edge_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerResponse:
     trace_id: str
     query_plan_id: str
@@ -595,6 +610,7 @@ class AnswerResponse:
     citations: tuple[Citation, ...]
     embedding_provenance: ModelCallProvenance
     answer_provenance: ModelCallProvenance | None
+    relation_citations: tuple[RelationCitation, ...] = ()
     abstention_reason: AbstentionReason | None = None
     degraded_mode: bool = False
     degradation_reasons: tuple[str, ...] = ()

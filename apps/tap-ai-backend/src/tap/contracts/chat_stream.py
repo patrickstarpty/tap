@@ -134,7 +134,22 @@ class AnswerClaim(StreamContractModel):
         return self
 
 
+class RelationCitation(StreamContractModel):
+    citation_id: str
+    snapshot_id: str
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    source_label: str
+    target_label: str
+    relation_type: str
+    origin: Literal["EXTRACTED", "INFERRED"]
+    claim_index: Annotated[int, Field(strict=True, ge=0)]
+    path_edge_ids: list[str]
+
+
 class RetrievalAnswerResponse(StreamContractModel):
+    relation_citations: list[RelationCitation] = []
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
     context_snapshot_id: str = Field(min_length=1)
@@ -247,6 +262,15 @@ class CitationResolvedPayload(StreamContractModel):
 class CitationResolvedEvent(StreamContractModel):
     type: Literal["citation.resolved"]
     payload: CitationResolvedPayload
+
+
+class RelationCitationResolvedPayload(StreamContractModel):
+    citation: RelationCitation
+
+
+class RelationCitationResolvedEvent(StreamContractModel):
+    type: Literal["relation_citation.resolved"]
+    payload: RelationCitationResolvedPayload
 
 
 class TurnCompletedPayload(StreamContractModel):
@@ -378,6 +402,7 @@ ChatStreamEvent = Annotated[
     | AnswerDeltaEvent
     | AnswerResetEvent
     | CitationResolvedEvent
+    | RelationCitationResolvedEvent
     | TurnCompletedEvent
     | TurnAbstainedEvent
     | TurnDegradedEvent

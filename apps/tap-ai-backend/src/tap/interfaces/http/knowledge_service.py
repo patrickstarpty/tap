@@ -464,18 +464,101 @@ class KnowledgeHttpService:
             )
         domain_request = answer_request_from_http(request)
         graph_context = None
-        if self._graph_enricher is not None:
+        graph_facts: list[dict[str, object]] = []
+        relation = answer_plan is not None and answer_plan.intent == "relation"
+        relation_tools = None
+
+        async def graph_phase(evidence):
+            nonlocal graph_context, relation_tools
+            if self._graph_enricher is None:
+                return graph_facts
             graph_context = await self._graph_enricher.enrich(
                 self.scope,
                 tuple(frozen_input.source_revision_ids),
                 domain_request.query,
+                chunk_ids=tuple(item.chunk_id for item in evidence),
+                evidence_labels={item.chunk_id: item.evidence_label for item in evidence},
+                hops=2 if relation else 1,
             )
+            graph_facts.extend(dict(item) for item in graph_context.facts)
+            if relation and graph_context.index is not None:
+                from tap.modules.knowledge.application.graph_tools import GraphTurnTools
+
+                index = graph_context.index
+
+                async def authorize_graph(edge_ids):
+                    await self._graph_enricher.authorize_facts(self.scope, index, edge_ids)
+
+                relation_tools = GraphTurnTools(
+                    self.scope,
+                    index,
+                    graph_facts,
+                    authorize=authorize,
+                    authorize_graph=authorize_graph,
+                )
+            return graph_facts
+
+        original_phase = tool_phase
+
+        async def relation_phase(query, evidence, search):
+            if relation_tools is None or agent_tools is None:
+                if original_phase is not None:
+                    return await original_phase(query, evidence, search)
+                from tap.modules.knowledge.ports.search import ToolPhaseResult
+
+                return ToolPhaseResult()
+            from dataclasses import replace
+
+            from tap.modules.ai.domain.models import (
+                GenerationGovernance,
+                schema_digest,
+                text_digest,
+            )
+            from tap.modules.knowledge.application.answer_templates import ANSWER_SCHEMA
+            from tap.modules.knowledge.application.graph_tools import RELATION_TOOLS
+            from tap.modules.knowledge.application.search_tool import KnowledgeSearchTool
+
+            relation_tools.search = search
+            effective = governance
+            if effective is None:
+                instruction = (
+                    "Explore relationships in the authorized knowledge graph before answering."
+                )
+                effective = GenerationGovernance(
+                    model_alias=frozen_input.model_alias,
+                    system_instruction=instruction,
+                    system_instruction_digest=text_digest(instruction),
+                    skill_instructions=(),
+                    skill_instruction_digests=(),
+                    tool_allowlist=RELATION_TOOLS | {"knowledge.answer"},
+                    output_schema=ANSWER_SCHEMA,
+                    output_schema_digest=schema_digest(ANSWER_SCHEMA),
+                    revision_digests=(text_digest(instruction),),
+                )
+            else:
+                effective = replace(effective, tool_allowlist=RELATION_TOOLS | {"knowledge.answer"})
+            if self._models is None:
+                raise ValueError("relation tools require the governed model boundary")
+            return await self._models.research(
+                query,
+                evidence,
+                governance=effective,
+                model_alias=frozen_input.model_alias,
+                tool_loop=agent_tools.loop(
+                    None if search is None else KnowledgeSearchTool(search, scope=self.scope),
+                    graph_tools=relation_tools,
+                ),
+                graph_context=graph_facts,
+            )
+
+        if relation and agent_tools is not None:
+            tool_phase = relation_phase
         response = await self._answers.answer_frozen(
             domain_request,
             revisions,
             policy,
             governance=governance,
-            graph_context=() if graph_context is None else graph_context.facts,
+            graph_phase=graph_phase,
             model_alias=frozen_input.model_alias,
             **(
                 {"answer_execution": self._execution(answer_plan), "authorize": authorize}

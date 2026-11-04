@@ -42,6 +42,8 @@ flowchart LR
 
 退出标准：[V1 总纲](2026-09-29-v1-roadmap.md) 中 5 项能力的“工程完成”全部勾选。
 
+2026-11-04：本地 5 项工程验收均通过，完整原型同步；版本表仍按远端合入记录为进行中，真实资料业务验证单独保留。详见 [增量验证记录](../../guides/2026-11-04-v1-completion-validation.md)。
+
 | 项 | 状态 |
 | --- | --- |
 | 子项目 0 文档精简与总纲 | 已完成（#30、#31） |
@@ -49,10 +51,10 @@ flowchart LR
 | TAP AI 前端清理原型内容 | 已完成（#34） |
 | 子项目 2 可观测性（能力 5） | 已完成（#36） |
 | 推荐问题（能力 1 的一部分） | 已完成（#38、#39） |
-| 子项目 3 可靠问答（能力 1） | 已完成（分支 `feat/v1-completion`，待 PR；[spec](../specs/2026-11-03-reliable-answering-design.md)、[plan](2026-11-03-reliable-answering.md)） |
-| 子项目 4 图谱查询扩展（能力 2） | 已完成（分支 `feat/v1-completion`，待 PR；[spec](../specs/2026-11-03-graph-query-extension-design.md)、[plan](2026-11-03-graph-query-extension.md)） |
-| 子项目 5 脉络分析（能力 3） | 已设计（[spec](../specs/2026-11-03-graph-context-analysis-design.md)），依赖子项目 4、6 |
-| 子项目 6 Skills/Agents（能力 4） | 已设计（[spec](../specs/2026-11-03-skills-agents-design.md)） |
+| 子项目 3 可靠问答（能力 1） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-reliable-answering-design.md)、[plan](2026-11-03-reliable-answering.md)） |
+| 子项目 4 图谱查询扩展（能力 2） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-graph-query-extension-design.md)、[plan](2026-11-03-graph-query-extension.md)） |
+| 子项目 5 脉络分析（能力 3） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-graph-context-analysis-design.md)、[plan](2026-11-04-graph-context-analysis.md)） |
+| 子项目 6 Skills/Agents（能力 4） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-skills-agents-design.md)、[plan](2026-11-03-skills-agents.md)） |
 
 ## V2：主动 Tapper（已设计）
 
@@ -61,7 +63,7 @@ flowchart LR
 | 项 | 内容 | 状态 |
 | --- | --- | --- |
 | V2.1 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
-| V2.2 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
+| V2.2 | TAP AI 与平台事件契约 ADR、平台事件接入、委托授权的 `insights.query` 工具、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.3 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
 
 退出标准：V2.1、V2.2 工程完成；在真实项目中度量提议采纳率。

@@ -14,6 +14,8 @@ INTENTS = frozenset(
         "general_chat",
         "transform_text",
         "factual_lookup",
+        "fact",
+        "relation",
         "explanation",
         "comparison",
         "procedural",
@@ -205,6 +207,10 @@ class AnswerPlan:
     def from_dict(cls, raw: dict[str, Any]) -> AnswerPlan:
         value = dict(raw)
         digest = value.pop("digest")
+        if content_digest(value) != digest:
+            raise ValueError("answer plan checkpoint digest changed")
+        legacy_intent = "intent" not in value
+        value.setdefault("intent", "fact")
         value["queries"] = tuple(
             PlannedQuery(
                 **{
@@ -218,6 +224,6 @@ class AnswerPlan:
         for name in ("constraints", "missing", "source_ids", "context_digests"):
             value[name] = tuple(value[name])
         result = cls(**value)
-        if result.digest != digest:
+        if not legacy_intent and result.digest != digest:
             raise ValueError("answer plan checkpoint digest changed")
         return result

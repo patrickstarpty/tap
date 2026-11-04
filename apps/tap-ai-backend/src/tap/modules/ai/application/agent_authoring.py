@@ -123,7 +123,9 @@ class AgentAuthoringService:
         )
         skills = await self._skills(scope, draft.skill_revision_ids)
         allowlist = await self._allowlist(scope, draft.tool_allowlist)
-        model_alias = await self._model(scope, draft.model_alias)
+        model_alias = await self._model(
+            scope, draft.model_alias, needs_tools=bool(allowlist - {ANSWER_CAPABILITY})
+        )
         content = {
             "displayName": display_name,
             "description": description,
@@ -191,14 +193,20 @@ class AgentAuthoringService:
         except (ToolRejected, TypeError) as error:
             raise AgentAuthoringRejected("agent-tool-unavailable") from error
 
-    async def _model(self, scope: ProjectScopeContext, alias: str | None) -> str | None:
+    async def _model(
+        self, scope: ProjectScopeContext, alias: str | None, *, needs_tools: bool
+    ) -> str | None:
         if alias is None:
             return None
         if not isinstance(alias, str) or not alias or len(alias) > MAX_MODEL_ALIAS_LENGTH:
             raise AgentAuthoringRejected("agent-model-unsupported")
-        # The catalog has no tool-calling flag; structured output is the required capability.
         for item in await self._models.list_models(scope):
-            if item.alias == alias and ModelCapability.STRUCTURED in item.capabilities:
+            if (
+                item.alias == alias
+                and item.enabled
+                and ModelCapability.STRUCTURED in item.capabilities
+                and (not needs_tools or item.supports_tool_calls)
+            ):
                 return alias
         raise AgentAuthoringRejected("agent-model-unsupported")
 

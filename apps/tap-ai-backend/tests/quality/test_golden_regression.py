@@ -211,3 +211,40 @@ async def test_golden_set_does_not_regress_against_the_fake_baseline() -> None:
     assert compare(report, baseline) == []
     assert report.metrics["fact"]["citationRecall"] >= 0.8
     assert report.metrics["abstain"]["abstainAccuracy"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_relation_golden_cases_return_graph_and_original_text_citations() -> None:
+    cases = [case for case in load_cases(CASES) if case.category == "relation"]
+    assert len(cases) >= 8
+    report = await run_golden(cases, corpus_dir=CORPUS, gateway=deterministic_golden_gateway())
+    assert report.metrics["relation"]["relationRecall"] == 1.0
+    for case, result in zip(cases, report.cases, strict=True):
+        assert set(case.relations) <= set(result.relation_types)
+        assert result.cited_documents
+        assert result.error is None
+
+
+def test_relation_recall_counts_only_relations_actually_cited() -> None:
+    from tap.quality.golden import CaseResult, _metrics
+
+    case = GoldenCase(
+        "relation",
+        "relation",
+        "A 与 C 的关系？",
+        ("a.md",),
+        False,
+        ("a.md",),
+        (),
+        ("DEPENDS_ON", "CALLS"),
+    )
+    result = CaseResult(
+        "relation",
+        "relation",
+        case.question,
+        False,
+        "A depends on B.",
+        ("a.md",),
+        relation_types=("DEPENDS_ON",),
+    )
+    assert _metrics((case,), (result,))["relation"]["relationRecall"] == 0.5

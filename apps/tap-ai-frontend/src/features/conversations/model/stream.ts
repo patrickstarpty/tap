@@ -1,3 +1,4 @@
+import type { RelationCitation } from "../../graph/model/relationCitation";
 import type { components } from "../../../shared/api/generated/schema";
 import type { RetrievalAnswerResponse } from "../../knowledge/api/types";
 
@@ -13,6 +14,7 @@ export interface StreamTurnState {
    * `RetrievalAnswerResponse` arrives (`turn.completed`/`turn.abstained`),
    * so consumers can rely on a non-null `response` always having `claims`.
    */
+  pendingRelationCitations: RelationCitation[];
   pendingCitations: RetrievalAnswerResponse["citations"][number][];
   response: RetrievalAnswerResponse | null;
   status:
@@ -33,6 +35,7 @@ export interface ConversationStreamState {
 const emptyTurn = (): StreamTurnState => ({
   error: null,
   lastSequence: 0,
+  pendingRelationCitations: [],
   pendingCitations: [],
   response: null,
   status: "queued",
@@ -135,9 +138,28 @@ export function reduceStreamEvent(
     next = {
       ...current,
       pendingCitations: [],
+      pendingRelationCitations: [],
       status: "running",
       streamingText: null,
     };
+  } else if (event.type === "relation_citation.resolved") {
+    const citation = payload.citation;
+    if (
+      typeof citation === "object" &&
+      citation !== null &&
+      "citationId" in citation
+    ) {
+      const relation = citation as RelationCitation;
+      next = {
+        ...current,
+        pendingRelationCitations: [
+          ...current.pendingRelationCitations.filter(
+            (item) => item.citationId !== relation.citationId,
+          ),
+          relation,
+        ],
+      };
+    }
   } else if (event.type === "citation.resolved") {
     const citation = payload.citation;
     if (typeof citation === "object" && citation !== null) {
@@ -161,8 +183,12 @@ export function reduceStreamEvent(
       next = {
         ...next,
         pendingCitations: [],
+        pendingRelationCitations: [],
         response: {
           ...response,
+          relationCitations: response.relationCitations?.length
+            ? response.relationCitations
+            : current.pendingRelationCitations,
           citations:
             response.citations.length > 0
               ? response.citations

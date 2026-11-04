@@ -1188,7 +1188,9 @@
   font-weight: 400;
 }
 
-.tap-attachment-chip[data-status="needs-review"] .tap-attachment-chip-copy > small {
+.tap-attachment-chip[data-status="needs-review"]
+  .tap-attachment-chip-copy
+  > small {
   color: var(--tap-accent-dark);
 }
 
@@ -5594,4 +5596,119 @@
 .tap-automation-row[tabindex]:focus-visible {
   outline: 2px solid var(--tap-accent, #b44800);
   outline-offset: -2px;
+}
+
+.tap-catalog-server-form {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
+  margin: 20px 0;
+}
+
+.tap-catalog-server-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.tap-catalog-dialog fieldset {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+}
+
+.tap-catalog-dialog fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tap-catalog-dialog select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  color: var(--tap-ink);
+  background: #fff;
+}
+
+.tap-catalog-dialog pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tap-catalog-list > li {
+  flex-wrap: wrap;
+}
+
+.tap-catalog-list article {
+  min-width: min(200px, 100%);
+}
+
+.tap-relation-citation {
+  max-inline-size: 100%;
+  height: auto;
+  white-space: normal;
+  text-align: start;
+}
+
+.tap-catalog-import {
+  position: relative;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 32px;
+  max-width: none;
+  padding: 4px 12px;
+  border: 1px solid var(--tap-line);
+  border-radius: 6px;
+  color: var(--tap-ink);
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tap-catalog-import input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tap-catalog-import:focus-within {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 3px;
+}
+
+.tap-catalog > .tap-section-tabs {
+  margin-bottom: 18px;
+}
+
+.tap-tool-list > li {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.tap-tool-list h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.tap-tool-list h3 small {
+  margin-left: 8px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tap-catalog-list .tap-catalog-actions {
+  max-width: 360px;
+  flex-wrap: wrap;
+}
+
+.tap-catalog-dialog-layout--agent {
+  grid-template-columns: minmax(0, 1fr);
 }

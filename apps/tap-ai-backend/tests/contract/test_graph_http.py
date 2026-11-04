@@ -117,3 +117,47 @@ def test_graph_node_and_evidence_deep_links_are_snapshot_scoped():
     assert node.json()["nodes"][0]["evidenceIds"] == ["evidence-1"]
     assert fact.status_code == 200
     assert fact.json()["documentRevisionId"] == "document-revision-1"
+
+
+def test_graph_subgraph_is_bounded_and_rejects_foreign_project():
+    store = InMemoryGraphStore()
+    draft = GraphSnapshotDraft(
+        GraphSnapshot.create(
+            snapshot_id="s",
+            project_id=VALIDATION_SCOPE.project_id,
+            source_revision_ids=("sr",),
+            document_revision_ids=("dr",),
+        ),
+        (GraphNode("a", "s", "A", "ENTITY", "a"), GraphNode("b", "s", "B", "ENTITY", "b")),
+        (GraphEdge("e", "s", "a", "b", "DEPENDS_ON", RelationOrigin.EXTRACTED, 1.0, ("ev",)),),
+        (Evidence("ev", "s", "sr", "dr", "c", {"kind": "page", "page": 1}, "sha256:" + "a" * 64),),
+        (),
+    )
+    asyncio.run(store.publish(VALIDATION_SCOPE, draft))
+    client = TestClient(
+        create_app(
+            replace(validation_http_services(), graph=store),
+            validation_mode=True,
+            allowed_origins=frozenset({"http://localhost:3000"}),
+        ),
+        headers={"Origin": "http://localhost:3000"},
+    )
+    body = {"snapshotId": "s", "edgeIds": ["e"]}
+    response = client.post("/api/v1/projects/tapper-demo/knowledge/graph/subgraph", json=body)
+    assert response.status_code == 200
+    assert response.json()["edges"][0]["edgeId"] == "e"
+    assert response.json()["isActiveSnapshot"] is True
+    assert len(response.json()["nodes"]) == 2
+    assert (
+        client.post(
+            "/api/v1/projects/other-project/knowledge/graph/subgraph", json=body
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/v1/projects/tapper-demo/knowledge/graph/subgraph",
+            json={"snapshotId": "foreign", "edgeIds": ["e"]},
+        ).status_code
+        == 404
+    )

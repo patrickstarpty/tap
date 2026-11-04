@@ -6,6 +6,11 @@ export type GraphSubgraph = components["schemas"]["GraphSubgraphView"];
 export type GraphOverview = components["schemas"]["GraphOverviewView"];
 
 export interface GraphClient {
+  subgraph(
+    snapshotId: string,
+    edgeIds: string[],
+    signal?: AbortSignal,
+  ): Promise<GraphSubgraph>;
   overview(nodeLimit?: number, signal?: AbortSignal): Promise<GraphOverview>;
   active(
     sourceRevisionIds: string[],
@@ -40,13 +45,25 @@ export interface GraphClient {
 
 export function createGraphClient(
   projectId: string,
-  baseUrl = "",
+  baseUrl = window.location.origin,
 ): GraphClient {
   if (!projectId.trim())
     throw new Error("A project ID is required for Graph requests.");
   const http = createOpenApiClient<paths>({ baseUrl });
   const pathProject = { project_id: projectId };
   return {
+    async subgraph(snapshotId, edgeIds, signal) {
+      const result = await http.POST(
+        "/api/v1/projects/{project_id}/knowledge/graph/subgraph",
+        {
+          params: { path: pathProject },
+          body: { snapshotId, edgeIds },
+          signal,
+        },
+      );
+      if (!result.data) throw new Error("The cited graph could not be loaded.");
+      return result.data;
+    },
     async overview(nodeLimit = 150, signal) {
       const result = await http.POST(
         "/api/v1/projects/{project_id}/knowledge/graph/overview",

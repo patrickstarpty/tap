@@ -99,6 +99,12 @@ async def test_mysql_agent_revisions_are_immutable_numbered_and_bind_skills(
             VALIDATION_SCOPE, first.revision_id, AssetRevisionStatus.DISABLED
         )
         assert disabled == replace(first, status=AssetRevisionStatus.DISABLED)
+        managed = await catalog.list_agent_revisions(VALIDATION_SCOPE)
+        assert [item.revision_id for item in managed] == [second.revision_id, first.revision_id]
+        assert managed[1].status is AssetRevisionStatus.DISABLED
+        assert first.revision_id not in {
+            item.revision_id for item in await catalog.list_agents(VALIDATION_SCOPE)
+        }
         with pytest.raises(AssetRevisionRejected):
             await catalog.get_agent(VALIDATION_SCOPE, first.revision_id)
         with pytest.raises(AssetRevisionRejected):

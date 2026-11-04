@@ -14,6 +14,7 @@ from tap.modules.ai.adapters.mysql_checkpointer import AI_GRAPH_TABLES
 from tap.modules.ai.adapters.mysql_mcp import ai_mcp_server, ai_mcp_tool
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
 from tap.modules.chat.adapters.mysql_conversations import (
+    chat_relation_citation,
     conversation,
     turn_answer_evidence_snapshot,
     turn_artifact_link,
@@ -64,6 +65,7 @@ BUSINESS_TABLES = (
     chat_event,
     turn_snapshot,
     conversation,
+    chat_relation_citation,
     turn_input_snapshot,
     turn_answer_evidence_snapshot,
     turn_artifact_link,

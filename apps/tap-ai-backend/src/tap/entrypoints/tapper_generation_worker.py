@@ -45,6 +45,7 @@ from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
     GraphContextStatus,
+    RelationCitationEvidence,
     RetrievalSummary,
 )
 from tap.modules.chat.domain.suggestions import RefreshReason
@@ -80,6 +81,10 @@ def _evidence_checkpoint(evidence: AnswerEvidence) -> dict[str, object]:
         ],
         "diagnostics": list(evidence.diagnostics),
     }
+    if evidence.relation_citations:
+        from dataclasses import asdict
+
+        result["relationCitations"] = [asdict(item) for item in evidence.relation_citations]
     if evidence.insights_explanation is not None:
         result["insightsExplanation"] = evidence.insights_explanation
     return result
@@ -109,6 +114,16 @@ def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
         ),
         diagnostics=tuple(str(item) for item in raw.get("diagnostics", [])),
         insights_explanation=raw.get("insightsExplanation"),
+        relation_citations=tuple(
+            RelationCitationEvidence(
+                **{
+                    **item,
+                    "path_edge_ids": tuple(item["path_edge_ids"]),
+                    "original_citation_ids": tuple(item.get("original_citation_ids", ())),
+                }
+            )
+            for item in raw.get("relationCitations", ())
+        ),
     )
 
 
@@ -270,6 +285,18 @@ class GenerationWorker:
                     authorized_hit_count=len(answer.citations),
                 ),
                 citations=citations,
+                relation_citations=tuple(
+                    RelationCitationEvidence(
+                        **{
+                            **item.model_dump(),
+                            "path_edge_ids": tuple(item.path_edge_ids),
+                            "original_citation_ids": tuple(
+                                answer.claims[item.claim_index].citation_ids
+                            ),
+                        }
+                    )
+                    for item in getattr(answer, "relation_citations", ())
+                ),
                 abstained=answer.abstained,
                 answer_plan_id=None if active_plan is None else active_plan.plan_id,
             )
@@ -277,6 +304,13 @@ class GenerationWorker:
         async def agent_tool_options(value) -> dict[str, object]:
             """Enter the tool loop only when the Agent allowlists a tool this Turn can call."""
 
+            if (
+                self.agent_tools is not None
+                and active_plan is not None
+                and active_plan.intent == "relation"
+                and value.resolved_resources
+            ):
+                return {"agent_tools": self.agent_tools}
             allowlist = getattr(value, "agent_tool_allowlist", ())
             if self.agent_tools is None or value.agent_revision_id is None or not allowlist:
                 return {}
@@ -345,6 +379,13 @@ class GenerationWorker:
                         "payload": {"citation": citation.model_dump(mode="json", by_alias=True)},
                     }
                     for citation in answer_response.citations
+                )
+                events.extend(
+                    {
+                        "type": "relation_citation.resolved",
+                        "payload": {"citation": citation.model_dump(mode="json", by_alias=True)},
+                    }
+                    for citation in getattr(answer_response, "relation_citations", ())
                 )
             return events
 

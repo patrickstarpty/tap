@@ -20,6 +20,8 @@
 - [知识审核工作台](guides/2026-09-27-knowledge-review-workbench.md)
 - [Azure 接入扩展点](guides/2026-09-29-azure-integration.md)
 - [LiteLLM 模型目录指南](guides/2026-09-29-litellm-models.md)
+- [Skills、Agents 与 MCP](guides/2026-11-04-skills-agents-mcp.md)
+- [V1 增量验证记录](guides/2026-11-04-v1-completion-validation.md)
 
 ## 约定
 

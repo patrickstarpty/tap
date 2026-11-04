@@ -261,6 +261,7 @@ class LiteLLMModelGateway:
                     if item.supports_response_schema
                     else {ModelCapability.CHAT}
                 ),
+                supports_tool_calls=item.supports_function_calling,
             )
             for item in models
             if item.mode == "chat"
@@ -379,6 +380,8 @@ class LiteLLMModelGateway:
         if request.operation is not operation:
             raise ModelGatewayRejected()
         model = await self._model(request, operation)
+        if tool_chat is not None and tool_chat.tools and not model.supports_function_calling:
+            raise ModelGatewayRejected()
         if request.image_bytes is not None or request.image_media_type is not None:
             image = request.image_bytes
             media_type = request.image_media_type

@@ -1,3 +1,5 @@
+import { relationGraphSelection } from "../../../features/graph/model/relationCitation";
+import { createGraphClient } from "../../../features/graph/api/client";
 import { UploadChunkPreview } from "../../../features/knowledge/components/UploadChunkPreview";
 import {
   DEFAULT_CHUNK_SETTINGS,
@@ -72,7 +74,9 @@ function ProjectKnowledgeGraph({
   query: string;
   onViewSource: (source: LibrarySource) => void;
 }) {
-  const [graphView, setGraphView] = useState<GraphView>("overview");
+  const [graphView, setGraphView] = useState<GraphView>(() =>
+    relationGraphSelection() ? "source" : "overview",
+  );
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [focus, setFocus] = useState<{
     sourceId: string;
@@ -137,6 +141,7 @@ function ProjectKnowledgeGraph({
     );
   };
 
+  const [selection, setSelection] = useState(relationGraphSelection);
   return (
     <div className="tap-project-graph">
       <div className="tap-project-graph-controls">
@@ -178,6 +183,30 @@ function ProjectKnowledgeGraph({
         ) : (
           <p role="status">{copy.library.graphOverviewEmpty}</p>
         )
+      ) : selection ? (
+        <>
+          <Button
+            onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.delete("snapshot");
+              url.searchParams.delete("highlight");
+              window.history.replaceState(
+                null,
+                "",
+                `${url.pathname}${url.search}${url.hash}`,
+              );
+              setSelection(null);
+            }}
+          >
+            {locale === "zh" ? "返回当前图谱" : "Back to current graph"}
+          </Button>
+          <CitedKnowledgeGraph
+            projectId={projectId}
+            selection={selection}
+            copy={copy}
+            locale={locale}
+          />
+        </>
       ) : (
         <SourceKnowledgeGraph
           projectId={projectId}
@@ -195,6 +224,95 @@ function ProjectKnowledgeGraph({
         />
       )}
     </div>
+  );
+}
+
+function CitedKnowledgeGraph({
+  projectId,
+  selection,
+  copy,
+  locale,
+}: {
+  projectId: string;
+  selection: { snapshotId: string; edgeIds: string[] };
+  copy: WorkspaceCopy;
+  locale: "en" | "zh";
+}) {
+  const graph = useQuery({
+    queryKey: [
+      "graph",
+      projectId,
+      selection.snapshotId,
+      "subgraph",
+      ...selection.edgeIds,
+    ],
+    queryFn: ({ signal }) =>
+      createGraphClient(projectId).subgraph(
+        selection.snapshotId,
+        selection.edgeIds,
+        signal,
+      ),
+    retry: false,
+  });
+  if (graph.isPending)
+    return (
+      <p role="status">
+        {locale === "zh" ? "正在加载引用图谱…" : "Loading the cited graph…"}
+      </p>
+    );
+  if (graph.isError)
+    return (
+      <div role="alert">
+        <p>
+          {locale === "zh"
+            ? "无法加载引用图谱。"
+            : "The cited graph could not be loaded."}
+        </p>
+        <button type="button" onClick={() => void graph.refetch()}>
+          {locale === "zh" ? "重试" : "Try again"}
+        </button>
+      </div>
+    );
+  if (!graph.data.nodes.length)
+    return (
+      <p role="status">
+        {locale === "zh"
+          ? "此引用的关系已不可用。"
+          : "The cited relationships are no longer available."}
+      </p>
+    );
+  const source: LibrarySource = {
+    id: selection.snapshotId,
+    name: locale === "zh" ? "引用图谱" : "Cited graph",
+    type: "Graph",
+    status: "ready",
+    origin: "knowledge-base",
+    description: "",
+  };
+  return (
+    <>
+      {graph.data.isActiveSnapshot === false ? (
+        <p role="status">
+          {locale === "zh"
+            ? "图谱已更新，显示的是历史快照。"
+            : "The graph has been updated. Showing the historical snapshot."}
+        </p>
+      ) : null}
+      <KnowledgeGraph
+        key={`${selection.snapshotId}:${selection.edgeIds.join(",")}`}
+        copy={copy}
+        query=""
+        sources={[]}
+        onViewSource={() => undefined}
+        publishedData={publishedGraphData(graph.data, source)}
+        highlightedEdgeIds={selection.edgeIds}
+        publishedCaption={
+          locale === "zh"
+            ? "回答引用的关系路径"
+            : "Relationship path cited by the answer"
+        }
+      />
+    </>
   );
 }
 
@@ -368,7 +486,7 @@ export function LibraryWorkspace({
   const [uploadFailed, setUploadFailed] = useState(false);
   const [view, setView] = useState<"list" | "cards">("cards");
   const [mode, setMode] = useState<LibraryMode>(() =>
-    graphProjectId === undefined ? "graph" : "list",
+    graphProjectId === undefined || relationGraphSelection() ? "graph" : "list",
   );
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");

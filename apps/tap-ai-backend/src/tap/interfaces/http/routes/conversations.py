@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from dataclasses import asdict
 from typing import cast
 from uuid import uuid4
 
@@ -239,6 +240,12 @@ def _turn(value):
         graph_snapshot_id=None
         if value.answer_snapshot is None
         else value.answer_snapshot.value.graph_snapshot_id,
+        relation_citations=[]
+        if value.answer_snapshot is None
+        else [
+            {key: item for key, item in asdict(citation).items() if key != "original_citation_ids"}
+            for citation in value.answer_snapshot.value.relation_citations
+        ],
         input=ConversationTurnInputView(
             message=frozen.message,
             model_alias=frozen.model_alias,

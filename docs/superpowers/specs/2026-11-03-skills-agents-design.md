@@ -22,6 +22,7 @@
 - 执行 Skill 附带脚本、Skill 市场、修订审批流（V1 单人本机环境，创建即启用；审批随 V4 身份设计）。
 - stdio 传输的 MCP server（会在服务端启动任意进程）；只支持 Streamable HTTP。
 - 有写入副作用的内置工具。
+- Test Insights 工具接入：现有查询解释流程依赖单独的委托身份与指标授权，V1 总纲明确排除 Test Insights/ClickHouse 交付路径；`insights.query` 包装随 V2.2 接入，不能把仅有项目上下文的 V1 Agent 当作指标访问授权。
 
 ## 1. 工具注册表
 
@@ -46,7 +47,7 @@
 ### 端口与实现
 
 - `ToolRegistry` 端口：`list(scope)`、`get(scope, tool_id)`、`require_allowlist(scope, tool_ids)`（未知、禁用或超出允许效果即拒绝）。
-- 内置工具注册：`knowledge.search`（检索已发布知识，返回带标签证据）、`graph.neighbors`、`graph.path`（子项目 5）、`insights.query`（已存在的 Insights 查询能力包装）。每个内置工具实现 `ToolExecutor.invoke(scope, arguments) -> ToolResult`，参数先按 schema 校验。
+- 内置工具注册：`knowledge.search`（检索已发布知识，返回带标签证据）、`graph.neighbors`、`graph.path`（子项目 5）、后续 Insights 工具随 V2.2 的平台事件与委托身份接入，当前不加入 V1 注册表。每个内置工具实现 `ToolExecutor.invoke(scope, arguments) -> ToolResult`，参数先按 schema 校验。
 - 组合注册表 = 内置 + MySQL 中启用的 MCP 工具。
 - 三处硬编码集合改为：领域层只校验格式（点分名、数量 ≤ 32），应用层用 `ToolRegistry.require_allowlist` 校验存在性与效果；LiteLLM 网关不再校验工具名集合。
 
@@ -83,6 +84,10 @@
 - `POST .../ai/agents/revisions/{revision_id}/status`。
 - 校验：Skill 修订存在且启用；工具经注册表校验；`modelAlias` 在模型目录中且支持结构化输出（使用工具时还需支持工具调用）；输出 schema 沿用平台默认回答 schema。
 
+### 管理读取
+
+会话选择目录保留原有启用版本摘要与内容隐藏语义。另设 `GET .../ai/agents/revisions`、`GET .../ai/skills/revisions` 返回同项目所有修订的完整管理视图（包括禁用版本），`GET .../ai/{agents|skills}/revisions/{revision_id}` 读取指定修订；分别要求对应的读取权限。Skill 管理视图包含 `instructionTemplate`，下载原文件仍走 `/content`。管理列表按资产与修订号倒序组织，确保禁用后仍可查阅并重新启用；管理读取不能把禁用版本重新加入会话选择目录。
+
 ### 会话运行
 
 - 选中 Agent 时：模型 = Agent 的 `model_alias`（有值时覆盖会话模型），Skills = Agent 绑定的 Skills ∪ 会话额外选择的 Skills（去重、保序），工具 = Agent 白名单。这些值按现有方式快照进 `TurnInput`，历史 Turn 不受后续修订影响。
@@ -115,7 +120,7 @@
 
 ### 循环（`ai/application/tool_loop.py`）
 
-LangGraph 子图 `model → tools → model`，状态含消息、步数与已用 token：
+LangGraph 子图 `model → tools → model`，状态含消息、步数与已用 token。子图显式关闭检查点继承：注册表和执行器为进程内运行配置，不进入外层 MySQL 检查点；由外层 `execute` 保存 Turn 与最终证据。循环限制：
 
 - 上限：工具步数 ≤ 4、单步并行调用 ≤ 3、总 token 预算按模型上下文的 50%；达到上限时强制最后一次无工具调用以产出回答。
 - 只暴露白名单中且可调用的工具；模型请求的未知工具返回错误结果而不执行。

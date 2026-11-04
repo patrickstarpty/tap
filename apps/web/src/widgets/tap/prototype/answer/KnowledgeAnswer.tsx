@@ -34,7 +34,13 @@ export function KnowledgeAnswer({
   onRetry,
   onStop,
   onOpenCitation,
+  onOpenRelation,
 }: {
+  onOpenRelation?: (selection: {
+    snapshotId: string;
+    edgeIds: string[];
+    sourceId: string;
+  }) => void;
   turn: AssistantTurn;
   onRetry: () => void;
   onStop: () => void;
@@ -145,6 +151,24 @@ export function KnowledgeAnswer({
         )}
       </p>
       <CitationButtons turn={turn} onOpenCitation={onOpenCitation} />
+      {turn.sourceReferences[0] && onOpenRelation ? (
+        <Button
+          size="small"
+          className="tap-relation-citation"
+          onClick={() =>
+            onOpenRelation({
+              snapshotId: "prototype-health-disclosure",
+              edgeIds: ["application-health"],
+              sourceId: turn.sourceReferences[0]!.id,
+            })
+          }
+        >
+          {t(
+            "Application —requires→ Health disclosure",
+            "投保申请 —要求→ 健康告知",
+          )}
+        </Button>
+      ) : null}
       <AnswerTrace trace={createSampleTrace(turn.locale)} />
     </div>
   );

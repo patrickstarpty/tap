@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy import (
     Column,
     ForeignKeyConstraint,
+    Integer,
     String,
     Table,
     UniqueConstraint,
@@ -48,6 +50,7 @@ from tap.modules.chat.domain.conversations import (
     ConversationTurn,
     FrozenResource,
     GraphContextStatus,
+    RelationCitationEvidence,
     RetrievalSummary,
     TurnInput,
     TurnInputSnapshot,
@@ -150,6 +153,25 @@ turn_answer_evidence_snapshot = _scoped(
     uniques=((("turn_id",), "uq_turn_answer_evidence_snapshot_turn"),),
     parents=(("turn_id", "chat_turn", "turn_id", "fk_turn_answer_evidence_snapshot_turn"),),
 )
+chat_relation_citation = _scoped(
+    "chat_relation_citation",
+    Column("citation_id", String(64), primary_key=True),
+    Column("turn_id", String(64), nullable=False),
+    Column("snapshot_id", String(64), nullable=False),
+    Column("edge_id", String(128), nullable=False),
+    Column("source_node_id", String(128), nullable=False),
+    Column("target_node_id", String(128), nullable=False),
+    Column("source_label", String(512), nullable=False),
+    Column("target_label", String(512), nullable=False),
+    Column("relation_type", String(64), nullable=False),
+    Column("origin", String(16), nullable=False),
+    Column("claim_index", Integer, nullable=False),
+    Column("path_edge_ids", JSON, nullable=False),
+    Column("original_citation_ids", JSON, nullable=False),
+    parents=(("turn_id", "chat_turn", "turn_id", "fk_chat_relation_citation_turn"),),
+)
+
+
 turn_artifact_link = _scoped(
     "turn_artifact_link",
     Column("link_id", String(64), primary_key=True),
@@ -582,6 +604,16 @@ class MysqlConversationRepository:
                 tuple(CitationEvidence(**c) for c in raw["citations"]),
                 tuple(raw["diagnostics"]),
                 raw.get("insights_explanation"),
+                tuple(
+                    RelationCitationEvidence(
+                        **{
+                            **item,
+                            "path_edge_ids": tuple(item["path_edge_ids"]),
+                            "original_citation_ids": tuple(item.get("original_citation_ids", ())),
+                        }
+                    )
+                    for item in raw.get("relation_citations", ())
+                ),
             )
             answer = AnswerEvidenceSnapshot(
                 answer_row["snapshot_id"],
@@ -883,7 +915,44 @@ class MysqlConversationRepository:
                     "Answer evidence snapshot/event binding differs from accepted Turn"
                 )
             if snapshot.value.graph_context_status is GraphContextStatus.APPLIED:
-                raise ValueError("graph snapshot persistence is unavailable")
+                graph_row = (
+                    (
+                        await session.execute(
+                            text(
+                                "SELECT source_revision_ids, document_revision_ids, status "
+                                "FROM graph_snapshot WHERE enterprise_id=:enterprise_id "
+                                "AND project_id=:project_id AND snapshot_id=:snapshot_id"
+                            ),
+                            {
+                                **scope_values(self.scope),
+                                "snapshot_id": snapshot.value.graph_snapshot_id,
+                            },
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                frozen = {} if input_row is None else input_row["snapshot"]
+                if (
+                    graph_row is None
+                    or graph_row["status"] != "READY"
+                    or set(
+                        json.loads(graph_row["source_revision_ids"])
+                        if isinstance(graph_row["source_revision_ids"], str)
+                        else graph_row["source_revision_ids"]
+                    )
+                    != set(frozen.get("source_revision_ids", ()))
+                    or not set(
+                        json.loads(graph_row["document_revision_ids"])
+                        if isinstance(graph_row["document_revision_ids"], str)
+                        else graph_row["document_revision_ids"]
+                    )
+                    <= {
+                        item.get("document_revision_id") or item["revision_id"]
+                        for item in frozen.get("resolved_resources", ())
+                    }
+                ):
+                    raise ValueError("graph snapshot is outside frozen Turn resources")
             frozen_resources = {
                 (
                     item["source_id"],
@@ -897,6 +966,7 @@ class MysqlConversationRepository:
             }
             if snapshot.value.citations and not frozen_resources:
                 raise ValueError("citation is outside the frozen Turn resources")
+            trusted_originals = {}
             for citation in snapshot.value.citations:
                 citation_row = (
                     (
@@ -922,6 +992,7 @@ class MysqlConversationRepository:
                 )
                 if citation_row is None:
                     raise ValueError("citation snapshot is not a trusted persisted fact")
+                trusted_originals[citation.citation_snapshot_id] = citation_row
                 trusted_digest = citation_evidence_digest(
                     citation_id=citation_row["citation_id"],
                     trace_id=citation_row["trace_id"],
@@ -953,6 +1024,74 @@ class MysqlConversationRepository:
                         artifact_id=citation.citation_snapshot_id,
                         artifact_digest=trusted_digest,
                         created_at=_naive(snapshot.created_at),
+                    )
+                )
+            for citation in snapshot.value.relation_citations:
+                if (
+                    citation.snapshot_id != snapshot.value.graph_snapshot_id
+                    or not citation.original_citation_ids
+                    or not set(citation.original_citation_ids) <= set(trusted_originals)
+                ):
+                    raise ValueError("relation citation lacks authorized original evidence")
+                paragraphs = snapshot.value.answer.split("\n\n")
+                if citation.claim_index >= len(paragraphs) or not any(
+                    paragraphs[citation.claim_index]
+                    in (trusted_originals[key]["claim_text"] or "").split("\n\n")
+                    for key in citation.original_citation_ids
+                ):
+                    raise ValueError("relation citation claim index differs from original evidence")
+                edges = []
+                for edge_id in citation.path_edge_ids:
+                    edge = (
+                        (
+                            await session.execute(
+                                text(
+                                    "SELECT e.*, s.label AS source_label, t.label AS target_label "
+                                    "FROM graph_edge e JOIN graph_node s ON "
+                                    "s.project_id=e.project_id AND s.snapshot_id=e.snapshot_id "
+                                    "AND s.node_id=e.source_node_id JOIN graph_node t ON "
+                                    "t.project_id=e.project_id AND t.snapshot_id=e.snapshot_id "
+                                    "AND t.node_id=e.target_node_id "
+                                    "WHERE e.enterprise_id=:enterprise_id "
+                                    "AND e.project_id=:project_id "
+                                    "AND e.snapshot_id=:snapshot_id AND e.edge_id=:edge_id"
+                                ),
+                                {
+                                    **scope_values(self.scope),
+                                    "snapshot_id": citation.snapshot_id,
+                                    "edge_id": edge_id,
+                                },
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+                    if edge is None:
+                        raise ValueError("relation citation edge is outside authorized snapshot")
+                    edges.append(edge)
+                endpoints = set()
+                for position, edge in enumerate(edges):
+                    source, target = edge["source_node_id"], edge["target_node_id"]
+                    following = ({target} if source in endpoints else set()) | (
+                        {source} if target in endpoints else set()
+                    )
+                    if position and not following:
+                        raise ValueError("relation citation path is disconnected")
+                    endpoints = following if position else {source, target}
+                edge = next(item for item in edges if item["edge_id"] == citation.edge_id)
+                for field in (
+                    "source_node_id",
+                    "target_node_id",
+                    "source_label",
+                    "target_label",
+                    "relation_type",
+                    "origin",
+                ):
+                    if edge[field] != getattr(citation, field):
+                        raise ValueError("relation citation differs from immutable graph fact")
+                await session.execute(
+                    insert(chat_relation_citation).values(
+                        **scope_values(self.scope), turn_id=turn_id, **asdict(citation)
                     )
                 )
             for stream_event in stream_events:

@@ -13,11 +13,13 @@ from starlette.formparsers import MultiPartException
 from tap.contracts.http import (
     AgentDraftRequest,
     AgentStatusRequest,
+    AiAgentManagementPage,
     AiAgentRevisionPage,
     AiAgentRevisionSummary,
     AiAgentRevisionView,
     SkillCreateRequest,
     SkillImportResult,
+    SkillManagementPage,
     SkillRevisionPage,
     SkillRevisionSummary,
     SkillRevisionView,
@@ -99,6 +101,56 @@ async def list_agents(request: Request) -> AiAgentRevisionPage:
 
 
 @router.get(
+    "/agents/revisions",
+    operation_id="ai_manage_agent_revisions",
+    response_model=AiAgentManagementPage,
+    dependencies=[Depends(project_authorization("ai.agents.read"))],
+)
+async def manage_agents(request: Request) -> AiAgentManagementPage:
+    values = await asset_catalog_service(request).list_agent_revisions(request.state.project_scope)
+    return AiAgentManagementPage(items=[_agent_view(item) for item in values])
+
+
+@router.get(
+    "/agents/revisions/{revision_id}",
+    operation_id="ai_read_agent_configuration",
+    response_model=AiAgentRevisionView,
+    dependencies=[Depends(project_authorization("ai.agents.read"))],
+    responses={404: problem_response_metadata("Agent revision unavailable")},
+)
+async def read_agent_configuration(request: Request, revision_id: str) -> AiAgentRevisionView:
+    value = await asset_catalog_service(request).resolve_historical_agent(
+        request.state.project_scope, revision_id
+    )
+    return _agent_view(value)
+
+
+@router.get(
+    "/skills/revisions",
+    operation_id="ai_manage_skill_revisions",
+    response_model=SkillManagementPage,
+    dependencies=[Depends(project_authorization("ai.skills.read"))],
+)
+async def manage_skills(request: Request) -> SkillManagementPage:
+    values = await asset_catalog_service(request).list_skill_revisions(request.state.project_scope)
+    return SkillManagementPage(items=[_skill_view(item) for item in values])
+
+
+@router.get(
+    "/skills/revisions/{revision_id}",
+    operation_id="ai_read_skill_configuration",
+    response_model=SkillRevisionView,
+    dependencies=[Depends(project_authorization("ai.skills.read"))],
+    responses={404: problem_response_metadata("Skill revision unavailable")},
+)
+async def read_skill_configuration(request: Request, revision_id: str) -> SkillRevisionView:
+    value = await asset_catalog_service(request).resolve_historical_skill(
+        request.state.project_scope, revision_id
+    )
+    return _skill_view(value)
+
+
+@router.get(
     "/agents/{revision_id}",
     operation_id="ai_get_agent_revision",
     response_model=AiAgentRevisionSummary,
@@ -167,6 +219,7 @@ def _skill_view(value: SkillRevision) -> SkillRevisionView:
         origin=cast(Literal["seed", "import", "editor"], value.origin),
         description=value.description,
         requested_tools=list(value.requested_tools),
+        instruction_template=value.instruction_template,
         adopted_from_revision_id=value.adopted_from_revision_id,
     )
 

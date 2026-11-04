@@ -127,6 +127,45 @@ test("ready knowledge is published as a bounded grounded graph", async ({
     explorer.getByRole("button", { name: new RegExp(filename, "u") }),
   ).toBeVisible();
 
+  // The answer references the same immutable graph that the source published.
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page.getByRole("checkbox", { name: new RegExp(filename, "u") }).check();
+  await page
+    .getByRole("textbox", { name: "Message Tapper" })
+    .fill(
+      "What relationship connects the claims policy and supporting evidence?",
+    );
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const relationChip = page.locator(".tapper-relation-citation").first();
+  await expect(relationChip).toBeVisible({ timeout: 45_000 });
+  const citedGraphResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/knowledge/graph/subgraph"),
+  );
+  await relationChip.click();
+  const citedGraph = await citedGraphResponse;
+  expect(citedGraph.status(), await citedGraph.text()).toBe(200);
+  expect((await citedGraph.json()) as { snapshotId: string }).toMatchObject({
+    snapshotId,
+  });
+  const highlightedPath = page
+    .locator('.tap-graph-edge[data-highlighted="true"] path')
+    .first();
+  // A vertical SVG path has a zero-width fill box even when its stroke is visible.
+  await expect(highlightedPath).toHaveCSS("opacity", "1");
+  expect(
+    await highlightedPath.evaluate((path: SVGPathElement) =>
+      path.getTotalLength(),
+    ),
+  ).toBeGreaterThan(0);
+  await expect(highlightedPath).not.toHaveCSS("stroke", "none");
+  await expect(
+    page.locator('.tap-graph-node[data-highlighted="true"]'),
+  ).toHaveCount(2);
+  expect(new URL(page.url()).searchParams.get("snapshot")).toBe(snapshotId);
+  await page.goto("/");
+
   const unavailable = async (route: Route) => {
     await route.fulfill({
       status: 503,

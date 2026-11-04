@@ -44,7 +44,9 @@ export function KnowledgeGraph({
   query,
   sources,
   onViewSource,
+  highlightedEdgeIds = [],
 }: {
+  highlightedEdgeIds?: readonly string[];
   copy: PrototypeCopy;
   query: string;
   sources: readonly LibrarySource[];
@@ -76,12 +78,30 @@ export function KnowledgeGraph({
     () => buildKnowledgeGraph(copy, sources),
     [copy, sources],
   );
+  const highlightedEdges = new Set(highlightedEdgeIds);
+  const highlightedNodes = new Set(
+    data.edges
+      .filter((edge) => highlightedEdges.has(edge.id))
+      .flatMap((edge) => [edge.source, edge.target]),
+  );
   const [activeCommunities, setActiveCommunities] = useState<
     ReadonlySet<GraphCommunity>
   >(() => new Set(COMMUNITY_ORDER));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pan, setPan] = useState(() => {
+    const nodes = data.nodes.filter((node) => highlightedNodes.has(node.id));
+    return nodes.length
+      ? {
+          x:
+            GRAPH_WIDTH / 2 -
+            nodes.reduce((sum, node) => sum + node.x, 0) / nodes.length,
+          y:
+            GRAPH_HEIGHT / 2 -
+            nodes.reduce((sum, node) => sum + node.y, 0) / nodes.length,
+        }
+      : { x: 0, y: 0 };
+  });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{
@@ -496,6 +516,7 @@ export function KnowledgeGraph({
                   const middleY = (source.y + target.y) / 2;
                   const bend = index % 2 === 0 ? -28 : 28;
                   const active =
+                    highlightedEdges.has(edge.id) ||
                     focusedNodeId === edge.source ||
                     focusedNodeId === edge.target;
                   const showLabel =
@@ -557,6 +578,7 @@ export function KnowledgeGraph({
                     <g
                       key={edge.id}
                       className="tap-graph-edge"
+                      data-highlighted={highlightedEdges.has(edge.id)}
                       data-active={active}
                       data-muted={Boolean(focusedNodeId) && !active}
                       data-document={source.kind === "document"}
@@ -598,7 +620,8 @@ export function KnowledgeGraph({
                   const communityLabel = communityLabels[node.community];
                   const kindLabel = kindLabels[node.kind];
                   const highlighted =
-                    normalizedQuery.length > 0 && matchesQuery(node);
+                    highlightedNodes.has(node.id) ||
+                    (normalizedQuery.length > 0 && matchesQuery(node));
                   const dimmed =
                     normalizedQuery.length > 0
                       ? !highlighted

@@ -32,6 +32,7 @@ class ModelDescriptor:
     display_name: str
     capabilities: frozenset[ModelCapability]
     enabled: bool = True
+    supports_tool_calls: bool = False
 
     def __post_init__(self) -> None:
         if not self.alias or not self.display_name or not self.capabilities:

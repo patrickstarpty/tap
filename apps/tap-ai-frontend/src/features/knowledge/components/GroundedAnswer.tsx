@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 
+import type { RelationCitation } from "../../graph/model/relationCitation";
 import type { RetrievalAnswerResponse } from "../api/types";
 
 const ANSWER_TAGS = [
@@ -223,7 +224,11 @@ function CitedClaim({
   graph,
   onOpenCitation,
   locale,
+  relations,
+  onOpenRelation,
 }: {
+  relations: readonly RelationCitation[];
+  onOpenRelation?: (citation: RelationCitation) => void;
   claim: RetrievalClaim;
   graph: ValidAnswerGraph;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
@@ -247,6 +252,17 @@ function CitedClaim({
           {`[${String(graph.citationNumberById.get(citationId))}]`}
         </Button>
       ))}
+      {relations.map((relation) => (
+        <Button
+          key={relation.citationId}
+          size="small"
+          className="tapper-relation-citation"
+          onClick={() => onOpenRelation?.(relation)}
+          disabled={onOpenRelation === undefined}
+        >
+          {`${relation.sourceLabel} —${relation.relationType}→ ${relation.targetLabel}`}
+        </Button>
+      ))}
     </span>
   );
   return (
@@ -260,10 +276,12 @@ function groundedSegments(
   graph: ValidAnswerGraph,
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void,
   locale: AnswerLocale,
+  relations: readonly RelationCitation[],
+  onOpenRelation?: (citation: RelationCitation) => void,
 ): ReactNode[] {
   const segments: ReactNode[] = [];
   let cursor = 0;
-  for (const claim of graph.claims) {
+  for (const [claimIndex, claim] of graph.claims.entries()) {
     const before = graph.points.slice(cursor, claim.answerStart).join("");
     if (before.length > 0) {
       segments.push(
@@ -275,6 +293,10 @@ function groundedSegments(
         key={claim.claimId}
         claim={claim}
         graph={graph}
+        relations={relations.filter(
+          (relation) => relation.claimIndex === claimIndex,
+        )}
+        onOpenRelation={onOpenRelation}
         onOpenCitation={onOpenCitation}
         locale={locale}
       />,
@@ -293,8 +315,10 @@ export function GroundedAnswer({
   onOpenCitation,
   locale = "zh",
   citationNumbering = "source-order",
+  onOpenRelation,
 }: {
   response: RetrievalAnswerResponse | null | undefined;
+  onOpenRelation?: (citation: RelationCitation) => void;
   onOpenCitation: (citationId: string, trigger: HTMLElement) => void;
   locale?: AnswerLocale;
   citationNumbering?: "source-order" | "shown-order";
@@ -366,7 +390,13 @@ export function GroundedAnswer({
           title={ANSWER_COPY[locale].degraded}
         />
       ) : null}
-      {groundedSegments(graph, onOpenCitation, locale)}
+      {groundedSegments(
+        graph,
+        onOpenCitation,
+        locale,
+        response.relationCitations ?? [],
+        onOpenRelation,
+      )}
     </div>
   );
 }

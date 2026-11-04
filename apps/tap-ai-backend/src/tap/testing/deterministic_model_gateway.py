@@ -28,7 +28,7 @@ from tap.testing.deterministic_model import _first_evidence_sentence, determinis
 
 BUILT_IN_ROUTES = LiteLLMRoutes(
     {
-        "qwen-plus": LiteLLMModel("qwen-plus", "Qwen Plus", "chat", True, True, False),
+        "qwen-plus": LiteLLMModel("qwen-plus", "Qwen Plus", "chat", True, True, True),
         "text-embedding-v4": LiteLLMModel(
             "text-embedding-v4", "text-embedding-v4", "embedding", False, False, False
         ),
@@ -249,6 +249,30 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                     else {"answer": "Grounded"}
                 )
                 content = json.dumps(output)
+            # A fixture model may cite only relations supported by the same S evidence.
+            # Labels originate from production graph expansion, never from case expectations.
+            if request.operation is ModelOperation.STRUCTURED:
+                output = json.loads(content)
+                try:
+                    graph = json.loads(request.context).get("knowledgeGraph", [])
+                except (ValueError, AttributeError):
+                    graph = []
+                for claim in output.get("claims", []):
+                    labels = [
+                        fact["relationLabel"]
+                        for fact in graph
+                        if fact.get("kind") == "edge"
+                        and fact.get("relationLabel")
+                        and set(fact.get("evidenceLabels", [])) & set(claim["evidenceLabels"])
+                        and (
+                            fact.get("sourceLabel", "") in claim["text"]
+                            and fact.get("targetLabel", "") in claim["text"]
+                            or fact.get("relationType") == "CONTAINS"
+                        )
+                    ]
+                    if graph:
+                        claim["relationLabels"] = labels[:16]
+                content = json.dumps(output, ensure_ascii=False)
             body = {
                 "model": "fake/deterministic-chat-v1",
                 "choices": [{"message": {"content": content}}],

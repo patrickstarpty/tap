@@ -1,7 +1,4 @@
-import {
-  DocumentReview,
-  useDocumentReview,
-} from "./prototype/DocumentReview";
+import { DocumentReview, useDocumentReview } from "./prototype/DocumentReview";
 import type { ChunkSettings } from "./prototype/ChunkManager";
 import { KnowledgeAnswer } from "./prototype/answer/KnowledgeAnswer";
 import {
@@ -473,13 +470,49 @@ export function TapProductPrototype() {
   }, []);
   const [activeModule, setActiveModule] = useState<ProductModule>(() =>
     (() => {
-      const requested = new URLSearchParams(window.location.search).get("module");
+      const requested = new URLSearchParams(window.location.search).get(
+        "module",
+      );
       if (requested === "test-analytics") return "test-insights";
-      if (requested && ["tapper", "agents", "skills", "library", "test-management", "low-code", "test-insights"].includes(requested))
+      if (
+        requested &&
+        [
+          "tapper",
+          "agents",
+          "skills",
+          "library",
+          "test-management",
+          "low-code",
+          "test-insights",
+        ].includes(requested)
+      )
         return requested as ProductModule;
       return initialSnapshot?.library?.open ? "library" : "tapper";
     })(),
   );
+  const [, setNavigationVersion] = useState(0);
+  useEffect(() => {
+    const restoreModule = () => {
+      setNavigationVersion((version) => version + 1);
+      const module = new URLSearchParams(window.location.search).get("module");
+      setActiveModule(
+        module &&
+          [
+            "tapper",
+            "agents",
+            "skills",
+            "library",
+            "test-management",
+            "low-code",
+            "test-insights",
+          ].includes(module)
+          ? (module as ProductModule)
+          : "tapper",
+      );
+    };
+    window.addEventListener("popstate", restoreModule);
+    return () => window.removeEventListener("popstate", restoreModule);
+  }, []);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -532,9 +565,7 @@ export function TapProductPrototype() {
           createConversation("chat-1"),
           ...SAMPLE_CONVERSATIONS,
         ]
-      ).map(
-        ({ id }) => id,
-      ),
+      ).map(({ id }) => id),
       "chat",
       0,
     ),
@@ -574,9 +605,9 @@ export function TapProductPrototype() {
   const [pendingSendConversationId, setPendingSendConversationId] = useState<
     string | null
   >(null);
-  const [attachments, setAttachments] = useState<
-    readonly ComposerAttachment[]
-  >([]);
+  const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>(
+    [],
+  );
   const documentLanguageOnMount = useRef(document.documentElement.lang);
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
@@ -749,9 +780,7 @@ export function TapProductPrototype() {
           hasNewerRevision: fullSource?.hasNewerRevision,
           description: fullSource?.description,
         },
-        verificationFailed: takePrototypeFault(
-          "citation-verification-failed",
-        ),
+        verificationFailed: takePrototypeFault("citation-verification-failed"),
         sourceRemoved: fullSource === undefined,
       });
       if (sourcesCollapsed) expandKnowledgeSources();
@@ -772,10 +801,7 @@ export function TapProductPrototype() {
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
-  const resolvedAttachments = resolveComposerAttachments(
-    attachments,
-    sources,
-  );
+  const resolvedAttachments = resolveComposerAttachments(attachments, sources);
   const readyAttachmentKey = resolvedAttachments.ready
     .map(({ conversationId, sourceId }) => `${conversationId}:${sourceId}`)
     .join("|");
@@ -792,7 +818,10 @@ export function TapProductPrototype() {
           ? conversation
           : {
               ...conversation,
-              selectedSourceIds: [...conversation.selectedSourceIds, ...sourceIds],
+              selectedSourceIds: [
+                ...conversation.selectedSourceIds,
+                ...sourceIds,
+              ],
             };
       }),
     );
@@ -1023,8 +1052,7 @@ export function TapProductPrototype() {
               setTimeout(() => {
                 const interrupted = takePrototypeFault("stream-interrupted");
                 const sourceChanged =
-                  !interrupted &&
-                  takePrototypeFault("source-version-changed");
+                  !interrupted && takePrototypeFault("source-version-changed");
                 const finalState: NonNullable<AssistantTurn["answerState"]> =
                   interrupted
                     ? "interrupted"
@@ -1037,8 +1065,7 @@ export function TapProductPrototype() {
                       ? {
                           ...conversation,
                           turns: conversation.turns.map((turn) =>
-                            turn.id === turnId &&
-                            turn.answerState === "running"
+                            turn.id === turnId && turn.answerState === "running"
                               ? { ...turn, answerState: finalState }
                               : turn,
                           ),
@@ -1115,9 +1142,7 @@ export function TapProductPrototype() {
     setComposerContext(null);
     setMessageDraft(turn.prompt);
     const readySourceIds = new Set(
-      sources
-        .filter((source) => source.status === "ready")
-        .map(({ id }) => id),
+      sources.filter((source) => source.status === "ready").map(({ id }) => id),
     );
     const catalogIds = (kind: "agent" | "skill") =>
       (turn.catalogReferences ?? [])
@@ -1667,6 +1692,22 @@ export function TapProductPrototype() {
                     onRetry={() => resendTurn(turn)}
                     onStop={() => stopTurn(turn.id)}
                     onOpenCitation={openCitationPanel}
+                    onOpenRelation={(selection) => {
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("module", "library");
+                      url.searchParams.set("snapshot", selection.snapshotId);
+                      url.searchParams.set(
+                        "highlight",
+                        selection.edgeIds.join(","),
+                      );
+                      url.searchParams.set("graphSource", selection.sourceId);
+                      window.history.pushState(
+                        null,
+                        "",
+                        `${url.pathname}${url.search}`,
+                      );
+                      setActiveModule("library");
+                    }}
                   />
                 ) : (
                   <AssistantResponse
@@ -1742,6 +1783,7 @@ export function TapProductPrototype() {
         {activeModule === "agents" ? (
           <CatalogWorkspace
             kind="agent"
+            skills={skills}
             copy={copy}
             items={agents}
             onCreate={(draft) => createCatalogItem("agent", draft)}
@@ -1765,6 +1807,7 @@ export function TapProductPrototype() {
         ) : null}
         {activeModule === "library" ? (
           <LibraryWorkspace
+            key={window.location.search}
             copy={copy}
             sources={sources}
             onAddSource={addLocalSource}

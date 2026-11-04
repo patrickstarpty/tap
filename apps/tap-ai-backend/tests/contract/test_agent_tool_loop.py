@@ -301,3 +301,25 @@ async def test_retrieval_turn_merges_granted_tool_evidence_for_cited_answers():
     assert response.abstained is False
     assert response.claims[0].citation_ids == (evidence[1].citation_id,)
     assert len(response.citations) == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_loop_does_not_inherit_strict_parent_checkpoint_serialization():
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+    gateway, knowledge, client, tools = _composition(
+        (ToolTurnScript(((ECHO, {"text": "hello"}),)),)
+    )
+    service = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    await service.create(
+        "strict-chat", "strict-turn", "strict-request", _turn_input(("knowledge.answer", ECHO))
+    )
+    saver = InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=None))
+    await GenerationWorker(service, knowledge, checkpointer=saver, agent_tools=tools).run_once(
+        limit=1
+    )
+    turn = (await service.load("strict-chat")).turns[0]
+    assert turn.state == "completed"
+    assert client.calls == [("echo", {"text": "hello"})]
+    assert gateway.tool_calls == 2
+    assert set(saver.storage["strict-turn"]) == {""}

@@ -61,6 +61,7 @@ EXPECTED_TABLES = {
     "outbox",
     "chat_turn",
     "chat_event",
+    "chat_relation_citation",
     "turn_snapshot",
     "conversation",
     "turn_input_snapshot",

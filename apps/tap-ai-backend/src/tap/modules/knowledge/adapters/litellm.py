@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -408,6 +408,20 @@ class KnowledgeModelGateway:
                 governance_digests += (text_digest(answer_input.platform_instruction),)
                 # A pinned template digest makes this a governed answer; declare the capability.
                 tools = tools | {"knowledge.answer"}
+            if graph_context:
+                import copy
+
+                schema = copy.deepcopy(schema)
+                cast(Any, schema)["properties"]["claims"]["items"]["properties"][
+                    "relationLabels"
+                ] = {"type": "array", "items": {"type": "string"}, "maxItems": 16}
+                cast(Any, schema)["properties"]["claims"]["items"]["required"].append(
+                    "relationLabels"
+                )
+                prompt += (
+                    "\nFor relationship claims cite known R labels in relationLabels "
+                    "and supporting S labels in evidenceLabels. Never invent relation labels."
+                )
             plan_id = None if answer_input is None else answer_input.context.get("planId")
             result = await self._structured(
                 ModelRequest(
@@ -433,6 +447,7 @@ class KnowledgeModelGateway:
                 max_claims=64,
                 max_claim_chars=4000,
                 max_labels_per_claim=16,
+                relation_context=graph_context,
             )
             return AnswerGeneration(
                 answer,
@@ -456,6 +471,7 @@ class KnowledgeModelGateway:
         governance: GenerationGovernance | None,
         model_alias: str,
         tool_loop: ToolLoop,
+        graph_context=(),
     ) -> ToolPhaseResult:
         """Let the selected Agent call its tools after retrieval, before the final answer."""
 
@@ -478,6 +494,7 @@ class KnowledgeModelGateway:
             {
                 "query": await self._redact(query),
                 "evidence": [await self._evidence_payload(item) for item in evidence],
+                "knowledgeGraph": [dict(item) for item in graph_context],
             },
             ensure_ascii=False,
             separators=(",", ":"),

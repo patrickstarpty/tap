@@ -10,6 +10,7 @@ from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
     GraphContextStatus,
+    RelationCitationEvidence,
     RetrievalSummary,
 )
 
@@ -23,6 +24,7 @@ class ProviderResult:
     citations: tuple[CitationEvidence, ...] = ()
     abstained: bool = False
     answer_plan_id: str | None = None
+    relation_citations: tuple[RelationCitationEvidence, ...] = ()
 
     def __post_init__(self):
         if (self.graph_context_status is GraphContextStatus.APPLIED) != bool(
@@ -64,6 +66,7 @@ class TurnProcessor:
                 result.graph_snapshot_id,
                 result.citations,
                 diagnostics,
+                relation_citations=result.relation_citations,
             )
         except Exception:
             evidence = AnswerEvidence(

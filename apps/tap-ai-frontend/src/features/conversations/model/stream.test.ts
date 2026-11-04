@@ -309,3 +309,33 @@ describe("conversation stream reducer", () => {
     ).toBe(true);
   });
 });
+
+it("retains resolved relation citations until a complete answer arrives", () => {
+  const citation = {
+    citationId: "r1",
+    snapshotId: "old",
+    edgeId: "e1",
+    pathEdgeIds: ["e1"],
+    sourceNodeId: "a",
+    targetNodeId: "b",
+    sourceLabel: "A",
+    targetLabel: "B",
+    relationType: "REQUIRES",
+    origin: "EXTRACTED",
+    claimIndex: 0,
+  };
+  let state = reduceStreamEvent(
+    createStreamState(),
+    envelope(1, "turn-1", "relation_citation.resolved", { citation }),
+  );
+  expect(state.turns["turn-1"]?.response).toBeNull();
+  state = reduceStreamEvent(
+    state,
+    envelope(2, "turn-1", "turn.completed", {
+      answer: { answer: "done", citations: [], relationCitations: [] },
+    }),
+  );
+  expect(state.turns["turn-1"]?.response?.relationCitations).toEqual([
+    citation,
+  ]);
+});

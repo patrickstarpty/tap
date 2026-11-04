@@ -82,8 +82,14 @@ class Models:
                 "qwen-plus",
                 "Qwen Plus",
                 frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
+                supports_tool_calls=True,
             ),
-            ModelDescriptor("qwen-max", "Qwen Max", frozenset({ModelCapability.STRUCTURED})),
+            ModelDescriptor(
+                "qwen-max",
+                "Qwen Max",
+                frozenset({ModelCapability.STRUCTURED}),
+                supports_tool_calls=True,
+            ),
             ModelDescriptor("qwen-flash", "Qwen Flash", frozenset({ModelCapability.CHAT})),
         )
 
@@ -252,3 +258,27 @@ def test_domain_bounds_authored_agent_fields() -> None:
     ):
         with pytest.raises(AssetRevisionRejected):
             replace(base, **overrides)
+
+
+@pytest.mark.asyncio
+async def test_tool_enabled_agent_rejects_a_model_without_function_calling():
+    from dataclasses import replace
+
+    from tap.modules.ai.application.agent_authoring import (
+        AgentAuthoringRejected,
+        AgentAuthoringService,
+    )
+    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+
+    class NoTools(Models):
+        async def list_models(self, scope):
+            return tuple(
+                replace(item, supports_tool_calls=False)
+                for item in await super().list_models(scope)
+            )
+
+    service = AgentAuthoringService(
+        MemoryAgentStore((skill_revision("skill-a"),)), ToolRegistry(builtin_tools()), NoTools()
+    )
+    with pytest.raises(AgentAuthoringRejected, match="agent-model-unsupported"):
+        await service.create(VALIDATION_SCOPE, draft())
