@@ -45,6 +45,7 @@ from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.application.agent_authoring import AgentAuthoringService
 from tap.modules.ai.application.mcp_servers import McpServerService
 from tap.modules.ai.application.skill_import import SkillImportService
+from tap.modules.ai.application.tool_loop import AgentToolRuntime
 from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
@@ -246,6 +247,7 @@ class HttpServices:
     insights_explanation: object | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
+    agent_tools: AgentToolRuntime | None = None
 
 
 class GraphUnavailable(Exception):

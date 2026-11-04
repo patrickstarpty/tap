@@ -222,8 +222,13 @@ class KnowledgeHttpService:
         answer_plan=None,
         authorize=None,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
+        agent_tools=None,
     ):
-        """Answer one accepted Turn; `on_delta` receives answer text while it streams."""
+        """Answer one accepted Turn; `on_delta` receives answer text while it streams.
+
+        `agent_tools` (an `AgentToolRuntime`) runs the selected Agent's tool loop after
+        retrieval; without it the Turn keeps the one-shot answer path.
+        """
 
         remaining = None if answer_plan is None else answer_plan.deadline_at - time.time()
         if remaining is not None and remaining <= 0:
@@ -235,6 +240,7 @@ class KnowledgeHttpService:
                 answer_plan=answer_plan,
                 authorize=authorize,
                 on_delta=on_delta,
+                agent_tools=agent_tools,
             )
 
     async def authorize_planning(self, snapshot) -> None:
@@ -311,6 +317,7 @@ class KnowledgeHttpService:
         answer_plan=None,
         authorize=None,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
+        agent_tools=None,
     ):
         from tap.modules.chat.domain.conversations import content_digest
         from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
@@ -332,6 +339,11 @@ class KnowledgeHttpService:
         )
         governance = self._generation_governance(frozen_input)
         streaming = {} if on_delta is None else {"on_delta": on_delta}
+        tool_phase = (
+            None
+            if agent_tools is None or governance is None
+            else self._tool_phase(agent_tools, governance, frozen_input.model_alias)
+        )
         answer_input = None
         if answer_plan is not None:
             from tap.modules.chat.domain.answer_plan import PlanningInput
@@ -391,6 +403,7 @@ class KnowledgeHttpService:
                     else {}
                 ),
                 **streaming,
+                **(await self._tool_results(tool_phase, request.query)),
             )
             if authorize is not None:
                 await authorize()
@@ -432,6 +445,7 @@ class KnowledgeHttpService:
                 answer_plan_id=answer_plan.plan_id,
                 answer_input=answer_input,
                 **streaming,
+                **(await self._tool_results(tool_phase, request.query)),
             )
             if authorize is not None:
                 await authorize()
@@ -469,6 +483,7 @@ class KnowledgeHttpService:
                 else {}
             ),
             **streaming,
+            **({} if tool_phase is None else {"tool_phase": tool_phase}),
         )
         return answer_response_to_http(
             response,
@@ -478,6 +493,34 @@ class KnowledgeHttpService:
             ),
             graph_snapshot_id=None if graph_context is None else graph_context.snapshot_id,
         )
+
+    def _tool_phase(self, agent_tools, governance, model_alias):
+        from tap.modules.knowledge.application.search_tool import KnowledgeSearchTool
+
+        models = self._models
+        if models is None or not callable(getattr(models, "research", None)):
+            raise ValueError("agent tool runtime requires the governed model boundary")
+
+        async def phase(query, evidence, search):
+            tool = None if search is None else KnowledgeSearchTool(search, scope=models.scope)
+            return await models.research(
+                query,
+                evidence,
+                governance=governance,
+                model_alias=model_alias,
+                tool_loop=agent_tools.loop(tool),
+            )
+
+        return phase
+
+    @staticmethod
+    async def _tool_results(tool_phase, query: str) -> dict[str, object]:
+        """Run tools for answers without retrieval; only non-search tools can be callable."""
+
+        if tool_phase is None:
+            return {}
+        result = await tool_phase(query, (), None)
+        return {"tool_results": result.tool_results} if result.tool_results else {}
 
     @staticmethod
     def _execution(plan):

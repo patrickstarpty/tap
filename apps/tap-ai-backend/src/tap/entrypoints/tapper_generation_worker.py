@@ -167,6 +167,7 @@ class GenerationWorker:
     checkpointer: BaseCheckpointSaver | None = None
     insights_explanation: Any | None = None
     suggestion_refresh: Any | None = None
+    agent_tools: Any | None = None
     lease_duration: timedelta = timedelta(seconds=60)
     renew_interval_seconds: float = 20.0
     max_checkpoint_attempts: int = 3
@@ -243,6 +244,7 @@ class GenerationWorker:
                         else {}
                     ),
                     **({} if batcher is None else {"on_delta": batcher.add}),
+                    **(await agent_tool_options(value)),
                 )
                 if batcher is not None:
                     await batcher.close()
@@ -271,6 +273,19 @@ class GenerationWorker:
                 abstained=answer.abstained,
                 answer_plan_id=None if active_plan is None else active_plan.plan_id,
             )
+
+        async def agent_tool_options(value) -> dict[str, object]:
+            """Enter the tool loop only when the Agent allowlists a tool this Turn can call."""
+
+            allowlist = getattr(value, "agent_tool_allowlist", ())
+            if self.agent_tools is None or value.agent_revision_id is None or not allowlist:
+                return {}
+            callable_tools = await self.agent_tools.callable_tools(
+                self.conversations.scope,
+                allowlist,
+                knowledge_search=bool(value.resolved_resources),
+            )
+            return {"agent_tools": self.agent_tools} if callable_tools else {}
 
         streaming = True
 
@@ -732,6 +747,7 @@ async def main() -> None:
         knowledge,
         insights_explanation=runtime.http_services.insights_explanation,
         suggestion_refresh=runtime.http_services.prompt_suggestion_store,
+        agent_tools=runtime.http_services.agent_tools,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

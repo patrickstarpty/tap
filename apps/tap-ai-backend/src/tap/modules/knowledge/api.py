@@ -161,6 +161,7 @@ class KnowledgeAPI:
         answer_execution=None,
         authorize=None,
         on_delta=None,
+        tool_phase=None,
     ):
         import asyncio
 
@@ -177,6 +178,7 @@ class KnowledgeAPI:
                 answer_execution=answer_execution,
                 authorize=authorize,
                 on_delta=on_delta,
+                tool_phase=tool_phase,
             )
 
 

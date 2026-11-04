@@ -74,6 +74,7 @@ from tap.modules.knowledge.ports.search import (
     GovernedKnowledgeModels,
     QueryEmbeddingPort,
     SearchPort,
+    ToolPhase,
 )
 from tap.platform.telemetry import span
 
@@ -226,6 +227,7 @@ class AuthorizedRetrieval:
         answer_execution: AuthorizedAnswerExecution | None = None,
         authorize=None,
         on_delta: AnswerDeltaCallback | None = None,
+        tool_phase: ToolPhase | None = None,
     ) -> AnswerResponse:
         answer_input = None
         missing = False
@@ -369,6 +371,17 @@ class AuthorizedRetrieval:
             )
             answer_input.context["planId"] = answer_execution.plan_id
             missing = bool(answer_input.context["missingEvidence"])
+        tool_results: tuple[Mapping[str, object], ...] = ()
+        if tool_phase is not None:
+            run, tool_results = await self._run_tool_phase(
+                tool_phase,
+                request,
+                run,
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=None if answer_execution is None else answer_execution.plan_id,
+                authorize=authorize,
+            )
         required = tuple(
             resource for resource in run.plan.resources if resource.mode is ResourceMode.REQUIRED
         )
@@ -400,12 +413,14 @@ class AuthorizedRetrieval:
                 model_alias=model_alias,
                 **({"answer_input": answer_input} if answer_input is not None else {}),
                 **({"on_delta": on_delta} if on_delta is not None else {}),
+                **({"tool_results": tool_results} if tool_results else {}),
             )
             if governance is not None
             or graph_context
             or model_alias is not None
             or answer_input is not None
             or on_delta is not None
+            or tool_results
             else await self._answers.answer(
                 run.plan.sanitized_query,
                 run.response.evidence,
@@ -448,6 +463,78 @@ class AuthorizedRetrieval:
             degraded_mode=missing,
             degradation_reasons=("partial-evidence",) if missing else (),
         )
+
+    async def _run_tool_phase(
+        self,
+        tool_phase: ToolPhase,
+        request: AnswerRequest,
+        run: _RetrievalRun,
+        policy: RetrievalPolicyContext,
+        *,
+        frozen_policy: bool,
+        answer_plan_id: str | None,
+        authorize,
+    ) -> tuple[_RetrievalRun, tuple[Mapping[str, object], ...]]:
+        """Run the Agent's tools after retrieval and merge their evidence into the run.
+
+        `knowledge.search` reuses this Turn's frozen selection and policy; merged evidence must
+        stay within the policy grants, keeps existing labels, and is capped at 20 items.
+        """
+
+        async def search(query: str, limit: int) -> tuple[Evidence, ...]:
+            if authorize is not None:
+                await authorize()
+            found = await self._retrieve(
+                replace(request.as_search_request(), query=query, top_k=limit),
+                policy,
+                frozen_policy=frozen_policy,
+                answer_plan_id=answer_plan_id,
+                authorize=authorize,
+            )
+            if self._publication_authority is not None and found.publication is not None:
+                await self._publication_authority.revalidate(found.publication)
+            return found.response.evidence
+
+        if authorize is not None:
+            await authorize()
+        phase = await tool_phase(run.plan.sanitized_query, run.response.evidence, search)
+        grants = {
+            (grant.source_id, grant.revision, grant.source_content_hash)
+            for grant in policy.resource_grants
+        }
+        merged = list(run.response.evidence)
+        seen = {(item.source.source_id, item.source.revision, item.chunk_id) for item in merged}
+        labels = {item.evidence_label for item in merged}
+        for item in phase.evidence:
+            if not isinstance(item, Evidence):
+                continue
+            identity = (item.source.source_id, item.source.revision, item.chunk_id)
+            if (
+                len(merged) >= 20
+                or identity in seen
+                or (item.source.source_id, item.source.revision, item.source.source_content_hash)
+                not in grants
+            ):
+                continue
+            label = f"S{len(merged) + 1}"
+            while label in labels:
+                label = f"S{int(label[1:]) + 1}"
+            seen.add(identity)
+            labels.add(label)
+            merged.append(replace(item, evidence_label=label))
+        if len(merged) > len(run.response.evidence):
+            publication = run.publication
+            if self._publication_authority is not None:
+                publication = await self._publication_authority.authorize_selection(
+                    policy.project_id,
+                    tuple(sorted({item.source.revision for item in merged})),
+                )
+            run = replace(
+                run,
+                response=replace(run.response, evidence=tuple(merged)),
+                publication=publication,
+            )
+        return run, phase.tool_results
 
     async def _planned_retrieval(self, request, policy, execution, *, frozen_policy, authorize):
         if (

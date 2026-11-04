@@ -69,7 +69,7 @@ ACTUAL_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
 _WIRE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _TOOL_CALL_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _MAX_TOOLS = 32
-_MAX_TOOL_MESSAGES = 64
+_MAX_TOOL_MESSAGES = 128
 _MAX_TOOL_CALLS = 16
 _MAX_RAW_ARGUMENTS = 4096
 

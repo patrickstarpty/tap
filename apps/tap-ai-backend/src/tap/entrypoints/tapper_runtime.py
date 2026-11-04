@@ -1788,6 +1788,9 @@ def _assemble_http_services(
             mcp_sessions, mcp_client, scope=repository.scope, extra_hosts=mcp_hosts
         )
     tool_registry = ToolRegistry(builtin_tools(), mcp=mcp_tools)
+    from tap.modules.ai.application.tool_loop import AgentToolRuntime
+
+    agent_tools = AgentToolRuntime(embeddings.gateway, mcp=mcp_tools, redact=_redact_model_context)
     model_catalog = ModelCatalog(
         embeddings.gateway,
         scope=embeddings.scope,
@@ -1823,6 +1826,7 @@ def _assemble_http_services(
         knowledge_reviews=knowledge_reviews,
         insights_knowledge_search=answer_service,
         insights_publication_authority=publication_authority,
+        agent_tools=agent_tools,
     )
 
 

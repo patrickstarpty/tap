@@ -33,7 +33,7 @@ from tap.modules.knowledge.ports.answers import (
     DocumentStateChanged,
     ReadyDocumentRevision,
 )
-from tap.modules.knowledge.ports.search import AnswerDeltaCallback
+from tap.modules.knowledge.ports.search import AnswerDeltaCallback, ToolPhase
 
 __all__ = [
     "AnswerSelectionRejected",
@@ -157,6 +157,7 @@ class AnswerService:
         answer_execution=None,
         authorize=None,
         on_delta: AnswerDeltaCallback | None = None,
+        tool_phase: ToolPhase | None = None,
     ) -> AnswerResponse:
         if (
             not revisions
@@ -179,7 +180,11 @@ class AnswerService:
         }:
             raise DocumentStateChanged("accepted retrieval authority is invalid")
         frozen_answer = getattr(self._knowledge, "answer_frozen", None)
-        streaming = {} if on_delta is None else {"on_delta": on_delta}
+        streaming: dict[str, object] = {} if on_delta is None else {"on_delta": on_delta}
+        if tool_phase is not None:
+            if frozen_answer is None:
+                raise ValueError("agent tools require the authorized Knowledge boundary")
+            streaming["tool_phase"] = tool_phase
         if answer_execution is not None:
             if frozen_answer is None:
                 raise ValueError("planned answers require the authorized Knowledge boundary")
