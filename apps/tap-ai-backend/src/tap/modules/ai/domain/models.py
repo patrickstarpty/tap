@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.tools import well_formed_tools
@@ -116,6 +118,39 @@ class StreamCompleted:
 
 
 ModelStreamEvent = TextDelta | StreamCompleted
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    """One callable tool offered to the model; `name` is the registry tool id."""
+
+    name: str
+    description: str
+    parameters: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """A model-requested call; unparseable arguments arrive as `{"_raw": text}`."""
+
+    call_id: str
+    name: str
+    arguments: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ChatMessage:
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTurn:
+    text: str | None
+    tool_calls: tuple[ToolCall, ...]
+    result: ModelResult
 
 
 @dataclass(frozen=True, slots=True)

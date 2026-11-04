@@ -10,7 +10,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -30,6 +30,7 @@ from tap.modules.ai.adapters.litellm_catalog import (
 from tap.modules.ai.application.schema import check_schema, validate_output
 from tap.modules.ai.domain.model_calls import ModelCallRecord
 from tap.modules.ai.domain.models import (
+    ChatMessage,
     ModelCallAudit,
     ModelCapability,
     ModelDescriptor,
@@ -42,10 +43,18 @@ from tap.modules.ai.domain.models import (
     ModelUsage,
     StreamCompleted,
     TextDelta,
+    ToolCall,
+    ToolSpec,
+    ToolTurn,
     schema_digest,
     text_digest,
 )
-from tap.modules.ai.domain.tools import well_formed_tools
+from tap.modules.ai.domain.tools import (
+    RESERVED_TOOLS,
+    ToolRejected,
+    validate_tool_id,
+    well_formed_tools,
+)
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.platform.telemetry import current_binding, span
 
@@ -56,6 +65,89 @@ logger = logging.getLogger(__name__)
 
 # Audited upstream model identifiers: printable ASCII only, bounded to 256 characters.
 ACTUAL_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}")
+# OpenAI-compatible function names; registry ids travel with `.` replaced by `__`.
+_WIRE_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_TOOL_CALL_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+_MAX_TOOLS = 32
+_MAX_TOOL_MESSAGES = 64
+_MAX_TOOL_CALLS = 16
+_MAX_RAW_ARGUMENTS = 4096
+
+
+def wire_tool_name(tool_id: str) -> str:
+    return tool_id.replace(".", "__")
+
+
+@dataclass(slots=True)
+class _ToolChat:
+    """Tool-chat inputs for one `_execute`; the parsed calls are written back here."""
+
+    messages: tuple[ChatMessage, ...]
+    tools: tuple[ToolSpec, ...]
+    calls: tuple[ToolCall, ...] = ()
+
+    def wire_names(self) -> dict[str, str]:
+        return {wire_tool_name(item.name): item.name for item in self.tools}
+
+
+def _wire_message(message: ChatMessage) -> dict[str, Any]:
+    if message.role == "tool":
+        return {"role": "tool", "tool_call_id": message.tool_call_id, "content": message.content}
+    if message.role == "assistant" and message.tool_calls:
+        return {
+            "role": "assistant",
+            "content": message.content or None,
+            "tool_calls": [
+                {
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": wire_tool_name(call.name),
+                        "arguments": json.dumps(
+                            dict(call.arguments), ensure_ascii=False, separators=(",", ":")
+                        ),
+                    },
+                }
+                for call in message.tool_calls
+            ],
+        }
+    return {"role": message.role, "content": message.content}
+
+
+def _parse_tool_calls(raw: object, wire_names: Mapping[str, str]) -> tuple[ToolCall, ...]:
+    """Map provider tool calls back to registry ids; bad argument JSON is kept as `_raw`."""
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > _MAX_TOOL_CALLS:
+        raise ModelGatewayUnavailable()
+    calls: list[ToolCall] = []
+    for item in raw:
+        function = item.get("function") if isinstance(item, dict) else None
+        if not isinstance(function, dict):
+            raise ModelGatewayUnavailable()
+        call_id, name, arguments = item.get("id"), function.get("name"), function.get("arguments")
+        if (
+            not isinstance(call_id, str)
+            or _TOOL_CALL_ID.fullmatch(call_id) is None
+            or not isinstance(name, str)
+            or _WIRE_TOOL_NAME.fullmatch(name) is None
+        ):
+            raise ModelGatewayUnavailable()
+        if not isinstance(arguments, str):
+            arguments = "" if arguments is None else json.dumps(arguments)
+        try:
+            parsed = json.loads(arguments) if arguments.strip() else {}
+        except ValueError:
+            parsed = None
+        calls.append(
+            ToolCall(
+                call_id,
+                wire_names.get(name, name.replace("__", ".")),
+                parsed if isinstance(parsed, dict) else {"_raw": arguments[:_MAX_RAW_ARGUMENTS]},
+            )
+        )
+    return tuple(calls)
 
 
 def _parse_cost_header(value: str | None) -> Decimal | None:
@@ -211,6 +303,17 @@ class LiteLLMModelGateway:
     async def generate_structured(self, request: ModelRequest) -> ModelResult:
         return await self._execute(request, ModelOperation.STRUCTURED)
 
+    async def chat_with_tools(
+        self,
+        request: ModelRequest,
+        messages: tuple[ChatMessage, ...],
+        tools: tuple[ToolSpec, ...],
+    ) -> ToolTurn:
+        tool_chat = _ToolChat(tuple(messages), tuple(tools))
+        result = await self._execute(request, ModelOperation.CHAT, tool_chat=tool_chat)
+        text = result.output if isinstance(result.output, str) and result.output else None
+        return ToolTurn(text, tool_chat.calls, result)
+
     async def stream_structured(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]:
         """Stream structured output text, then the result `generate_structured` would return.
 
@@ -266,7 +369,12 @@ class LiteLLMModelGateway:
         if redacted != text:
             raise ModelGatewayRejected()
 
-    async def _validate(self, request: ModelRequest, operation: ModelOperation) -> None:
+    async def _validate(
+        self,
+        request: ModelRequest,
+        operation: ModelOperation,
+        tool_chat: _ToolChat | None = None,
+    ) -> None:
         self._check_scope(request.scope)
         if request.operation is not operation:
             raise ModelGatewayRejected()
@@ -309,7 +417,7 @@ class LiteLLMModelGateway:
             or (
                 governed
                 and (
-                    operation is not ModelOperation.STRUCTURED
+                    (operation is not ModelOperation.STRUCTURED and tool_chat is None)
                     or "knowledge.answer" not in request.tool_allowlist
                     or not request.governance_digests
                 )
@@ -327,6 +435,58 @@ class LiteLLMModelGateway:
             await self._check_redacted(serialized_schema)
         elif request.schema is not None or request.schema_digest is not None:
             raise ModelGatewayRejected()
+        if tool_chat is not None:
+            await self._validate_tool_chat(request, operation, tool_chat)
+
+    async def _validate_tool_chat(
+        self, request: ModelRequest, operation: ModelOperation, tool_chat: _ToolChat
+    ) -> None:
+        """Only allowlisted, callable tools; the transcript opens with the audited prompt."""
+
+        tools, messages = tool_chat.tools, tool_chat.messages
+        if (
+            operation is not ModelOperation.CHAT
+            or request.image_bytes is not None
+            or len(tools) > _MAX_TOOLS
+            or not 2 <= len(messages) <= _MAX_TOOL_MESSAGES
+            or any(type(item) is not ChatMessage for item in messages)
+            or messages[0] != ChatMessage("system", request.prompt)
+            or messages[1] != ChatMessage("user", request.context)
+        ):
+            raise ModelGatewayRejected()
+        for spec in tools:
+            try:
+                validate_tool_id(spec.name)
+            except (ToolRejected, TypeError):
+                raise ModelGatewayRejected() from None
+            if (
+                type(spec) is not ToolSpec
+                or spec.name in RESERVED_TOOLS
+                or spec.name not in request.tool_allowlist
+                or _WIRE_TOOL_NAME.fullmatch(wire_tool_name(spec.name)) is None
+                or not isinstance(spec.description, str)
+                or len(spec.description) > 1024
+                or not isinstance(spec.parameters, Mapping)
+                or spec.parameters.get("type") != "object"
+            ):
+                raise ModelGatewayRejected()
+        if len(tool_chat.wire_names()) != len(tools):
+            raise ModelGatewayRejected()
+        for message in messages[2:]:
+            if message.role not in {"assistant", "tool"} or not isinstance(message.content, str):
+                raise ModelGatewayRejected()
+            if message.role == "tool":
+                if (
+                    message.tool_calls
+                    or not isinstance(message.tool_call_id, str)
+                    or _TOOL_CALL_ID.fullmatch(message.tool_call_id) is None
+                ):
+                    raise ModelGatewayRejected()
+                await self._check_redacted(message.content)
+            elif message.tool_call_id is not None or any(
+                type(call) is not ToolCall for call in message.tool_calls
+            ):
+                raise ModelGatewayRejected()
 
     async def _model(self, request: ModelRequest, operation: ModelOperation) -> LiteLLMModel:
         """Resolve the requested model against the LiteLLM catalog; never substitute another."""
@@ -353,7 +513,12 @@ class LiteLLMModelGateway:
         return model
 
     async def _execute(
-        self, request: ModelRequest, operation: ModelOperation, *, on_text: OnText | None = None
+        self,
+        request: ModelRequest,
+        operation: ModelOperation,
+        *,
+        on_text: OnText | None = None,
+        tool_chat: _ToolChat | None = None,
     ) -> ModelResult:
         call_id = str(uuid4())
         span_kind = "embeddings" if operation is ModelOperation.EMBED else "chat"
@@ -395,7 +560,7 @@ class LiteLLMModelGateway:
                         if len(snapshot.encode()) > 262144:
                             raise ModelGatewayRejected()
                         request = replace(request, schema=json.loads(snapshot))
-                    await self._validate(request, operation)
+                    await self._validate(request, operation, tool_chat)
                     payload = {
                         "model": request.alias,
                         "metadata": {
@@ -446,12 +611,29 @@ class LiteLLMModelGateway:
                                 + json.dumps(request.schema, sort_keys=True, separators=(",", ":"))
                             )
                         payload.update(
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_content},
-                            ],
+                            messages=(
+                                [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_content},
+                                ]
+                                if tool_chat is None
+                                else [_wire_message(item) for item in tool_chat.messages]
+                            ),
                             max_tokens=8192 if request.image_bytes is not None else 2048,
                         )
+                        if tool_chat is not None and tool_chat.tools:
+                            payload["tools"] = [
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": wire_tool_name(item.name),
+                                        "description": item.description,
+                                        "parameters": dict(item.parameters),
+                                    },
+                                }
+                                for item in tool_chat.tools
+                            ]
+                            payload["tool_choice"] = "auto"
                         if operation is ModelOperation.STRUCTURED:
                             payload["temperature"] = 0
                             payload["response_format"] = (
@@ -470,7 +652,13 @@ class LiteLLMModelGateway:
                         body, headers = await self._post(request, payload, attempts)
                     else:
                         body, headers = await self._post_stream(request, payload, attempts, on_text)
-                    result = self._normalize(request, body, headers, self._upstream_model(headers))
+                    result = self._normalize(
+                        request,
+                        body,
+                        headers,
+                        self._upstream_model(headers),
+                        tool_chat=tool_chat is not None,
+                    )
                     gateway_call_id = result.gateway_call_id
                     provider_request_id = result.provider_request_id
                     upstream_model = result.actual_model
@@ -491,6 +679,15 @@ class LiteLLMModelGateway:
                         content = message.get("content")
                         if isinstance(content, str):
                             response_text = content
+                        if tool_chat is not None:
+                            tool_chat.calls = _parse_tool_calls(
+                                message.get("tool_calls"), tool_chat.wire_names()
+                            )
+                            if tool_chat.calls:
+                                response_text = json.dumps(
+                                    {"content": content, "tool_calls": message["tool_calls"]},
+                                    ensure_ascii=False,
+                                )
                         reasoning = message.get("reasoning_content")
                         if isinstance(reasoning, str):
                             reasoning_text = reasoning
@@ -732,6 +929,8 @@ class LiteLLMModelGateway:
         body: dict[str, Any],
         headers: httpx.Headers,
         upstream_model: str | None = None,
+        *,
+        tool_chat: bool = False,
     ) -> ModelResult:
         # LiteLLM may echo the model without its provider prefix; the deployment id is exact.
         returned = body["model"]
@@ -779,14 +978,17 @@ class LiteLLMModelGateway:
                 not isinstance(choices, list)
                 or len(choices) != 1
                 or not isinstance(choices[0], dict)
-                or choices[0].get("finish_reason", "stop") != "stop"
+                or choices[0].get("finish_reason", "stop")
+                not in ({"stop", "tool_calls"} if tool_chat else {"stop"})
                 or not isinstance(choices[0].get("message"), dict)
-                or choices[0]["message"].get("tool_calls")
+                or (choices[0]["message"].get("tool_calls") and not tool_chat)
                 or choices[0]["message"].get("refusal")
             ):
                 raise ModelGatewayUnavailable()
-            content = choices[0]["message"]["content"]
-            if not isinstance(content, str) or not content.strip():
+            content = choices[0]["message"].get("content")
+            if tool_chat and choices[0]["message"].get("tool_calls"):
+                content = content if isinstance(content, str) else ""
+            elif not isinstance(content, str) or not content.strip():
                 raise ModelGatewayUnavailable()
             output = content
             if request.operation is ModelOperation.STRUCTURED:

@@ -19,12 +19,15 @@ from tap.modules.ai.adapters.litellm import (
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
 from tap.modules.ai.domain.models import (
+    ChatMessage,
     ModelCapability,
     ModelDescriptor,
     ModelGatewayRejected,
     ModelGatewayUnavailable,
     ModelOperation,
     ModelRequest,
+    ToolCall,
+    ToolSpec,
 )
 
 
@@ -1781,3 +1784,249 @@ async def test_deterministic_gateway_streams_its_structured_json_in_16_character
     assert all(len(delta) <= 16 for delta in deltas)
     assert "".join(deltas) == json.dumps(generated.output)
     assert streamed.output == generated.output
+
+
+SEARCH_TOOL = ToolSpec(
+    "knowledge.search",
+    "Search published Project knowledge.",
+    {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+)
+ECHO_TOOL = ToolSpec(
+    "mcp.local-echo.echo",
+    "Echo text.",
+    {"type": "object", "properties": {"text": {"type": "string"}}},
+)
+
+
+def tool_request(**changes):
+    return replace(
+        request(),
+        tool_allowlist=frozenset({"knowledge.answer", SEARCH_TOOL.name, ECHO_TOOL.name}),
+        governance_digests=(digest("agent-revision"),),
+        **changes,
+    )
+
+
+def opening(req):
+    return (ChatMessage("system", req.prompt), ChatMessage("user", req.context))
+
+
+def tool_call_response(*calls, content=None, finish_reason="tool_calls"):
+    return httpx.Response(
+        200,
+        json={
+            "model": "openai/gpt-5.6-sol",
+            "choices": [
+                {
+                    "finish_reason": finish_reason,
+                    "message": {
+                        "content": content,
+                        "tool_calls": [
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {"name": name, "arguments": arguments},
+                            }
+                            for call_id, name, arguments in calls
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 8},
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_with_tools_sends_wire_names_and_restores_tool_calls():
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return tool_call_response(
+            ("call-1", "knowledge__search", '{"query":"retention"}'),
+            ("call-2", "mcp__local-echo__echo", '{"text":"hi"}'),
+        )
+
+    req = tool_request()
+    turn = await configured_gateway(respond).chat_with_tools(
+        req, opening(req), (SEARCH_TOOL, ECHO_TOOL)
+    )
+
+    assert turn.text is None
+    assert turn.tool_calls == (
+        ToolCall("call-1", "knowledge.search", {"query": "retention"}),
+        ToolCall("call-2", "mcp.local-echo.echo", {"text": "hi"}),
+    )
+    assert turn.result.audit.operation is ModelOperation.CHAT
+    assert turn.result.usage.input_tokens == 40
+    payload = sent[0]
+    assert payload["tool_choice"] == "auto"
+    assert [item["function"]["name"] for item in payload["tools"]] == [
+        "knowledge__search",
+        "mcp__local-echo__echo",
+    ]
+    assert payload["tools"][0] == {
+        "type": "function",
+        "function": {
+            "name": "knowledge__search",
+            "description": SEARCH_TOOL.description,
+            "parameters": dict(SEARCH_TOOL.parameters),
+        },
+    }
+    assert payload["messages"] == [
+        {"role": "system", "content": req.prompt},
+        {"role": "user", "content": req.context},
+    ]
+    assert "response_format" not in payload
+
+
+@pytest.mark.asyncio
+async def test_chat_with_tools_replays_tool_transcript_and_returns_text_without_tools():
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "openai/gpt-5.6-sol",
+                "choices": [{"finish_reason": "stop", "message": {"content": "Done."}}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+            },
+        )
+
+    req = tool_request()
+    call = ToolCall("call-1", "knowledge.search", {"query": "retention"})
+    transcript = (
+        *opening(req),
+        ChatMessage("assistant", "", tool_calls=(call,)),
+        ChatMessage("tool", "[T1] untrusted tool data", tool_call_id="call-1"),
+    )
+    turn = await configured_gateway(respond).chat_with_tools(req, transcript, ())
+
+    assert turn.text == "Done."
+    assert turn.tool_calls == ()
+    payload = sent[0]
+    assert "tools" not in payload and "tool_choice" not in payload
+    assert payload["messages"][2] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "knowledge__search", "arguments": '{"query":"retention"}'},
+            }
+        ],
+    }
+    assert payload["messages"][3] == {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": "[T1] untrusted tool data",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_with_tools_returns_malformed_arguments_as_raw():
+    def respond(_incoming):
+        return tool_call_response(
+            ("call-1", "knowledge__search", "{not json"),
+            ("call-2", "knowledge__search", "[1, 2]"),
+        )
+
+    req = tool_request()
+    turn = await configured_gateway(respond).chat_with_tools(req, opening(req), (SEARCH_TOOL,))
+
+    assert turn.tool_calls == (
+        ToolCall("call-1", "knowledge.search", {"_raw": "{not json"}),
+        ToolCall("call-2", "knowledge.search", {"_raw": "[1, 2]"}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_with_tools_records_one_chat_model_call_and_span(span_recorder):
+    recorder = FakeRecorder()
+    req = tool_request()
+    turn = await configured_gateway(
+        lambda _incoming: tool_call_response(("call-1", "knowledge__search", '{"query":"x"}')),
+        recorder=recorder,
+    ).chat_with_tools(req, opening(req), (SEARCH_TOOL,))
+
+    assert len(recorder.records) == 1
+    record = recorder.records[0]
+    assert record.operation is ModelOperation.CHAT
+    assert record.status == "ok"
+    assert turn.result.call_id == record.call_id
+    assert "knowledge__search" in json.loads(record.request_json)["tools"][0]["function"]["name"]
+    assert "call-1" in (record.response_text or "")
+    spans = span_recorder.get_finished_spans()
+    assert [item.name for item in spans] == ["chat qwen-plus"]
+    assert spans[0].attributes["tap.model_call_id"] == record.call_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "reserved-tool",
+        "tool-outside-allowlist",
+        "opening-mismatch",
+        "unredacted-tool-result",
+        "structured-operation",
+    ],
+)
+async def test_chat_with_tools_rejects_unsafe_requests_before_io(case):
+    sent = []
+    gateway = configured_gateway(lambda incoming: (sent.append(incoming), success(incoming))[1])
+    req = tool_request()
+    messages = opening(req)
+    tools: tuple[ToolSpec, ...] = (SEARCH_TOOL,)
+    if case == "reserved-tool":
+        tools = (ToolSpec("knowledge.answer", "Reserved.", {"type": "object"}),)
+    elif case == "tool-outside-allowlist":
+        tools = (ToolSpec("mcp.other.delete", "Delete.", {"type": "object"}),)
+    elif case == "opening-mismatch":
+        messages = (ChatMessage("system", "Other prompt."), messages[1])
+    elif case == "unredacted-tool-result":
+        leaked = ChatMessage("tool", "mail owner@example.com", tool_call_id="call-1")
+        messages = (*messages, leaked)
+    else:
+        req = replace(req, operation=ModelOperation.STRUCTURED)
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.chat_with_tools(req, messages, tools)
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_follows_tool_script_then_answers_text():
+    from tap.testing.deterministic_model_gateway import (
+        DeterministicModelGateway,
+        ToolTurnScript,
+    )
+
+    recorder = FakeRecorder()
+    gateway = DeterministicModelGateway(
+        configured_gateway(success)._config,
+        scope=VALIDATION_SCOPE,
+        redact=redact,
+        recorder=recorder,
+        tool_script=(
+            ToolTurnScript((("knowledge.search", {"query": "a"}),)),
+            ToolTurnScript((("mcp.local-echo.echo", {"text": "b"}), ("knowledge.search", {}))),
+        ),
+    )
+    req = tool_request()
+    tools = (SEARCH_TOOL, ECHO_TOOL)
+
+    first = await gateway.chat_with_tools(req, opening(req), tools)
+    second = await gateway.chat_with_tools(req, opening(req), tools)
+    third = await gateway.chat_with_tools(req, opening(req), tools)
+
+    assert [(call.name, dict(call.arguments)) for call in first.tool_calls] == [
+        ("knowledge.search", {"query": "a"})
+    ]
+    assert [call.name for call in second.tool_calls] == ["mcp.local-echo.echo", "knowledge.search"]
+    assert len({call.call_id for call in (*first.tool_calls, *second.tool_calls)}) == 3
+    assert third.tool_calls == () and third.text
+    assert [record.operation for record in recorder.records] == [ModelOperation.CHAT] * 3

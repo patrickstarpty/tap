@@ -25,12 +25,15 @@ from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.domain.policy import AuthorizationDenied
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.models import (
+    ChatMessage,
     ModelDescriptor,
     ModelGatewayUnavailable,
     ModelRequest,
     ModelResult,
     ModelStreamEvent,
     StreamCompleted,
+    ToolSpec,
+    ToolTurn,
 )
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.application.answers import (
@@ -157,7 +160,29 @@ class CapturingModelGateway:
         # Quality receipts attest one complete call; streaming adds no captured evidence.
         yield StreamCompleted(await self._capture("generate_structured", request))
 
-    async def _capture(self, method: str, request: ModelRequest) -> ModelResult:
+    async def chat_with_tools(
+        self,
+        request: ModelRequest,
+        messages: tuple[ChatMessage, ...],
+        tools: tuple[ToolSpec, ...],
+    ) -> ToolTurn:
+        turn: ToolTurn | None = None
+
+        async def call(value: ModelRequest) -> ModelResult:
+            nonlocal turn
+            turn = await self._delegate.chat_with_tools(value, messages, tools)
+            return turn.result
+
+        await self._capture("chat_with_tools", request, call)
+        assert turn is not None
+        return turn
+
+    async def _capture(
+        self,
+        method: str,
+        request: ModelRequest,
+        call: Callable[[ModelRequest], Awaitable[ModelResult]] | None = None,
+    ) -> ModelResult:
         if self._active is None:
             raise RuntimeError("ModelGateway call occurred outside a quality attempt")
         route = self._routes.get(request.operation.value)
@@ -183,7 +208,7 @@ class CapturingModelGateway:
         started = time.monotonic_ns()
         result: ModelResult | None = None
         try:
-            result = await getattr(self._delegate, method)(request)
+            result = await (call or getattr(self._delegate, method))(request)
             audit = getattr(result, "audit", None)
             if audit is None or (
                 getattr(result, "actual_provider", None)

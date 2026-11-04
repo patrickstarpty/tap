@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections import deque
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
@@ -16,6 +19,7 @@ from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGatewayConfig,
     OnText,
     Redact,
+    wire_tool_name,
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, LiteLLMModel, LiteLLMRoutes
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest
@@ -52,6 +56,14 @@ class StaticLiteLLMCatalog(LiteLLMCatalog):
 
 
 AnswerMode = Literal["first-sentence", "best-overlap"]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTurnScript:
+    """One scripted model turn: `(tool_id, arguments)` calls returned in order."""
+
+    calls: tuple[tuple[str, Mapping[str, object]], ...]
+
 
 _STOP_TERMS = frozenset(
     {
@@ -136,10 +148,13 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         redact: Redact,
         recorder: ModelCallRecorder | None = None,
         answer_mode: AnswerMode = "first-sentence",
+        tool_script: Sequence[ToolTurnScript] | None = None,
     ) -> None:
         if answer_mode not in ("first-sentence", "best-overlap"):
             raise ValueError("unsupported deterministic answer mode")
         self._answer_mode = answer_mode
+        self._tool_script = deque(tool_script or ())
+        self._tool_call_count = 0
         super().__init__(
             config,
             scope=scope,
@@ -165,6 +180,8 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
         attempts.count = 1
+        if "tools" in payload and self._tool_script:
+            return self._scripted_tool_turn(request), httpx.Headers()
         if request.operation is ModelOperation.EMBED:
             vector = (
                 deterministic_vector(request.context)
@@ -241,3 +258,25 @@ class DeterministicModelGateway(LiteLLMModelGateway):
                 },
             }
         return body, httpx.Headers()
+
+    def _scripted_tool_turn(self, request: ModelRequest) -> dict[str, Any]:
+        calls = []
+        for name, arguments in self._tool_script.popleft().calls:
+            self._tool_call_count += 1
+            calls.append(
+                {
+                    "id": f"call-{self._tool_call_count}",
+                    "type": "function",
+                    "function": {
+                        "name": wire_tool_name(name),
+                        "arguments": json.dumps(dict(arguments), ensure_ascii=False),
+                    },
+                }
+            )
+        return {
+            "model": "fake/deterministic-chat-v1",
+            "choices": [
+                {"finish_reason": "tool_calls", "message": {"content": None, "tool_calls": calls}}
+            ],
+            "usage": {"prompt_tokens": len(request.context.split()), "completion_tokens": 1},
+        }
