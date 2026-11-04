@@ -17,6 +17,7 @@ from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavaila
 from tap.modules.ai.application.agent_authoring import AgentAuthoringRejected
 from tap.modules.ai.application.skill_import import SkillImportRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected
+from tap.modules.ai.domain.mcp import McpRejected
 from tap.modules.ai.domain.models import (
     ModelGatewayRejected,
     ModelGatewayUnavailable,
@@ -341,6 +342,10 @@ def register_problem_handlers(app: FastAPI) -> None:
     async def agent_authoring_rejected_problem(
         request: Request, error: AgentAuthoringRejected
     ) -> JSONResponse:
+        return problem_response(error.code, request)
+
+    @app.exception_handler(McpRejected)
+    async def mcp_rejected_problem(request: Request, error: McpRejected) -> JSONResponse:
         return problem_response(error.code, request)
 
     @app.exception_handler(SkillImportRejected)

@@ -11,6 +11,7 @@ from tap.modules.ai.adapters.mysql import (
     skill_revision,
 )
 from tap.modules.ai.adapters.mysql_checkpointer import AI_GRAPH_TABLES
+from tap.modules.ai.adapters.mysql_mcp import ai_mcp_server, ai_mcp_tool
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn, turn_snapshot
 from tap.modules.chat.adapters.mysql_conversations import (
     conversation,
@@ -89,6 +90,8 @@ BUSINESS_TABLES = (
     skill,
     skill_revision,
     ai_agent_revision_skill,
+    ai_mcp_server,
+    ai_mcp_tool,
     *AI_GRAPH_TABLES,
     *GRAPH_TABLES,
     *TEST_MANAGEMENT_TABLES,

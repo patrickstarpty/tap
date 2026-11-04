@@ -279,6 +279,38 @@
       "type": "https://tap.example/problems/knowledge-runtime-unavailable"
     },
     {
+      "code": "mcp-server-conflict",
+      "detail": "An MCP server with this slug already exists in this Project.",
+      "retryable": false,
+      "status": 409,
+      "title": "MCP server conflict",
+      "type": "https://tap.example/problems/mcp-server-conflict"
+    },
+    {
+      "code": "mcp-server-invalid",
+      "detail": "The slug, name or auth environment variable name is invalid.",
+      "retryable": false,
+      "status": 422,
+      "title": "MCP server invalid",
+      "type": "https://tap.example/problems/mcp-server-invalid"
+    },
+    {
+      "code": "mcp-server-not-found",
+      "detail": "The MCP server is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "MCP server not found",
+      "type": "https://tap.example/problems/mcp-server-not-found"
+    },
+    {
+      "code": "mcp-url-not-allowed",
+      "detail": "The MCP URL must be http(s) on a loopback or configured allowed host.",
+      "retryable": false,
+      "status": 422,
+      "title": "MCP URL not allowed",
+      "type": "https://tap.example/problems/mcp-url-not-allowed"
+    },
+    {
       "code": "model-not-selectable",
       "detail": "The requested model is not available for this request.",
       "retryable": false,

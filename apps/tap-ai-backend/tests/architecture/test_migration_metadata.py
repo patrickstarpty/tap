@@ -49,6 +49,8 @@ EXPECTED_TABLES = {
     "skill",
     "skill_revision",
     "ai_agent_revision_skill",
+    "ai_mcp_server",
+    "ai_mcp_tool",
     "enterprise",
     "project",
     "actor_principal",

@@ -68,6 +68,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/ai/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mcp Servers */
+        get: operations["ai_list_mcp_servers"];
+        put?: never;
+        /** Register Mcp Server */
+        post: operations["ai_register_mcp_server"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/mcp-servers/{server_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Mcp Server */
+        patch: operations["ai_update_mcp_server"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/mcp-servers/{server_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync Mcp Server */
+        post: operations["ai_sync_mcp_server"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/models": {
         parameters: {
             query?: never;
@@ -163,6 +215,23 @@ export interface paths {
         };
         /** Get Skill Content */
         get: operations["ai_get_skill_content"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/ai/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tools */
+        get: operations["ai_list_tools"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3038,6 +3107,51 @@ export interface components {
              */
             status: "ok";
         };
+        /**
+         * McpServerCreateRequest
+         * @description Registration input; `authHeaderEnv` names an environment variable, never a secret.
+         */
+        McpServerCreateRequest: {
+            /** Authheaderenv */
+            authHeaderEnv?: string | null;
+            /** Displayname */
+            displayName: string;
+            /** Slug */
+            slug: string;
+            /** Url */
+            url: string;
+        };
+        /** McpServerPage */
+        McpServerPage: {
+            /** Items */
+            items: components["schemas"]["McpServerView"][];
+        };
+        /** McpServerUpdateRequest */
+        McpServerUpdateRequest: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** McpServerView */
+        McpServerView: {
+            /** Authheaderenv */
+            authHeaderEnv?: string | null;
+            /** Displayname */
+            displayName: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Lasterror */
+            lastError?: string | null;
+            /** Lastsyncedat */
+            lastSyncedAt?: string | null;
+            /** Serverid */
+            serverId: string;
+            /** Slug */
+            slug: string;
+            /** Tools */
+            tools?: components["schemas"]["ToolView"][];
+            /** Url */
+            url: string;
+        };
         /** ModelCallDetail */
         ModelCallDetail: {
             /** Attempts */
@@ -3196,7 +3310,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "https://tap.example/problems/agent-definition-invalid" | "https://tap.example/problems/agent-description-invalid" | "https://tap.example/problems/agent-instruction-invalid" | "https://tap.example/problems/agent-model-unsupported" | "https://tap.example/problems/agent-name-invalid" | "https://tap.example/problems/agent-skill-unavailable" | "https://tap.example/problems/agent-skills-invalid" | "https://tap.example/problems/agent-tool-unavailable" | "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/skill-body-empty" | "https://tap.example/problems/skill-description-invalid" | "https://tap.example/problems/skill-front-matter-invalid" | "https://tap.example/problems/skill-front-matter-missing" | "https://tap.example/problems/skill-name-invalid" | "https://tap.example/problems/skill-not-utf8" | "https://tap.example/problems/skill-too-large" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
+            type: "https://tap.example/problems/agent-definition-invalid" | "https://tap.example/problems/agent-description-invalid" | "https://tap.example/problems/agent-instruction-invalid" | "https://tap.example/problems/agent-model-unsupported" | "https://tap.example/problems/agent-name-invalid" | "https://tap.example/problems/agent-skill-unavailable" | "https://tap.example/problems/agent-skills-invalid" | "https://tap.example/problems/agent-tool-unavailable" | "https://tap.example/problems/answer-snapshot-unavailable" | "https://tap.example/problems/answer-unavailable" | "https://tap.example/problems/asset-revision-unavailable" | "https://tap.example/problems/association-conflict" | "https://tap.example/problems/authorization-denied" | "https://tap.example/problems/automation-mapping-required" | "https://tap.example/problems/citation-stale" | "https://tap.example/problems/citation-unavailable" | "https://tap.example/problems/conversation-integrity" | "https://tap.example/problems/conversation-not-found" | "https://tap.example/problems/document-limit-reached" | "https://tap.example/problems/document-not-found" | "https://tap.example/problems/document-not-retryable" | "https://tap.example/problems/document-state-changed" | "https://tap.example/problems/document-too-large" | "https://tap.example/problems/embedding-unavailable" | "https://tap.example/problems/empty-document" | "https://tap.example/problems/execution-provider-unavailable" | "https://tap.example/problems/graph-fact-not-found" | "https://tap.example/problems/graph-unavailable" | "https://tap.example/problems/idempotency-conflict" | "https://tap.example/problems/knowledge-projection-not-ready" | "https://tap.example/problems/knowledge-review-not-found" | "https://tap.example/problems/knowledge-review-state-conflict" | "https://tap.example/problems/knowledge-runtime-unavailable" | "https://tap.example/problems/mcp-server-conflict" | "https://tap.example/problems/mcp-server-invalid" | "https://tap.example/problems/mcp-server-not-found" | "https://tap.example/problems/mcp-url-not-allowed" | "https://tap.example/problems/model-not-selectable" | "https://tap.example/problems/model-unavailable" | "https://tap.example/problems/recorder-unavailable" | "https://tap.example/problems/request-validation" | "https://tap.example/problems/revision-conflict" | "https://tap.example/problems/scope-mismatch" | "https://tap.example/problems/search-execution-rejected" | "https://tap.example/problems/search-unavailable" | "https://tap.example/problems/skill-body-empty" | "https://tap.example/problems/skill-description-invalid" | "https://tap.example/problems/skill-front-matter-invalid" | "https://tap.example/problems/skill-front-matter-missing" | "https://tap.example/problems/skill-name-invalid" | "https://tap.example/problems/skill-not-utf8" | "https://tap.example/problems/skill-too-large" | "https://tap.example/problems/source-command-pending" | "https://tap.example/problems/source-not-found" | "https://tap.example/problems/source-selection-required" | "https://tap.example/problems/source-unavailable" | "https://tap.example/problems/turn-not-implemented" | "https://tap.example/problems/unsupported-answer-control" | "https://tap.example/problems/unsupported-document";
         } & ({
             /** @constant */
             detail?: "The Agent definition does not satisfy the revision contract.";
@@ -3626,6 +3740,58 @@ export interface components {
             title?: "Knowledge runtime unavailable";
             /** @constant */
             type?: "https://tap.example/problems/knowledge-runtime-unavailable";
+        } | {
+            /** @constant */
+            detail?: "An MCP server with this slug already exists in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            title?: "MCP server conflict";
+            /** @constant */
+            type?: "https://tap.example/problems/mcp-server-conflict";
+        } | {
+            /** @constant */
+            detail?: "The slug, name or auth environment variable name is invalid.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "MCP server invalid";
+            /** @constant */
+            type?: "https://tap.example/problems/mcp-server-invalid";
+        } | {
+            /** @constant */
+            detail?: "The MCP server is unavailable in this Project.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 404;
+            /** @constant */
+            title?: "MCP server not found";
+            /** @constant */
+            type?: "https://tap.example/problems/mcp-server-not-found";
+        } | {
+            /** @constant */
+            detail?: "The MCP URL must be http(s) on a loopback or configured allowed host.";
+            /** @constant */
+            failureStage?: unknown;
+            /** @constant */
+            retryable?: false;
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            title?: "MCP URL not allowed";
+            /** @constant */
+            type?: "https://tap.example/problems/mcp-url-not-allowed";
         } | {
             /** @constant */
             detail?: "The requested model is not available for this request.";
@@ -4997,6 +5163,36 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ToolPage */
+        ToolPage: {
+            /** Items */
+            items: components["schemas"]["ToolView"][];
+        };
+        /** ToolView */
+        ToolView: {
+            /** Callable */
+            callable: boolean;
+            /** Description */
+            description: string;
+            /** Displayname */
+            displayName: string;
+            /**
+             * Effect
+             * @enum {string}
+             */
+            effect: "read" | "propose" | "external";
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "builtin" | "mcp";
+            /** Serverid */
+            serverId?: string | null;
+            /** Toolid */
+            toolId: string;
+        };
         /** TraceSpanView */
         TraceSpanView: {
             /** Attempt */
@@ -5697,6 +5893,266 @@ export interface operations {
             };
         };
     };
+    ai_list_mcp_servers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_register_mcp_server: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_update_mcp_server: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_sync_mcp_server: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerView"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MCP server rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     ai_list_models: {
         parameters: {
             query?: never;
@@ -6094,6 +6550,55 @@ export interface operations {
             };
             /** @description Skill revision unavailable */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Knowledge runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ai_list_tools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

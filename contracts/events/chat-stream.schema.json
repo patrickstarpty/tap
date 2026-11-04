@@ -1440,6 +1440,94 @@
         {
           "properties": {
             "detail": {
+              "const": "An MCP server with this slug already exists in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "MCP server conflict"
+            },
+            "type": {
+              "const": "https://tap.example/problems/mcp-server-conflict"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The slug, name or auth environment variable name is invalid."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "MCP server invalid"
+            },
+            "type": {
+              "const": "https://tap.example/problems/mcp-server-invalid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The MCP server is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "MCP server not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/mcp-server-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The MCP URL must be http(s) on a loopback or configured allowed host."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "MCP URL not allowed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/mcp-url-not-allowed"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The requested model is not available for this request."
             },
             "failureStage": {
@@ -2032,6 +2120,10 @@
             "https://tap.example/problems/knowledge-review-not-found",
             "https://tap.example/problems/knowledge-review-state-conflict",
             "https://tap.example/problems/knowledge-runtime-unavailable",
+            "https://tap.example/problems/mcp-server-conflict",
+            "https://tap.example/problems/mcp-server-invalid",
+            "https://tap.example/problems/mcp-server-not-found",
+            "https://tap.example/problems/mcp-url-not-allowed",
             "https://tap.example/problems/model-not-selectable",
             "https://tap.example/problems/model-unavailable",
             "https://tap.example/problems/recorder-unavailable",

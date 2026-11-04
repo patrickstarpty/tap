@@ -43,6 +43,7 @@ from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvi
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.application.agent_authoring import AgentAuthoringService
+from tap.modules.ai.application.mcp_servers import McpServerService
 from tap.modules.ai.application.skill_import import SkillImportService
 from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
@@ -232,6 +233,7 @@ class HttpServices:
     tool_registry: ToolRegistry | None = None
     skill_imports: SkillImportService | None = None
     agent_authoring: AgentAuthoringService | None = None
+    mcp_servers: McpServerService | None = None
     conversations: ConversationService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None
@@ -326,6 +328,14 @@ def skill_import_service(request: Request) -> SkillImportService:
 def agent_authoring_service(request: Request) -> AgentAuthoringService:
     services = getattr(request.app.state, "http_services", None)
     service = services.agent_authoring if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def mcp_server_service(request: Request) -> McpServerService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.mcp_servers if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

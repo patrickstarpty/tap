@@ -746,6 +746,7 @@ async def create_api_runtime(
             graph_indexes=CachedSnapshotIndexes(),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
+            mcp_sessions=async_sessionmaker(engine, expire_on_commit=False),
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
             conversation_notifier=RedisConversationEventNotifier(notification_redis),
@@ -1535,6 +1536,7 @@ def _assemble_http_services(
     graph_indexes: CachedSnapshotIndexes | None = None,
     test_plan_sessions: object | None = None,
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
+    mcp_sessions: async_sessionmaker[AsyncSession] | None = None,
     parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
     conversation_notifier: ConversationEventNotifier | None = None,
@@ -1767,7 +1769,25 @@ def _assemble_http_services(
     from tap.modules.ai.application.skill_import import SkillImportService
     from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
 
-    tool_registry = ToolRegistry(builtin_tools())
+    mcp_servers = None
+    mcp_tools = None
+    if mcp_sessions is not None:
+        from tap.modules.ai.adapters.mcp_client import StreamableHttpMcpClient
+        from tap.modules.ai.adapters.mysql_mcp import (
+            MysqlMcpServerRepository,
+            MysqlMcpToolSource,
+        )
+        from tap.modules.ai.application.mcp_servers import McpServerService
+        from tap.modules.ai.domain.mcp import mcp_allowed_hosts
+
+        mcp_hosts = mcp_allowed_hosts()
+        mcp_client = StreamableHttpMcpClient(extra_hosts=mcp_hosts)
+        mcp_repository = MysqlMcpServerRepository(mcp_sessions, scope=repository.scope)
+        mcp_servers = McpServerService(mcp_repository, mcp_client, extra_hosts=mcp_hosts)
+        mcp_tools = MysqlMcpToolSource(
+            mcp_sessions, mcp_client, scope=repository.scope, extra_hosts=mcp_hosts
+        )
+    tool_registry = ToolRegistry(builtin_tools(), mcp=mcp_tools)
     model_catalog = ModelCatalog(
         embeddings.gateway,
         scope=embeddings.scope,
@@ -1787,6 +1807,7 @@ def _assemble_http_services(
             model_catalog,
         ),
         model_catalog=model_catalog,
+        mcp_servers=mcp_servers,
         knowledge=knowledge_http,
         readiness=readiness,
         scope_provider=scope_provider,

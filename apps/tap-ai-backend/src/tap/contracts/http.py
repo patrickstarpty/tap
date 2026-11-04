@@ -150,6 +150,50 @@ class AgentStatusRequest(ContractModel):
     status: Literal["enabled", "disabled"]
 
 
+class ToolView(ContractModel):
+    tool_id: ToolId
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, max_length=1024)]
+    effect: Literal["read", "propose", "external"]
+    origin: Literal["builtin", "mcp"]
+    server_id: Annotated[str | None, Field(strict=True, min_length=1, max_length=64)] = None
+    enabled: bool
+    callable: bool
+
+
+class ToolPage(ContractModel):
+    items: Annotated[list[ToolView], Field(max_length=4096)]
+
+
+class McpServerCreateRequest(ContractModel):
+    """Registration input; `authHeaderEnv` names an environment variable, never a secret."""
+
+    slug: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
+    url: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
+    auth_header_env: Annotated[str | None, Field(strict=True, min_length=1, max_length=256)] = None
+
+
+class McpServerUpdateRequest(ContractModel):
+    enabled: Annotated[bool, Field(strict=True)]
+
+
+class McpServerView(ContractModel):
+    server_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    slug: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
+    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    url: Annotated[str, Field(strict=True, min_length=1, max_length=2048)]
+    auth_header_env: Annotated[str | None, Field(strict=True, max_length=128)] = None
+    enabled: bool
+    last_synced_at: str | None = None
+    last_error: Annotated[str | None, Field(strict=True, max_length=64)] = None
+    tools: Annotated[list[ToolView], Field(max_length=64)] = Field(default_factory=list)
+
+
+class McpServerPage(ContractModel):
+    items: Annotated[list[McpServerView], Field(max_length=256)]
+
+
 class SourceFamily(str, Enum):
     DOC = "doc"
     CODE = "code"

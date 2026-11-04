@@ -384,6 +384,30 @@ PROBLEM_REGISTRY = MappingProxyType(
                         422,
                         "The Agent definition does not satisfy the revision contract.",
                     ),
+                    (
+                        "mcp-url-not-allowed",
+                        "MCP URL not allowed",
+                        422,
+                        "The MCP URL must be http(s) on a loopback or configured allowed host.",
+                    ),
+                    (
+                        "mcp-server-invalid",
+                        "MCP server invalid",
+                        422,
+                        "The slug, name or auth environment variable name is invalid.",
+                    ),
+                    (
+                        "mcp-server-conflict",
+                        "MCP server conflict",
+                        409,
+                        "An MCP server with this slug already exists in this Project.",
+                    ),
+                    (
+                        "mcp-server-not-found",
+                        "MCP server not found",
+                        404,
+                        "The MCP server is unavailable in this Project.",
+                    ),
                 )
             ),
             ProblemDefinition(
