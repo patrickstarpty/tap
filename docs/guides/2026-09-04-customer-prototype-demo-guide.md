@@ -1,6 +1,6 @@
 # TAP 客户演示指南：从业务知识到测试决策
 
-更新日期：2026-11-03（追加流程五 Agents 与 Skills）。本文按当前实现重新组织演示，替代原有逐页浏览脚本。面向售前、产品负责人和演示主持人；主线约 20 分钟，加流程五约 25 分钟，管理层精简版约 5 分钟。
+更新日期：2026-11-04（流程五 Agents 与 Skills 重采英文截图，讲解保留中文）。本文按当前实现重新组织演示，替代原有逐页浏览脚本。面向售前、产品负责人和演示主持人；主线约 20 分钟，加流程五约 25 分钟，管理层精简版约 5 分钟。
 
 ## 1. 客户应带走的四个答案
 
@@ -350,16 +350,18 @@ TAP AI 运行页已增加待核对/阻断/全部筛选、已加载位置搜索�
 
 ## 7. 流程五：用 Agents 与 Skills 沉淀团队工作方式（5 分钟）
 
+**截图约定：**演示截图默认使用英文，本文讲解保持中文；产品默认语言不变。截图前选择左下角 **EN** 并折叠会话侧栏。本组于 2026-11-04 重采，布局视口为 1440×960，预览工具导出 1280×853 PNG。部分演示数据的中文 Agent 描述、反馈留言，以及图 26 的激活摘要和回答中的中文括注，仅在截图页面中作英文展示翻译；未修改数据库、统计数字、模型调用或原始对话。图 26 不作为未经修改的原始执行证据。旧中文截图保留在 `docs/assets/agents-skills-demo-2026-11-03/` 供追溯。
+
 **业务角色：**测试负责人、团队管理者、经常重复同类任务的测试设计人员。
 
 **业务问题：**团队的写法规范和常用方法散落在个人经验里，每次对话都要重新交代；管理者也看不到哪些助手在被使用、效果如何、由谁负责。
 
-1. 进入 **Tapper / 技能**，查看 Skill 库：数量、启用状态、来源、版本及周期内激活次数。
+1. 进入 **Tapper / Skills**，查看 Skill 库：数量、启用状态、来源、版本及周期内激活次数。
 2. 打开一个导入的 Skill，说明修订不可直接编辑，更新需重新导入为新修订。
-3. 打开 **导入 Skill** 与 **新建 Skill**，只展示入口与表单，不提交。
-4. 进入 **智能体 / 配置**，展示 Agent 列表，打开 **新建 Agent** 表单与一个 Agent 的详情，不保存。
+3. 打开 **Import skill** 与 **New skill**，只展示入口与表单，不提交。
+4. 进入 **Agents / Configuration**，展示 Agent 列表，打开 **New agent** 表单与一个 Agent 的详情，不保存。
 5. 打开一段使用 Agent 的已有对话，指出回答上方的 Skill 自动激活记录和调用链。
-6. 回到 **智能体 / 团队**，从指标、单个 Agent 档案、我的 Agent 到汇报页，展示运营与管理视角。
+6. 回到 **Agents / Team**，从指标、单个 Agent 档案、我的 Agent 到汇报页，展示运营与管理视角。
 
 **客户应看到：**Skill 是可版本化、可审计的团队工作规范；Agent 把提示词、模型与 Skill 组合成专职助手；每次使用都有记录，管理者可以按 Agent 看运行、成本、反馈与负责人。
 
@@ -371,19 +373,19 @@ TAP AI 运行页已增加待核对/阻断/全部筛选、已加载位置搜索�
 
 ### 图 19｜Skill 库：团队有哪些可复用的做法
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），本地演示数据，中文界面。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），本地演示数据，英文界面。
 
-![图 19：Skill 库](../assets/agents-skills-demo-2026-11-03/19-skills-library.png)
+![图 19：Skill 库](../assets/agents-skills-demo-2026-11-04-en/19-skills-library.png)
 
-- **怎么操作：**在 Tapper 二级菜单点击 **技能**，周期保持“近 30 天”。
+- **怎么操作：**在 Tapper 二级菜单点击 **Skills**，周期保持**Last 30 days**。
 - **请客户看：**顶部 Skill 总数、已启用、周期内用到/未用到和自动激活占比；每张卡片的类别、版本、来源（导入、内置、在 Tapper 中创建）与周期内激活次数；可按类别、适用任务、来源、状态筛选并导出 CSV。
 - **讲解重点：**“这里是团队的做法清单。每个 Skill 用了多少次一目了然，没人用的可以停用或改进。”
 
 ### 图 20｜Skill 详情：来源与修订可追溯
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），本地演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），本地演示数据。
 
-![图 20：Skill 详情](../assets/agents-skills-demo-2026-11-03/20-skill-detail.png)
+![图 20：Skill 详情](../assets/agents-skills-demo-2026-11-04-en/20-skill-detail.png)
 
 - **怎么操作：**点击 `webapp-testing` 卡片。
 - **请客户看：**描述、来源“导入”、导入人与时间、负责人、适用任务“知识问答”和修订号 `skill-rev-…`；底部提示“导入的 Skill 不能直接编辑，请将更新后的包作为新修订重新导入”。上方还有指令、文件、修订历史、用量与设置分页。
@@ -391,103 +393,103 @@ TAP AI 运行页已增加待核对/阻断/全部筛选、已加载位置搜索�
 
 ### 图 21｜导入外部 Skill
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），未提交的导入对话框。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），未提交的导入对话框。
 
-![图 21：导入 Skill](../assets/agents-skills-demo-2026-11-03/21-skill-import.png)
+![图 21：导入 Skill](../assets/agents-skills-demo-2026-11-04-en/21-skill-import.png)
 
-- **怎么操作：**点击右上角 **导入 Skill**，展示后点击 **取消**。
-- **请客户看：**支持 `SKILL.md`、zip 压缩包、文件夹或直接粘贴文本；先 **预览** 再确认导入。
+- **怎么操作：**点击右上角 **Import skill**，展示后点击 **Cancel**。
+- **请客户看：**支持 `SKILL.md`、zip 压缩包、文件夹或直接粘贴文本；先 **Preview** 再确认导入。
 - **讲解重点：**“团队或社区已有的 Skill 可以直接带进来。包里的脚本只存档、不会被执行，导入不会给 Tapper 增加任何工具权限。”
 
 ### 图 22｜在 Tapper 中新建 Skill
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），未保存的新建表单。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），未保存的新建表单。
 
-![图 22：新建 Skill](../assets/agents-skills-demo-2026-11-03/22-skill-new.png)
+![图 22：新建 Skill](../assets/agents-skills-demo-2026-11-04-en/22-skill-new.png)
 
-- **怎么操作：**点击 **新建 Skill**，展示后点击 **取消**。
+- **怎么操作：**点击 **New skill**，展示后点击 **Cancel**。
 - **请客户看：**名称、描述、适用任务（知识问答、测试计划生成、自动化生成）、指令，以及下方实时生成的 `SKILL.md` 预览。
 - **讲解重点：**“描述决定 Skill 何时被自动激活，所以要写清楚‘什么情况下使用’。保存后同样生成不可变修订，格式与导入的 Skill 一致。”
 
 ### 图 23｜Agent 配置：专职助手列表
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），本地演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），本地演示数据。
 
-![图 23：Agent 配置列表](../assets/agents-skills-demo-2026-11-03/23-agents-config.png)
+![图 23：Agent 配置列表](../assets/agents-skills-demo-2026-11-04-en/23-agents-config.png)
 
-- **怎么操作：**点击 **智能体**，切到 **配置** 分页。
-- **请客户看：**12 个已启用的自定义 Agent，如 Release Readiness Reporter、Web Test Design Assistant、Defect Triage Assistant；每行都可 **在对话中使用** 或 **停用**。
+- **怎么操作：**点击 **Agents**，切到 **Configuration** 分页。
+- **请客户看：**12 个已启用的 Agent（包含内置配置），如 Release Readiness Reporter、Web Test Design Assistant、Defect Triage Assistant；每行都可 **Use in chat** 或 **Disable**。
 - **讲解重点：**“每个 Agent 对应一个岗位或任务，例如发布评估、测试设计、缺陷分诊。”
 
 ### 图 24｜新建 Agent：提示词、模型与 Skill
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），未保存的新建表单。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），未保存的新建表单。
 
-![图 24：新建 Agent](../assets/agents-skills-demo-2026-11-03/24-agent-new.png)
+![图 24：新建 Agent](../assets/agents-skills-demo-2026-11-04-en/24-agent-new.png)
 
-- **怎么操作：**点击 **新建 Agent**，向下滚动展示各字段，不保存。
-- **请客户看：**名称、描述、系统提示词（上限 32 KB）、默认模型；**常驻 Skills** 表示每次回答都加载，**排除 Skills** 表示该 Agent 不自动激活。
+- **怎么操作：**点击 **New agent**，向下滚动展示各字段，不保存。
+- **请客户看：**名称、描述、系统提示词（上限 32 KB）、默认模型；**Pinned Skills** 表示每次回答都加载，**Excluded Skills** 表示该 Agent 不自动激活。
 - **讲解重点：**“大多数 Skill 按问题自动激活；只有必须始终遵守的规范才设为常驻，不适合该岗位的可以排除。”
 
 ### 图 25｜Agent 详情：当前配置与修订
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），本地演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），本地演示数据。
 
-![图 25：Agent 详情](../assets/agents-skills-demo-2026-11-03/25-agent-detail.png)
+![图 25：Agent 详情](../assets/agents-skills-demo-2026-11-04-en/25-agent-detail.png)
 
 - **怎么操作：**取消新建表单，点击 Plan Comparison Assistant 名称。
-- **请客户看：**职责描述、默认模型、内置工具“知识检索、知识回答（始终启用）”和修订号 `agent-rev-…`；分页可看 Skill 与修订历史，可 **编辑** 或 **在对话中使用**。
+- **请客户看：**职责描述、默认模型、内置工具“知识检索、知识回答（始终启用）”和修订号 `agent-rev-…`；分页可看 Skill 与修订历史，可 **Edit** 或 **Use in chat**。
 - **讲解重点：**“Agent 的每次修改都会留下修订，便于回看效果变化的原因。”
 
 ### 图 26｜对话中自动激活 Skill
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），本地演示环境已保存的一次真实模型对话（Qwen Plus）。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），本地演示环境已保存的一次真实模型对话（Qwen Plus）。
 
-![图 26：对话中自动激活 Skill](../assets/agents-skills-demo-2026-11-03/26-chat-agent-skill.png)
+![图 26：对话中自动激活 Skill](../assets/agents-skills-demo-2026-11-04-en/26-chat-agent-skill.png)
 
 - **怎么操作：**在对话历史中打开“Write Playwright tests for the policy reinstatement flow…”。
-- **请客户看：**输入框中的 Agent 标签 Automation Script Writer 与两个来源；回答上方“skill.activate → 已激活 webapp-testing”；调用链显示耗时、token、成本与实际模型；回答正文带 [1]–[6] 引用。
+- **请客户看：**输入框中的 Agent 标签 Automation Script Writer 与两个来源；回答上方“skill.activate → Activated webapp-testing”；调用链显示耗时、token、成本与实际模型；回答正文带 [1]–[6] 引用。
 - **讲解重点：**“用户不需要手动挑 Skill。Tapper 按问题判断该用哪个，并把这一步记录下来，回答依然回到资料原文。”
 
 ### 图 27｜Agent 团队：运行全貌
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），含 2026-10 业务验证演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），含 2026-10 业务验证演示数据。
 
-![图 27：Agent 团队](../assets/agents-skills-demo-2026-11-03/27-agents-team.png)
+![图 27：Agent 团队](../assets/agents-skills-demo-2026-11-04-en/27-agents-team.png)
 
-- **怎么操作：**切到 **团队** 分页，周期选“近 30 天”。
+- **怎么操作：**切到 **Team** 分页，周期选**Last 30 days**。
 - **请客户看：**运行次数、失败率、成本、总耗时与活跃 Agent；按 Agent 拆分的运行趋势、活跃日历；下方花名册、人员与组织架构图。
 - **讲解重点：**“管理者可以像看团队一样看 Agent：谁在干活、花了多少、哪里在失败。”
 
 ### 图 28｜Agent 档案：负责人与服务对象
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），含演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），含演示数据。
 
-![图 28：Agent 档案](../assets/agents-skills-demo-2026-11-03/28-agent-profile.png)
+![图 28：Agent 档案](../assets/agents-skills-demo-2026-11-04-en/28-agent-profile.png)
 
 - **怎么操作：**在花名册点击 Plan Comparison Assistant。
-- **请客户看：**入职日期、状态、负责人、当前修订（可 **查看配置**）及服务对象排行；分页包括工作量、履历、待处理反馈与设置。
+- **请客户看：**入职日期、状态、负责人、当前修订（可 **View configuration**）及服务对象排行；分页包括工作量、履历、待处理反馈与设置。
 - **讲解重点：**“每个 Agent 都有明确负责人。谁在用它、收到哪些反馈，负责人都看得到。”
 
 ### 图 29｜我的 Agent：待我处理的反馈
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），含演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），含演示数据。
 
-![图 29：我的 Agent](../assets/agents-skills-demo-2026-11-03/29-agents-mine.png)
+![图 29：我的 Agent](../assets/agents-skills-demo-2026-11-04-en/29-agents-mine.png)
 
-- **怎么操作：**关闭档案，切到 **我的 Agent** 分页。
+- **怎么操作：**关闭档案，切到 **My Agents** 分页。
 - **请客户看：**用户对回答点了“有帮助/没帮助”的反馈与留言；我负责的 Agent 的运行次数、满意度、中位耗时与成本。
 - **讲解重点：**“差评会直接进入负责人的待办，改进有据可依。”
 
 ### 图 30｜汇报：周期对比，可导出
 
-**画面来源：**2026-11-03 当前 TAP AI 运行页面（`develop`），含演示数据。
+**画面来源：**2026-11-04 当前 TAP AI 运行页面（`develop`），含演示数据。
 
-![图 30：Agent 团队汇报](../assets/agents-skills-demo-2026-11-03/30-agents-report.png)
+![图 30：Agent 团队汇报](../assets/agents-skills-demo-2026-11-04-en/30-agents-report.png)
 
-- **怎么操作：**切到 **汇报** 分页，周期选“上月”。
-- **请客户看：**本周期与上一周期的 Agent 数、运行次数、总耗时、成本、维护动作等对比，运行趋势与活跃日历；可 **导出 PDF**。
-- **讲解重点：**“周报或月报不用另外整理，直接导出给管理层。示例中上一周期为 0，是因为演示数据从 2026-10 开始。”
+- **怎么操作：**切到 **Report** 分页，周期选 **Last 30 days**。
+- **请客户看：**本周期与上一周期的 Agent 数、运行次数、总耗时、成本、维护动作等对比，运行趋势与活跃日历；可 **Export PDF**。
+- **讲解重点：**“周报或月报不用另外整理，直接导出给管理层。本图比较 2026-10-06—11-04 与 2026-09-06—10-05，指标仅用于演示，不代表客户真实用量。”
 
 ### 图 15｜将当前运行带入 Tapper
 

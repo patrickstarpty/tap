@@ -18,7 +18,7 @@ corepack pnpm --dir apps/web dev --port 15176
 
 Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄木鸟；素材包见 [Tapper Owl](apps/tap-ai-frontend/assets/brand/tapper/owl/README.md)。
 
-当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。各应用的实际交互以 `develop` 上运行的应用为准。
+当前设计截图：[Agents（英文）](docs/assets/agents-skills-demo-2026-11-04-en/23-agents-config.png) · [Skills（英文）](docs/assets/agents-skills-demo-2026-11-04-en/19-skills-library.png) · [Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。各应用的实际交互以 `develop` 上运行的应用为准。
 
 ## 文档
 
