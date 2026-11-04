@@ -5300,6 +5300,14 @@
             "title": "Serverid",
             "type": "string"
           },
+          "skippedTools": {
+            "items": {
+              "$ref": "#/components/schemas/McpSkippedToolView"
+            },
+            "maxItems": 64,
+            "title": "Skippedtools",
+            "type": "array"
+          },
           "slug": {
             "maxLength": 32,
             "minLength": 1,
@@ -5329,6 +5337,32 @@
           "enabled"
         ],
         "title": "McpServerView",
+        "type": "object"
+      },
+      "McpSkippedToolView": {
+        "additionalProperties": false,
+        "description": "A server tool left out of the registry because its name or schema is unusable.",
+        "properties": {
+          "name": {
+            "maxLength": 128,
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "name-invalid",
+              "schema-invalid",
+              "descriptor-invalid"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "reason"
+        ],
+        "title": "McpSkippedToolView",
         "type": "object"
       },
       "ModelCallDetail": {

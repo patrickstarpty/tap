@@ -178,6 +178,13 @@ class McpServerUpdateRequest(ContractModel):
     enabled: Annotated[bool, Field(strict=True)]
 
 
+class McpSkippedToolView(ContractModel):
+    """A server tool left out of the registry because its name or schema is unusable."""
+
+    name: Annotated[str, Field(strict=True, max_length=128)]
+    reason: Literal["name-invalid", "schema-invalid", "descriptor-invalid"]
+
+
 class McpServerView(ContractModel):
     server_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     slug: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
@@ -188,6 +195,9 @@ class McpServerView(ContractModel):
     last_synced_at: str | None = None
     last_error: Annotated[str | None, Field(strict=True, max_length=64)] = None
     tools: Annotated[list[ToolView], Field(max_length=64)] = Field(default_factory=list)
+    skipped_tools: Annotated[list[McpSkippedToolView], Field(max_length=64)] = Field(
+        default_factory=list
+    )
 
 
 class McpServerPage(ContractModel):

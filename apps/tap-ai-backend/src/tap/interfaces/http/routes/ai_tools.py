@@ -10,6 +10,7 @@ from tap.contracts.http import (
     McpServerCreateRequest,
     McpServerPage,
     McpServerUpdateRequest,
+    McpSkippedToolView,
     ToolPage,
     ToolView,
 )
@@ -54,6 +55,9 @@ def _server(value: McpServerView) -> McpServerContract:
         last_synced_at=None if value.last_synced_at is None else value.last_synced_at.isoformat(),
         last_error=value.last_error,
         tools=[_tool(item) for item in value.tools],
+        skipped_tools=[
+            McpSkippedToolView(name=item.name, reason=item.reason) for item in value.skipped_tools
+        ],
     )
 
 

@@ -7,7 +7,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 from tap.modules.ai.domain.tools import (
@@ -16,6 +16,7 @@ from tap.modules.ai.domain.tools import (
     ToolOrigin,
     ToolRejected,
     ToolResult,
+    validate_tool_id,
 )
 
 ALLOWED_HOSTS_ENV = "TAP_MCP_ALLOWED_HOSTS"
@@ -27,6 +28,8 @@ MAX_URL_LENGTH = 2048
 MAX_SLUG_LENGTH = 32
 MAX_DISPLAY_NAME_LENGTH = 128
 _MAX_TOOL_DESCRIPTION = 1024
+MAX_TOOL_NAME_LENGTH = 128
+_TOOL_NAME_UNSAFE = re.compile(r"[^a-z0-9_-]")
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,127}")
 _SCHEMES = frozenset({"http", "https"})
@@ -38,6 +41,17 @@ class McpRejected(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+McpSkipReason = Literal["name-invalid", "schema-invalid", "descriptor-invalid"]
+
+
+@dataclass(frozen=True)
+class McpSkippedTool:
+    """An MCP tool left out of the registry; `name` is the server's (bounded) name."""
+
+    name: str
+    reason: McpSkipReason
 
 
 @dataclass(frozen=True)
@@ -70,9 +84,13 @@ def _loopback(host: str) -> bool:
     if host == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(host)
     except ValueError:
         return False
+    # Only `::1` for IPv6: IPv4-mapped forms such as `::ffff:127.0.0.1` are not accepted.
+    if isinstance(address, ipaddress.IPv6Address):
+        return address == ipaddress.IPv6Address("::1")
+    return address.is_loopback
 
 
 def host_allowed(host: str | None, *, extra_hosts: frozenset[str]) -> bool:
@@ -120,8 +138,32 @@ def validate_auth_header_env(value: str) -> str:
     return value
 
 
+def normalize_tool_name(name: str) -> str:
+    """Registry form of an MCP tool name: lowercase, other characters become `_`."""
+    return _TOOL_NAME_UNSAFE.sub("_", name.lower())
+
+
 def mcp_tool_id(slug: str, name: str) -> str:
-    return f"mcp.{slug}.{name}"
+    """Registry id for an MCP tool; calls still use the server's original name."""
+    return f"mcp.{slug}.{normalize_tool_name(name)}"
+
+
+def _build_descriptor(
+    spec: McpToolSpec, *, server_id: str, slug: str, enabled: bool
+) -> ToolDescriptor:
+    if not isinstance(spec.name, str) or len(spec.name) > MAX_TOOL_NAME_LENGTH:
+        raise ToolRejected("tool-id-invalid")
+    validate_tool_id(mcp_tool_id(slug, spec.name))
+    return ToolDescriptor(
+        tool_id=mcp_tool_id(slug, spec.name),
+        display_name=spec.name,
+        description=spec.description[:_MAX_TOOL_DESCRIPTION],
+        input_schema=spec.input_schema,
+        effect=ToolEffect.READ if spec.read_only else ToolEffect.EXTERNAL,
+        origin=ToolOrigin.MCP,
+        server_id=server_id,
+        enabled=enabled,
+    )
 
 
 def mcp_descriptor(
@@ -129,18 +171,27 @@ def mcp_descriptor(
 ) -> ToolDescriptor | None:
     """Map an untrusted MCP tool to a registry descriptor, or None when it is unusable."""
     try:
-        return ToolDescriptor(
-            tool_id=mcp_tool_id(slug, spec.name),
-            display_name=spec.name,
-            description=spec.description[:_MAX_TOOL_DESCRIPTION],
-            input_schema=spec.input_schema,
-            effect=ToolEffect.READ if spec.read_only else ToolEffect.EXTERNAL,
-            origin=ToolOrigin.MCP,
-            server_id=server_id,
-            enabled=enabled,
-        )
-    except (ToolRejected, TypeError):
+        return _build_descriptor(spec, server_id=server_id, slug=slug, enabled=enabled)
+    except (ToolRejected, TypeError, AttributeError):
         return None
+
+
+def mcp_tool_problem(spec: McpToolSpec, *, slug: str) -> McpSkippedTool | None:
+    """Why a synchronized MCP tool cannot join the registry, or None when it can."""
+    try:
+        _build_descriptor(spec, server_id="sync", slug=slug, enabled=True)
+    except ToolRejected as error:
+        reason: McpSkipReason = "descriptor-invalid"
+        if str(error) == "tool-id-invalid":
+            reason = "name-invalid"
+        elif str(error) == "tool-schema-invalid":
+            reason = "schema-invalid"
+    except (TypeError, AttributeError):
+        reason = "descriptor-invalid"
+    else:
+        return None
+    name = spec.name if isinstance(spec.name, str) else ""
+    return McpSkippedTool(name[:MAX_TOOL_NAME_LENGTH], reason)
 
 
 def truncate_result(text: str) -> tuple[str, bool]:

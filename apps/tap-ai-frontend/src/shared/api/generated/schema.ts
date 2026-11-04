@@ -3145,12 +3145,27 @@ export interface components {
             lastSyncedAt?: string | null;
             /** Serverid */
             serverId: string;
+            /** Skippedtools */
+            skippedTools?: components["schemas"]["McpSkippedToolView"][];
             /** Slug */
             slug: string;
             /** Tools */
             tools?: components["schemas"]["ToolView"][];
             /** Url */
             url: string;
+        };
+        /**
+         * McpSkippedToolView
+         * @description A server tool left out of the registry because its name or schema is unusable.
+         */
+        McpSkippedToolView: {
+            /** Name */
+            name: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "name-invalid" | "schema-invalid" | "descriptor-invalid";
         };
         /** ModelCallDetail */
         ModelCallDetail: {

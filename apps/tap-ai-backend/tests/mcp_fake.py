@@ -13,7 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 
-def fake_server(*, tool_count: int = 0) -> FastMCP:
+def fake_server(*, tool_count: int = 0, extra_names: tuple[str, ...] = ()) -> FastMCP:
     server = FastMCP("fake", stateless_http=True, json_response=True, log_level="WARNING")
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True), description="Echo the text.")
@@ -40,6 +40,8 @@ def fake_server(*, tool_count: int = 0) -> FastMCP:
 
     for index in range(tool_count):
         server.add_tool(lambda: "ok", name=f"extra_{index}", description="Extra tool.")
+    for name in extra_names:
+        server.add_tool(lambda name=name: f"called {name}", name=name, description="Named tool.")
     return server
 
 

@@ -16,13 +16,13 @@ async def test_mysql_mcp_resync_replaces_tools_and_servers_are_project_scoped(
     from tap.modules.ai.adapters.mysql_mcp import MysqlMcpServerRepository, MysqlMcpToolSource
     from tap.modules.ai.application.mcp_servers import McpServerService
     from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
-    from tap.modules.ai.domain.mcp import McpRejected
+    from tap.modules.ai.domain.mcp import McpRejected, McpSkippedTool
     from tap.modules.ai.domain.tools import ToolEffect
     from tests.mcp_fake import fake_server, serve
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     client = StreamableHttpMcpClient(extra_hosts=frozenset())
-    server = fake_server()
+    server = fake_server(extra_names=("getWeather", "_hidden"))
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         service = McpServerService(
@@ -41,6 +41,8 @@ async def test_mysql_mcp_resync_replaces_tools_and_servers_are_project_scoped(
             effects = {item.tool_id: item.effect for item in created.tools}
             assert effects["mcp.fake.echo"] is ToolEffect.READ
             assert effects["mcp.fake.create_ticket"] is ToolEffect.EXTERNAL
+            assert "mcp.fake.getweather" in names
+            assert created.skipped_tools == (McpSkippedTool("_hidden", "name-invalid"),)
 
             server.remove_tool("create_ticket")
             server.add_tool(lambda: "ok", name="close_ticket", description="Close.")
@@ -61,10 +63,13 @@ async def test_mysql_mcp_resync_replaces_tools_and_servers_are_project_scoped(
             )
             executor = await registry.executor(VALIDATION_SCOPE, "mcp.fake.echo")
             assert (await executor.invoke(VALIDATION_SCOPE, {"text": "db"})).content == "echo: db"
+            weather = await registry.executor(VALIDATION_SCOPE, "mcp.fake.getweather")
+            assert (await weather.invoke(VALIDATION_SCOPE, {})).content == "called getWeather"
 
         failed = await service.sync(VALIDATION_SCOPE, created.server_id)
         assert failed.last_error == "mcp-unreachable"
         assert {item.tool_id for item in failed.tools} == names
+        assert failed.skipped_tools == (McpSkippedTool("_hidden", "name-invalid"),)
 
         disabled = await service.set_enabled(VALIDATION_SCOPE, created.server_id, False)
         assert disabled.enabled is False and all(not item.enabled for item in disabled.tools)

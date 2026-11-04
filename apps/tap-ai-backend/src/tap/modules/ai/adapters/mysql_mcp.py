@@ -25,7 +25,13 @@ from sqlalchemy.sql import ColumnElement
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.application.mcp_servers import McpServerRecord, RepositoryMcpToolSource
-from tap.modules.ai.domain.mcp import McpClient, McpRejected, McpToolSpec
+from tap.modules.ai.domain.mcp import (
+    MAX_SERVER_TOOLS,
+    McpClient,
+    McpRejected,
+    McpSkippedTool,
+    McpToolSpec,
+)
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 
@@ -66,6 +72,7 @@ ai_mcp_server = Table(
     Column("enabled", Boolean, nullable=False, server_default="1"),
     Column("last_synced_at", DATETIME(fsp=6)),
     Column("last_error", String(64)),
+    Column("skipped_tools_json", JSON),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     *_scope_columns(),
     UniqueConstraint("project_id", "server_id", name="uq_ai_mcp_server_project_pk"),
@@ -99,6 +106,21 @@ def _naive(value: datetime) -> datetime:
 
 def _aware(value: datetime | None) -> datetime | None:
     return None if value is None else value.replace(tzinfo=UTC)
+
+
+_SKIP_REASONS = frozenset({"name-invalid", "schema-invalid", "descriptor-invalid"})
+
+
+def _skipped(raw: object) -> tuple[McpSkippedTool, ...]:
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        McpSkippedTool(item["name"], item["reason"])
+        for item in raw[:MAX_SERVER_TOOLS]
+        if isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and item.get("reason") in _SKIP_REASONS
+    )
 
 
 class MysqlMcpServerRepository:
@@ -158,10 +180,17 @@ class MysqlMcpServerRepository:
         tools: tuple[McpToolSpec, ...],
         *,
         synced_at: datetime,
+        skipped: tuple[McpSkippedTool, ...] = (),
     ) -> None:
         self._assert_scope(scope)
         async with self._sessions.begin() as session:
-            await self._touch(session, server_id, last_synced_at=_naive(synced_at), last_error=None)
+            await self._touch(
+                session,
+                server_id,
+                last_synced_at=_naive(synced_at),
+                last_error=None,
+                skipped_tools_json=[{"name": item.name, "reason": item.reason} for item in skipped],
+            )
             await session.execute(
                 delete(ai_mcp_tool).where(
                     *scope_predicates(ai_mcp_tool, self._scope),
@@ -268,6 +297,7 @@ class MysqlMcpServerRepository:
                 last_synced_at=_aware(row["last_synced_at"]),
                 last_error=row["last_error"],
                 tools=tuple(tools.get(row["server_id"], ())),
+                skipped_tools=_skipped(row["skipped_tools_json"]),
             )
             for row in servers
         )

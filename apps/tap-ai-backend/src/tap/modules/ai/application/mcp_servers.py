@@ -15,9 +15,12 @@ from tap.modules.ai.domain.mcp import (
     MAX_SERVER_TOOLS,
     McpClient,
     McpRejected,
+    McpSkippedTool,
     McpToolSpec,
     allowed_mcp_url,
     mcp_descriptor,
+    mcp_tool_id,
+    mcp_tool_problem,
     validate_auth_header_env,
     validate_display_name,
     validate_server_slug,
@@ -25,7 +28,7 @@ from tap.modules.ai.domain.mcp import (
 from tap.modules.ai.domain.tools import ToolDescriptor, ToolExecutor, ToolRejected, ToolResult
 from tap.platform.telemetry import span
 
-# Tools whose names or schemas cannot form a registry descriptor are not stored.
+# Tools whose names or schemas cannot form a registry descriptor are reported, not stored.
 _MAX_TOOL_DESCRIPTION = 1024
 
 
@@ -40,6 +43,7 @@ class McpServerRecord:
     last_synced_at: datetime | None = None
     last_error: str | None = None
     tools: tuple[McpToolSpec, ...] = ()
+    skipped_tools: tuple[McpSkippedTool, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,7 @@ class McpServerView:
     last_synced_at: datetime | None
     last_error: str | None
     tools: tuple[ToolDescriptor, ...] = field(default_factory=tuple)
+    skipped_tools: tuple[McpSkippedTool, ...] = field(default_factory=tuple)
 
 
 class McpServerRepository(Protocol):
@@ -69,6 +74,7 @@ class McpServerRepository(Protocol):
         tools: tuple[McpToolSpec, ...],
         *,
         synced_at: datetime,
+        skipped: tuple[McpSkippedTool, ...] = (),
     ) -> None: ...
 
     async def record_sync_error(
@@ -109,10 +115,14 @@ class InMemoryMcpServerRepository:
             if (enterprise_id, project_id) == (scope.enterprise_id, scope.project_id)
         )
 
-    async def replace_tools(self, scope, server_id, tools, *, synced_at):
+    async def replace_tools(self, scope, server_id, tools, *, synced_at, skipped=()):
         record = await self.get_server(scope, server_id)
         self.servers[self._key(scope, server_id)] = replace(
-            record, tools=tools, last_synced_at=synced_at, last_error=None
+            record,
+            tools=tools,
+            skipped_tools=skipped,
+            last_synced_at=synced_at,
+            last_error=None,
         )
 
     async def record_sync_error(self, scope, server_id, code, *, at):
@@ -145,6 +155,7 @@ def _view(record: McpServerRecord) -> McpServerView:
         last_synced_at=record.last_synced_at,
         last_error=record.last_error,
         tools=_descriptors(record),
+        skipped_tools=record.skipped_tools,
     )
 
 
@@ -206,17 +217,26 @@ class McpServerService:
                 raise McpRejected("mcp-too-many-tools")
             if len({item.name for item in specs}) != len(specs):
                 raise McpRejected("mcp-protocol-error")
+            usable: list[McpToolSpec] = []
+            skipped: list[McpSkippedTool] = []
+            for spec in specs:
+                problem = mcp_tool_problem(spec, slug=record.slug)
+                if problem is None:
+                    usable.append(
+                        replace(spec, description=spec.description[:_MAX_TOOL_DESCRIPTION])
+                    )
+                else:
+                    skipped.append(problem)
+            # Distinct server names may normalize to one registry id; never pick one silently.
+            if len({mcp_tool_id(record.slug, item.name) for item in usable}) != len(usable):
+                raise McpRejected("mcp-tool-name-collision")
         except McpRejected as error:
             # A failed sync keeps the previous tool set and records a stable code.
             await self._repository.record_sync_error(scope, server_id, error.code, at=now)
         else:
-            usable = tuple(
-                replace(spec, description=spec.description[:_MAX_TOOL_DESCRIPTION])
-                for spec in specs
-                if mcp_descriptor(spec, server_id=record.server_id, slug=record.slug, enabled=True)
-                is not None
+            await self._repository.replace_tools(
+                scope, server_id, tuple(usable), synced_at=now, skipped=tuple(skipped)
             )
-            await self._repository.replace_tools(scope, server_id, usable, synced_at=now)
         return _view(await self._repository.get_server(scope, server_id))
 
     async def set_enabled(

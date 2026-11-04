@@ -160,6 +160,28 @@ def test_registered_mcp_tools_join_the_registry_and_follow_the_server_switch(
         assert duplicate.json()["type"].endswith("/mcp-server-conflict")
 
 
+def test_sync_keeps_non_canonical_names_and_reports_skipped_tools() -> None:
+    client, registry = _client(_ALL)
+    with serve(fake_server(extra_names=("getWeather", "_hidden"))) as url:
+        created = client.post(
+            f"{_BASE}/mcp-servers", json={"slug": "named", "displayName": "Named", "url": url}
+        )
+        assert created.status_code == 201, created.text
+        server = created.json()
+        tools = {item["toolId"]: item for item in server["tools"]}
+        assert tools["mcp.named.getweather"]["displayName"] == "getWeather"
+        assert server["skippedTools"] == [{"name": "_hidden", "reason": "name-invalid"}]
+        listed = client.get(f"{_BASE}/mcp-servers").json()["items"][0]
+        assert listed["skippedTools"] == server["skippedTools"]
+
+        async def call():
+            executor = await registry.executor(VALIDATION_SCOPE, "mcp.named.getweather")
+            return await executor.invoke(VALIDATION_SCOPE, {})
+
+        result = asyncio.run(call())
+        assert (result.content, result.is_error) == ("called getWeather", False)
+
+
 def test_sync_rejects_more_than_64_tools_and_keeps_no_tools() -> None:
     client, _ = _client(_ALL)
     with serve(fake_server(tool_count=60)) as url:
