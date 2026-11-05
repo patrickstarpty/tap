@@ -205,11 +205,11 @@ async def test_skill_revision_and_event_commit_together(owned_project_mysql) -> 
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.ai.adapters.maintenance import skill_maintenance_event
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
     from tap.modules.ai.application.skill_authoring import SkillAuthoringService, SkillDraft
     from tap.modules.ai.domain.assets import RevisionConflict
-    from tap.modules.skill_hub.adapters.mysql import skill_maintenance_event
-    from tap.modules.skill_hub.domain.models import new_skill_event
+    from tap.modules.ai.domain.maintenance import new_skill_event
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     try:

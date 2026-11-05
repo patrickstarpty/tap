@@ -10,14 +10,13 @@ import pytest
 from tap.modules.agent_team.domain.models import (
     TAPPER_DEFAULT_AGENT_KEY,
     UNKNOWN_AGENT_KEY,
-    MaintenanceEvent,
     Period,
     PeriodInvalid,
     is_pending_feedback,
-    new_event,
     project_timezone,
     trailing_30_days,
 )
+from tap.modules.ai.domain.maintenance import MaintenanceEvent, new_event
 
 
 def test_constants():

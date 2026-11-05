@@ -15,7 +15,6 @@ from tap.modules.agent_team.domain.models import (
     TAPPER_DEFAULT_AGENT_KEY,
     UNKNOWN_AGENT_KEY,
     AgentKind,
-    MaintenanceKind,
     MemberRow,
     MemberStatus,
     OrgChart,
@@ -23,6 +22,7 @@ from tap.modules.agent_team.domain.models import (
     TeamSummary,
 )
 from tap.modules.agent_team.ports import AgentRuntimeStats, ServedActor, TrendPoint
+from tap.modules.ai.domain.maintenance import MaintenanceKind
 from tap.platform.reporting.satisfaction import satisfaction as satisfaction
 
 # Spec 1.2/6.1: cards show at most the top 3 served actors.

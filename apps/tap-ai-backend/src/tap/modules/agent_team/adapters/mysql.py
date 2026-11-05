@@ -1,14 +1,4 @@
-"""`agent_maintenance_event` table definition (Task 1) and `MysqlAgentTeamStore`
-(Task 6): MySQL read models and writes for the Agent team view.
-
-`ai_agent`/`ai_agent_revision` are imported lazily, inside the methods that
-need them, rather than at module scope: `tap.modules.ai.adapters.mysql`
-imports `agent_maintenance_event` from this module at its own module scope,
-so an eager top-level import here of anything from that module would
-deadlock the cycle the first time either module loads before the other
-finishes executing (whichever side starts first finds the other's symbol not
-yet defined).
-"""
+"""MySQL read models and personnel writes for the Agent team view."""
 
 from __future__ import annotations
 
@@ -19,8 +9,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Column, Index, String, Table, func, or_, select, update
-from sqlalchemy.dialects.mysql import DATETIME
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.adapters.mysql import actor_principal
@@ -29,8 +18,6 @@ from tap.modules.agent_team.adapters.agent_keys import resolve_agent_keys
 from tap.modules.agent_team.domain.models import (
     TAPPER_DEFAULT_AGENT_KEY,
     UNKNOWN_AGENT_KEY,
-    MaintenanceEvent,
-    MaintenanceKind,
     Period,
     is_pending_feedback,
 )
@@ -43,65 +30,15 @@ from tap.modules.agent_team.ports import (
     RatingCounts,
     ResolvedFeedback,
 )
+from tap.modules.ai.adapters.maintenance import agent_maintenance_event, insert_maintenance_event
 from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.langfuse_sync import SyncKind
+from tap.modules.ai.domain.maintenance import MaintenanceEvent, MaintenanceKind
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import turn_input_snapshot
 from tap.modules.chat.adapters.mysql_feedback import answer_feedback
-from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
-from tap.platform.db.schema import augment_project_table, metadata
+from tap.platform.db.project_scope import require_project_scope, scope_predicates
 from tap.platform.telemetry.schema import langfuse_sync_cursor, trace_span
-
-agent_maintenance_event = Table(
-    "agent_maintenance_event",
-    metadata,
-    Column("event_id", String(64), primary_key=True),
-    Column("agent_id", String(64), nullable=False),
-    Column("kind", String(24), nullable=False),
-    Column("revision_id", String(64), nullable=True),
-    Column("feedback_id", String(36), nullable=True),
-    Column("note", String(500), nullable=True),
-    Column("occurred_at", DATETIME(fsp=6), nullable=False),
-)
-# `agent_id -> ai_agent.agent_id` is registered in `PROJECT_PARENT_LINKS`
-# (platform/db/schema.py) so `augment_project_table` wires the FK itself.
-augment_project_table(agent_maintenance_event)
-Index(
-    "ix_agent_maintenance_event_project_agent_occurred",
-    agent_maintenance_event.c.project_id,
-    agent_maintenance_event.c.agent_id,
-    agent_maintenance_event.c.occurred_at,
-)
-Index(
-    "ix_agent_maintenance_event_project_occurred",
-    agent_maintenance_event.c.project_id,
-    agent_maintenance_event.c.occurred_at,
-)
-
-
-async def insert_maintenance_event(
-    session: AsyncSession, scope: ProjectScopeContext, event: MaintenanceEvent
-) -> None:
-    """The one `agent_maintenance_event` insert, shared by every writer that
-    records a maintenance event in the same transaction as its state change
-    (revise, enable/disable, owner transfer, feedback resolution).
-
-    An `IntegrityError` raised here (duplicate `event_id`, or the Agent FK)
-    is only meaningful as a *transaction* failure: callers that map it to
-    `RevisionConflict` do so because the whole transaction -- including the
-    state change -- rolls back, never because the event alone conflicted."""
-    await session.execute(
-        agent_maintenance_event.insert().values(
-            event_id=event.event_id,
-            agent_id=event.agent_id,
-            kind=event.kind,
-            revision_id=event.revision_id,
-            feedback_id=event.feedback_id,
-            note=event.note,
-            occurred_at=event.occurred_at,
-            **scope_values(scope),
-        )
-    )
 
 
 def _naive(value: datetime) -> datetime:

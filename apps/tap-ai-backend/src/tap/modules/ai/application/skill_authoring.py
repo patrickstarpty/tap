@@ -38,16 +38,16 @@ from tap.modules.ai.domain.assets import (
     SkillRevision,
     text_digest,
 )
+from tap.modules.ai.domain.maintenance import (
+    SkillMaintenanceEvent,
+    SkillMaintenanceKind,
+    new_skill_event,
+)
 from tap.modules.ai.domain.skill_metadata import (
     OriginKind,
     SkillCategory,
     category_from_frontmatter,
     version_label_from_frontmatter,
-)
-from tap.modules.skill_hub.domain.models import (
-    SkillMaintenanceEvent,
-    SkillMaintenanceKind,
-    new_skill_event,
 )
 from tap.platform.storage.objects import (
     ObjectMissingError,

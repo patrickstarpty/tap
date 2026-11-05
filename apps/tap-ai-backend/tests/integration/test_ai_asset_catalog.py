@@ -850,10 +850,10 @@ async def test_revision_and_event_commit_together(owned_project_mysql) -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-    from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
-    from tap.modules.agent_team.domain.models import MaintenanceEvent
+    from tap.modules.ai.adapters.maintenance import agent_maintenance_event
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
     from tap.modules.ai.domain.assets import AiAgentRevision, RevisionConflict, text_digest
+    from tap.modules.ai.domain.maintenance import MaintenanceEvent
     from tap.platform.db.project_scope import scope_values
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
@@ -982,9 +982,9 @@ async def test_concurrent_disables_write_exactly_one_event(owned_project_mysql) 
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-    from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
-    from tap.modules.agent_team.domain.models import new_event
+    from tap.modules.ai.adapters.maintenance import agent_maintenance_event
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.maintenance import new_event
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     try:

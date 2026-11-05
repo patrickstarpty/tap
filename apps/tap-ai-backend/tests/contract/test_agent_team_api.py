@@ -18,7 +18,7 @@ from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
 from tap.modules.agent_team.adapters.mysql import _decode_history_cursor
 from tap.modules.agent_team.application.service import AgentTeamService
-from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, Period
+from tap.modules.agent_team.domain.models import Period
 from tap.modules.agent_team.ports import (
     AgentRecord,
     AgentRuntimeStats,
@@ -30,6 +30,7 @@ from tap.modules.agent_team.ports import (
     ResolvedFeedback,
     RuntimeMetricsUnavailable,
 )
+from tap.modules.ai.domain.maintenance import MaintenanceEvent, MaintenanceKind
 
 _NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 

@@ -461,8 +461,8 @@ async def test_outdated_skill_ids_is_always_empty() -> None:
 @pytest.mark.asyncio
 async def test_set_asset_enabled_rejects_an_event_on_a_skill() -> None:
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE as scope
-    from tap.modules.agent_team.domain.models import new_event
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.maintenance import new_event
 
     # The guard fires before any session is opened, so no database is needed.
     catalog = MysqlAssetCatalog(None, scope=scope)  # type: ignore[arg-type]

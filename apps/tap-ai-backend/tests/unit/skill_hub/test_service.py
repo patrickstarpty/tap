@@ -14,9 +14,9 @@ import pytest
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.ai.domain.assets import SkillFile, SkillRevision, text_digest
+from tap.modules.ai.domain.maintenance import SkillMaintenanceEvent
 from tap.modules.skill_hub.adapters.cached_metrics import CachedSkillRuntimeMetrics
 from tap.modules.skill_hub.application.service import SkillHubRejected, SkillHubService
-from tap.modules.skill_hub.domain.models import SkillMaintenanceEvent
 from tap.modules.skill_hub.ports import (
     ActivationCount,
     RankedKey,

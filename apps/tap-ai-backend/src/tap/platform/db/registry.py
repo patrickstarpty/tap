@@ -3,7 +3,7 @@
 from sqlalchemy import MetaData
 
 from tap.modules.access.adapters.mysql import actor_principal, enterprise, project
-from tap.modules.agent_team.adapters.mysql import agent_maintenance_event
+from tap.modules.ai.adapters.maintenance import agent_maintenance_event, skill_maintenance_event
 from tap.modules.ai.adapters.mysql import (
     ai_agent,
     ai_agent_revision,
@@ -49,7 +49,6 @@ from tap.modules.knowledge.adapters.mysql_projection import (
     knowledge_projection_state,
 )
 from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
-from tap.modules.skill_hub.adapters.mysql import skill_maintenance_event
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 from tap.platform.telemetry.schema import (

@@ -26,7 +26,7 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
 from tap.modules.agent_team.application.service import AgentTeamService
-from tap.modules.agent_team.domain.models import MaintenanceKind, Period
+from tap.modules.agent_team.domain.models import Period
 from tap.modules.agent_team.ports import (
     AgentRecord,
     AgentRuntimeStats,
@@ -37,6 +37,7 @@ from tap.modules.agent_team.ports import (
     ServedActor,
     TrendPoint,
 )
+from tap.modules.ai.domain.maintenance import MaintenanceKind
 
 _NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 _AGENT_NAME = "客服小助手"

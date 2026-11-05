@@ -8,11 +8,8 @@ A Turn's Agent attribution is frozen at the time it ran:
 selected (`TAPPER_DEFAULT_AGENT_KEY`); a revision id that resolves to no row
 (the Agent or revision no longer exists) means `UNKNOWN_AGENT_KEY`.
 
-`ai_agent_revision` is imported lazily inside `resolve_agent_keys` rather than
-at module scope: `tap.modules.ai.adapters.mysql` imports
-`tap.modules.agent_team.adapters.mysql` (for `agent_maintenance_event`) at its
-own module scope, so an eager import here would deadlock that cycle the first
-time either module loads before the other has finished executing.
+`ai_agent_revision` is imported inside `resolve_agent_keys` to keep this
+reporting helper independent of AI catalog adapter initialization.
 """
 
 from __future__ import annotations

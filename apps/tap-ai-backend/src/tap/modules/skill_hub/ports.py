@@ -10,8 +10,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Protocol
 
+from tap.modules.ai.domain.maintenance import SkillMaintenanceEvent
 from tap.modules.ai.domain.skill_metadata import ActivationMode, OriginKind, SkillCategory
-from tap.modules.skill_hub.domain.models import SkillMaintenanceEvent
 from tap.platform.reporting.period import Period
 
 Granularity = Literal["day", "week", "month"]

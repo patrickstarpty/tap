@@ -19,6 +19,7 @@ from typing import Literal, Protocol, TypeVar, cast
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.assets import SkillRevision
+from tap.modules.ai.domain.maintenance import new_skill_event
 from tap.modules.ai.domain.skill_metadata import SKILL_CATEGORIES, SkillCategory
 from tap.modules.skill_hub.adapters.cached_metrics import CachedSkillRuntimeMetrics
 from tap.modules.skill_hub.domain import metrics as pure
@@ -30,7 +31,6 @@ from tap.modules.skill_hub.domain.models import (
     SkillDetail,
     SkillUsage,
     UsageSeries,
-    new_skill_event,
 )
 from tap.modules.skill_hub.ports import (
     SkillHubStore,

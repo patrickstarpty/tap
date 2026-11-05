@@ -27,8 +27,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
-from tap.modules.agent_team.adapters.mysql import insert_maintenance_event
-from tap.modules.agent_team.domain.models import MaintenanceEvent
+from tap.modules.ai.adapters.maintenance import (
+    insert_maintenance_event,
+    insert_skill_maintenance_event,
+)
 from tap.modules.ai.application.assets import ValidationAssetSeed, resolve_agent_selection
 from tap.modules.ai.application.skill_authoring import SkillImportRecord
 from tap.modules.ai.domain.assets import (
@@ -39,14 +41,13 @@ from tap.modules.ai.domain.assets import (
     SkillFile,
     SkillRevision,
 )
+from tap.modules.ai.domain.maintenance import MaintenanceEvent, SkillMaintenanceEvent
 from tap.modules.ai.domain.skill_metadata import (
     OriginKind,
     SkillCategory,
     category_from_frontmatter,
     version_label_from_frontmatter,
 )
-from tap.modules.skill_hub.adapters.mysql import insert_skill_maintenance_event
-from tap.modules.skill_hub.domain.models import SkillMaintenanceEvent
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 

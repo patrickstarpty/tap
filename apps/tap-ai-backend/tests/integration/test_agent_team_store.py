@@ -22,11 +22,13 @@ from scripts.migration_support import IsolatedMysql
 from tap.modules.access.adapters.mysql import actor_principal, project
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
-from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore, agent_maintenance_event
-from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY, Period, new_event
+from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore
+from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY, Period
 from tap.modules.agent_team.ports import FeedbackNotFound, HistoryCursorInvalid
+from tap.modules.ai.adapters.maintenance import agent_maintenance_event
 from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision
 from tap.modules.ai.domain.langfuse_sync import SyncKind
+from tap.modules.ai.domain.maintenance import new_event
 from tap.modules.chat.adapters.mysql import chat_turn
 from tap.modules.chat.adapters.mysql_conversations import conversation, turn_input_snapshot
 from tap.modules.chat.adapters.mysql_feedback import MysqlFeedbackRepository, answer_feedback

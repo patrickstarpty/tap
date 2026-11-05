@@ -24,13 +24,13 @@ from datetime import date, timedelta
 
 from tap.modules.agent_team.application.service import PeriodReport
 from tap.modules.agent_team.domain.models import (
-    MaintenanceKind,
     MemberRow,
     Period,
     PersonRow,
     RuntimeStatus,
 )
 from tap.modules.agent_team.ports import ServedActor, TrendPoint
+from tap.modules.ai.domain.maintenance import MaintenanceKind
 from tap.platform.reporting.csv_zip import (
     blank_cell,
     csv_bytes,

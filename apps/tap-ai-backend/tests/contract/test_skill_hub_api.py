@@ -20,9 +20,9 @@ from tap.interfaces.http.dependencies import HttpServices
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.authorization import AuthorizationDecision
 from tap.modules.ai.domain.assets import SkillFile, SkillRevision, text_digest
+from tap.modules.ai.domain.maintenance import SkillMaintenanceEvent
 from tap.modules.skill_hub.adapters.cached_metrics import CachedSkillRuntimeMetrics
 from tap.modules.skill_hub.application.service import SkillHubService
-from tap.modules.skill_hub.domain.models import SkillMaintenanceEvent
 from tap.modules.skill_hub.ports import (
     ActivationCount,
     RankedKey,

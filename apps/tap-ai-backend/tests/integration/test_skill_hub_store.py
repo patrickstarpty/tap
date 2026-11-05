@@ -22,13 +22,14 @@ from tap.modules.access.adapters.mysql import project
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.domain.models import TAPPER_DEFAULT_AGENT_KEY
+from tap.modules.ai.adapters.maintenance import skill_maintenance_event
 from tap.modules.ai.adapters.mysql import ai_agent, ai_agent_revision, skill, skill_revision
+from tap.modules.ai.domain.maintenance import new_skill_event
 from tap.modules.chat.adapters.mysql_skill_activations import (
     activation_id_for,
     turn_skill_activation,
 )
-from tap.modules.skill_hub.adapters.mysql import MysqlSkillHubStore, skill_maintenance_event
-from tap.modules.skill_hub.domain.models import new_skill_event
+from tap.modules.skill_hub.adapters.mysql import MysqlSkillHubStore
 from tap.modules.skill_hub.ports import (
     ActivationCount,
     RankedKey,

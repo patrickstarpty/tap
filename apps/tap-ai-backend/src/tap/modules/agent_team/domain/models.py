@@ -1,4 +1,4 @@
-"""Agent team domain model: reporting periods and maintenance events.
+"""Agent team domain model: reporting periods and read models.
 
 `Period` captures a closed `[start, end]` date range used throughout the
 Agent team view (spec sections 1.3/2.1/4). It and the other period/runtime
@@ -15,9 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
-from uuid import uuid4
 
-from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.maintenance import MaintenanceKind
 from tap.platform.reporting.period import MAX_PERIOD_DATE as MAX_PERIOD_DATE
 from tap.platform.reporting.period import MIN_PERIOD_DATE as MIN_PERIOD_DATE
 from tap.platform.reporting.period import PERIOD_PRESETS as PERIOD_PRESETS
@@ -37,57 +36,12 @@ if TYPE_CHECKING:
 TAPPER_DEFAULT_AGENT_KEY = "tapper_default"
 UNKNOWN_AGENT_KEY = "unknown"
 
-MaintenanceKind = Literal[
-    "revised",
-    "skill_upgraded",
-    "disabled",
-    "enabled",
-    "feedback_resolved",
-    "owner_transferred",
-]
-
-
-@dataclass(frozen=True, slots=True)
-class MaintenanceEvent:
-    event_id: str
-    project_id: str
-    agent_id: str
-    actor_id: str
-    kind: MaintenanceKind
-    revision_id: str | None
-    feedback_id: str | None
-    note: str | None
-    occurred_at: datetime
-
 
 def is_pending_feedback(rating: str | None, comment: str | None) -> bool:
     """Spec 2.4: a thumbs-down, or any feedback with a comment (including a
     commented thumbs-up), is pending until resolved. A plain thumbs-up and
     withdrawn feedback (rating and comment both empty) never are."""
     return rating == "down" or comment is not None
-
-
-def new_event(
-    scope: ProjectScopeContext,
-    agent_id: str,
-    kind: MaintenanceKind,
-    *,
-    revision_id: str | None = None,
-    feedback_id: str | None = None,
-    note: str | None = None,
-    now: datetime,
-) -> MaintenanceEvent:
-    return MaintenanceEvent(
-        event_id=f"mevt-{uuid4().hex[:16]}",
-        project_id=scope.project_id,
-        agent_id=agent_id,
-        actor_id=scope.actor_id,
-        kind=kind,
-        revision_id=revision_id,
-        feedback_id=feedback_id,
-        note=note,
-        occurred_at=now,
-    )
 
 
 # --- Agent team view read models (spec 1.4, 2.2-2.6; Task 7) ---------------

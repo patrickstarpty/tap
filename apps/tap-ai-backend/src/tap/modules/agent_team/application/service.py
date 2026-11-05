@@ -18,7 +18,6 @@ from tap.modules.agent_team.domain import metrics as pure
 from tap.modules.agent_team.domain.models import (
     TAPPER_DEFAULT_AGENT_KEY,
     AgentKind,
-    MaintenanceKind,
     MemberRow,
     MemberStatus,
     OrgChart,
@@ -28,7 +27,6 @@ from tap.modules.agent_team.domain.models import (
     RuntimeStatus,
     TeamSummary,
     TeamView,
-    new_event,
     trailing_30_days,
 )
 from tap.modules.agent_team.ports import (
@@ -45,6 +43,7 @@ from tap.modules.agent_team.ports import (
     ServedActor,
     TrendPoint,
 )
+from tap.modules.ai.domain.maintenance import MaintenanceKind, new_event
 from tap.platform.reporting.runtime import combine_status, gather_runtime, view_deadline
 
 _MAX_JOB_TITLE_LENGTH = 64

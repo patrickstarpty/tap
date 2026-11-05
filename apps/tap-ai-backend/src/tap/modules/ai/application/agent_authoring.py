@@ -18,7 +18,6 @@ from uuid import uuid4
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.agent_team.domain.classify import classify_revision
-from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, new_event
 from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import (
     AiAgentRevision,
@@ -27,6 +26,7 @@ from tap.modules.ai.domain.assets import (
     SkillRevision,
     text_digest,
 )
+from tap.modules.ai.domain.maintenance import MaintenanceEvent, MaintenanceKind, new_event
 from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor, schema_digest
 from tap.modules.ai.domain.tools import known_tool_ids, platform_tool_ids, required_tool_ids
 

@@ -10,7 +10,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 
-from tap.modules.agent_team.domain.models import MaintenanceEvent, MaintenanceKind, Period
+from tap.modules.agent_team.domain.models import Period
+from tap.modules.ai.domain.maintenance import MaintenanceEvent, MaintenanceKind
 from tap.platform.reporting.runtime import RuntimeMetricsUnavailable as RuntimeMetricsUnavailable
 
 

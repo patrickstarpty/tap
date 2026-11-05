@@ -54,7 +54,6 @@ from tap.modules.agent_team.application.service import (
 from tap.modules.agent_team.domain.models import (
     PERIOD_PRESETS,
     AgentKind,
-    MaintenanceEvent,
     MemberRow,
     MemberStatus,
     OrgChart,
@@ -66,6 +65,7 @@ from tap.modules.agent_team.domain.models import (
     TeamView,
 )
 from tap.modules.agent_team.ports import PendingFeedback, ResolvedFeedback, ServedActor, TrendPoint
+from tap.modules.ai.domain.maintenance import MaintenanceEvent
 from tap.platform.reporting.period import parse_period_query, parse_preset
 
 router = APIRouter(prefix="/ai", tags=["ai"])
