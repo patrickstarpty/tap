@@ -19,7 +19,7 @@
 flowchart LR
   B[基础<br/>已完成] --> V1[V1 可信知识问答<br/>进行中]
   V1 --> V2[V2 主动 Tapper<br/>已设计]
-  V2 --> V3[V3 测试闭环<br/>设计草案待评审]
+  V2 --> V3[V3 测试闭环<br/>实施计划已编写]
   V3 --> V4[V4 产品化<br/>未设计]
 ```
 
@@ -28,7 +28,7 @@ flowchart LR
 | 基础 | 知识问答原型与完整产品原型 | 可演示的 Tapper 与全模块设计基准 | 已完成 |
 | V1 | 可信知识问答 | 基于项目知识得到有依据、可追溯的回答 | 进行中 |
 | V2 | 主动 Tapper | 不用提问，Tapper 主动发现问题并沉淀团队知识 | 已设计 |
-| V3 | 测试闭环 | 通用 Agent 任务底座，首先打通知识 → 版本化测试计划/用例 → 自动化执行 → 结果回写 | 已设计（2026-11-06 整体草案待评审，尚未实施） |
+| V3 | 测试闭环 | 通用 Agent 任务底座，首先打通知识 → 版本化测试计划/用例 → 自动化执行 → 结果回写 | 已设计并确认（2026-11-06；[实施计划](2026-11-06-agent-workflows-and-test-loop.md)已编写，尚未实施） |
 | V4 | 产品化 | 多人、多项目、可在企业环境安全部署 | 未设计 |
 
 ## 基础（已完成）
@@ -64,26 +64,26 @@ flowchart LR
 | --- | --- | --- |
 | V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 工程完成（[plan](2026-10-23-agent-team-view.md)；[spec](../specs/2026-10-22-agent-team-view-design.md)）；2026-10-28 审查修复、面板重做（分析平台式）与香港语料数据重建合入（[演示](../../guides/2026-10-28-agent-team-business-demo.md)）；待业务验证（spec 7.4） |
 | Skill Hub | Skills 模块改为 Skill 库：按描述自动激活取代绑定 Agent、类别/版本/来源元数据、用量统计与导出（第 1 阶段）；来源同步与版本（第 2 阶段）；静态扫描与信任等级、项目内共享（第 3 阶段） | 已设计并确认（[spec](../specs/2026-11-01-skill-hub-design.md)，2026-11-01；替代已否决的"Skill 名册"方向）；第 1 阶段工程完成，待业务验证（已合入 `develop`，2026-11-03，[计划](2026-11-01-skill-hub-phase-1.md)；真实模型激活精度 1.00/1.00、名册去常驻复跑已完成） |
-| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 文档长任务的暂停恢复与进度，2026-11-06 扩展为通用任务底座和双路径 Agent 工作流 | 已设计（[原 spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；[扩展草案](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)待评审，新增 Copilot BYOK 路径、原生编排和 Azure Pipelines 风格实时节点；可信知识仍独立验收） |
+| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 文档长任务的暂停恢复与进度，2026-11-06 扩展为通用任务底座和双路径 Agent 工作流 | 已设计（[原 spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；[扩展设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已确认，[实施计划](2026-11-06-agent-workflows-and-test-loop.md)已编写，新增 Copilot BYOK 路径、原生编排和 Azure Pipelines 风格实时节点；可信知识仍独立验收） |
 | V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.4 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
 
 退出标准：V2.1、LangGraph 收尾、V2.2、V2.3 工程完成；在真实项目中度量提议采纳率。
 
-## V3：测试闭环（整体设计草案待评审）
+## V3：测试闭环（设计已确认，实施计划已编写）
 
-2026-11-06 范围调整：[双路径 Agent 工作流与测试闭环设计草案](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。方向已由产品负责人逐项确认，整体草案尚待评审，不表示实施或验收完成。底座面向测试、软件开发和业务自动化，首版只以测试闭环验收；V1 的范围与未完成门禁不变。
+2026-11-06 范围调整：[双路径 Agent 工作流与测试闭环设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已由产品负责人确认并进入实施规划；[实施总计划](2026-11-06-agent-workflows-and-test-loop.md)包含四份分阶段计划，尚未执行，不表示实施或验收完成。底座面向测试、软件开发和业务自动化，首版只以测试闭环验收；V1 的范围与未完成门禁不变。
 
 | 项 | 确认范围 | 状态 |
 | --- | --- | --- |
-| 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；先识别意图，编码任务交给 Copilot CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 已设计（调用与展示方向已确认，整体草案待评审；Copilot 组合能力待实测） |
-| 实时 Agent 流水线 | Agents 模块覆盖全部 Agent 档案与运行实例，Tapper 支持自然语言与选择 / @ 调用；Orchestrator 作为运行父层，单个/多个 Agent 以 Azure Pipelines 风格节点展示，结合对话和活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 已设计（调用与展示方向已确认，整体草案待评审） |
-| 测试资产与代码版本 | 测试计划、用例始终在 TAP 管理且各自版本化；首版代码由 TAP 管理；以易懂的“自动化测试步骤”描述结构化操作、数据和预期结果 | 已设计（整体草案待评审） |
-| 执行与结果回写 | 首个执行器改为 TAP 管理的本机隔离容器，运行 Playwright + TypeScript；固定发布版本，回写真实结果与证据，修复形成新版本 | 已设计（整体草案待评审） |
+| 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；首版在编码任务启动前一次性生成当前项目已启用且任务获准使用的 Agent 配置，无 `tap-` 前缀，任务内冻结版本，不依赖热加载；编码任务交给 Copilot CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 已设计并确认；阶段 0–2 计划已编写，Copilot 组合能力待实测 |
+| 实时 Agent 流水线 | Agents 模块覆盖全部 Agent 档案与运行实例，Tapper 支持自然语言与选择 / @ 调用；Orchestrator 作为运行父层，单个/多个 Agent 以 Azure Pipelines 风格节点展示，结合对话和活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 已设计并确认；阶段 1–2 计划已编写 |
+| 测试资产与代码版本 | 测试计划、用例始终在 TAP 管理且各自版本化；首版代码由 TAP 管理；以易懂的“自动化测试步骤”描述结构化操作、数据和预期结果 | 已设计并确认；阶段 3 计划已编写，领域归属及迁移先固化 ADR |
+| 执行与结果回写 | 首个执行器改为 TAP 管理的本机隔离容器，运行 Playwright + TypeScript；固定发布版本，回写真实结果与证据，修复形成新版本 | 已设计并确认；阶段 3 计划已编写 |
 | 后续适配 | Azure DevOps Repos、GitLab 等代码仓库；Jenkins、Azure DevOps Pipelines 执行器；保留 Claude Code、Codex coding provider 接口 | 未设计（仅确认扩展边界，首版不交付这些适配器） |
 
-实施前按草案拆分能力验证、通用任务与实时视图、Copilot 接入、版本化测试闭环四个子项目，各自形成 spec 和 plan。解冻 Test Management 与建设自动化后端时先确定跨应用领域归属，重新评估 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md)、[ADR-024](../../decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md) 与 [ADR-025](../../decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md)。V2.4 主动事件与采纳动作仍单独交付。
+实施分为[能力验证](2026-11-06-copilot-capability-validation.md)、[通用任务与实时视图](2026-11-06-native-agent-workflows.md)、[Copilot 接入](2026-11-06-copilot-workflow-runtime.md)、[版本化测试闭环](2026-11-06-versioned-test-automation-loop.md)四个子项目；每阶段先固化详细接口设计和前置证据。解冻 Test Management 与建设自动化后端时先确定跨应用领域归属，重新评估 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md)、[ADR-024](../../decisions/2026-09-04-adr-024-tap-managed-automation-revisions.md) 与 [ADR-025](../../decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md)。V2.4 主动事件与采纳动作仍单独交付。
 
 ## V4：产品化（未设计）
 
