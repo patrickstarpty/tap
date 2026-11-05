@@ -13,6 +13,8 @@
 
 每次 PR 合并、spec 定稿或范围调整时，同步更新本文件对应行。
 
+2026-11-05 `main` 发布基线：[PR #42](https://github.com/patrickstarpty/tap/pull/42) 以 `develop@66f8e6f6` 为准整合双方历史，包含下述 V1 工程进展、V2.1 Agent 团队视图与 Skill Hub 第 1 阶段；不改变图谱真实门禁和业务验证的待办状态。默认 `make test` 收敛为核心回归，完整测试保留为 `make test-full`。
+
 ## 总览
 
 ```mermaid
