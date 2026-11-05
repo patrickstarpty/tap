@@ -1,11 +1,10 @@
 """Validation identity is read from the migrated registry, never client assertions."""
 
+import os
 from collections.abc import Iterator
 from contextlib import ExitStack
 
 import pytest
-
-from tests.conftest import _mysql_gate
 
 
 def test_identity_metadata_has_registry_relations() -> None:
@@ -32,11 +31,10 @@ def test_identity_metadata_has_registry_relations() -> None:
 
 
 @pytest.fixture
-def identity_database(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[str]:
+def identity_database(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """Own fresh identity data; never mutate a caller's registry or reset its state."""
-    _mysql_gate(request)
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import isolated_mysql
 
     with ExitStack() as resources:

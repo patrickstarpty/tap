@@ -92,6 +92,9 @@ class RuntimeOperationEffects:
                 self._sessions,
                 scope=self._scope,
                 default_chat_model=self._settings.default_chat_model,
+                graph_extraction_profile_digest=tapper_runtime._graph_extraction_profile(
+                    self._settings
+                ),
             )
             service = DocumentService(
                 repository=documents, artifacts=cast("ArtifactStore", self._blob())

@@ -12,9 +12,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  citationPreview,
   document,
   documentDetail,
   fakeKnowledgeClient,
+  retrievalCitation,
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
 import {
@@ -22,11 +24,16 @@ import {
   renderApp,
 } from "../../shared/testing/renderApp";
 import { RuntimeClientProvider } from "../../features/runtime/api/queries";
-import { createKnowledgeClient } from "../../features/knowledge/api/client";
 import {
-  useActiveGraph,
+  useGraphNode,
+  useGraphOverview,
+  useGraphProject,
   useGraphSearch,
 } from "../../features/graph/api/queries";
+import { pushGraphHighlight } from "../../features/graph/model/highlight";
+import { resolvePeriod } from "../../features/knowledge/api/agentTeam";
+import { aiAssetKeys } from "../../features/knowledge/api/aiAssets";
+import { skillHubKeys } from "../../features/knowledge/api/skillHub";
 import { TapperWorkspace } from "./TapperWorkspace";
 
 const workspaceStyles = readFileSync(
@@ -34,30 +41,21 @@ const workspaceStyles = readFileSync(
   "utf8",
 );
 
-// This module's LibraryWorkspace/ProjectKnowledgeGraph calls the real
-// createKnowledgeClient() directly (not the injected fakeKnowledgeClient
-// context) to fetch a source's graph detail, and calls the real graph query
-// hooks unconditionally on every render. Mock both so tests that switch to
-// the Knowledge Graph tab in durable/api mode exercise a deterministic
-// published graph instead of an unmocked network call. Tests that never
-// reach a ready source (selectedId stays null) are unaffected by these
-// defaults since that branch short-circuits before either is consulted.
+// `LibraryWorkspace`'s graph panel (`GraphOverview`) calls the real graph
+// query hooks unconditionally on every render. Mock them so tests that
+// switch to the Knowledge Graph tab exercise a deterministic project graph
+// instead of an unmocked network call.
 function defaultGraphQueryResult() {
   return { data: undefined, isPending: false, isError: false } as never;
 }
 
-vi.mock("../../features/knowledge/api/client", () => ({
-  createKnowledgeClient: vi.fn(),
-}));
 vi.mock("../../features/graph/api/queries", () => ({
-  useActiveGraph: vi.fn(() => defaultGraphQueryResult()),
-  useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
+  useGraphProject: vi.fn(() => defaultGraphQueryResult()),
   useGraphOverview: vi.fn(() => defaultGraphQueryResult()),
-  useGraphNode: vi.fn(() => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-  })),
+  useGraphSearch: vi.fn(() => defaultGraphQueryResult()),
+  useGraphNode: vi.fn(() => defaultGraphQueryResult()),
+  useGraphHighlight: vi.fn(() => defaultGraphQueryResult()),
+  useGraphVersionGuard: vi.fn(),
 }));
 
 const DEFAULT_SOURCES = [
@@ -133,6 +131,8 @@ function seedAgentSkillCatalog(
         contentDigest: `sha256:${"1".repeat(64)}`,
         toolAllowlist: ["knowledge.search", "knowledge.answer"],
         outputSchemaDigest: `sha256:${"2".repeat(64)}`,
+        status: "enabled",
+        isLatest: true,
       },
       {
         revisionId: "application-completeness-reviewer",
@@ -141,6 +141,8 @@ function seedAgentSkillCatalog(
         contentDigest: `sha256:${"3".repeat(64)}`,
         toolAllowlist: ["knowledge.search", "knowledge.answer"],
         outputSchemaDigest: `sha256:${"4".repeat(64)}`,
+        status: "enabled",
+        isLatest: true,
       },
     ],
   );
@@ -153,6 +155,8 @@ function seedAgentSkillCatalog(
         displayName: "BDD Scenario Design",
         contentDigest: `sha256:${"5".repeat(64)}`,
         applicableTasks: ["knowledge.answer"],
+        status: "enabled",
+        isLatest: true,
       },
       {
         revisionId: "underwriting-evidence-review",
@@ -160,101 +164,177 @@ function seedAgentSkillCatalog(
         displayName: "Underwriting Evidence Review",
         contentDigest: `sha256:${"6".repeat(64)}`,
         applicableTasks: ["knowledge.answer"],
+        status: "enabled",
+        isLatest: true,
       },
     ],
   );
 }
 
-function stubCatalogManagement(
+// The Skills page reads the Skill library (`skillHubKeys`) for its default
+// period and sort. Seed the library and its summary with these Skills so the
+// page renders them without a network call.
+function seedSkillLibrary(
+  queryClient: ReturnType<typeof createTestQueryClient>,
+  projectId: string,
+  skills: {
+    skillId: string;
+    revisionId: string;
+    name: string;
+    description: string;
+  }[],
+) {
+  const period = resolvePeriod("last30", new Date());
+  const envelope = (data: unknown) => ({
+    runtimeStatus: "ok",
+    computedAt: "2026-10-30T08:00:00Z",
+    timezone: "UTC",
+    period,
+    granularity: "day",
+    data,
+  });
+  queryClient.setQueryData(
+    skillHubKeys.catalog(projectId, period, {
+      sort: "activations",
+      order: "desc",
+    }),
+    envelope(
+      skills.map((skill) => ({
+        skill: {
+          skillId: skill.skillId,
+          name: skill.name,
+          description: skill.description,
+          category: "test-design",
+          version: "r1",
+          revisionNumber: 1,
+          latestRevisionId: skill.revisionId,
+          sourceKind: "built_in",
+          originKind: "built_in",
+          originRef: null,
+          originImportedAt: null,
+          originActorId: "system",
+          ownerActorId: "system",
+          ownerAssignedAt: "2026-10-01T00:00:00Z",
+          status: "enabled",
+          applicableTasks: ["knowledge.answer"],
+          compatibility: null,
+          updatedAt: "2026-10-01T12:00:00Z",
+          builtIn: true,
+        },
+        activations: 0,
+        byMode: { manual: 0, pinned: 0, auto: 0 },
+      })),
+    ),
+  );
+  queryClient.setQueryData(
+    skillHubKeys.summary(projectId, period),
+    envelope({
+      skillTotal: skills.length,
+      enabled: skills.length,
+      usedInPeriod: 0,
+      unused: skills.length,
+      autoShare: null,
+      candidateCount: skills.length,
+      candidateLimit: 60,
+    }),
+  );
+}
+
+// The Agents/Skills management pages (AgentsWorkspace/SkillsWorkspace) read
+// their own catalog through `useAgents`/`useSkills` (query keys under
+// `aiAssetKeys`), independent of the composer-facing
+// `["ai-agent-catalog"]`/`["skill-catalog"]` keys `seedAgentSkillCatalog`
+// seeds above. Seed both shapes a single built-in item so cases that open
+// those management pages see a stable, non-digest item to assert against.
+function seedAiAssetWorkspaces(
   queryClient: ReturnType<typeof createTestQueryClient>,
   projectId: string,
 ) {
-  const originalFetch = fetch;
-  type Row = {
-    revisionId: string;
-    assetId: string;
-    displayName: string;
-    description?: string;
-    systemInstruction?: string;
-    instructionTemplate?: string;
-    origin: string;
-    status: string;
-  };
-  let agents = (
-    (queryClient.getQueryData(["ai-agent-catalog", projectId]) as Row[]) ?? []
-  ).map((row) => ({
-    ...row,
-    description: "Searches sources · Answers questions",
-    systemInstruction: "Use approved evidence.",
-    origin: "seed",
-    status: "enabled",
-  }));
-  let skills = (
-    (queryClient.getQueryData(["skill-catalog", projectId]) as Row[]) ?? []
-  ).map((row) => ({
-    ...row,
-    description: "For knowledge answers",
-    instructionTemplate: "Cite evidence.",
-    origin: "seed",
-    status: "enabled",
-  }));
-  vi.stubGlobal(
-    "fetch",
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/ai/agents/revisions"))
-        return Response.json({ items: agents });
-      if (url.endsWith("/ai/skills/revisions"))
-        return Response.json({ items: skills });
-      if (url.endsWith("/ai/tools") || url.endsWith("/ai/mcp-servers"))
-        return Response.json({ items: [] });
-      if (url.endsWith("/ai/models"))
-        return Response.json({
-          defaultAlias: "tapper-chat",
-          items: [
-            {
-              alias: "tapper-chat",
-              displayName: "Chat",
-              capabilities: ["chat", "structured"],
-            },
-          ],
-        });
-      if (
-        init?.method === "POST" &&
-        /\/ai\/(agents|skills)(?:\/[^/]+\/revisions)?$/.test(url)
-      ) {
-        const body = JSON.parse(init.body as string);
-        const isAgent = url.includes("/agents");
-        const match = /\/agents\/([^/]+)\/revisions$/.exec(url);
-        const assetId = match?.[1] ?? (isAgent ? body.displayName : body.name);
-        const row = {
-          ...body,
-          applicableTasks: ["knowledge.answer"],
-          toolAllowlist: body.toolAllowlist ?? [],
-          assetId,
-          revisionId: `${assetId}-${Date.now()}`,
-          displayName: isAgent ? body.displayName : body.name,
-          instructionTemplate: body.instructions,
-          origin: "editor",
-          status: "enabled",
-        };
-        if (isAgent) agents = [row, ...agents];
-        else
-          skills = [row, ...skills.filter((item) => item.assetId !== assetId)];
-        return Response.json(isAgent ? row : { revision: row, warnings: [] });
-      }
-      if (url.endsWith("/ai/agents")) return Response.json({ items: agents });
-      if (url.endsWith("/ai/skills")) return Response.json({ items: skills });
-      return originalFetch(input, init);
+  queryClient.setQueryData(aiAssetKeys.agents(projectId), [
+    {
+      revisionId: "life-underwriting-analyst",
+      agentId: "life-underwriting-analyst",
+      assetId: "life-underwriting-analyst",
+      displayName: "Life Underwriting Analyst",
+      description: "Reviews life underwriting evidence.",
+      contentDigest: `sha256:${"1".repeat(64)}`,
+      outputSchemaDigest: `sha256:${"2".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
     },
-  );
+  ]);
+  queryClient.setQueryData(aiAssetKeys.skills(projectId), [
+    {
+      revisionId: "bdd-scenario-design",
+      skillId: "bdd-scenario-design",
+      assetId: "bdd-scenario-design",
+      displayName: "BDD Scenario Design",
+      description: "Turns underwriting rules into BDD scenarios.",
+      contentDigest: `sha256:${"5".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+    },
+  ]);
+  seedSkillLibrary(queryClient, projectId, [
+    {
+      skillId: "bdd-scenario-design",
+      revisionId: "bdd-scenario-design",
+      name: "BDD Scenario Design",
+      description: "Turns underwriting rules into BDD scenarios.",
+    },
+  ]);
+  // `AgentForm`'s tool checkboxes (LangGraph PR 5 Task 10) read `GET
+  // /ai/tools` through `useTools` -- seed both locales this fixture's
+  // tests render in so opening the create/edit dialog never depends on an
+  // unmocked network call for `/ai/tools`.
+  for (const locale of ["en", "zh"] as const) {
+    queryClient.setQueryData(aiAssetKeys.tools(projectId, locale), [
+      {
+        toolId: "knowledge.search",
+        name: "Knowledge Search",
+        description: "Searches approved knowledge sources.",
+        required: true,
+        defaultEnabled: true,
+      },
+      {
+        toolId: "knowledge.answer",
+        name: "Knowledge Answer",
+        description: "Produces a governed, citation-grounded answer.",
+        required: true,
+        defaultEnabled: true,
+      },
+      {
+        toolId: "graph.relations",
+        name: "Graph Relations",
+        description: "Explores entity relations.",
+        required: false,
+        defaultEnabled: true,
+      },
+      {
+        toolId: "insights.query",
+        name: "Insights Query",
+        description: "Queries authorized Insights metrics.",
+        required: false,
+        defaultEnabled: true,
+      },
+    ]);
+  }
 }
 
 function renderWorkspace() {
   const api = defaultKnowledgeClient();
   const queryClient = createTestQueryClient();
   seedAgentSkillCatalog(queryClient, api.projectId);
-  stubCatalogManagement(queryClient, api.projectId);
+  seedAiAssetWorkspaces(queryClient, api.projectId);
   // Switching to Test Management in durable/api mode mounts the real
   // TestPlanLibrary, whose Ant Design Spin uses a deprecated `tip` prop that
   // logs a console warning while its test-plans query is pending (a
@@ -268,6 +348,51 @@ function renderWorkspace() {
     api,
     queryClient,
   });
+}
+
+// Like `renderWorkspace`, but `["runtime-mode"]` is *not* seeded: the
+// runtime-mode query stays pending until `resolveRuntimeMode()` is called, so
+// `projectId` arrives asynchronously after mount — the real runtime path.
+function renderWorkspaceWithDeferredRuntime() {
+  const api = defaultKnowledgeClient();
+  const queryClient = createTestQueryClient();
+  seedAgentSkillCatalog(queryClient, api.projectId);
+  queryClient.setQueryData(["test-plans", api.projectId], []);
+  let resolveMode: () => void = () => undefined;
+  const mode = new Promise<{
+    mode: "validation";
+    identityMode: "validation";
+    projectId: string;
+    actorId: string;
+  }>((resolve) => {
+    resolveMode = () =>
+      resolve({
+        mode: "validation",
+        identityMode: "validation",
+        projectId: api.projectId,
+        actorId: "actor-test",
+      });
+  });
+  const view = renderKnowledgeApp(
+    <RuntimeClientProvider client={{ getMode: () => mode }}>
+      <TapperWorkspace />
+    </RuntimeClientProvider>,
+    { api, queryClient, seedRuntimeMode: false },
+  );
+  return {
+    ...view,
+    resolveRuntimeMode: async () => {
+      await act(async () => {
+        resolveMode();
+        await mode;
+      });
+      await waitFor(() =>
+        expect(
+          view.container.querySelector(".tap-product-shell--runtime-ready"),
+        ).not.toBeNull(),
+      );
+    },
+  };
 }
 
 const CONVERSATION_NOW = "2026-09-29T08:00:00Z";
@@ -529,32 +654,48 @@ function stubConversationHistory(total: number) {
 it("shows approved Agent and Skill meaning instead of integrity digests", async () => {
   const api = fakeKnowledgeClient();
   const queryClient = createTestQueryClient();
-  queryClient.setQueryData(
-    ["ai-agent-catalog", api.projectId],
-    [
-      {
-        revisionId: "validation-knowledge-agent-v2",
-        assetId: "validation-knowledge-agent",
-        displayName: "Knowledge agent",
-        contentDigest: `sha256:${"a".repeat(64)}`,
-        toolAllowlist: ["knowledge.search", "knowledge.answer"],
-        outputSchemaDigest: `sha256:${"b".repeat(64)}`,
-      },
-    ],
-  );
-  queryClient.setQueryData(
-    ["skill-catalog", api.projectId],
-    [
-      {
-        revisionId: "validation-citation-skill-v2",
-        assetId: "validation-citation-skill",
-        displayName: "Citation skill",
-        contentDigest: `sha256:${"c".repeat(64)}`,
-        applicableTasks: ["knowledge.answer"],
-      },
-    ],
-  );
-  stubCatalogManagement(queryClient, api.projectId);
+  queryClient.setQueryData(aiAssetKeys.agents(api.projectId), [
+    {
+      revisionId: "validation-knowledge-agent-v2",
+      agentId: "validation-knowledge-agent",
+      assetId: "validation-knowledge-agent",
+      displayName: "Knowledge agent",
+      description: "Searches sources and answers questions.",
+      contentDigest: `sha256:${"a".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"b".repeat(64)}`,
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
+    },
+  ]);
+  queryClient.setQueryData(aiAssetKeys.skills(api.projectId), [
+    {
+      revisionId: "validation-citation-skill-v2",
+      skillId: "validation-citation-skill",
+      assetId: "validation-citation-skill",
+      displayName: "Citation skill",
+      description: "Cites the strongest evidence for knowledge answers.",
+      contentDigest: `sha256:${"c".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      status: "enabled",
+      isLatest: true,
+      builtIn: true,
+    },
+  ]);
+  seedSkillLibrary(queryClient, api.projectId, [
+    {
+      skillId: "validation-citation-skill",
+      revisionId: "validation-citation-skill-v2",
+      name: "Citation skill",
+      description: "Cites the strongest evidence for knowledge answers.",
+    },
+  ]);
   renderKnowledgeApp(<TapperWorkspace />, {
     api,
     queryClient,
@@ -562,13 +703,18 @@ it("shows approved Agent and Skill meaning instead of integrity digests", async 
   const user = userEvent.setup();
 
   await user.click(screen.getByRole("button", { name: "Agents" }));
+  await user.click(screen.getByRole("tab", { name: "Configuration" }));
   expect(
-    await screen.findByText("Searches sources · Answers questions"),
+    await screen.findByText("Searches sources and answers questions."),
   ).toBeVisible();
   expect(screen.queryByText(/sha256:/)).toBeNull();
 
   await user.click(screen.getByRole("button", { name: "Skills" }));
-  expect(await screen.findByText("For knowledge answers")).toBeVisible();
+  expect(
+    await screen.findByText(
+      "Cites the strongest evidence for knowledge answers.",
+    ),
+  ).toBeVisible();
   expect(screen.queryByText(/sha256:/)).toBeNull();
 });
 
@@ -967,11 +1113,16 @@ describe("Tap product workspace interactions", () => {
   });
 
   afterEach(() => {
-    vi.mocked(createKnowledgeClient).mockReset();
-    vi.mocked(useActiveGraph)
+    vi.mocked(useGraphProject)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphOverview)
       .mockReset()
       .mockImplementation(() => defaultGraphQueryResult());
     vi.mocked(useGraphSearch)
+      .mockReset()
+      .mockImplementation(() => defaultGraphQueryResult());
+    vi.mocked(useGraphNode)
       .mockReset()
       .mockImplementation(() => defaultGraphQueryResult());
     vi.unstubAllGlobals();
@@ -1043,7 +1194,12 @@ describe("Tap product workspace interactions", () => {
       within(navigation)
         .getAllByRole("button")
         .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Tapper", "Test Management"]);
+    ).toEqual([
+      "Tapper",
+      "Test Management",
+      "Low Code Automation",
+      "Test Insights",
+    ]);
     const tapperSidebar = screen.getByRole("complementary", {
       name: "Tapper tools",
     });
@@ -1866,7 +2022,8 @@ describe("Tap product workspace interactions", () => {
     } finally {
       style.remove();
     }
-  });
+    // Typing and sending seven questions exceeds the 5s default under full-suite load.
+  }, 15_000);
 
   it("keeps a long question minimap inside a viewport-sized window", async () => {
     const originalInnerHeight = Object.getOwnPropertyDescriptor(
@@ -2486,6 +2643,951 @@ describe("Tap product workspace interactions", () => {
     ).toBeVisible();
   });
 
+  it("greys out and blocks selecting a Skill that doesn't apply to knowledge Q&A (I-2, spec §4.4)", async () => {
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["ai-agent-catalog", api.projectId], []);
+    queryClient.setQueryData(
+      ["skill-catalog", api.projectId],
+      [
+        {
+          revisionId: "bdd-scenario-design",
+          assetId: "bdd-scenario-design",
+          displayName: "BDD Scenario Design",
+          contentDigest: `sha256:${"5".repeat(64)}`,
+          applicableTasks: ["knowledge.answer"],
+          status: "enabled",
+          isLatest: true,
+        },
+        {
+          revisionId: "test-plan-outline",
+          assetId: "test-plan-outline",
+          displayName: "Test Plan Outline",
+          contentDigest: `sha256:${"a".repeat(64)}`,
+          applicableTasks: ["test-plan.generate"],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    const picker = screen.getByRole("dialog", { name: "Use Skills" });
+
+    const applicable = within(picker).getByRole("option", {
+      name: "BDD Scenario Design",
+    });
+    expect(applicable).toBeEnabled();
+
+    const notApplicable = within(picker).getByRole("option", {
+      name: "Test Plan Outline (Doesn't apply to knowledge Q&A)",
+    });
+    expect(notApplicable).toBeDisabled();
+    expect(notApplicable).toHaveAttribute("aria-disabled", "true");
+
+    await user.click(notApplicable);
+    expect(screen.getByRole("dialog", { name: "Use Skills" })).toBeVisible();
+    expect(notApplicable).toHaveAttribute("aria-selected", "false");
+  });
+
+  // `renderWorkspace()`'s `seedAgentSkillCatalog` doesn't carry
+  // `defaultModelAlias`/`pinnedSkillIds` (its Agents never prefill or
+  // pin anything), so these cases seed the composer's own catalog keys
+  // directly with an Agent that does.
+  function renderWorkspaceWithComposerAgent(overrides: {
+    defaultModelAlias?: string | null;
+    pinnedSkillIds?: string[];
+  }) {
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      ["ai-agent-catalog", api.projectId],
+      [
+        {
+          revisionId: "underwriting-reviewer",
+          assetId: "underwriting-reviewer",
+          displayName: "Underwriting reviewer",
+          contentDigest: `sha256:${"7".repeat(64)}`,
+          toolAllowlist: ["knowledge.search", "knowledge.answer"],
+          outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+          defaultModelAlias: overrides.defaultModelAlias ?? null,
+          pinnedSkillIds: overrides.pinnedSkillIds ?? [],
+          excludedSkillIds: [],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(
+      ["skill-catalog", api.projectId],
+      [
+        {
+          revisionId: "rules-lookup",
+          skillId: "rules-lookup-skill",
+          assetId: "rules-lookup-skill",
+          displayName: "Rules lookup",
+          contentDigest: `sha256:${"9".repeat(64)}`,
+          applicableTasks: ["knowledge.answer"],
+          status: "enabled",
+          isLatest: true,
+        },
+      ],
+    );
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    return renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+  }
+
+  it("brings in the selected Agent's pinned Skill (at its latest revision) as a locked chip and drops it when the Agent is deselected", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({
+      pinnedSkillIds: ["rules-lookup-skill"],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    expect(within(composer).getByText("Rules lookup")).toBeVisible();
+    expect(within(composer).getByText("From Agent")).toBeVisible();
+    // A locked chip has no remove button — only deselecting the Agent drops it.
+    expect(
+      within(composer).queryByRole("button", { name: "Remove Rules lookup" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(composer).getByRole("button", {
+        name: "Remove Underwriting reviewer",
+      }),
+    );
+    expect(
+      within(composer).queryByText("Rules lookup"),
+    ).not.toBeInTheDocument();
+  });
+
+  // A durable conversation API whose Agent pins "Rules lookup" by Skill.
+  // `detailTurnInput` is what the conversation detail echoes back for the
+  // created Turn; `created` captures the create request body.
+  function stubPinnedAgentConversation(
+    detailTurnInput: Record<string, unknown>,
+    options: { agentSkillRevisionIds?: string[] } = {},
+  ) {
+    const created: Array<Record<string, unknown>> = [];
+    const appended: Array<Record<string, unknown>> = [];
+    const agent = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      defaultModelAlias: null,
+      pinnedSkillIds: ["rules-lookup-skill"],
+      excludedSkillIds: [],
+      // Deprecated: the revisions a pre-pinning Agent revision bundled.
+      skillRevisionIds: options.agentSkillRevisionIds ?? [],
+    };
+    const skill = (
+      revisionId: string,
+      skillId: string,
+      displayName: string,
+    ) => ({
+      revisionId,
+      skillId,
+      assetId: skillId,
+      displayName,
+      description: "",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+    });
+    const skills = [
+      skill("rules-lookup-rev-2", "rules-lookup-skill", "Rules lookup"),
+      skill("clause-finder-rev-1", "clause-finder-skill", "Clause finder"),
+      skill("glossary-rev-1", "glossary-skill", "Glossary helper"),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        // The Skill library isn't under test here; opening a Skill from the
+        // answer context just has to land there.
+        if (path.includes("/skill-hub/"))
+          return Response.json(
+            { code: "unavailable", detail: "unavailable" },
+            { status: 503 },
+          );
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [agent] });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: skills });
+        const skillDetail = /\/ai\/skills\/([^/]+)$/u.exec(path);
+        if (skillDetail !== null) {
+          const summary = skills.find(
+            (item) => item.revisionId === skillDetail[1],
+          );
+          return Response.json({ ...summary, instructions: "a", files: [] });
+        }
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          const body =
+            input instanceof Request
+              ? await input.json()
+              : JSON.parse(String(init?.body ?? "{}"));
+          created.push(body as Record<string, unknown>);
+          return Response.json(
+            {
+              conversationId: "conversation-skills",
+              turnId: "conversation-skills-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-skills/turns") && method === "POST") {
+          const body =
+            input instanceof Request
+              ? await input.json()
+              : JSON.parse(String(init?.body ?? "{}"));
+          appended.push(body as Record<string, unknown>);
+          return Response.json(
+            {
+              conversationId: "conversation-skills",
+              turnId: "conversation-skills-turn-2",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-skills")) {
+          return Response.json({
+            conversationId: "conversation-skills",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-skills-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  ...detailTurnInput,
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-skills-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-skills-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    return { created, appended };
+  }
+
+  async function sendWithAgentAndManualSkill(
+    user: ReturnType<typeof userEvent.setup>,
+  ) {
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Skills" })).getByRole(
+        "option",
+        { name: "Clause finder" },
+      ),
+    );
+    await user.keyboard("{Escape}");
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    // The pinned Skill shows as a locked chip next to the manual pick.
+    expect(within(composer).getByText("Rules lookup")).toBeVisible();
+    expect(within(composer).getByText("Clause finder")).toBeVisible();
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    const send = screen.getByRole("button", { name: "Send" });
+    await waitFor(() => expect(send).toBeEnabled());
+    await user.click(send);
+  }
+
+  it("sends only manually selected skills", async () => {
+    const { created } = stubPinnedAgentConversation({});
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await sendWithAgentAndManualSkill(user);
+
+    await waitFor(() => expect(created).toHaveLength(1));
+    // The Agent's pinned Skill is loaded server-side from the Agent; the
+    // request carries only what the person picked.
+    expect(created[0]!.agentRevisionId).toBe("underwriting-reviewer");
+    expect(created[0]!.skillRevisionIds).toEqual(["clause-finder-rev-1"]);
+  });
+
+  it.each([
+    [
+      "an older revision of a currently pinned Skill",
+      "rules-lookup-rev-1",
+      ["rules-lookup-rev-1"],
+    ],
+    ["the pinned Skill's current revision", "rules-lookup-rev-2", []],
+  ])(
+    "regenerating an older turn sends only its manual skills (bound: %s)",
+    async (_case, boundRevisionId, agentSkillRevisionIds) => {
+      // A Turn recorded before Skill usage was tracked: no `skillsUsed`, and
+      // its frozen list mixes the Agent's bound Skill with a manual pick.
+      const { appended } = stubPinnedAgentConversation(
+        {
+          skillRevisionIds: [boundRevisionId, "clause-finder-rev-1"],
+          skillLabels: ["Rules lookup", "Clause finder"],
+        },
+        { agentSkillRevisionIds },
+      );
+      const user = userEvent.setup();
+      renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+      await sendWithAgentAndManualSkill(user);
+      await user.click(
+        await screen.findByRole("button", { name: "Regenerate" }),
+      );
+
+      await waitFor(() => expect(appended).toHaveLength(1));
+      expect(appended[0]!.agentRevisionId).toBe("underwriting-reviewer");
+      expect(appended[0]!.skillRevisionIds).toEqual(["clause-finder-rev-1"]);
+    },
+  );
+
+  it("answer context lists skills used with their modes", async () => {
+    stubPinnedAgentConversation({
+      skillRevisionIds: ["clause-finder-rev-1", "rules-lookup-rev-2"],
+      skillLabels: ["Clause finder", "Rules lookup"],
+      skillsUsed: [
+        {
+          skillId: "clause-finder-skill",
+          revisionId: "clause-finder-rev-1",
+          label: "Clause finder",
+          mode: "manual",
+        },
+        {
+          skillId: "rules-lookup-skill",
+          revisionId: "rules-lookup-rev-2",
+          label: "Rules lookup",
+          mode: "pinned",
+        },
+        {
+          skillId: "glossary-skill",
+          revisionId: "glossary-rev-1",
+          label: "Glossary helper",
+          mode: "auto",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await sendWithAgentAndManualSkill(user);
+
+    await user.click(await screen.findByText(/Sources and settings used/));
+    const used = await screen.findByRole("list", { name: "Skills used" });
+    const rows = within(used).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Clause finder Manual",
+      "Rules lookup Pinned",
+      "Glossary helper Auto",
+    ]);
+
+    // Still openable to the Skill detail, auto-activated ones included.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(
+      within(used).getByRole("button", { name: "Glossary helper" }),
+    );
+    // The Skills module opens that Skill's detail drawer.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("list", { name: "Skills used" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("answer context falls back to the legacy skill labels for an older turn without skillsUsed", async () => {
+    stubPinnedAgentConversation({
+      skillRevisionIds: ["clause-finder-rev-1"],
+      skillLabels: ["Clause finder"],
+    });
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await sendWithAgentAndManualSkill(user);
+
+    await user.click(await screen.findByText(/Sources and settings used/));
+    expect(
+      screen.queryByRole("list", { name: "Skills used" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clause finder" })).toBeVisible();
+  });
+
+  it("prefills the composer model from the selected Agent's default model", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "qwen-max" });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: /current model Qwen Max/,
+      }),
+    ).toBeVisible();
+  });
+
+  it("falls back to the global default model and shows a one-time notice when the Agent's default model left the catalog", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "retired-model" });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /current model Qwen Plus/ }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /default model is no longer available; using the global default instead/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows the model-fallback notice in Chinese when the UI locale is Chinese", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({ defaultModelAlias: "retired-model" });
+    await user.click(screen.getByRole("button", { name: "中文" }));
+
+    await user.click(screen.getByRole("button", { name: "添加到消息" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "添加到消息" })).getByRole(
+        "menuitem",
+        { name: "使用智能体" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "使用智能体" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+
+    expect(
+      screen.getByText(/的默认模型已不可用，已改用全局默认模型/),
+    ).toBeVisible();
+  });
+
+  it("warns and disables Send when selected Skills exceed the per-turn budget", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (/\/ai\/skills\/rules-lookup$/u.test(input)) {
+          return Response.json({
+            revisionId: "rules-lookup",
+            skillId: "rules-lookup",
+            assetId: "rules-lookup",
+            displayName: "Rules lookup",
+            description: "",
+            instructions: "a".repeat(100 * 1024),
+            applicableTasks: ["knowledge.answer"],
+            sourceKind: "authored",
+            builtIn: false,
+            status: "enabled",
+            isLatest: true,
+          });
+        }
+        if (/\/ai\/(agents|skills)$/u.test(input))
+          return Response.json({ items: [] });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWorkspaceWithComposerAgent({});
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Skills" },
+      ),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Skills" })).getByRole(
+        "option",
+        { name: "Rules lookup" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+
+    expect(
+      await screen.findByText(
+        "Selected skills exceed the per-turn budget. Remove some before sending.",
+      ),
+    ).toBeVisible();
+    const composer = screen.getByRole("textbox", { name: "Message Tapper" });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    // Enter submits the form directly (`requestSubmit()`), bypassing the
+    // disabled Send button — the over-budget guard has to live in
+    // `submit()` itself, not just the button's `disabled` attribute.
+    await user.keyboard("{Enter}");
+    // A successful send clears the composer (see `submit()`'s
+    // `setMessage("")`); the draft staying in place is the signal nothing
+    // was sent.
+    expect(composer).toHaveValue("What evidence is needed?");
+  });
+
+  it("shows the turn's skillNotices once and links Sources and settings to the Agent/Skill revision", async () => {
+    const AGENT_SUMMARY = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: [],
+    };
+    const SKILL_SUMMARY = {
+      revisionId: "citation-skill-rev-1",
+      assetId: "citation-skill",
+      skillId: "citation-skill",
+      displayName: "Citation skill",
+      description: "Cites evidence labels.",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      builtIn: true,
+      status: "disabled",
+      isLatest: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        // aiAssets.ts calls `fetch(relativePath)` with a bare string, which
+        // a real browser resolves against the document — but wrapping that
+        // string in `new Request()` here (Node's undici implementation, no
+        // implicit document base) throws on a relative URL. Resolve it
+        // against `window.location.origin` instead of constructing a
+        // `Request` at all.
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [AGENT_SUMMARY] });
+        if (path.endsWith("/ai/agents/underwriting-reviewer"))
+          return Response.json({
+            ...AGENT_SUMMARY,
+            systemInstruction: "Review the evidence.",
+          });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: [SKILL_SUMMARY] });
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          return Response.json(
+            {
+              conversationId: "conversation-notices",
+              turnId: "conversation-notices-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-notices")) {
+          return Response.json({
+            conversationId: "conversation-notices",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-notices-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  skillNotices: ["skill_disabled:citation-skill-rev-1"],
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-notices-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-notices-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(
+        'Skill "Citation skill" is disabled and was skipped for this answer.',
+      ),
+    ).toBeVisible();
+
+    await user.click(screen.getByText(/Sources and settings used/));
+    await user.click(
+      screen.getByRole("button", { name: "Underwriting reviewer" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Underwriting reviewer" }),
+    ).toBeVisible();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Reviews underwriting evidence.",
+    );
+
+    // Closing the drawer, leaving the Agents module and coming back must
+    // not reopen the same linked revision — only following the link again
+    // should.
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Close",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Tapper" }));
+    await user.click(screen.getByRole("button", { name: "Agents" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("never shows the raw skill_disabled:<id> wire code, even when the id names an older revision not in the latest-only skill list (N-2)", async () => {
+    // `skillById` (built from `GET /ai/skills`, latest-per-asset only) has
+    // no entry for "citation-skill-rev-OLD" -- the Agent is pinned to a
+    // revision superseded since, the ordinary case a disabled-skill
+    // notice can still name. The notice must fall back to a generic
+    // sentence, never the raw code.
+    const AGENT_SUMMARY = {
+      revisionId: "underwriting-reviewer",
+      agentId: "underwriting-reviewer",
+      assetId: "underwriting-reviewer",
+      displayName: "Underwriting reviewer",
+      description: "Reviews underwriting evidence.",
+      contentDigest: `sha256:${"7".repeat(64)}`,
+      toolAllowlist: ["knowledge.search", "knowledge.answer"],
+      outputSchemaDigest: `sha256:${"8".repeat(64)}`,
+      sourceKind: "authored",
+      builtIn: false,
+      status: "enabled",
+      isLatest: true,
+      hasSkillUpdates: false,
+      defaultModelAlias: null,
+      skillRevisionIds: ["citation-skill-rev-NEW"],
+    };
+    const SKILL_SUMMARY = {
+      revisionId: "citation-skill-rev-NEW",
+      assetId: "citation-skill",
+      skillId: "citation-skill",
+      displayName: "Citation skill",
+      description: "Cites evidence labels.",
+      contentDigest: `sha256:${"9".repeat(64)}`,
+      applicableTasks: ["knowledge.answer"],
+      sourceKind: "built_in",
+      builtIn: true,
+      status: "enabled",
+      isLatest: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const rawUrl =
+          input instanceof Request
+            ? input.url
+            : input instanceof URL
+              ? input.toString()
+              : input;
+        const method = (
+          input instanceof Request ? input.method : (init?.method ?? "GET")
+        ).toUpperCase();
+        const path = new URL(rawUrl, window.location.origin).pathname;
+        if (path.endsWith("/ai/agents"))
+          return Response.json({ items: [AGENT_SUMMARY] });
+        if (path.endsWith("/ai/skills"))
+          return Response.json({ items: [SKILL_SUMMARY] });
+        if (path.endsWith("/ai/skills/citation-skill-rev-NEW"))
+          return Response.json({
+            ...SKILL_SUMMARY,
+            instructions: "Cite every claim.",
+            attachedReferences: null,
+          });
+        if (path.endsWith("/conversations") && method === "GET")
+          return Response.json({ items: [], nextCursor: null });
+        if (path.endsWith("/conversations") && method === "POST") {
+          return Response.json(
+            {
+              conversationId: "conversation-old-rev-notice",
+              turnId: "conversation-old-rev-notice-turn-1",
+              state: "queued",
+            },
+            { status: 202 },
+          );
+        }
+        if (path.endsWith("/conversation-old-rev-notice")) {
+          return Response.json({
+            conversationId: "conversation-old-rev-notice",
+            title: "What evidence is needed?",
+            createdAt: CONVERSATION_NOW,
+            updatedAt: CONVERSATION_NOW,
+            turns: [
+              {
+                turnId: "conversation-old-rev-notice-turn-1",
+                state: "completed",
+                attempt: 1,
+                inputSnapshotDigest: INPUT_DIGEST,
+                answerEvidenceSnapshotDigest: EVIDENCE_DIGEST,
+                input: {
+                  message: "What evidence is needed?",
+                  modelAlias: "qwen-plus",
+                  sourceRevisionIds: [],
+                  documentRevisionIds: [],
+                  resolvedResources: [],
+                  agentRevisionId: "underwriting-reviewer",
+                  agentLabel: "Underwriting reviewer",
+                  skillRevisionIds: [],
+                  skillLabels: [],
+                  skillNotices: ["skill_disabled:citation-skill-rev-OLD"],
+                },
+              },
+            ],
+          });
+        }
+        if (path.endsWith("/events"))
+          return Response.json({
+            items: [
+              {
+                eventId: "conversation-old-rev-notice-turn-1-event",
+                sequence: 1,
+                turnId: "conversation-old-rev-notice-turn-1",
+                occurredAt: CONVERSATION_NOW,
+                eventType: "turn.completed",
+                payload: { answer: NO_CONTEXT_ANSWER },
+              },
+            ],
+          });
+        if (path.endsWith("/stream"))
+          return new Response("", {
+            headers: { "content-type": "text/event-stream" },
+          });
+        return Response.json({ items: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, { api: fakeKnowledgeClient() });
+
+    await user.click(screen.getByRole("button", { name: "Add to message" }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+        "menuitem",
+        { name: "Use Agents" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Use Agents" }),
+      ).toHaveTextContent("Underwriting reviewer"),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Use Agents" })).getByRole(
+        "option",
+        { name: "Underwriting reviewer" },
+      ),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+      "What evidence is needed?",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(
+        "A selected skill is disabled and was skipped for this answer.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/skill_disabled:citation-skill-rev-OLD/),
+    ).toBeNull();
+  });
+
   it("supports keyboard navigation and Escape focus restoration in the add menu", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -2594,270 +3696,70 @@ describe("Tap product workspace interactions", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  // Catalog edits persist immutable revisions through the management API.
-  it("searches, creates, and edits agents for the life-underwriting workflow", async () => {
+  it("manages agents through the Agents workspace and gates Save on required fields", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Agents" }));
+    await user.click(screen.getByRole("tab", { name: "Configuration" }));
     expect(screen.getByRole("heading", { name: "Agents" })).toBeVisible();
-    await user.type(
-      screen.getByRole("textbox", { name: "Search agents" }),
-      "underwriting",
-    );
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
 
-    const createDialog = screen.getByRole("dialog", { name: "Create agent" });
-    expect(
-      within(createDialog).getByRole("button", { name: "Save agent" }),
-    ).toBeDisabled();
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name" }),
-      "life-underwriting-reviewer",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Description" }),
-      "Reviews life underwriting evidence before escalation.",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Instructions" }),
-      "Review the selected evidence before escalating an application.",
-    );
-    await user.click(
-      within(createDialog).getByRole("button", { name: "Save agent" }),
-    );
-    const customAgent = await screen.findByRole("listitem", {
-      name: "life-underwriting-reviewer",
-    });
-    expect(
-      within(customAgent).getByRole("heading", {
-        name: "life-underwriting-reviewer",
-      }),
-    ).toBeVisible();
-    expect(within(customAgent).getByText("Custom")).toBeVisible();
-    expect(
-      within(customAgent).getByText(
-        "Review the selected evidence before escalating an application.",
-      ),
-    ).toBeVisible();
     const builtInAgent = screen.getByRole("listitem", {
       name: "Life Underwriting Analyst",
     });
     expect(within(builtInAgent).getByText("Built-in")).toBeVisible();
     expect(
-      within(builtInAgent).queryByRole("button", {
-        name: "Edit Life Underwriting Analyst",
-      }),
+      within(builtInAgent).queryByRole("button", { name: "Edit" }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Edit life-underwriting-reviewer" }),
-    );
-    const editDialog = screen.getByRole("dialog", { name: "Edit agent" });
-    const description = within(editDialog).getByRole("textbox", {
-      name: "Description",
-    });
-    await user.clear(description);
-    await user.type(description, "Escalates high-risk life applications.");
-    await user.click(
-      within(editDialog).getByRole("button", { name: "Save agent" }),
-    );
-    expect(
-      await screen.findByText("Escalates high-risk life applications."),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        "Review the selected evidence before escalating an application.",
-      ),
-    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    const createDialog = screen.getByRole("dialog", { name: "New agent" });
+    const save = within(createDialog).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
 
-    expect(
-      screen.getByRole("button", {
-        name: "Use life-underwriting-reviewer in chat",
-      }),
-    ).toBeVisible();
-  });
-  it("localizes catalog list labels instead of composing English aria text", async () => {
-    const user = userEvent.setup();
-    renderWorkspace();
-
-    await user.click(screen.getByRole("button", { name: "中文" }));
-    await user.click(screen.getByRole("button", { name: "智能体" }));
-    expect(screen.getByRole("list", { name: "智能体目录" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "技能" }));
-    expect(screen.getByRole("list", { name: "技能目录" })).toBeVisible();
-  });
-
-  it("contains create-dialog focus, hides the product background, and restores the Create trigger", async () => {
-    const user = userEvent.setup();
-    const { container } = renderWorkspace();
-
-    await user.click(screen.getByRole("button", { name: "Agents" }));
-    const trigger = screen.getByRole("button", { name: "Create agent" });
-    await user.click(trigger);
-
-    const dialog = screen.getByRole("dialog", { name: "Create agent" });
-    const name = within(dialog).getByRole("textbox", {
-      name: "Name",
-    });
-    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
-    expect(name).toHaveFocus();
-    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(screen.queryByRole("navigation", { name: "Product" })).toBeNull();
-
-    await user.tab({ shift: true });
-    expect(cancel).toHaveFocus();
-    await user.tab();
-    expect(name).toHaveFocus();
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
-    expect(trigger).toHaveFocus();
-    expect(container.querySelector(".tap-product-shell")).not.toHaveAttribute(
-      "aria-hidden",
-    );
-  });
-
-  // Built-in items remain read-only; saved custom revisions can be edited.
-  it("contains edit-dialog focus and restores the exact Edit trigger", async () => {
-    const user = userEvent.setup();
-    const { container } = renderWorkspace();
-
-    await user.click(screen.getByRole("button", { name: "Agents" }));
-    await user.click(screen.getByRole("button", { name: "Create agent" }));
-    const createDialog = screen.getByRole("dialog", { name: "Create agent" });
     await user.type(
       within(createDialog).getByRole("textbox", { name: "Name" }),
       "life-underwriting-reviewer",
     );
+    expect(save).toBeDisabled();
     await user.type(
       within(createDialog).getByRole("textbox", { name: "Description" }),
       "Reviews life underwriting evidence before escalation.",
     );
+    expect(save).toBeDisabled();
     await user.type(
-      within(createDialog).getByRole("textbox", { name: "Instructions" }),
+      within(createDialog).getByRole("textbox", { name: "System instruction" }),
       "Review the selected evidence before escalating an application.",
     );
+    expect(save).toBeEnabled();
+
     await user.click(
-      within(createDialog).getByRole("button", { name: "Save agent" }),
+      within(createDialog).getByRole("button", { name: "Cancel" }),
     );
-
-    const trigger = await screen.findByRole("button", {
-      name: "Edit life-underwriting-reviewer",
-    });
-    await user.click(trigger);
-
-    const dialog = screen.getByRole("dialog", { name: "Edit agent" });
-    const name = within(dialog).getByRole("textbox", {
-      name: "Name",
-    });
-    const save = within(dialog).getByRole("button", { name: "Save agent" });
-    expect(name).toHaveFocus();
-    expect(container.querySelector(".tap-product-shell")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-
-    await user.tab({ shift: true });
-    expect(save).toHaveFocus();
-    await user.tab();
-    expect(name).toHaveFocus();
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull();
-    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole("dialog", { name: "New agent" })).toBeNull();
   });
 
-  // Skill revisions use the same backend workflow.
-  it("searches, creates, and edits reusable underwriting skills", async () => {
+  it("manages skills through the Skills workspace without the retired local-draft flow", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Skills" }));
     expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
-    await user.type(
-      screen.getByRole("textbox", { name: "Search skills" }),
-      "underwriting",
-    );
-    await user.click(screen.getByRole("button", { name: "Create skill" }));
+    expect(screen.getByRole("button", { name: "Import skill" })).toBeVisible();
 
-    const createDialog = screen.getByRole("dialog", { name: "Create skill" });
-    expect(
-      within(createDialog).getByRole("button", { name: "Save skill" }),
-    ).toBeDisabled();
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Name (kebab-case)" }),
-      "underwriting-rules-lookup",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Description" }),
-      "Looks up underwriting rules for the selected source.",
-    );
-    await user.type(
-      within(createDialog).getByRole("textbox", { name: "Instructions" }),
-      "Find relevant rules and cite the selected source.",
-    );
-    await user.click(
-      within(createDialog).getByRole("button", { name: "Save skill" }),
-    );
-    const customSkill = await screen.findByRole("listitem", {
-      name: "underwriting-rules-lookup",
-    });
-    expect(
-      within(customSkill).getByRole("heading", {
-        name: "underwriting-rules-lookup",
-      }),
-    ).toBeVisible();
-    expect(within(customSkill).getByText("Custom")).toBeVisible();
-    expect(
-      within(customSkill).getByText(
-        "Find relevant rules and cite the selected source.",
-      ),
-    ).toBeVisible();
-    // Unlike the fixture-only BDD Scenario Design copy ("Turns underwriting
-    // rules into..."), the api-mode presentation text derived from the
-    // seeded catalog's capabilities doesn't mention "underwriting", so clear
-    // the still-active search before looking for it.
-    await user.clear(screen.getByRole("textbox", { name: "Search skills" }));
     const builtInSkill = screen.getByRole("listitem", {
       name: "BDD Scenario Design",
     });
     expect(within(builtInSkill).getByText("Built-in")).toBeVisible();
     expect(
-      within(builtInSkill).queryByRole("button", {
-        name: "Edit BDD Scenario Design",
-      }),
+      within(builtInSkill).queryByRole("button", { name: "Edit" }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Edit underwriting-rules-lookup" }),
-    );
-    const editDialog = screen.getByRole("dialog", { name: "Edit skill" });
-    const description = within(editDialog).getByRole("textbox", {
-      name: "Description",
-    });
-    await user.clear(description);
-    await user.type(description, "Retrieves rule evidence before a decision.");
-    await user.click(
-      within(editDialog).getByRole("button", { name: "Save skill" }),
-    );
     expect(
-      await screen.findByText("Retrieves rule evidence before a decision."),
-    ).toBeVisible();
-    expect(
-      screen.getByText("Find relevant rules and cite the selected source."),
-    ).toBeVisible();
-
-    expect(
-      screen.getByRole("button", {
-        name: "Use underwriting-rules-lookup in chat",
-      }),
-    ).toBeVisible();
+      screen.queryByRole("textbox", { name: "Search skills" }),
+    ).not.toBeInTheDocument();
   });
+
   it("uploads a Library file without making processing documents selectable", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -3021,46 +3923,43 @@ describe("Tap product workspace interactions", () => {
 
   it("switches the Library between All sources and an interactive Knowledge Graph", async () => {
     const user = userEvent.setup();
-    const getSource = vi.fn(async (sourceId: string) => ({
-      documents: {
-        items: [{ status: "ready", revisionId: `rev_${sourceId}` }],
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 2,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 2 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
       },
-    }));
-    vi.mocked(createKnowledgeClient).mockReturnValue({ getSource } as never);
-    vi.mocked(useActiveGraph).mockImplementation(
-      (_projectId, revisionIds) =>
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
         ({
-          data: revisionIds.length
-            ? { items: [{ snapshotId: `snap_${revisionIds[0]}` }] }
-            : undefined,
-          isPending: revisionIds.length === 0,
-          isError: false,
-        }) as never,
-    );
-    vi.mocked(useGraphSearch).mockImplementation(
-      (_projectId, snapshotId) =>
-        ({
-          data: snapshotId
-            ? {
-                snapshotId,
-                nodes: [
-                  {
-                    nodeId: "doc",
-                    nodeType: "DOCUMENT",
-                    label: "rev_source",
-                    canonicalKey: "doc",
-                  },
-                  {
-                    nodeId: "age",
-                    nodeType: "CONCEPT",
-                    label: "Age eligibility",
-                    canonicalKey: "age",
-                  },
-                ],
-                edges: [],
-              }
-            : undefined,
-          isPending: snapshotId === null,
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
           isError: false,
         }) as never,
     );
@@ -3083,8 +3982,11 @@ describe("Tap product workspace interactions", () => {
       within(filteredSources).queryByText("life-underwriting-rules.md"),
     ).toBeNull();
 
+    // The Knowledge Graph overview switches to a project-wide search once
+    // the shared query is non-empty (see `GraphOverview`), so clear it
+    // before switching tabs to see the default overview instead.
+    await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-    await user.click(screen.getByText("Published source graph"));
     expect(
       screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
     ).toBeVisible();
@@ -3092,21 +3994,510 @@ describe("Tap product workspace interactions", () => {
       screen.getByRole("tabpanel", { name: "Knowledge Graph" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Graph source" }),
-    ).toBeVisible();
+      screen.queryByRole("combobox", { name: "Graph source" }),
+    ).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
     );
-    expect(
-      screen.getByText(/nodes and relationships come from the service/i),
-    ).toBeVisible();
+    expect(screen.getByText(/Project knowledge overview/i)).toBeVisible();
     expect(
       screen.getByRole("button", { name: /Age eligibility/ }),
     ).toBeVisible();
 
-    await user.clear(search);
     await user.click(screen.getByRole("tab", { name: "Documents" }));
     expect(screen.getByRole("list", { name: "Library sources" })).toBeVisible();
+  });
+
+  it("falls back to the default module when a reloaded highlight turns out to belong to a different project", async () => {
+    // `defaultKnowledgeClient()`'s project is "project-test" (see
+    // `fakeKnowledgeClient`'s default); this highlight is for a different
+    // project, simulating e.g. a bookmark or forward/back navigation
+    // landing on a highlight minted for a project the user isn't in
+    // anymore. The very first render optimistically guesses "library"
+    // from this (any valid highlight, `projectId` unknown yet) — once
+    // `projectId` resolves and the highlight is screened out as a
+    // mismatch, `activeModule` must fall back to the normal default
+    // ("Tapper") instead of leaving the user stranded on an empty Library.
+    pushGraphHighlight({
+      edgeIds: ["edge-1"],
+      graphVersion: "1",
+      turnId: null,
+      projectId: "a-different-project",
+    });
+
+    try {
+      renderWorkspace();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Tapper" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Library" }),
+      ).not.toHaveAttribute("aria-current", "page");
+    } finally {
+      // This test file's jsdom `window` persists across its other tests —
+      // undo the navigation so it doesn't leak into them.
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("keeps Library active when a matching highlight is cleared", async () => {
+    const user = userEvent.setup();
+    // A non-empty project graph, so `GraphOverview` actually renders the
+    // canvas (and, with a highlight present, the "Back to overview"
+    // button) instead of its empty-graph message.
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    // Matches `defaultKnowledgeClient()`'s project ("project-test") —
+    // unlike the mismatch case above, this highlight genuinely belongs to
+    // the project the user is in. Clearing it later must not be misread
+    // as "the optimistic guess was wrong" and kick the user back to
+    // Tapper.
+    pushGraphHighlight({
+      edgeIds: ["edge-1"],
+      graphVersion: "1",
+      turnId: null,
+      projectId: "project-test",
+    });
+
+    try {
+      renderWorkspace();
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Back to overview" }),
+        ).toBeVisible(),
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Back to overview" }),
+      );
+
+      expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  describe("when the runtime project resolves asynchronously", () => {
+    function mockNonEmptyGraph() {
+      vi.mocked(useGraphProject).mockReturnValue({
+        data: {
+          graphVersion: 1,
+          status: "READY",
+          nodeCount: 1,
+          edgeCount: 0,
+          mergedAt: "2026-01-01T00:00:00Z",
+          communities: [
+            { communityId: "underwriting", label: "Underwriting", size: 1 },
+          ],
+          extractingRevisionIds: [],
+          partialRevisionIds: [],
+        },
+        isPending: false,
+        isError: false,
+        isSuccess: true,
+      } as never);
+      vi.mocked(useGraphOverview).mockImplementation(
+        () =>
+          ({
+            data: {
+              graphVersion: 1,
+              nodes: [
+                {
+                  nodeId: "age",
+                  nodeType: "CONCEPT",
+                  label: "Age eligibility",
+                  canonicalKey: "age",
+                  degree: 1,
+                  communityId: "underwriting",
+                  aliases: [],
+                },
+              ],
+              edges: [],
+              evidence: [],
+            },
+            isPending: false,
+            isError: false,
+          }) as never,
+      );
+    }
+
+    function expectActiveModule(name: string) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    }
+
+    afterEach(() => {
+      window.history.replaceState(null, "", "/");
+    });
+
+    it("falls back to the default module once a mismatched highlight is screened out", async () => {
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "a-different-project",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      // Optimistic guess before `projectId` is known.
+      expectActiveModule("Library");
+
+      await resolveRuntimeMode();
+
+      // "Tapper" stays current for any Tapper sub-module (Library included),
+      // so the default module is asserted through "New chat".
+      await waitFor(() => expectActiveModule("New chat"));
+      expect(
+        screen.getByRole("button", { name: "Library" }),
+      ).not.toHaveAttribute("aria-current");
+    });
+
+    it("stays on Library once a matching highlight is confirmed", async () => {
+      mockNonEmptyGraph();
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "project-test",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      expectActiveModule("Library");
+
+      await resolveRuntimeMode();
+
+      expect(
+        await screen.findByRole("button", { name: "Back to overview" }),
+      ).toBeVisible();
+      expectActiveModule("Library");
+    });
+
+    it("stays on Library when a confirmed matching highlight is later cleared", async () => {
+      const user = userEvent.setup();
+      mockNonEmptyGraph();
+      pushGraphHighlight({
+        edgeIds: ["edge-1"],
+        graphVersion: "1",
+        turnId: null,
+        projectId: "project-test",
+      });
+      const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+      await resolveRuntimeMode();
+
+      await user.click(
+        await screen.findByRole("button", { name: "Back to overview" }),
+      );
+
+      expectActiveModule("Library");
+      expect(
+        screen.queryByRole("button", { name: "Back to overview" }),
+      ).toBeNull();
+    });
+
+    it.each([
+      ["a matching", "project-test"],
+      ["a mismatched", "a-different-project"],
+    ])(
+      "does not override a module the user chose before %s highlight resolves",
+      async (_label, highlightProjectId) => {
+        const user = userEvent.setup();
+        mockNonEmptyGraph();
+        pushGraphHighlight({
+          edgeIds: ["edge-1"],
+          graphVersion: "1",
+          turnId: null,
+          projectId: highlightProjectId,
+        });
+        const { resolveRuntimeMode } = renderWorkspaceWithDeferredRuntime();
+        expectActiveModule("Library");
+        await user.click(
+          screen.getByRole("button", { name: "Test Management" }),
+        );
+        expectActiveModule("Test Management");
+
+        await resolveRuntimeMode();
+
+        expectActiveModule("Test Management");
+      },
+    );
+  });
+
+  it("returns focus to the 'Open original' button after closing the opened source", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "age",
+                nodeType: "CONCEPT",
+                label: "Age eligibility",
+                canonicalKey: "age",
+                degree: 0,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphNode).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            node: {
+              nodeId: "age",
+              nodeType: "CONCEPT",
+              label: "Age eligibility",
+              canonicalKey: "age",
+              degree: 0,
+              communityId: "underwriting",
+              aliases: [],
+            },
+            community: {
+              communityId: "underwriting",
+              label: "Underwriting",
+              size: 1,
+            },
+            sources: [
+              {
+                sourceRevisionId: "rev_life_underwriting_rules",
+                documentRevisionId: "rev_life_underwriting_rules",
+                sourceName: "life-underwriting-rules.md",
+                evidence: [],
+              },
+            ],
+            relations: [],
+            neighbors: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    // The graph's node-detail "Open original" button opens the sourceId
+    // resolved from `publishedSources` (DEFAULT_SOURCES), but the fake
+    // knowledge client's `getSource` looks a source up by the *document*
+    // fixture's own deterministic `sourceId` (derived from `documentId`).
+    // Point the published source's id at that same value so opening it
+    // resolves instead of erroring.
+    const matchingSourceId = document({
+      documentId: "life-underwriting-rules",
+      filename: "life-underwriting-rules.md",
+      stage: "ready",
+      status: "ready",
+    }).sourceId;
+    const api = defaultKnowledgeClient().withPublishedSources({
+      items: [{ ...DEFAULT_SOURCES[0], sourceId: matchingSourceId }],
+    });
+    const queryClient = createTestQueryClient();
+    seedAgentSkillCatalog(queryClient, api.projectId);
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: /Age eligibility/ }));
+    const openOriginalButton = await screen.findByRole("button", {
+      name: "Open original",
+    });
+    await user.click(openOriginalButton);
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close Knowledge sources" }),
+    );
+
+    expect(openOriginalButton).toHaveFocus();
+  });
+
+  it("fills the composer and source chips when asking about a graph node", async () => {
+    const user = userEvent.setup();
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "disclosure",
+                nodeType: "CONCEPT",
+                label: "Health disclosure",
+                canonicalKey: "disclosure",
+                degree: 0,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    vi.mocked(useGraphNode).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            node: {
+              nodeId: "disclosure",
+              nodeType: "CONCEPT",
+              label: "Health disclosure",
+              canonicalKey: "disclosure",
+              degree: 0,
+              communityId: "underwriting",
+              aliases: [],
+            },
+            community: {
+              communityId: "underwriting",
+              label: "Underwriting",
+              size: 1,
+            },
+            // Both revision ids resolve to a published source id in
+            // `DEFAULT_SOURCES` (the fixture `defaultKnowledgeClient` seeds
+            // below), so `GraphOverview` can map them to real source ids
+            // before `askAboutGraphNode` ever sees them.
+            sources: [
+              {
+                sourceRevisionId: "rev_life_underwriting_rules",
+                documentRevisionId: "rev_life_underwriting_rules",
+                sourceName: "life-underwriting-rules.md",
+                evidence: [],
+              },
+              {
+                sourceRevisionId: "rev_health_disclosure_guide",
+                documentRevisionId: "rev_health_disclosure_guide",
+                sourceName: "health-disclosure-guide.pdf",
+                evidence: [],
+              },
+            ],
+            relations: [],
+            neighbors: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    const api = defaultKnowledgeClient();
+    const queryClient = createTestQueryClient();
+    seedAgentSkillCatalog(queryClient, api.projectId);
+    queryClient.setQueryData(["test-plans", api.projectId], []);
+    renderKnowledgeApp(<TapperWorkspace />, { api, queryClient });
+
+    await user.click(screen.getByRole("button", { name: "Library" }));
+    await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible(),
+    );
+    await user.click(screen.getByRole("button", { name: /Health disclosure/ }));
+    await user.click(screen.getByRole("button", { name: "Ask about this" }));
+
+    expect(screen.getByRole("textbox", { name: "Message Tapper" })).toHaveValue(
+      "Health disclosure",
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /life-underwriting-rules\.md/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /health-disclosure-guide\.pdf/ }),
+    ).toBeChecked();
   });
 
   it("combines Library type and status filters and clears them together", async () => {
@@ -3183,7 +4574,7 @@ describe("Tap product workspace interactions", () => {
     expect(input).toHaveValue("Keep this draft");
   });
 
-  it("does not substitute the illustrative graph without a published revision", async () => {
+  it("does not substitute an illustrative graph before the project graph loads", async () => {
     const user = userEvent.setup();
     renderKnowledgeApp(<TapperWorkspace />, {
       api: fakeKnowledgeClient(),
@@ -3191,11 +4582,8 @@ describe("Tap product workspace interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-    await user.click(screen.getByText("Published source graph"));
 
-    expect(
-      await screen.findByText("Select a ready source to view its graph."),
-    ).toBeVisible();
+    expect(await screen.findByText("No knowledge graph yet.")).toBeVisible();
     expect(screen.queryByText("Illustrative view")).not.toBeInTheDocument();
   });
 
@@ -3207,14 +4595,390 @@ describe("Tap product workspace interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "Library" }));
     await user.click(screen.getByRole("tab", { name: "Knowledge Graph" }));
-    await user.click(screen.getByText("Published source graph"));
 
-    expect(
-      await screen.findByText("Select a ready source to view its graph."),
-    ).toBeVisible();
+    expect(await screen.findByText("No knowledge graph yet.")).toBeVisible();
     expect(
       screen.queryByRole("region", { name: "Knowledge graph summary" }),
     ).not.toBeInTheDocument();
+  });
+
+  // Stubs a completed durable conversation whose single turn cites one
+  // chunk and one edge, so the chip/evidence-panel wiring (`GroundedAnswer`
+  // -> `EdgeCitationChip` -> `EvidencePanel` -> `pushGraphHighlight`) can be
+  // exercised end to end the same way `completedConversation` does in
+  // `TapperWorkspace.conversations.test.tsx`. `turn.traceId` is left `null`
+  // (falls back to `AnswerActivity`, not the trace panel) since the trace
+  // endpoint is irrelevant to citation rendering.
+  function stubEdgeCitationConversation({
+    citationResponse,
+    onCitationRequest,
+  }: {
+    // Overridable so the error-state test below can return a problem
+    // response instead. `AssistantResponse`'s per-chip hover-card lookup
+    // (`useConversationCitations`) only enables a citation's query once
+    // its chip is hovered or focused, and the evidence panel's own lookup
+    // only enables once a citation is opened — but both hit this same
+    // endpoint, so it must always resolve to something once either
+    // happens.
+    citationResponse?: () => Response;
+    // Lets the laziness test below count requests without needing to spy
+    // on the stubbed global `fetch` itself.
+    onCitationRequest?: () => void;
+  } = {}) {
+    const jsonResponse = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    const answer = {
+      traceId: "trace-1",
+      queryPlanId: "plan-1",
+      contextSnapshotId: "context-1",
+      corpusVersion: "v1",
+      retrievalProfileId: "quick",
+      degradedMode: false,
+      answer: "Verified identity is required.",
+      abstained: false,
+      claims: [
+        {
+          claimId: "claim-1",
+          text: "Verified identity is required.",
+          answerStart: 0,
+          answerEnd: 30,
+          citationIds: ["citation-a", "edge-1"],
+        },
+      ],
+      citations: [
+        retrievalCitation("citation-a"),
+        {
+          ...retrievalCitation("edge-1"),
+          kind: "edge",
+          edge: {
+            edgeId: "e1",
+            graphVersion: "2",
+            subject: {
+              nodeId: "node-underwriting",
+              label: "Underwriting review",
+            },
+            object: { nodeId: "node-disclosure", label: "Health disclosure" },
+            relationType: "REQUIRES",
+            relationLabel: "requires",
+          },
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/conversations") && request.method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              conversationId: "conversation-a",
+              title: "What is the rule?",
+              createdAt: "2026-09-29T08:00:00Z",
+              updatedAt: "2026-09-29T08:00:00Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (path.endsWith("/conversations/conversation-a")) {
+        return jsonResponse({
+          conversationId: "conversation-a",
+          title: "What is the rule?",
+          createdAt: "2026-09-29T08:00:00Z",
+          updatedAt: "2026-09-29T08:00:01Z",
+          turns: [
+            {
+              turnId: "turn-1",
+              state: "completed",
+              attempt: 1,
+              traceId: null,
+              inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
+              answerEvidenceSnapshotDigest: null,
+              input: {
+                message: "What is the rule?",
+                modelAlias: "qwen-plus",
+                sourceRevisionIds: [],
+                documentRevisionIds: [],
+                resolvedResources: [],
+                agentRevisionId: null,
+                agentLabel: null,
+                skillRevisionIds: [],
+                skillLabels: [],
+                insightsQueryId: null,
+              },
+            },
+          ],
+        });
+      }
+      if (path.endsWith("/conversations/conversation-a/events")) {
+        return jsonResponse({
+          items: [
+            {
+              eventId: "event-1",
+              sequence: 1,
+              turnId: "turn-1",
+              occurredAt: "2026-09-29T08:00:01Z",
+              eventType: "turn.completed",
+              payload: { answer },
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (
+        path.endsWith(
+          "/conversations/conversation-a/turns/turn-1/citations/edge-1",
+        )
+      ) {
+        onCitationRequest?.();
+        return (
+          citationResponse?.() ??
+          jsonResponse(
+            citationPreview({
+              citationId: "edge-1",
+              quote:
+                "Health disclosure is required before underwriting review.",
+            }),
+          )
+        );
+      }
+      throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+    });
+  }
+
+  it("keeps citation chips in reading order and returns focus after closing the evidence panel", async () => {
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const chunkChip = await screen.findByRole("button", {
+      name: "Open source citation 1",
+    });
+    const edgeChip = screen.getByRole("button", {
+      name: "Open relation citation R1",
+    });
+
+    chunkChip.focus();
+    expect(chunkChip).toHaveFocus();
+    await user.tab();
+    expect(edgeChip).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("heading", { name: "Relation evidence" }),
+    ).toHaveFocus();
+
+    await user.click(
+      screen.getByRole("button", { name: "Close relation evidence" }),
+    );
+    expect(edgeChip).toHaveFocus();
+  });
+
+  it("opens Library in highlight mode from an edge citation", async () => {
+    vi.mocked(useGraphProject).mockReturnValue({
+      data: {
+        graphVersion: 1,
+        status: "READY",
+        nodeCount: 1,
+        edgeCount: 0,
+        mergedAt: "2026-01-01T00:00:00Z",
+        communities: [
+          { communityId: "underwriting", label: "Underwriting", size: 1 },
+        ],
+        extractingRevisionIds: [],
+        partialRevisionIds: [],
+      },
+      isPending: false,
+      isError: false,
+      isSuccess: true,
+    } as never);
+    vi.mocked(useGraphOverview).mockImplementation(
+      () =>
+        ({
+          data: {
+            graphVersion: 1,
+            nodes: [
+              {
+                nodeId: "node-underwriting",
+                nodeType: "CONCEPT",
+                label: "Underwriting review",
+                canonicalKey: "underwriting",
+                degree: 1,
+                communityId: "underwriting",
+                aliases: [],
+              },
+            ],
+            edges: [],
+            evidence: [],
+          },
+          isPending: false,
+          isError: false,
+        }) as never,
+    );
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    try {
+      renderWorkspace();
+
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Open relation citation R1",
+        }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View in Library" }),
+      );
+
+      expect(
+        await screen.findByRole("button", { name: "Library" }),
+      ).toHaveAttribute("aria-current", "page");
+      expect(
+        screen.getByRole("tab", { name: "Knowledge Graph", selected: true }),
+      ).toBeVisible();
+      expect(
+        await screen.findByRole("region", { name: "Highlighted path" }),
+      ).toBeVisible();
+
+      const historyState = window.history.state as {
+        graphHighlight?: { edgeIds: string[] };
+      } | null;
+      expect(historyState?.graphHighlight?.edgeIds).toEqual(["e1"]);
+    } finally {
+      // This test file's jsdom `window` persists across its other tests —
+      // undo the navigation so it doesn't leak into them (same convention
+      // as the other `pushGraphHighlight` tests above).
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("fetches an edge citation's snippet only after its chip is hovered or focused", async () => {
+    let citationRequests = 0;
+    stubEdgeCitationConversation({
+      onCitationRequest: () => {
+        citationRequests += 1;
+      },
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const chip = await screen.findByRole("button", {
+      name: "Open relation citation R1",
+    });
+    // The turn (and its edge citation chip) is fully rendered, but nothing
+    // has hovered or focused it yet.
+    expect(citationRequests).toBe(0);
+
+    await user.hover(chip);
+    await waitFor(() => expect(citationRequests).toBe(1));
+
+    // Unhovering and re-hovering reads from the now-enabled, `staleTime:
+    // Infinity` cache entry rather than firing a second request.
+    await user.unhover(chip);
+    await user.hover(chip);
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Health disclosure is required before underwriting review.",
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(citationRequests).toBe(1);
+  });
+
+  it("shows the historical supporting passage in the evidence panel", async () => {
+    stubEdgeCitationConversation();
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open relation citation R1",
+      }),
+    );
+
+    // Scoped to the evidence panel itself: the hover popover's own copy of
+    // this same snippet (`RelationHoverCard`) can still be in the DOM
+    // alongside it (the click that opened the panel also focuses the chip,
+    // and the popover triggers on focus too).
+    const panel = (
+      await screen.findByRole("heading", { name: "Relation evidence" })
+    ).closest("section")!;
+    expect(
+      await within(panel).findByText(
+        "Health disclosure is required before underwriting review.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a retryable error when the supporting passage fails to load, and recovers on retry", async () => {
+    let citationRequests = 0;
+    stubEdgeCitationConversation({
+      onCitationRequest: () => {
+        citationRequests += 1;
+      },
+      // `retryable: false` here only stops react-query's own automatic
+      // retry-with-backoff (`retryConversationRequest`) from repeatedly
+      // re-fetching and timing out this test — `safeCitationProblem`'s
+      // retryable *UI* classification (which shows the "Retry
+      // verification" button) comes from the 503 status + problem code
+      // below, not from this field. The first request fails; a retry
+      // (manual `refetch()` from the button) succeeds.
+      citationResponse: () =>
+        citationRequests > 1
+          ? new Response(
+              JSON.stringify(
+                citationPreview({
+                  citationId: "edge-1",
+                  quote:
+                    "Health disclosure is required before underwriting review.",
+                }),
+              ),
+              { status: 200, headers: { "content-type": "application/json" } },
+            )
+          : new Response(
+              JSON.stringify({
+                type: "https://tap.example/problems/citation-unavailable",
+                retryable: false,
+              }),
+              {
+                status: 503,
+                headers: { "content-type": "application/problem+json" },
+              },
+            ),
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open relation citation R1",
+      }),
+    );
+
+    const panel = (
+      await screen.findByRole("heading", { name: "Relation evidence" })
+    ).closest("section")!;
+    expect(
+      await within(panel).findByText(
+        "Cited content is temporarily unavailable. Try again.",
+      ),
+    ).toBeInTheDocument();
+    const requestsBeforeRetry = citationRequests;
+
+    await user.click(
+      within(panel).getByRole("button", { name: "Retry verification" }),
+    );
+
+    await waitFor(() =>
+      expect(citationRequests).toBeGreaterThan(requestsBeforeRetry),
+    );
+    expect(
+      await within(panel).findByText(
+        "Health disclosure is required before underwriting review.",
+      ),
+    ).toBeInTheDocument();
   });
 });
 

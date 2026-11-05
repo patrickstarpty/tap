@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
+import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from redis import Redis as SyncRedis
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from tap.platform.telemetry import TraceBindingProcessor
 
@@ -59,49 +65,14 @@ def span_recorder(_span_exporter: InMemorySpanExporter) -> Iterator[InMemorySpan
     _span_exporter.clear()
 
 
-MYSQL_SKIP_REASON = "requires owned isolated MySQL"
-_MYSQL_SKIPS: list[str] = []
-
-
-def _mysql_gate(request: pytest.FixtureRequest) -> None:
-    """Skip (or fail when required) unless owned MySQL integration is enabled."""
-    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") == "1":
-        return
-    if os.getenv("TAP_REQUIRE_MYSQL_INTEGRATION") == "1":
-        pytest.fail(f"{MYSQL_SKIP_REASON} (TAP_REQUIRE_MYSQL_INTEGRATION=1)")
-    # Broader-scoped fixtures cache the skip; per-test skips are counted in the report hook.
-    if request.scope == "function" and request.node.nodeid not in _MYSQL_SKIPS:
-        _MYSQL_SKIPS.append(request.node.nodeid)
-    pytest.skip(MYSQL_SKIP_REASON)
-
-
-def _mysql_skip_summary(n: int) -> str:
-    return (
-        f"MySQL persistence tests: {n} skipped (set TAP_RUN_MYSQL_INTEGRATION=1 with owned MySQL)"
-    )
-
-
-def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    if not report.skipped or not isinstance(report.longrepr, tuple):
-        return
-    if MYSQL_SKIP_REASON in str(report.longrepr[2]) and report.nodeid not in _MYSQL_SKIPS:
-        _MYSQL_SKIPS.append(report.nodeid)
-
-
-def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    if _MYSQL_SKIPS:
-        terminalreporter.write_line(_mysql_skip_summary(len(_MYSQL_SKIPS)))
-
-
 # New Project scenarios own a fresh database even inside the broad wrapper.
 # Caller URLs are restored before the scenario and never selected for its SQL.
 @pytest.fixture
-def owned_project_mysql(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[IsolatedMysql]:
+def owned_project_mysql(monkeypatch: pytest.MonkeyPatch) -> Iterator[IsolatedMysql]:
     from scripts.migration_support import isolated_mysql
 
-    _mysql_gate(request)
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     with ExitStack() as resources:
         with monkeypatch.context() as environment:
             environment.delenv("TAP_DATABASE_URL", raising=False)
@@ -111,15 +82,106 @@ def owned_project_mysql(
         yield database
 
 
+def _remove_owned_redis(docker, name, env):
+    result = subprocess.run(
+        [*docker, "rm", "--force", name], capture_output=True, env=env, timeout=20
+    )
+    if result.returncode:
+        raise RuntimeError("owned Redis cleanup failed")
+
+
+@pytest.fixture
+def owned_redis_url():
+    """A disposable, isolated Redis container on a random host port.
+
+    Moved here (unchanged) from `tests/unit/operations/test_redis_stream_recovery.py`
+    so other suites (e.g. `tests/integration/test_redis_drafts_integration.py`) can
+    reuse the same gated, self-cleaning fixture instead of depending on a fixed
+    external Redis URL/port.
+    """
+    if os.getenv("TAP_RUN_REDIS_INTEGRATION") != "1":
+        pytest.skip("requires owned disposable Redis")
+    from scripts.migration_support import _local_environment, _run
+
+    env = _local_environment()
+    context = _run(["docker", "context", "show"], env=env)
+    endpoint = _run(
+        [
+            "docker",
+            "context",
+            "inspect",
+            context,
+            "--format",
+            '{{(index .Endpoints "docker").Host}}',
+        ],
+        env=env,
+    )
+    if not endpoint.startswith("unix://"):
+        raise ValueError("recovery tests require a local Docker socket")
+    docker = ["docker", "--context", context]
+    name = "tap-recovery-test-" + uuid4().hex[:12]
+    event = {"event": "owned-redis", "identity": name, "state": "started"}
+    print(json.dumps(event), file=sys.stderr, flush=True)
+    try:
+        subprocess.run(
+            [
+                *docker,
+                "run",
+                "--detach",
+                "--rm",
+                "--name",
+                name,
+                "-p",
+                "127.0.0.1::6379",
+                "redis:7.4.7",
+            ],
+            check=True,
+            capture_output=True,
+            env=env,
+            timeout=60,
+        )
+        port = (
+            subprocess.check_output(
+                [*docker, "port", name, "6379/tcp"], text=True, env=env, timeout=10
+            )
+            .strip()
+            .rsplit(":", 1)[1]
+        )
+        url = f"redis://127.0.0.1:{port}/0"
+        client = SyncRedis.from_url(url)
+        try:
+            for _ in range(100):
+                try:
+                    if client.ping():
+                        break
+                except RedisConnectionError:
+                    time.sleep(0.05)
+            else:
+                raise RuntimeError("owned Redis did not start")
+        finally:
+            client.close()
+        yield url
+    finally:
+        try:
+            _remove_owned_redis(docker, name, env)
+            event["state"] = "complete"
+        except BaseException:
+            event["state"] = "failed"
+            raise
+        finally:
+            print(json.dumps(event), file=sys.stderr, flush=True)
+
+
 # Ledger and recovery scenarios clean their tables between tests, so one owned
 # head-migrated database per module is enough; never fall back to caller URLs.
 @pytest.fixture(scope="module")
-def owned_module_database_url(request: pytest.FixtureRequest) -> Iterator[str]:
+def owned_module_database_url() -> Iterator[str]:
     from scripts.migration_support import isolated_mysql
 
     from tests.owned_mysql import owned_project_database_url
 
-    _mysql_gate(request)
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     with ExitStack() as resources:
         with pytest.MonkeyPatch.context() as environment:
             environment.delenv("TAP_DATABASE_URL", raising=False)

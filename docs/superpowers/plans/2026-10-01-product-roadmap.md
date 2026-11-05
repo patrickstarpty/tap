@@ -6,7 +6,7 @@
 
 | 状态 | 含义 |
 | --- | --- |
-| 已完成 | 已合入 `main`，附 PR 编号 |
+| 已完成 | 已合入 `develop` 并通过验收，附 PR 编号或合并提交；进入 `main` 的时间以发布为准 |
 | 进行中 | 有 plan 或已在实施，附分支或 PR |
 | 已设计 | spec 已写，未进入实施 |
 | 未设计 | 仅有方向，没有 spec |
@@ -40,9 +40,7 @@ flowchart LR
 
 ## V1：可信知识问答（进行中）
 
-退出标准：[V1 总纲](2026-09-29-v1-roadmap.md) 中 5 项能力的“工程完成”全部勾选。
-
-2026-11-04：本地 5 项工程验收均通过，完整原型同步；版本表仍按远端合入记录为进行中，真实资料业务验证单独保留。详见 [增量验证记录](../../guides/2026-11-04-v1-completion-validation.md)。
+退出标准：[V1 总纲](2026-09-29-v1-roadmap.md) 中 6 项能力的“工程完成”全部勾选。
 
 | 项 | 状态 |
 | --- | --- |
@@ -50,23 +48,27 @@ flowchart LR
 | 子项目 1 基础设施收敛 | 已完成（#32） |
 | TAP AI 前端清理原型内容 | 已完成（#34） |
 | 子项目 2 可观测性（能力 5） | 已完成（#36） |
+| Langfuse 运营看板与用户反馈（能力 5 的增量） | 已完成（2026-10-15 实机验收；[spec](../specs/2026-10-14-langfuse-ops-observability-design.md)、[计划](2026-10-14-langfuse-ops-observability.md)） |
 | 推荐问题（能力 1 的一部分） | 已完成（#38、#39） |
-| 子项目 3 可靠问答（能力 1） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-reliable-answering-design.md)、[plan](2026-11-03-reliable-answering.md)） |
-| 子项目 4 图谱查询扩展（能力 2） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-graph-query-extension-design.md)、[plan](2026-11-03-graph-query-extension.md)） |
-| 子项目 5 脉络分析（能力 3） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-graph-context-analysis-design.md)、[plan](2026-11-04-graph-context-analysis.md)） |
-| 子项目 6 Skills/Agents（能力 4） | 进行中（工程完成，本地 `main`，远端待合入；[spec](../specs/2026-11-03-skills-agents-design.md)、[plan](2026-11-03-skills-agents.md)） |
+| 子项目 3 可靠问答（能力 1） | 进行中（推荐问题部分见上一行；golden set 格式与回归命令已就绪，随子项目 7 PR 3 交付——`make quality-answers` CI 常驻假模型门禁、`make quality-answers-real` 真实模型对比 opt-in，真实基线已在 `d6e432de` 上运行并完成切换后对比（2026-10-22，门禁通过）；链路可靠性修复并入子项目 7 ②） |
+| 子项目 4 知识图谱脉络分析（能力 2、3） | 进行中（PR 1–PR 5、验收修复与三轮真实模型复验修复已合并到 `develop`，独立验收有条件通过；能力 2 工程完成（2026-10-23 `graph-bench` 通过）；2026-10-23 真实门禁 FAIL：关系 golden 2/25、边抽样准确率 26%、误合并 30%，真实对话中 `graph.relations` 调用 0/25（[门禁记录](../../reviews/2026-10-23-graph-reasoning-gate.md)）） |
+| 子项目 5 Skills/Agents（能力 4） | 工程完成，业务验证待办（[spec](../specs/2026-10-11-skills-agents-design.md)、[计划](2026-10-12-skills-agents.md)、[ADR-032](../../decisions/2026-10-12-adr-032-skill-packages-and-tool-registry.md)；MCP 不在 V1） |
+| 子项目 7 LangGraph 编排（能力 6，② 图重构 → ③ 角色与意图 → ④ 围栏 → ⑤ 工具与长任务 → ⑥ 可信知识） | 进行中（PR 1 图骨架已合并到 `develop`（2026-10-15）；PR 2（瞬时失败退避续跑、attempt 上限、worker loop 单次异常不退出）与 PR 4 围栏已合并到 `develop`（2026-10-17）；PR 3（ModelGateway 流式、正文内联引用 `[S<n>]`/`[R<n>]`、Redis 草稿流与唤醒流、SSE 阻塞读取取代数据库轮询、立即停止）已合并到 `develop`（2026-10-18）；PR 5（③ 角色与意图、④ 工具参数范围校验、⑤ `model ⇄ tools` 工具调用循环：工具注册表四项、`graph.relations`/`insights.query` 经工具调用、SSE `task.step`、`TapperPersona` 版本冻结、`CHAT_STATE_SCHEMA_VERSION` 升为 3）已合并到 `develop`（2026-10-22）；剩余意图真实门禁（用户运行）；PR 6 可信知识与 PR 7 长任务 2026-10-23 移入 V2；[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md)，7 个 PR；2026-10-14 由 V2 方向提入 V1；PR 1–4 先行，能力 4 在 PR 5 之前合入） |
 
 ## V2：主动 Tapper（已设计）
 
-设计：[Tapper 主动 Agent 设计](../specs/2026-09-30-tapper-proactive-agent-design.md)。前置：V1 能力 4、能力 5 与 worker 可靠性修复完成。
+设计：[Agent 团队视图设计](../specs/2026-10-22-agent-team-view-design.md)（V2.1）、[Tapper 主动 Agent 设计](../specs/2026-09-30-tapper-proactive-agent-design.md)（V2.2–V2.4）、[Tapper LangGraph 编排设计](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节（LangGraph 收尾）。前置：V1 能力 4、能力 5 与 worker 可靠性修复完成。
 
 | 项 | 内容 | 状态 |
 | --- | --- | --- |
-| V2.1 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
-| V2.2 | TAP AI 与平台事件契约 ADR、平台事件接入、委托授权的 `insights.query` 工具、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
-| V2.3 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
+| V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 工程完成（[plan](2026-10-23-agent-team-view.md)；[spec](../specs/2026-10-22-agent-team-view-design.md)）；2026-10-28 审查修复、面板重做（分析平台式）与香港语料数据重建合入（[演示](../../guides/2026-10-28-agent-team-business-demo.md)）；待业务验证（spec 7.4） |
+| Skill Hub | Skills 模块改为 Skill 库：按描述自动激活取代绑定 Agent、类别/版本/来源元数据、用量统计与导出（第 1 阶段）；来源同步与版本（第 2 阶段）；静态扫描与信任等级、项目内共享（第 3 阶段） | 已设计并确认（[spec](../specs/2026-11-01-skill-hub-design.md)，2026-11-01；替代已否决的"Skill 名册"方向）；第 1 阶段工程完成，待业务验证（已合入 `develop`，2026-11-03，[计划](2026-11-01-skill-hub-phase-1.md)；真实模型激活精度 1.00/1.00、名册去常驻复跑已完成） |
+| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 长任务（`document.read_section` / `document.analyse`、durable 子图、`interrupt` / `resume`、进度与确认卡片） | 已设计（[spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；V2 第二个实施，在 V2.1 之后、V2.2 主动框架之前） |
+| V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
+| V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
+| V2.4 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
 
-退出标准：V2.1、V2.2 工程完成；在真实项目中度量提议采纳率。
+退出标准：V2.1、LangGraph 收尾、V2.2、V2.3 工程完成；在真实项目中度量提议采纳率。
 
 ## V3：测试闭环（未设计）
 
@@ -74,7 +76,7 @@ flowchart LR
 
 - 解冻 Test Management 后端，建设 Low Code Automation 后端。
 - 重新评估已暂缓的 [ADR-021](../../decisions/2026-09-04-adr-021-knowledge-first-web-automation-delivery.md) 与 [ADR-025](../../decisions/2026-09-04-adr-025-jenkins-first-execution-provider.md)。
-- 完成 V2.3。
+- 完成 V2.4。
 
 ## V4：产品化（未设计）
 

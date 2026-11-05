@@ -3,7 +3,6 @@
 from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.graph.domain.index import SnapshotIndex
 from tap.modules.graph.domain.models import (
     Evidence,
     GraphSearchQuery,
@@ -13,20 +12,16 @@ from tap.modules.graph.domain.models import (
     NeighborQuery,
     PathQuery,
 )
-from tap.modules.graph.domain.models import GraphFactNotFound as GraphFactNotFound
+
+
+class GraphFactNotFound(LookupError):
+    pass
 
 
 class GraphStorePort(Protocol):
-    async def load_index(
-        self, scope: ProjectScopeContext, snapshot: GraphSnapshot
-    ) -> SnapshotIndex: ...
-
     async def publish(
         self, scope: ProjectScopeContext, draft: GraphSnapshotDraft
     ) -> GraphSnapshot: ...
-    async def active_snapshot(
-        self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
-    ) -> GraphSnapshot | None: ...
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str
     ) -> GraphSnapshot | None: ...

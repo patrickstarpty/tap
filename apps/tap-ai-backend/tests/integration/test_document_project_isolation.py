@@ -1,5 +1,6 @@
 """Project authority on the real document ledger, using a disposable database."""
 
+import os
 from collections.abc import Iterator
 from contextlib import ExitStack
 from datetime import datetime, timedelta
@@ -14,7 +15,6 @@ from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.ports.documents import ArtifactLocator, JobLeaseLost, ReserveUpload
 from tap.platform.db.session import create_engine_and_session_factory
-from tests.conftest import _mysql_gate
 
 OTHER_SCOPE = ProjectScopeContext(
     enterprise_id="local",
@@ -25,10 +25,9 @@ OTHER_SCOPE = ProjectScopeContext(
 
 
 @pytest.fixture
-def project_database(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[str]:
-    _mysql_gate(request)
+def project_database(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import isolated_mysql
 
     with ExitStack() as resources:

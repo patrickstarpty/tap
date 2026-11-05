@@ -1,284 +1,620 @@
+"""AgentAuthoringService: compose Agents from Skills, tools and a default model.
+
+Uses in-memory doubles for the catalog and model-catalog ports so these tests
+exercise only the service's own validation and orchestration logic.
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.application.agent_authoring import (
+    AgentAuthoringRejected,
+    AgentAuthoringService,
+    AgentDraft,
+)
 from tap.modules.ai.domain.assets import (
-    AiAgentRevision,
     AssetRevisionRejected,
     AssetRevisionStatus,
+    RevisionConflict,
     SkillRevision,
     text_digest,
 )
 from tap.modules.ai.domain.models import ModelCapability, ModelDescriptor
+from tap.modules.ai.domain.tools import required_tool_ids
 
 
-def skill_revision(revision_id: str, *, status=AssetRevisionStatus.ENABLED) -> SkillRevision:
-    return SkillRevision(
-        revision_id=revision_id,
-        asset_id=f"{revision_id}-asset",
-        display_name=revision_id,
-        scope=VALIDATION_SCOPE,
-        content_digest=text_digest(revision_id),
-        instruction_template_digest=text_digest(f"{revision_id} instruction"),
-        applicable_tasks=frozenset({"knowledge.answer"}),
-        status=status,
-        instruction_template=f"{revision_id} instruction",
-    )
+class _FakeCatalog:
+    def __init__(self) -> None:
+        self.scope = VALIDATION_SCOPE
+        self._agents: dict[str, list] = {}
+        self._skills: dict[str, list[SkillRevision]] = {}
+        self.received_events: list = []
 
+    # -- agent write port -------------------------------------------------
 
-class MemoryAgentStore:
-    """In-memory authoring store used by unit and contract tests."""
-
-    def __init__(self, skills: tuple[SkillRevision, ...] = ()) -> None:
-        self.skills = {item.revision_id: item for item in skills}
-        self.agents: dict[str, AiAgentRevision] = {}
-        self.numbers: dict[str, int] = {}
-
-    async def get_skill(self, scope, revision_id):
-        value = self.skills.get(revision_id)
-        if value is None or value.status is not AssetRevisionStatus.ENABLED:
-            raise AssetRevisionRejected()
-        return value
-
-    async def latest_agent_revision(self, scope, asset_id):
-        candidates = [item for item in self.agents.values() if item.asset_id == asset_id]
-        if not candidates:
-            raise AssetRevisionRejected()
-        return max(candidates, key=lambda item: self.numbers[item.revision_id])
-
-    async def insert_agent_revision(self, scope, revision):
-        siblings = [item for item in self.agents.values() if item.asset_id == revision.asset_id]
-        latest = (
-            max(siblings, key=lambda item: self.numbers[item.revision_id]) if siblings else None
-        )
-        if (None if latest is None else latest.revision_id) != revision.adopted_from_revision_id:
-            raise AssetRevisionRejected()
-        self.agents[revision.revision_id] = revision
-        self.numbers[revision.revision_id] = len(siblings) + 1
+    async def insert_agent_revision(self, revision, *, base_revision_id, event=None):
+        history = self._agents.setdefault(revision.asset_id, [])
+        latest = history[-1].revision_id if history else None
+        if latest != base_revision_id:
+            raise RevisionConflict()
+        history.append(revision)
+        self.received_events.append(event)
         return revision
 
-    async def set_agent_status(self, scope, revision_id, status):
-        if revision_id not in self.agents:
+    async def set_asset_enabled(self, kind, asset_id, enabled, *, event=None):
+        store = self._agents if kind == "agent" else self._skills
+        history = store.get(asset_id)
+        if not history:
             raise AssetRevisionRejected()
-        self.agents[revision_id] = replace(self.agents[revision_id], status=status)
-        return self.agents[revision_id]
+        status = AssetRevisionStatus.ENABLED if enabled else AssetRevisionStatus.DISABLED
+        store[asset_id] = [replace(revision, status=status) for revision in history]
+        self.received_events.append(event)
 
-    async def get_agent(self, scope, revision_id):
-        value = self.agents.get(revision_id)
-        if value is None or value.status is not AssetRevisionStatus.ENABLED:
-            raise AssetRevisionRejected()
-        return value
+    async def list_revisions(self, kind, asset_id):
+        store = self._agents if kind == "agent" else self._skills
+        return tuple(store.get(asset_id, ()))
+
+    async def find_agent_by_name(self, scope, name):
+        for history in self._agents.values():
+            if history and history[-1].display_name == name:
+                return history[-1]
+        return None
+
+    # -- skill read port (shared with AssetCatalogHttpService) -----------
+
+    async def get_skill(self, scope, revision_id):
+        for history in self._skills.values():
+            for revision in history:
+                if revision.revision_id == revision_id and (
+                    revision.status == AssetRevisionStatus.ENABLED
+                ):
+                    return revision
+        raise AssetRevisionRejected()
+
+    async def resolve_historical_skill(self, scope, revision_id):
+        for history in self._skills.values():
+            for revision in history:
+                if revision.revision_id == revision_id:
+                    return revision
+        raise AssetRevisionRejected()
+
+    # -- test seeding helper -----------------------------------------------
+
+    def seed_skill(self, revision: SkillRevision) -> None:
+        self._skills.setdefault(revision.asset_id, []).append(revision)
 
 
-class Models:
-    scope = VALIDATION_SCOPE
+class _FakeModels:
+    def __init__(self, models: tuple[ModelDescriptor, ...]) -> None:
+        self._models = models
 
     async def list_models(self, scope):
-        return (
-            ModelDescriptor(
-                "qwen-plus",
-                "Qwen Plus",
-                frozenset({ModelCapability.CHAT, ModelCapability.STRUCTURED}),
-                supports_tool_calls=True,
-            ),
-            ModelDescriptor(
-                "qwen-max",
-                "Qwen Max",
-                frozenset({ModelCapability.STRUCTURED}),
-                supports_tool_calls=True,
-            ),
-            ModelDescriptor("qwen-flash", "Qwen Flash", frozenset({ModelCapability.CHAT})),
-        )
+        return self._models
 
 
-def authoring_service(store: MemoryAgentStore):
-    from tap.modules.ai.application.agent_authoring import AgentAuthoringService
-    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
-
-    return AgentAuthoringService(store, ToolRegistry(builtin_tools()), Models())
-
-
-def draft(**overrides):
-    from tap.modules.ai.application.agent_authoring import AgentDraft
-
-    values = {
-        "display_name": "Release agent",
-        "description": "Answers release questions.",
-        "system_instruction": "Answer from release notes only.",
-        "skill_revision_ids": ("skill-a",),
-        "tool_allowlist": frozenset({"knowledge.search"}),
-        "model_alias": "qwen-plus",
-    }
-    values.update(overrides)
-    return AgentDraft(**values)
-
-
-@pytest.mark.asyncio
-async def test_create_builds_an_enabled_editor_revision_with_the_default_answer_schema() -> None:
-    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
-    from tap.modules.ai.domain.models import schema_digest
-
-    store = MemoryAgentStore((skill_revision("skill-a"), skill_revision("skill-b")))
-    service = authoring_service(store)
-
-    created = await service.create(
-        VALIDATION_SCOPE, draft(skill_revision_ids=("skill-b", "skill-a"))
-    )
-
-    assert created.status is AssetRevisionStatus.ENABLED
-    assert created.origin == "editor"
-    assert created.adopted_from_revision_id is None
-    assert created.display_name == "Release agent"
-    assert created.description == "Answers release questions."
-    assert created.system_instruction == "Answer from release notes only."
-    assert created.skill_revision_ids == ("skill-b", "skill-a")
-    assert created.model_alias == "qwen-plus"
-    # The governed answer capability is always granted; it is never a callable tool.
-    assert created.tool_allowlist == frozenset({"knowledge.search", "knowledge.answer"})
-    assert created.output_schema_digest == schema_digest(VALIDATION_OUTPUT_SCHEMA)
-    assert created.output_schema_json is not None
-    assert store.agents == {created.revision_id: created}
-
-
-@pytest.mark.asyncio
-async def test_revise_increments_the_revision_and_adopts_the_latest_one() -> None:
-    store = MemoryAgentStore((skill_revision("skill-a"),))
-    service = authoring_service(store)
-
-    first = await service.create(VALIDATION_SCOPE, draft())
-    second = await service.revise(
-        VALIDATION_SCOPE, first.asset_id, draft(system_instruction="Be brief.", model_alias=None)
-    )
-    third = await service.revise(VALIDATION_SCOPE, first.asset_id, draft(skill_revision_ids=()))
-
-    assert second.asset_id == first.asset_id == third.asset_id
-    assert second.revision_id not in {first.revision_id, third.revision_id}
-    assert second.adopted_from_revision_id == first.revision_id
-    assert third.adopted_from_revision_id == second.revision_id
-    assert [store.numbers[item.revision_id] for item in (first, second, third)] == [1, 2, 3]
-    assert second.model_alias is None
-    assert second.content_digest != first.content_digest
-    assert store.agents[first.revision_id] == first
-    with pytest.raises(AssetRevisionRejected):
-        await service.revise(VALIDATION_SCOPE, "missing-agent", draft())
-
-
-@pytest.mark.asyncio
-async def test_set_status_disables_and_reenables_a_revision() -> None:
-    store = MemoryAgentStore((skill_revision("skill-a"),))
-    service = authoring_service(store)
-    created = await service.create(VALIDATION_SCOPE, draft())
-
-    disabled = await service.set_status(
-        VALIDATION_SCOPE, created.revision_id, AssetRevisionStatus.DISABLED
-    )
-    assert disabled.status is AssetRevisionStatus.DISABLED
-    enabled = await service.set_status(
-        VALIDATION_SCOPE, created.revision_id, AssetRevisionStatus.ENABLED
-    )
-    assert enabled.status is AssetRevisionStatus.ENABLED
-    with pytest.raises(AssetRevisionRejected):
-        await service.set_status(VALIDATION_SCOPE, "missing", AssetRevisionStatus.DISABLED)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("overrides", "code"),
-    [
-        ({"display_name": " "}, "agent-name-invalid"),
-        ({"display_name": "x" * 129}, "agent-name-invalid"),
-        ({"description": "x" * 1025}, "agent-description-invalid"),
-        ({"system_instruction": ""}, "agent-instruction-invalid"),
-        ({"system_instruction": "x" * 16001}, "agent-instruction-invalid"),
-        ({"skill_revision_ids": ("missing",)}, "agent-skill-unavailable"),
-        ({"skill_revision_ids": ("skill-off",)}, "agent-skill-unavailable"),
-        ({"skill_revision_ids": ("skill-a", "skill-a")}, "agent-skills-invalid"),
-        ({"skill_revision_ids": tuple(f"s{i}" for i in range(17))}, "agent-skills-invalid"),
-        ({"tool_allowlist": frozenset({"jira.search"})}, "agent-tool-unavailable"),
-        ({"tool_allowlist": frozenset({"Bad Tool"})}, "agent-tool-unavailable"),
-        (
-            {"tool_allowlist": frozenset(f"x.t{i}" for i in range(32))},
-            "agent-tool-unavailable",
-        ),
-        ({"model_alias": "missing-model"}, "agent-model-unsupported"),
-        ({"model_alias": "qwen-flash"}, "agent-model-unsupported"),
-    ],
-)
-async def test_create_rejects_invalid_drafts_with_specific_codes(overrides, code) -> None:
-    from tap.modules.ai.application.agent_authoring import AgentAuthoringRejected
-
-    store = MemoryAgentStore(
-        (
-            skill_revision("skill-a"),
-            skill_revision("skill-off", status=AssetRevisionStatus.DISABLED),
-        )
-    )
-    service = authoring_service(store)
-
-    with pytest.raises(AgentAuthoringRejected) as raised:
-        await service.create(VALIDATION_SCOPE, draft(**overrides))
-
-    assert raised.value.code == code
-    assert store.agents == {}
-
-
-def test_domain_bounds_authored_agent_fields() -> None:
-    from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
-    from tap.modules.ai.domain.models import schema_digest
-
-    base = AiAgentRevision(
-        revision_id="agent-1",
-        asset_id="agent",
-        display_name="Agent",
+def _skill_revision(
+    *, asset_id: str, revision_id: str, status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
+) -> SkillRevision:
+    return SkillRevision(
+        revision_id=revision_id,
+        asset_id=asset_id,
+        display_name="demo-skill",
         scope=VALIDATION_SCOPE,
-        content_digest=text_digest("agent"),
-        system_instruction_digest=text_digest("x"),
-        tool_allowlist=frozenset({"knowledge.answer"}),
-        output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
-        model_alias="qwen-plus",
-        description="ok",
-        skill_revision_ids=("skill-a",),
-        origin="editor",
+        content_digest=text_digest("demo-skill-content"),
+        instruction_template_digest=text_digest("demo-skill-instructions"),
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template="demo-skill-instructions",
+        status=status,
+        source_kind="authored",
     )
-    assert base.skill_revision_ids == ("skill-a",)
-    for overrides in (
-        {"skill_revision_ids": ["skill-a"]},
-        {"skill_revision_ids": ("skill-a", "skill-a")},
-        {"skill_revision_ids": tuple(f"s{i}" for i in range(17))},
-        {"model_alias": ""},
-        {"description": "x" * 1025},
-        {"origin": "import"},
-        {
-            "system_instruction": "x" * 16001,
-            "system_instruction_digest": text_digest("x" * 16001),
-        },
-    ):
-        with pytest.raises(AssetRevisionRejected):
-            replace(base, **overrides)
+
+
+def _service(catalog=None, models=None):
+    catalog = catalog if catalog is not None else _FakeCatalog()
+    models = models if models is not None else _FakeModels(())
+    return AgentAuthoringService(catalog, models, scope=VALIDATION_SCOPE), catalog
+
+
+def _draft(**overrides) -> AgentDraft:
+    fields = {
+        "name": "demo-agent",
+        "description": "A demo agent for authoring tests.",
+        "system_instruction": "Answer using only approved knowledge.",
+        "skill_revision_ids": (),
+        "tool_ids": frozenset({"knowledge.search", "knowledge.answer"}),
+        "default_model_alias": None,
+    }
+    fields.update(overrides)
+    return AgentDraft(**fields)
+
+
+# -- create ----------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_tool_enabled_agent_rejects_a_model_without_function_calling():
-    from dataclasses import replace
+async def test_create_returns_authored_enabled_revision() -> None:
+    service, _catalog = _service()
 
-    from tap.modules.ai.application.agent_authoring import (
-        AgentAuthoringRejected,
-        AgentAuthoringService,
+    revision = await service.create(VALIDATION_SCOPE, _draft())
+
+    assert revision.source_kind == "authored"
+    assert revision.status == AssetRevisionStatus.ENABLED
+    assert revision.display_name == "demo-agent"
+    assert revision.system_instruction == "Answer using only approved knowledge."
+    assert revision.tool_allowlist == frozenset({"knowledge.search", "knowledge.answer"})
+    assert revision.adopted_from_revision_id is None
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_duplicate_name_in_project() -> None:
+    service, _catalog = _service()
+    await service.create(VALIDATION_SCOPE, _draft())
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(VALIDATION_SCOPE, _draft())
+
+    assert excinfo.value.code == "agent_name_conflict"
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_system_instruction_over_32kb() -> None:
+    service, _catalog = _service()
+    oversized = "x" * (32 * 1024 + 1)
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(VALIDATION_SCOPE, _draft(system_instruction=oversized))
+
+    assert excinfo.value.code == "agent_system_instruction_too_large"
+
+
+@pytest.mark.asyncio
+async def test_create_fills_in_required_tools_when_draft_omits_them() -> None:
+    # The UI never sends `toolIds` (built-in tools are always enabled and
+    # shown read-only, per spec), so the service must union the registry's
+    # required ids into the draft before validating — a bare `AgentDraft()`
+    # default (empty `tool_ids`) must succeed, not 400.
+    service, _catalog = _service()
+
+    revision = await service.create(VALIDATION_SCOPE, _draft(tool_ids=frozenset()))
+
+    assert revision.tool_allowlist == required_tool_ids("knowledge.answer")
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_unknown_tool_id() -> None:
+    service, _catalog = _service()
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(
+            VALIDATION_SCOPE,
+            _draft(tool_ids=frozenset({"knowledge.search", "knowledge.answer", "not-a-real-tool"})),
+        )
+
+    assert excinfo.value.code == "agent_tool_allowlist_invalid"
+
+
+@pytest.mark.asyncio
+async def test_platform_tool_in_agent_tool_ids_rejected() -> None:
+    service, _catalog = _service()
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(
+            VALIDATION_SCOPE,
+            _draft(tool_ids=frozenset({"knowledge.search", "knowledge.answer", "skill.activate"})),
+        )
+
+    assert excinfo.value.code == "agent_tool_allowlist_invalid"
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_unknown_default_model_alias() -> None:
+    service, _catalog = _service(models=_FakeModels(()))
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(VALIDATION_SCOPE, _draft(default_model_alias="not-a-model"))
+
+    assert excinfo.value.code == "agent_model_not_selectable"
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_default_model_without_structured_capability() -> None:
+    models = _FakeModels(
+        (
+            ModelDescriptor(
+                alias="chat-only",
+                display_name="Chat only",
+                capabilities=frozenset({ModelCapability.CHAT}),
+            ),
+        )
     )
-    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+    service, _catalog = _service(models=models)
 
-    class NoTools(Models):
-        async def list_models(self, scope):
-            return tuple(
-                replace(item, supports_tool_calls=False)
-                for item in await super().list_models(scope)
-            )
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(VALIDATION_SCOPE, _draft(default_model_alias="chat-only"))
 
-    service = AgentAuthoringService(
-        MemoryAgentStore((skill_revision("skill-a"),)), ToolRegistry(builtin_tools()), NoTools()
+    assert excinfo.value.code == "agent_model_not_selectable"
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_structured_default_model_alias() -> None:
+    models = _FakeModels(
+        (
+            ModelDescriptor(
+                alias="structured-model",
+                display_name="Structured model",
+                capabilities=frozenset({ModelCapability.STRUCTURED}),
+            ),
+        )
     )
-    with pytest.raises(AgentAuthoringRejected, match="agent-model-unsupported"):
-        await service.create(VALIDATION_SCOPE, draft())
+    service, _catalog = _service(models=models)
+
+    revision = await service.create(
+        VALIDATION_SCOPE, _draft(default_model_alias="structured-model")
+    )
+
+    assert revision.default_model_alias == "structured-model"
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_disabled_skill_binding() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(
+        _skill_revision(
+            asset_id="skill-1", revision_id="skill-rev-1", status=AssetRevisionStatus.DISABLED
+        )
+    )
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+
+    assert excinfo.value.code == "agent_skill_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_enabled_skill_binding() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+
+    revision = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+
+    assert revision.skill_revision_ids == ("skill-rev-1",)
+
+
+# -- revise ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_revise_requires_matching_base_revision() -> None:
+    service, _catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    with pytest.raises(RevisionConflict):
+        await service.revise(
+            VALIDATION_SCOPE, created.asset_id, "not-the-real-base", _draft(description="v2")
+        )
+
+    revised = await service.revise(
+        VALIDATION_SCOPE, created.asset_id, created.revision_id, _draft(description="v2")
+    )
+    assert revised.revision_id != created.revision_id
+    assert revised.description == "v2"
+    assert revised.adopted_from_revision_id == created.revision_id
+
+
+@pytest.mark.asyncio
+async def test_revise_unknown_agent_is_asset_revision_rejected() -> None:
+    service, _catalog = _service()
+
+    with pytest.raises(AssetRevisionRejected):
+        await service.revise(VALIDATION_SCOPE, "unknown-agent", "unknown-rev", _draft())
+
+
+@pytest.mark.asyncio
+async def test_built_in_agent_cannot_be_revised_but_can_be_copied() -> None:
+    service, catalog = _service()
+    built_in = await service.create(VALIDATION_SCOPE, _draft(name="built-in-agent"))
+    catalog._agents[built_in.asset_id][-1] = replace(built_in, source_kind="built_in")
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.revise(
+            VALIDATION_SCOPE, built_in.asset_id, built_in.revision_id, _draft(name="built-in-agent")
+        )
+    assert excinfo.value.code == "agent_built_in_immutable"
+
+    copy = await service.create(
+        VALIDATION_SCOPE,
+        _draft(name="built-in-agent-copy", system_instruction=built_in.system_instruction),
+    )
+    assert copy.source_kind == "authored"
+    assert copy.system_instruction == built_in.system_instruction
+
+
+# -- maintenance events ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_passes_no_event() -> None:
+    service, catalog = _service()
+
+    await service.create(VALIDATION_SCOPE, _draft())
+
+    assert catalog.received_events == [None]
+
+
+@pytest.mark.asyncio
+async def test_revise_passes_revised_event() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    revised = await service.revise(
+        VALIDATION_SCOPE, created.asset_id, created.revision_id, _draft(description="v2")
+    )
+
+    event = catalog.received_events[-1]
+    assert event is not None
+    assert event.kind == "revised"
+    assert event.agent_id == created.asset_id
+    assert event.revision_id == revised.revision_id
+
+
+@pytest.mark.asyncio
+async def test_revise_passes_skill_upgraded_event() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    created = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-2"))
+
+    revised = await service.revise(
+        VALIDATION_SCOPE,
+        created.asset_id,
+        created.revision_id,
+        _draft(skill_revision_ids=("skill-rev-2",)),
+    )
+
+    event = catalog.received_events[-1]
+    assert event is not None
+    assert event.kind == "skill_upgraded"
+    assert event.revision_id == revised.revision_id
+
+
+@pytest.mark.asyncio
+async def test_disable_and_enable_pass_events() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+    disable_event = catalog.received_events[-1]
+    assert disable_event is not None
+    assert disable_event.kind == "disabled"
+    assert disable_event.agent_id == created.asset_id
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+    enable_event = catalog.received_events[-1]
+    assert enable_event is not None
+    assert enable_event.kind == "enabled"
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_passes_no_event_when_already_in_target_state() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+
+    assert catalog.received_events[-1] is None
+
+
+# -- set_enabled ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_toggles_latest_revision_status() -> None:
+    service, catalog = _service()
+    created = await service.create(VALIDATION_SCOPE, _draft())
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, False)
+    disabled = (await catalog.list_revisions("agent", created.asset_id))[-1]
+    assert disabled.status == AssetRevisionStatus.DISABLED
+
+    await service.set_enabled(VALIDATION_SCOPE, created.asset_id, True)
+    enabled = (await catalog.list_revisions("agent", created.asset_id))[-1]
+    assert enabled.status == AssetRevisionStatus.ENABLED
+
+
+# -- outdated_skill_ids / hasSkillUpdates --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_outdated_skill_ids_is_empty_when_bound_revision_is_latest() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    agent = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+
+    outdated = await service.outdated_skill_ids(VALIDATION_SCOPE, agent)
+
+    assert outdated == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_outdated_skill_ids_is_always_empty() -> None:
+    # Skill Hub (spec 1.2): Agents always use the latest enabled revision of a
+    # pinned Skill, so a superseded or disabled bound revision is no longer
+    # an "update" to offer.
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    agent = await service.create(VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1",)))
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-2"))
+    catalog._skills["skill-1"][-1] = replace(
+        catalog._skills["skill-1"][-1], status=AssetRevisionStatus.DISABLED
+    )
+
+    outdated = await service.outdated_skill_ids(VALIDATION_SCOPE, agent)
+
+    assert outdated == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_set_asset_enabled_rejects_an_event_on_a_skill() -> None:
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE as scope
+    from tap.modules.agent_team.domain.models import new_event
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+
+    # The guard fires before any session is opened, so no database is needed.
+    catalog = MysqlAssetCatalog(None, scope=scope)  # type: ignore[arg-type]
+    event = new_event(scope, "skill-1", "disabled", now=datetime.now(UTC))
+    with pytest.raises(AssetRevisionRejected):
+        await catalog.set_asset_enabled("skill", "skill-1", False, event=event)
+
+
+# -- pinned / excluded Skills (Skill Hub) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_maps_deprecated_skill_revision_ids_to_pinned() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    catalog.seed_skill(_skill_revision(asset_id="skill-2", revision_id="skill-rev-2"))
+    catalog.seed_skill(_skill_revision(asset_id="skill-3", revision_id="skill-rev-3"))
+
+    revision = await service.create(
+        VALIDATION_SCOPE,
+        _draft(
+            skill_revision_ids=("skill-rev-1", "skill-rev-2"),
+            pinned_skill_ids=("skill-2",),
+            excluded_skill_ids=("skill-3",),
+        ),
+    )
+
+    assert revision.pinned_skill_ids == ("skill-2", "skill-1")
+    assert revision.excluded_skill_ids == ("skill-3",)
+
+
+@pytest.mark.asyncio
+async def test_pinned_and_excluded_overlap_rejected() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+
+    with pytest.raises(AgentAuthoringRejected) as direct:
+        await service.create(
+            VALIDATION_SCOPE, _draft(pinned_skill_ids=("skill-1",), excluded_skill_ids=("skill-1",))
+        )
+    assert direct.value.code == "agent_skill_conflict"
+
+    # The deprecated binding counts as pinned too.
+    with pytest.raises(AgentAuthoringRejected) as mapped:
+        await service.create(
+            VALIDATION_SCOPE,
+            _draft(skill_revision_ids=("skill-rev-1",), excluded_skill_ids=("skill-1",)),
+        )
+    assert mapped.value.code == "agent_skill_conflict"
+    assert catalog.received_events == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_pinned_skill_rejected() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+
+    with pytest.raises(AgentAuthoringRejected) as pinned:
+        await service.create(VALIDATION_SCOPE, _draft(pinned_skill_ids=("no-such-skill",)))
+    assert pinned.value.code == "agent_skill_unavailable"
+
+    with pytest.raises(AgentAuthoringRejected) as excluded:
+        await service.create(VALIDATION_SCOPE, _draft(excluded_skill_ids=("no-such-skill",)))
+    assert excluded.value.code == "agent_skill_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_set_skills_creates_revision_with_revised_event() -> None:
+    service, catalog = _service()
+    catalog.seed_skill(_skill_revision(asset_id="skill-1", revision_id="skill-rev-1"))
+    catalog.seed_skill(_skill_revision(asset_id="skill-2", revision_id="skill-rev-2"))
+    created = await service.create(
+        VALIDATION_SCOPE, _draft(skill_revision_ids=("skill-rev-1", "skill-rev-2"))
+    )
+    # The base revision was written by another member of the project.
+    catalog._agents[created.asset_id][-1] = replace(
+        created, scope=replace(VALIDATION_SCOPE, actor_id="another-actor")
+    )
+
+    revised = await service.set_skills(
+        VALIDATION_SCOPE, created.asset_id, ("skill-2",), ("skill-1",)
+    )
+
+    assert revised.scope == VALIDATION_SCOPE
+
+    assert revised.revision_id != created.revision_id
+    assert revised.asset_id == created.asset_id
+    assert revised.adopted_from_revision_id == created.revision_id
+    assert revised.pinned_skill_ids == ("skill-2",)
+    assert revised.excluded_skill_ids == ("skill-1",)
+    # The deprecated binding keeps only revisions of Skills still pinned:
+    # skill-1 was unpinned (its revision is dropped), skill-2 stays.
+    assert revised.skill_revision_ids == ("skill-rev-2",)
+    for field in (
+        "display_name",
+        "description",
+        "system_instruction",
+        "tool_allowlist",
+        "default_model_alias",
+        "status",
+        "source_kind",
+    ):
+        assert getattr(revised, field) == getattr(created, field)
+    history = await catalog.list_revisions("agent", created.asset_id)
+    assert [item.revision_id for item in history] == [created.revision_id, revised.revision_id]
+    event = catalog.received_events[-1]
+    assert event is not None
+    assert event.kind == "revised"
+    assert event.agent_id == created.asset_id
+    assert event.revision_id == revised.revision_id
+
+
+@pytest.mark.asyncio
+async def test_set_skills_on_built_in_rejected() -> None:
+    service, catalog = _service()
+    built_in = await service.create(VALIDATION_SCOPE, _draft(name="built-in-agent"))
+    catalog._agents[built_in.asset_id][-1] = replace(built_in, source_kind="built_in")
+
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.set_skills(VALIDATION_SCOPE, built_in.asset_id, (), ())
+
+    assert excinfo.value.code == "agent_built_in_immutable"
+    assert len(await catalog.list_revisions("agent", built_in.asset_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_combined_pinned_over_64_rejected() -> None:
+    service, catalog = _service()
+    for index in range(65):
+        catalog.seed_skill(
+            _skill_revision(asset_id=f"skill-{index}", revision_id=f"skill-rev-{index}")
+        )
+
+    # 64 pinned ids pass the request limit; the deprecated binding maps a 65th.
+    with pytest.raises(AgentAuthoringRejected) as excinfo:
+        await service.create(
+            VALIDATION_SCOPE,
+            _draft(
+                pinned_skill_ids=tuple(f"skill-{index}" for index in range(64)),
+                skill_revision_ids=("skill-rev-64",),
+            ),
+        )
+
+    assert excinfo.value.code == "agent_skill_limit_exceeded"
+    assert catalog.received_events == []
+
+    # Exactly 64 after dedupe is fine.
+    revision = await service.create(
+        VALIDATION_SCOPE,
+        _draft(
+            pinned_skill_ids=tuple(f"skill-{index}" for index in range(64)),
+            skill_revision_ids=("skill-rev-0",),
+        ),
+    )
+    assert len(revision.pinned_skill_ids) == 64

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Five independent, bounded, and redacted local Tapper dependency checks."""
+"""Six independent, bounded, and redacted local Tapper dependency checks."""
 
 from __future__ import annotations
 
@@ -7,8 +7,11 @@ import asyncio
 import math
 import os
 import secrets
+import subprocess
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 
+import httpx
 from pydantic import SecretStr
 from sqlalchemy import text
 
@@ -35,15 +38,18 @@ from tap.modules.knowledge.domain.models import SourceFamily
 from tap.operations.milvus.doc_schema import doc_schema_sha256
 from tap.operations.milvus.client import suppress_pymilvus_rpc_logging
 
-_ORDER = ("mysql", "redis", "blob", "milvus", "models")
+_ORDER = ("mysql", "redis", "blob", "milvus", "models", "langfuse")
 _REMEDIATION = {
     "mysql": "start-mysql",
     "redis": "start-redis",
     "blob": "start-blob",
     "milvus": "start-milvus",
     "models": "configure-models",
+    "langfuse": "start-langfuse",
 }
+_LOW_DISK_HEADROOM_KB = 5 * 1024 * 1024
 _PROVIDER_SETTINGS: tuple[str, ...] = ("DASHSCOPE_API_KEY",)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 Probe = Callable[[TapperSettings, Mapping[str, str]], Awaitable[bool]]
 
@@ -172,6 +178,68 @@ async def _check_models(settings: TapperSettings, values: Mapping[str, str]) -> 
     return healthy
 
 
+async def _check_langfuse(settings: TapperSettings, _values: Mapping[str, str]) -> bool:
+    if settings.langfuse_host is None:
+        return False
+    host = settings.langfuse_host.rstrip("/")
+    async with httpx.AsyncClient(timeout=settings.ready_timeout_seconds) as client:
+        # An authenticated endpoint, so wrong LANGFUSE_* keys fail the check
+        # (the Agent team view needs a working key pair, not just a live host).
+        response = await client.get(
+            f"{host}/api/public/projects",
+            auth=(
+                settings.langfuse_public_key or "",
+                settings.langfuse_secret_key or "",
+            ),
+        )
+        return response.status_code == 200
+
+
+def _docker_disk_headroom_hint(values: Mapping[str, str]) -> str | None:
+    """Best-effort: free space on the Docker host's own filesystem (e.g.
+    `docker info`'s `DockerRootDir`) is meaningless on Docker Desktop/macOS,
+    since that path lives inside the Linux VM, not the host. Measure free
+    space inside the VM instead, through a container already started by
+    `make demo-up`/`langfuse-up` (the insights ClickHouse). Any failure
+    (project not up, docker not queryable, unexpected output) silently
+    produces no hint rather than fail the already-passing langfuse check."""
+
+    insights_project = values.get("TAP_INSIGHTS_COMPOSE_PROJECT", "").strip() or (
+        "tap-insights-local"
+    )
+    try:
+        completed = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-p",
+                insights_project,
+                "-f",
+                str(_REPO_ROOT / "compose.yaml"),
+                "exec",
+                "-T",
+                "clickhouse",
+                "df",
+                "-Pk",
+                "/var/lib/clickhouse",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        lines = completed.stdout.strip().splitlines()
+        if len(lines) < 2:
+            return None
+        available_kb = int(lines[1].split()[3])
+    except Exception:
+        return None
+    if available_kb >= _LOW_DISK_HEADROOM_KB:
+        return None
+    free_gb = available_kb / (1024**2)
+    return f"docker disk headroom low ({free_gb:.1f} GB free); langfuse/clickhouse may fail to start"
+
+
 async def _safe_probe(
     probe: Probe,
     settings: TapperSettings,
@@ -198,6 +266,7 @@ async def checks(
         _check_blob,
         _check_milvus,
         _check_models,
+        _check_langfuse,
     )
     results = await asyncio.gather(
         *(_safe_probe(probe, settings, values) for probe in probes)
@@ -217,6 +286,10 @@ def main(environment: Mapping[str, str] | None = None) -> int:
     for name in _ORDER:
         if states.get(name) is True:
             print(f"{name} ok")
+            if name == "langfuse":
+                hint = _docker_disk_headroom_hint(values)
+                if hint is not None:
+                    print(hint)
         else:
             print(f"{name} failed {_REMEDIATION[name]}")
     return 0 if all(states.values()) else 1

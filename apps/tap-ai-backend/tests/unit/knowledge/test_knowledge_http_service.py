@@ -61,7 +61,7 @@ async def test_model_only_conversation_returns_an_ungrounded_answer_without_cita
     class Models:
         scope = VALIDATION_SCOPE
 
-        async def chat(self, query, *, model_alias, governance):
+        async def chat(self, query, *, model_alias, governance, **kwargs):
             assert query == "Hello"
             assert model_alias == "qwen-plus"
             assert governance is None
@@ -195,7 +195,7 @@ async def test_turn_with_model_absent_from_catalog_is_model_unavailable() -> Non
     sent: list[str] = []
     service = _catalog_backed_service(sent)
 
-    with pytest.raises(AnswerUnavailable, match="^model-unavailable$"):
+    with pytest.raises(AnswerUnavailable, match="^model-rejected$"):
         await service.answer_conversation(
             RetrievalAnswerRequest(query="Hello"), _model_only_turn("removed-model")
         )

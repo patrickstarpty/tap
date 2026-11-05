@@ -8,6 +8,7 @@ import re
 import unicodedata
 from hashlib import sha256
 
+from tap.modules.ai.domain.skill_activation import TurnSkillContext
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.models import (
@@ -15,7 +16,6 @@ from tap.modules.knowledge.ports.models import (
     Embedding,
     GeneratedClaim,
 )
-from tap.modules.knowledge.ports.search import AnswerDeltaCallback
 
 _DIMENSION = 1536
 _EMBEDDING_ALIAS = "text-embedding-v4"
@@ -126,8 +126,11 @@ class DeterministicTapperModel:
         evidence: tuple[Evidence, ...],
         profile_id: str,
         *,
-        on_delta: AnswerDeltaCallback | None = None,
+        skills: TurnSkillContext | None = None,
     ) -> AnswerGeneration:
+        # `skills` (Skill Hub) is accepted and ignored: the fixed E2E answer
+        # quotes evidence only, whatever Skills the Turn renders.
+        del skills
         if (
             not isinstance(query, str)
             or not query.strip()
@@ -151,11 +154,8 @@ class DeterministicTapperModel:
                 break
         if not claims:
             raise ValueError("deterministic answer requires nonblank evidence")
-        text = "\n\n".join(item.text for item in claims)
-        if on_delta is not None:
-            await on_delta(text)
         return AnswerGeneration(
-            text=text,
+            text="\n\n".join(item.text for item in claims),
             claims=tuple(claims),
             model_id=_ANSWER_ALIAS,
             profile_id=profile_id,

@@ -340,8 +340,13 @@ def test_abstained_claims_cannot_reference_missing_citations() -> None:
         RetrievalAnswerResponse.model_validate(payload)
 
 
-def test_claim_text_must_be_exactly_one_unique_answer_paragraph() -> None:
-    """Substring matches or embedded paragraph separators would make spans ambiguous."""
+def test_claim_text_must_occupy_exactly_one_unique_answer_span() -> None:
+    """A claim is a cited sentence, not necessarily a whole paragraph (LangGraph
+    PR 3 review ruling, 2026-10-16): the offset just has to be the text's one
+    unique occurrence in the answer. An *ambiguously* repeated claim text (once
+    as its own paragraph, once embedded inside a longer, uncited paragraph) is
+    still rejected -- the location is not unique. Claim text embedding a
+    paragraph separator is rejected unconditionally."""
     payload = {
         "traceId": "trace-1",
         "queryPlanId": "plan-1",
@@ -349,21 +354,26 @@ def test_claim_text_must_be_exactly_one_unique_answer_paragraph() -> None:
         "corpusVersion": "corpus-1",
         "retrievalProfileId": "quick-hybrid-v1",
         "degradedMode": False,
-        "answer": "Claim exact.\n\nAnother paragraph mentions Claim exact.",
+        "answer": "- Claim exact.\n- Other text.",
         "abstained": False,
         "claims": [
             {
                 "claimId": "claim-1",
                 "text": "Claim exact.",
-                "answerStart": 0,
-                "answerEnd": 12,
+                "answerStart": 2,
+                "answerEnd": 14,
                 "citationIds": ["citation-1"],
             }
         ],
         "citations": [_retrieval_citation("citation-1")],
     }
 
-    assert RetrievalAnswerResponse.model_validate(payload).claims[0].answer_start == 0
+    assert RetrievalAnswerResponse.model_validate(payload).claims[0].answer_start == 2
+
+    payload["answer"] = "Claim exact.\n\nAnother paragraph mentions Claim exact."
+    payload["claims"][0].update({"answerStart": 0, "answerEnd": 12})
+    with pytest.raises(ValidationError):
+        RetrievalAnswerResponse.model_validate(payload)
 
     payload["answer"] = "First.\n\nSecond."
     payload["claims"][0].update({"text": "First.\n\nSecond.", "answerStart": 0, "answerEnd": 15})

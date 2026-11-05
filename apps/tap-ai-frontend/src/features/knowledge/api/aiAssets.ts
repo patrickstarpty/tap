@@ -1,5 +1,10 @@
 import type { components } from "../../../shared/api/generated/schema";
-import { useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 export type AiAgentRevision = components["schemas"]["AiAgentRevisionSummary"];
 export type SkillRevision = components["schemas"]["SkillRevisionSummary"];
@@ -86,160 +91,412 @@ export function useAiAssetCatalog(projectId: string | null) {
   return { agents, skills };
 }
 
-export type AgentRevisionView = components["schemas"]["AiAgentRevisionView"];
-export type SkillRevisionView = components["schemas"]["SkillRevisionView"];
-export type ToolView = components["schemas"]["ToolView"];
-export type McpServerView = components["schemas"]["McpServerView"];
-export type AgentDraftRequest = components["schemas"]["AgentDraftRequest"];
-export type McpServerCreateRequest =
-  components["schemas"]["McpServerCreateRequest"];
+// -- Skills/Agents/Tools client hooks (Task 8) -----------------------------
 
-export class CatalogError extends Error {
-  constructor(public readonly code: string) {
-    super(code);
+export type SkillDraftRequest = components["schemas"]["SkillDraftRequest"];
+export type SkillReviseRequest = components["schemas"]["SkillReviseRequest"];
+export type SkillRevisionDetail = components["schemas"]["SkillRevisionDetail"];
+export type SkillImportPreview = components["schemas"]["SkillImportPreview"];
+export type SkillImportSelection =
+  components["schemas"]["SkillImportSelection"];
+export type SkillImportCommitResult =
+  components["schemas"]["SkillImportCommitResult"];
+export type AgentDraftRequest = components["schemas"]["AgentDraftRequest"];
+export type AgentReviseRequest = components["schemas"]["AgentReviseRequest"];
+export type AiAgentRevisionDetail =
+  components["schemas"]["AiAgentRevisionDetail"];
+export type ToolDescriptor = components["schemas"]["ToolDescriptor"];
+
+/** Error shape every Skill/Agent route reports (`SkillProblem`); other
+ * routes under `/ai` report RFC 9457 `ProblemDetails` instead, which this
+ * normalizes to the same `{ code, detail }` shape so callers never branch
+ * on response content type. */
+export interface AiAssetProblem {
+  code: string;
+  detail: string;
+}
+
+export class AiAssetError extends Error implements AiAssetProblem {
+  readonly code: string;
+  readonly detail: string;
+
+  constructor(problem: AiAssetProblem) {
+    super(problem.detail);
+    this.code = problem.code;
+    this.detail = problem.detail;
   }
 }
-export async function catalogRequest<T>(
-  projectId: string,
+
+async function toProblem(response: Response): Promise<AiAssetProblem> {
+  try {
+    const body = (await response.json()) as Record<string, unknown>;
+    if (typeof body.code === "string" && typeof body.detail === "string") {
+      return { code: body.code, detail: body.detail };
+    }
+    if (typeof body.type === "string" && typeof body.detail === "string") {
+      const code = body.type.split("/").pop();
+      return {
+        code: code && code.length > 0 ? code : "request_failed",
+        detail: body.detail,
+      };
+    }
+  } catch {
+    // Body was not JSON (or had neither shape); fall through to the
+    // generic problem below instead of surfacing a parse error.
+  }
+  return {
+    code: "request_failed",
+    detail: response.statusText || "The request failed.",
+  };
+}
+
+export async function requestJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(
-    `/api/v1/projects/${encodeURIComponent(projectId)}/ai/${path}`,
-    init,
-  );
-  if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as {
-      code?: string;
-      type?: string;
-    };
-    throw new CatalogError(
-      problem.code ?? problem.type?.split("/").at(-1) ?? "catalog-unavailable",
-    );
-  }
-  return response.json() as Promise<T>;
+  const response = await fetch(path, init);
+  if (!response.ok) throw new AiAssetError(await toProblem(response));
+  return (await response.json()) as T;
 }
-function jsonBody(method: string, body: unknown): RequestInit {
+
+export function projectAiPath(projectId: string, suffix: string): string {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/ai${suffix}`;
+}
+
+export function jsonInit(method: string, body: unknown): RequestInit {
   return {
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
 }
-export const managementCatalog = {
-  agents: (projectId: string) =>
-    catalogRequest<{ items: AgentRevisionView[] }>(
-      projectId,
-      "agents/revisions",
-    ),
-  skills: (projectId: string) =>
-    catalogRequest<{ items: SkillRevisionView[] }>(
-      projectId,
-      "skills/revisions",
-    ),
-  tools: (projectId: string) =>
-    catalogRequest<{ items: ToolView[] }>(projectId, "tools"),
-  servers: (projectId: string) =>
-    catalogRequest<{ items: McpServerView[] }>(projectId, "mcp-servers"),
-  saveAgent: (projectId: string, body: AgentDraftRequest, assetId?: string) =>
-    catalogRequest<AgentRevisionView>(
-      projectId,
-      assetId ? `agents/${encodeURIComponent(assetId)}/revisions` : "agents",
-      jsonBody("POST", body),
-    ),
-  saveSkill: (
-    projectId: string,
-    body: components["schemas"]["SkillCreateRequest"],
-  ) =>
-    catalogRequest<components["schemas"]["SkillImportResult"]>(
-      projectId,
-      "skills",
-      jsonBody("POST", body),
-    ),
-  importSkill: (projectId: string, file: File) => {
-    const body = new FormData();
-    body.append("file", file);
-    return catalogRequest<components["schemas"]["SkillImportResult"]>(
-      projectId,
-      "skills/imports",
-      { method: "POST", body },
-    );
-  },
-  status: (
-    projectId: string,
-    kind: "agent" | "skill",
-    revisionId: string,
-    status: "enabled" | "disabled",
-  ) =>
-    catalogRequest(
-      projectId,
-      `${kind}s/revisions/${encodeURIComponent(revisionId)}/status`,
-      jsonBody("POST", { status }),
-    ),
-  registerServer: (projectId: string, body: McpServerCreateRequest) =>
-    catalogRequest<McpServerView>(
-      projectId,
-      "mcp-servers",
-      jsonBody("POST", body),
-    ),
-  syncServer: (projectId: string, serverId: string) =>
-    catalogRequest<McpServerView>(
-      projectId,
-      `mcp-servers/${encodeURIComponent(serverId)}/sync`,
-      { method: "POST" },
-    ),
-  serverStatus: (projectId: string, serverId: string, enabled: boolean) =>
-    catalogRequest<McpServerView>(
-      projectId,
-      `mcp-servers/${encodeURIComponent(serverId)}`,
-      jsonBody("PATCH", { enabled }),
-    ),
+
+export const aiAssetKeys = {
+  all: (projectId: string) => ["ai-assets", projectId] as const,
+  skills: (projectId: string) => ["ai-assets", projectId, "skills"] as const,
+  skill: (projectId: string, revisionId: string) =>
+    ["ai-assets", projectId, "skill", revisionId] as const,
+  skillRevisions: (projectId: string, skillId: string) =>
+    ["ai-assets", projectId, "skill-revisions", skillId] as const,
+  agents: (projectId: string) => ["ai-assets", projectId, "agents"] as const,
+  agent: (projectId: string, revisionId: string) =>
+    ["ai-assets", projectId, "agent", revisionId] as const,
+  agentRevisions: (projectId: string, agentId: string) =>
+    ["ai-assets", projectId, "agent-revisions", agentId] as const,
+  tools: (projectId: string, locale: "en" | "zh" | null) =>
+    ["ai-assets", projectId, "tools", locale] as const,
 };
-export async function fetchSkillContent(
+
+/** Root key of every agent-team query for a project; the single source of
+ * truth shared with `agentTeamKeys` (agentTeam.ts imports this module). */
+export const agentTeamRootKey = (projectId: string) =>
+  ["agent-team", projectId] as const;
+
+/** Root key of every Skill library query for a project; shared with
+ * `skillHubKeys` (skillHub.ts imports this module). */
+export const skillHubRootKey = (projectId: string) =>
+  ["skill-hub", projectId] as const;
+
+function invalidateAiAssets(queryClient: QueryClient, projectId: string) {
+  // The composer still reads the Agent/Skill catalog through the older
+  // `useAiAssetCatalog` hook above (its own query keys, kept separate so a
+  // workspace-page refetch doesn't thrash the composer's 60s staleTime) —
+  // without this, creating/revising/enabling an Agent or Skill here never
+  // reaches the composer, so a just-created Agent can't be selected and an
+  // already-selected one's `agentById` lookup (model prefill, bundled
+  // skills) keeps missing until that cache separately goes stale.
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: aiAssetKeys.all(projectId) }),
+    queryClient.invalidateQueries({
+      queryKey: ["ai-agent-catalog", projectId],
+    }),
+    queryClient.invalidateQueries({ queryKey: ["skill-catalog", projectId] }),
+    // Agent/Skill writes change the team roster (new/disabled members,
+    // skill updates); the Team tab keeps its queries cached while the
+    // Configuration tab is open, so refresh them here.
+    queryClient.invalidateQueries({ queryKey: agentTeamRootKey(projectId) }),
+    // Skill imports, revisions and enable/disable change the Skill library.
+    queryClient.invalidateQueries({ queryKey: skillHubRootKey(projectId) }),
+  ]);
+}
+
+// -- Skill reads -------------------------------------------------------
+
+export function useSkills(projectId: string) {
+  return useQuery({
+    queryKey: aiAssetKeys.skills(projectId),
+    queryFn: () =>
+      requestJson<components["schemas"]["SkillRevisionPage"]>(
+        projectAiPath(projectId, "/skills"),
+      ).then((page) => page.items),
+    staleTime: 30_000,
+  });
+}
+
+/** Shared by `useSkill` below and by any `useQueries` fan-out over several
+ * Skill revisions at once (e.g. summing an Agent's bundled Skills' sizes) —
+ * same URL and response shape, so both paths share one cache entry under
+ * `aiAssetKeys.skill`. */
+export function fetchSkillRevisionDetail(
   projectId: string,
   revisionId: string,
-): Promise<string> {
-  const response = await fetch(
-    `/api/v1/projects/${encodeURIComponent(projectId)}/ai/skills/${encodeURIComponent(revisionId)}/content`,
+): Promise<SkillRevisionDetail> {
+  return requestJson<SkillRevisionDetail>(
+    projectAiPath(projectId, `/skills/${encodeURIComponent(revisionId)}`),
   );
-  if (!response.ok) throw new CatalogError("skill-content-unavailable");
-  return response.text();
 }
-export async function fetchSkillDownload(
+
+export function useSkill(projectId: string, revisionId: string | null) {
+  return useQuery({
+    queryKey: aiAssetKeys.skill(projectId, revisionId ?? "none"),
+    queryFn: () => fetchSkillRevisionDetail(projectId, revisionId ?? ""),
+    enabled: revisionId !== null,
+    staleTime: 30_000,
+  });
+}
+
+export function useSkillRevisions(projectId: string, skillId: string | null) {
+  return useQuery({
+    queryKey: aiAssetKeys.skillRevisions(projectId, skillId ?? "none"),
+    queryFn: () =>
+      requestJson<components["schemas"]["SkillRevisionPage"]>(
+        projectAiPath(
+          projectId,
+          `/skills/${encodeURIComponent(skillId ?? "")}/revisions`,
+        ),
+      ).then((page) => page.items),
+    enabled: skillId !== null,
+    staleTime: 30_000,
+  });
+}
+
+export function skillFileUrl(
   projectId: string,
   revisionId: string,
-): Promise<Blob> {
-  const response = await fetch(
-    `/api/v1/projects/${encodeURIComponent(projectId)}/ai/skills/${encodeURIComponent(revisionId)}/content`,
+  path: string,
+): string {
+  const encodedPath = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return projectAiPath(
+    projectId,
+    `/skills/${encodeURIComponent(revisionId)}/files/${encodedPath}`,
   );
-  if (!response.ok) throw new CatalogError("skill-content-unavailable");
-  return response.blob();
 }
-export function catalogErrorMessage(error: unknown, zh: boolean): string {
-  const code =
-    error instanceof CatalogError ? error.code : "catalog-unavailable";
-  const messages: Record<string, [string, string]> = {
-    "mcp-url-not-allowed": [
-      "This MCP URL is not allowed. Use a local server or ask to allow its host.",
-      "此 MCP 地址未获允许，请使用本机服务或配置允许的主机。",
-    ],
-    "mcp-sync-failed": [
-      "Could not sync tools. Check the server and try again.",
-      "工具同步失败，请检查服务后重试。",
-    ],
-    "mcp-auth-env-unset": [
-      "The authentication environment variable is missing on the server.",
-      "服务端未设置该鉴权环境变量。",
-    ],
-    "skill-invalid": [
-      "Check the SKILL.md name, description and instructions.",
-      "请检查 SKILL.md 名称、描述和指令。",
-    ],
-  };
-  return (
-    messages[code]?.[zh ? 1 : 0] ??
-    (zh
-      ? `操作失败，请重试（${code}）。`
-      : `Could not complete this action. Retry (${code}).`)
-  );
+
+// -- Skill writes --------------------------------------------------------
+
+export type SkillImportInput =
+  | { archive: File }
+  | { files: { file: File; relativePath: string }[] }
+  | { text: string };
+
+function buildSkillImportInit(input: SkillImportInput): RequestInit {
+  if ("text" in input) return jsonInit("POST", { text: input.text });
+  const form = new FormData();
+  if ("archive" in input) {
+    form.append("archive", input.archive, input.archive.name);
+  } else {
+    for (const { file, relativePath } of input.files) {
+      form.append("files", file, relativePath);
+    }
+  }
+  return { method: "POST", body: form };
+}
+
+export function useStageSkillImport(projectId: string) {
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "skill-import-stage"],
+    mutationFn: (input: SkillImportInput) =>
+      requestJson<SkillImportPreview>(
+        projectAiPath(projectId, "/skills/imports"),
+        buildSkillImportInit(input),
+      ),
+  });
+}
+
+export function useCommitSkillImport(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "skill-import-commit"],
+    mutationFn: ({
+      importId,
+      selections,
+    }: {
+      importId: string;
+      selections: SkillImportSelection[];
+    }) =>
+      requestJson<SkillImportCommitResult>(
+        projectAiPath(
+          projectId,
+          `/skills/imports/${encodeURIComponent(importId)}/commit`,
+        ),
+        jsonInit("POST", { selections }),
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+export function useCreateSkill(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "skill-create"],
+    mutationFn: (draft: SkillDraftRequest) =>
+      requestJson<SkillRevisionDetail>(
+        projectAiPath(projectId, "/skills"),
+        jsonInit("POST", draft),
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+export function useReviseSkill(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "skill-revise"],
+    mutationFn: ({
+      skillId,
+      request,
+    }: {
+      skillId: string;
+      request: SkillReviseRequest;
+    }) =>
+      requestJson<SkillRevisionDetail>(
+        projectAiPath(
+          projectId,
+          `/skills/${encodeURIComponent(skillId)}/revisions`,
+        ),
+        jsonInit("POST", request),
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+export function useSetSkillEnabled(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "skill-enabled"],
+    mutationFn: ({ skillId, enabled }: { skillId: string; enabled: boolean }) =>
+      requestJson<SkillRevision>(
+        projectAiPath(
+          projectId,
+          `/skills/${encodeURIComponent(skillId)}/${enabled ? "enable" : "disable"}`,
+        ),
+        { method: "POST" },
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+// -- Agent reads ----------------------------------------------------------
+
+export function useAgents(projectId: string) {
+  return useQuery({
+    queryKey: aiAssetKeys.agents(projectId),
+    queryFn: () =>
+      requestJson<components["schemas"]["AiAgentRevisionPage"]>(
+        projectAiPath(projectId, "/agents"),
+      ).then((page) => page.items),
+    staleTime: 30_000,
+  });
+}
+
+export function useAgent(projectId: string, revisionId: string | null) {
+  return useQuery({
+    queryKey: aiAssetKeys.agent(projectId, revisionId ?? "none"),
+    queryFn: () =>
+      requestJson<AiAgentRevisionDetail>(
+        projectAiPath(
+          projectId,
+          `/agents/${encodeURIComponent(revisionId ?? "")}`,
+        ),
+      ),
+    enabled: revisionId !== null,
+    staleTime: 30_000,
+  });
+}
+
+export function useAgentRevisions(projectId: string, agentId: string | null) {
+  return useQuery({
+    queryKey: aiAssetKeys.agentRevisions(projectId, agentId ?? "none"),
+    queryFn: () =>
+      requestJson<components["schemas"]["AiAgentRevisionPage"]>(
+        projectAiPath(
+          projectId,
+          `/agents/${encodeURIComponent(agentId ?? "")}/revisions`,
+        ),
+      ).then((page) => page.items),
+    enabled: agentId !== null,
+    staleTime: 30_000,
+  });
+}
+
+// -- Agent writes --------------------------------------------------------
+
+export function useCreateAgent(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "agent-create"],
+    mutationFn: (draft: AgentDraftRequest) =>
+      requestJson<AiAgentRevisionDetail>(
+        projectAiPath(projectId, "/agents"),
+        jsonInit("POST", draft),
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+export function useReviseAgent(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "agent-revise"],
+    mutationFn: ({
+      agentId,
+      request,
+    }: {
+      agentId: string;
+      request: AgentReviseRequest;
+    }) =>
+      requestJson<AiAgentRevisionDetail>(
+        projectAiPath(
+          projectId,
+          `/agents/${encodeURIComponent(agentId)}/revisions`,
+        ),
+        jsonInit("POST", request),
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+export function useSetAgentEnabled(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ["ai-assets", projectId, "agent-enabled"],
+    mutationFn: ({ agentId, enabled }: { agentId: string; enabled: boolean }) =>
+      requestJson<AiAgentRevision>(
+        projectAiPath(
+          projectId,
+          `/agents/${encodeURIComponent(agentId)}/${enabled ? "enable" : "disable"}`,
+        ),
+        { method: "POST" },
+      ),
+    onSuccess: () => invalidateAiAssets(queryClient, projectId),
+  });
+}
+
+// -- Tools ------------------------------------------------------------------
+
+export function useTools(projectId: string, locale: "en" | "zh" | null = null) {
+  return useQuery({
+    queryKey: aiAssetKeys.tools(projectId, locale),
+    queryFn: () =>
+      requestJson<components["schemas"]["ToolPage"]>(
+        projectAiPath(
+          projectId,
+          `/tools${locale !== null ? `?locale=${locale}` : ""}`,
+        ),
+      ).then((page) => page.items),
+    staleTime: 30_000,
+  });
 }

@@ -6,10 +6,12 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from xml.etree import ElementTree
+
+from opentelemetry import trace
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.adapters.published_knowledge import PublishedKnowledgeEvidence
@@ -20,12 +22,14 @@ from tap.modules.ai.application.insights_explanation import (
     ProposedExplanation,
 )
 from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
+from tap.modules.ai.domain.prompt_guard import untrusted_context
 from tap.modules.ai.ports.insights import (
     AuthorizedEvidence,
     AuthorizedInsightsScope,
     InsightsAuthorizationChanged,
     InsightsBudgetExceeded,
     InsightsQueryUnavailable,
+    StructuredInsightsTool,
 )
 from tap.modules.chat.domain.conversations import FrozenResource
 
@@ -168,6 +172,59 @@ class ConfiguredInsightsExplanation:
             raise InsightsBudgetExceeded(
                 "Insights explanation exceeded its total time budget"
             ) from exc
+
+    async def query_metrics(
+        self,
+        context: ProjectScopeContext,
+        report_refs: tuple[str, ...],
+        arguments: Mapping[str, object],
+    ) -> tuple[dict[str, object], ...]:
+        """The `insights.query` tool (LangGraph PR 5, Task 8): execute one
+        closed-contract `StructuredInsightsTool` call authorized to exactly
+        the Turn's frozen `insights_report_refs` -- never the project at
+        large -- and return one record per returned fact for the evidence
+        pool to label `I<n>`. A fact whose own `evidence_refs` reach outside
+        `report_refs` is an authorization change, not a usable result."""
+        try:
+            async with asyncio.timeout(30):
+                return await self._query_metrics(context, report_refs, arguments)
+        except TimeoutError as exc:
+            raise InsightsBudgetExceeded(
+                "Insights metrics query exceeded its total time budget"
+            ) from exc
+
+    async def _query_metrics(
+        self,
+        context: ProjectScopeContext,
+        report_refs: tuple[str, ...],
+        arguments: Mapping[str, object],
+    ) -> tuple[dict[str, object], ...]:
+        if context.project_id != self._project_id:
+            raise InsightsAuthorizationChanged("Insights project scope changed")
+        scope = AuthorizedInsightsScope(
+            context=context,
+            user_authorization=self._user_token,
+            authorization_version=self._authorization_version,
+            authorized_resource_refs=report_refs,
+        )
+        result = await StructuredInsightsTool(self._insights).invoke(scope, arguments)
+        allowed_refs = set(report_refs)
+        for fact in result.metrics:
+            if not set(fact.evidence_refs) <= allowed_refs:
+                raise InsightsAuthorizationChanged(
+                    "Insights metric evidence is outside the Turn's frozen report refs"
+                )
+        as_of = result.query.as_of.isoformat()
+        return tuple(
+            {
+                "queryId": result.query_id,
+                "metricVersion": result.metric_version,
+                "metricId": fact.metric_id,
+                "value": fact.value,
+                "asOf": as_of,
+            }
+            for fact in result.metrics
+        )
 
     async def reauthorize_result(
         self,
@@ -328,17 +385,24 @@ class ConfiguredInsightsExplanation:
                     ),
                     cost_micros=0,
                 )
-            payload = {
+            trusted_value: dict[str, object] = {
                 "question": request.question,
                 "queryId": metrics.query_id,
                 "metricVersion": metrics.metric_version,
                 "asOf": metrics.query.as_of.isoformat(),
                 "facts": [asdict(fact) for fact in facts],
+            }
+            untrusted_sections: dict[str, Sequence[Mapping[str, object]] | Mapping[str, object]] = {
                 "evidence": [
                     {"citationId": item.citation_id, "excerpt": item.excerpt} for item in evidence
-                ],
+                ]
             }
-            model_context = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            context_value, flagged_labels = untrusted_context(trusted_value, untrusted_sections)
+            if flagged_labels:
+                current_span = trace.get_current_span()
+                current_span.set_attribute("tap.guard.injection.flagged", ",".join(flagged_labels))
+                current_span.set_attribute("tap.guard.injection.count", len(flagged_labels))
+            model_context = json.dumps(context_value, sort_keys=True, separators=(",", ":"))
             if len(model_context.encode()) > 20_000:
                 raise InsightsBudgetExceeded("Insights model context exceeds the bounded input")
             # Reserve a conservative configured ceiling, including schema and protocol overhead.

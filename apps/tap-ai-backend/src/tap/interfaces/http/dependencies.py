@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from fastapi import Header, Request
 from fastapi.exceptions import RequestValidationError
@@ -42,20 +42,23 @@ from tap.interfaces.http.trace_service import TraceHttpService
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.agent_team.application.service import AgentTeamService
 from tap.modules.ai.application.agent_authoring import AgentAuthoringService
-from tap.modules.ai.application.mcp_servers import McpServerService
-from tap.modules.ai.application.skill_import import SkillImportService
-from tap.modules.ai.application.tool_loop import AgentToolRuntime
-from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
+from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.domain.assets import AiAgentRevision, SkillRevision
 from tap.modules.ai.domain.models import ModelDescriptor
 from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.application.feedback import FeedbackService
+from tap.modules.chat.application.ports import DraftStream, TurnSkillActivations
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
-from tap.modules.graph.application.overview import GraphOverviewService
+from tap.modules.graph.application.jobs import GraphJobStore
+from tap.modules.graph.application.node_enrichment import GraphNodeEnrichmentPort
+from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.graph.ports.store import GraphStorePort
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.modules.skill_hub.application.service import SkillHubService
 from tap.modules.test_management.application.plans import TestPlanApplication
 
 
@@ -191,19 +194,6 @@ class ModelCatalogHttpService(Protocol):
 
 
 class AssetCatalogHttpService(Protocol):
-    async def list_agent_revisions(
-        self, scope: ProjectScopeContext
-    ) -> tuple[AiAgentRevision, ...]: ...
-    async def list_skill_revisions(
-        self, scope: ProjectScopeContext
-    ) -> tuple[SkillRevision, ...]: ...
-    async def resolve_historical_agent(
-        self, scope: ProjectScopeContext, revision_id: str
-    ) -> AiAgentRevision: ...
-    async def resolve_historical_skill(
-        self, scope: ProjectScopeContext, revision_id: str
-    ) -> SkillRevision: ...
-
     @property
     def scope(self) -> ProjectScopeContext: ...
 
@@ -211,6 +201,15 @@ class AssetCatalogHttpService(Protocol):
     async def get_agent(self, scope: ProjectScopeContext, revision_id: str) -> AiAgentRevision: ...
     async def list_skills(self, scope: ProjectScopeContext) -> tuple[SkillRevision, ...]: ...
     async def get_skill(self, scope: ProjectScopeContext, revision_id: str) -> SkillRevision: ...
+    async def resolve_historical_agent(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> AiAgentRevision: ...
+    async def resolve_historical_skill(
+        self, scope: ProjectScopeContext, revision_id: str
+    ) -> SkillRevision: ...
+    async def list_revisions(
+        self, kind: Literal["agent", "skill"], asset_id: str
+    ) -> tuple[AiAgentRevision, ...] | tuple[SkillRevision, ...]: ...
 
 
 class _UnconfiguredReadiness:
@@ -244,27 +243,58 @@ class HttpServices:
     scope: ProjectScopeContext | None = None
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
-    tool_registry: ToolRegistry | None = None
-    skill_imports: SkillImportService | None = None
-    agent_authoring: AgentAuthoringService | None = None
-    mcp_servers: McpServerService | None = None
     conversations: ConversationService | None = None
+    feedback: FeedbackService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None
     traces: TraceHttpService | None = None
     graph: GraphStorePort | None = None
-    graph_overview: GraphOverviewService | None = None
+    project_graph: ProjectGraphStorePort | None = None
+    graph_jobs: GraphJobStore | None = None
+    graph_overview_limit: int = 150
+    graph_node_enrichment: GraphNodeEnrichmentPort | None = None
     test_plans: TestPlanApplication | None = None
     knowledge_reviews: KnowledgeReviewHttpService | None = None
     chunk_manager: object | None = None
     insights_explanation: object | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
-    agent_tools: AgentToolRuntime | None = None
+    skill_authoring: SkillAuthoringService | None = None
+    agent_authoring: AgentAuthoringService | None = None
+    agent_team: AgentTeamService | None = None
+    skill_hub: SkillHubService | None = None
+    # The shared, per-process Redis draft/wake-up stream adapter, composed once
+    # in `tapper_runtime` from the same Redis client the API and generation
+    # worker (which shares this composition via `create_api_runtime`) both use.
+    # Read by `conversation_stream` (Task 6) to replay/stream drafts; Task 7
+    # also reads it to check cancellation.
+    draft_stream: DraftStream | None = None
+    # Skill Hub: the Skills each Turn used (manual, pinned and `auto`), read
+    # by the conversation detail route for `skillsUsed`.
+    skill_activations: TurnSkillActivations | None = None
 
 
 class GraphUnavailable(Exception):
     """The dedicated Graph runtime is unavailable; never represent this as an empty graph."""
+
+
+class GraphVersionMismatch(Exception):
+    """A project graph request named a `graphVersion` that is not the
+    Project's current READY version.
+
+    Stricter than the store-level `ProjectGraphVersionMismatch` (which still
+    serves a version retained in the adjacency cache's window): the public
+    HTTP contract requires an exact match against the current version, so
+    this is raised by the route layer before a query ever reaches the store.
+    `current` is `None` when the Project has no READY version at all.
+    """
+
+    def __init__(self, current: int | None) -> None:
+        self.current = current
+        super().__init__(
+            "requested graph version does not match the current version; "
+            f"current version is {current if current is not None else 'none'}"
+        )
 
 
 def graph_service(request: Request) -> GraphStorePort:
@@ -275,12 +305,33 @@ def graph_service(request: Request) -> GraphStorePort:
     return service
 
 
-def graph_overview_service(request: Request) -> GraphOverviewService:
+def project_graph_service(request: Request) -> ProjectGraphStorePort:
     services = getattr(request.app.state, "http_services", None)
-    service = services.graph_overview if isinstance(services, HttpServices) else None
+    service = services.project_graph if isinstance(services, HttpServices) else None
     if service is None:
         raise GraphUnavailable
     return service
+
+
+def graph_jobs_service(request: Request) -> GraphJobStore:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.graph_jobs if isinstance(services, HttpServices) else None
+    if service is None:
+        raise GraphUnavailable
+    return service
+
+
+def graph_overview_limit(request: Request) -> int:
+    services = getattr(request.app.state, "http_services", None)
+    return services.graph_overview_limit if isinstance(services, HttpServices) else 150
+
+
+def graph_node_enrichment_service(request: Request) -> GraphNodeEnrichmentPort | None:
+    """Optional: a response simply leaves `snippet`/`sourceName` unset when
+    no enrichment provider is wired, rather than failing the whole request."""
+
+    services = getattr(request.app.state, "http_services", None)
+    return services.graph_node_enrichment if isinstance(services, HttpServices) else None
 
 
 def test_plan_service(request: Request) -> TestPlanApplication:
@@ -329,12 +380,9 @@ def asset_catalog_service(request: Request) -> AssetCatalogHttpService:
     return service
 
 
-_BUILTIN_TOOL_REGISTRY = ToolRegistry(builtin_tools())
-
-
-def skill_import_service(request: Request) -> SkillImportService:
+def skill_authoring_service(request: Request) -> SkillAuthoringService:
     services = getattr(request.app.state, "http_services", None)
-    service = services.skill_imports if isinstance(services, HttpServices) else None
+    service = services.skill_authoring if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service
@@ -348,23 +396,33 @@ def agent_authoring_service(request: Request) -> AgentAuthoringService:
     return service
 
 
-def mcp_server_service(request: Request) -> McpServerService:
+def agent_team_service(request: Request) -> AgentTeamService:
     services = getattr(request.app.state, "http_services", None)
-    service = services.mcp_servers if isinstance(services, HttpServices) else None
+    service = services.agent_team if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service
 
 
-def tool_registry_service(request: Request) -> ToolRegistry:
+def skill_hub_service(request: Request) -> SkillHubService:
     services = getattr(request.app.state, "http_services", None)
-    service = services.tool_registry if isinstance(services, HttpServices) else None
-    return service or _BUILTIN_TOOL_REGISTRY
+    service = services.skill_hub if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
 
 
 def conversation_service(request: Request) -> ConversationService:
     services = getattr(request.app.state, "http_services", None)
     service = services.conversations if isinstance(services, HttpServices) else None
+    if service is None:
+        raise KnowledgeRuntimeUnavailable
+    return service
+
+
+def feedback_service(request: Request) -> FeedbackService:
+    services = getattr(request.app.state, "http_services", None)
+    service = services.feedback if isinstance(services, HttpServices) else None
     if service is None:
         raise KnowledgeRuntimeUnavailable
     return service

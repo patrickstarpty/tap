@@ -4,7 +4,8 @@
       "enum": [
         "insufficient_evidence",
         "conflicting_sources",
-        "revision_mismatch"
+        "revision_mismatch",
+        "out_of_scope"
       ],
       "title": "AbstentionReason",
       "type": "string"
@@ -50,14 +51,14 @@
       "title": "AnswerClaim",
       "type": "object"
     },
-    "AnswerDeltaEvent": {
+    "AnswerDraftEvent": {
       "additionalProperties": false,
       "properties": {
         "payload": {
-          "$ref": "#/$defs/AnswerDeltaPayload"
+          "$ref": "#/$defs/AnswerDraftPayload"
         },
         "type": {
-          "const": "answer.delta",
+          "const": "answer.draft",
           "title": "Type",
           "type": "string"
         }
@@ -66,21 +67,39 @@
         "type",
         "payload"
       ],
-      "title": "AnswerDeltaEvent",
+      "title": "AnswerDraftEvent",
       "type": "object"
     },
-    "AnswerDeltaPayload": {
+    "AnswerDraftPayload": {
       "additionalProperties": false,
+      "description": "One batched, redacted draft chunk of the model's in-progress answer,\nstreamed from Redis (never persisted to MySQL): `attempt`/`seq` order\ndrafts within one Turn attempt, not the envelope `sequence`, which is\ncarried only for the `ChatEventEnvelope` wrapper and is never advanced\nor deduplicated against for this event type (spec SS task 6).",
       "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "reset": {
+          "default": false,
+          "title": "Reset",
+          "type": "boolean"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
         "text": {
           "title": "Text",
           "type": "string"
         }
       },
       "required": [
+        "attempt",
+        "seq",
         "text"
       ],
-      "title": "AnswerDeltaPayload",
+      "title": "AnswerDraftPayload",
       "type": "object"
     },
     "AnswerMode": {
@@ -90,40 +109,6 @@
       ],
       "title": "AnswerMode",
       "type": "string"
-    },
-    "AnswerResetEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "payload": {
-          "$ref": "#/$defs/AnswerResetPayload"
-        },
-        "type": {
-          "const": "answer.reset",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "payload"
-      ],
-      "title": "AnswerResetEvent",
-      "type": "object"
-    },
-    "AnswerResetPayload": {
-      "additionalProperties": false,
-      "properties": {
-        "attempt": {
-          "minimum": 1,
-          "title": "Attempt",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "attempt"
-      ],
-      "title": "AnswerResetPayload",
-      "type": "object"
     },
     "BddAnchor": {
       "additionalProperties": false,
@@ -233,9 +218,29 @@
           "default": null,
           "title": "Derivedfromchunkids"
         },
+        "edge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EdgeCitationView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "evidenceLabel": {
           "minLength": 1,
           "title": "Evidencelabel",
+          "type": "string"
+        },
+        "kind": {
+          "default": "chunk",
+          "enum": [
+            "chunk",
+            "edge"
+          ],
+          "title": "Kind",
           "type": "string"
         },
         "logicalChunkId": {
@@ -602,6 +607,51 @@
       "title": "DocumentAnchor",
       "type": "object"
     },
+    "EdgeCitationView": {
+      "additionalProperties": false,
+      "properties": {
+        "edgeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Edgeid",
+          "type": "string"
+        },
+        "graphVersion": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Graphversion",
+          "type": "string"
+        },
+        "object": {
+          "$ref": "#/$defs/GraphEndpointView"
+        },
+        "relationLabel": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Relationlabel",
+          "type": "string"
+        },
+        "relationType": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Relationtype",
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/GraphEndpointView"
+        }
+      },
+      "required": [
+        "edgeId",
+        "graphVersion",
+        "subject",
+        "object",
+        "relationType",
+        "relationLabel"
+      ],
+      "title": "EdgeCitationView",
+      "type": "object"
+    },
     "FailureAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -659,6 +709,224 @@
       "title": "FailureAnchor",
       "type": "object"
     },
+    "GraphContextReadyEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/GraphContextReadyPayload"
+        },
+        "type": {
+          "const": "graph.context_ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "GraphContextReadyEvent",
+      "type": "object"
+    },
+    "GraphContextReadyPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "graphVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graphversion"
+        },
+        "paths": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxItems": 3,
+          "title": "Paths",
+          "type": "array"
+        },
+        "querySeedCount": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Queryseedcount",
+          "type": "integer"
+        },
+        "relationCount": {
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Relationcount",
+          "type": "integer"
+        },
+        "seedCount": {
+          "minimum": 0,
+          "title": "Seedcount",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "APPLIED",
+            "NOT_READY",
+            "STALE",
+            "FAILED",
+            "EMPTY",
+            "UNAVAILABLE",
+            "NOT_SELECTED"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "seedCount",
+        "paths",
+        "relationCount"
+      ],
+      "title": "GraphContextReadyPayload",
+      "type": "object"
+    },
+    "GraphContextSummaryView": {
+      "additionalProperties": false,
+      "properties": {
+        "graphVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graphversion"
+        },
+        "paths": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "querySeedCount": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Queryseedcount",
+          "type": "integer"
+        },
+        "relationCount": {
+          "minimum": 0,
+          "title": "Relationcount",
+          "type": "integer"
+        },
+        "seedCount": {
+          "minimum": 0,
+          "title": "Seedcount",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "APPLIED",
+            "NOT_READY",
+            "STALE",
+            "FAILED",
+            "EMPTY"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "seedCount",
+        "relationCount"
+      ],
+      "title": "GraphContextSummaryView",
+      "type": "object"
+    },
+    "GraphEndpointView": {
+      "additionalProperties": false,
+      "description": "One edge citation endpoint (subject or object).",
+      "properties": {
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "nodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Nodeid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "nodeId",
+        "label"
+      ],
+      "title": "GraphEndpointView",
+      "type": "object"
+    },
+    "InsightsFactView": {
+      "additionalProperties": false,
+      "description": "Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited\n`I<n>` Insights metric record, in citation order.",
+      "properties": {
+        "asOf": {
+          "minLength": 1,
+          "title": "Asof",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "metricId": {
+          "minLength": 1,
+          "title": "Metricid",
+          "type": "string"
+        },
+        "queryId": {
+          "minLength": 1,
+          "title": "Queryid",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "label",
+        "queryId",
+        "metricId",
+        "asOf"
+      ],
+      "title": "InsightsFactView",
+      "type": "object"
+    },
     "OpenApiAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -696,182 +964,6 @@
       "additionalProperties": false,
       "description": "Closed RFC 9457 error projection; only registered safe text is accepted.",
       "oneOf": [
-        {
-          "properties": {
-            "detail": {
-              "const": "The Agent definition does not satisfy the revision contract."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent definition invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-definition-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The Agent description must be at most 1024 characters."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent description invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-description-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The system instruction must be non-empty and at most 16000 characters."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent instruction invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-instruction-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The model must be in the catalog and support structured output."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent model unsupported"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-model-unsupported"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The Agent name must be non-empty and at most 128 characters."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent name invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-name-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "Every bound Skill revision must exist and be enabled in this Project."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent skill unavailable"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-skill-unavailable"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "An Agent binds at most 16 distinct Skill revisions."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent skills invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-skills-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "Every tool must be registered, enabled and within the 32-tool limit."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Agent tool unavailable"
-            },
-            "type": {
-              "const": "https://tap.example/problems/agent-tool-unavailable"
-            }
-          }
-        },
         {
           "properties": {
             "detail": {
@@ -1009,6 +1101,31 @@
               "const": "https://tap.example/problems/automation-mapping-required"
             }
           }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The answer stopped because its time, model-call or cost budget ran out."
+            },
+            "failureStage": {
+              "const": "answer"
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 422
+            },
+            "title": {
+              "const": "Answer budget exhausted"
+            },
+            "type": {
+              "const": "https://tap.example/problems/budget-exhausted"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
         },
         {
           "properties": {
@@ -1283,6 +1400,28 @@
         {
           "properties": {
             "detail": {
+              "const": "Feedback is only accepted for a completed Turn."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Feedback not allowed"
+            },
+            "type": {
+              "const": "https://tap.example/problems/feedback-not-allowed"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The graph fact is unavailable in this Project snapshot."
             },
             "failureStage": {
@@ -1305,6 +1444,31 @@
         {
           "properties": {
             "detail": {
+              "const": "The graph extraction job is currently running under an active lease."
+            },
+            "failureStage": {
+              "const": "graph"
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Graph job busy"
+            },
+            "type": {
+              "const": "https://tap.example/problems/graph-job-busy"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
               "const": "The graph service is currently unavailable."
             },
             "failureStage": {
@@ -1321,6 +1485,31 @@
             },
             "type": {
               "const": "https://tap.example/problems/graph-unavailable"
+            }
+          },
+          "required": [
+            "failureStage"
+          ]
+        },
+        {
+          "properties": {
+            "detail": {
+              "pattern": "The requested graph version does not match the current version; current version is (?:\\d+|none)\\."
+            },
+            "failureStage": {
+              "const": "graph"
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Graph version mismatch"
+            },
+            "type": {
+              "const": "https://tap.example/problems/graph-version-mismatch"
             }
           },
           "required": [
@@ -1434,94 +1623,6 @@
             },
             "type": {
               "const": "https://tap.example/problems/knowledge-runtime-unavailable"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "An MCP server with this slug already exists in this Project."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 409
-            },
-            "title": {
-              "const": "MCP server conflict"
-            },
-            "type": {
-              "const": "https://tap.example/problems/mcp-server-conflict"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The slug, name or auth environment variable name is invalid."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "MCP server invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/mcp-server-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The MCP server is unavailable in this Project."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 404
-            },
-            "title": {
-              "const": "MCP server not found"
-            },
-            "type": {
-              "const": "https://tap.example/problems/mcp-server-not-found"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The MCP URL must be http(s) on a loopback or configured allowed host."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "MCP URL not allowed"
-            },
-            "type": {
-              "const": "https://tap.example/problems/mcp-url-not-allowed"
             }
           }
         },
@@ -1712,160 +1813,6 @@
           "required": [
             "failureStage"
           ]
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The SKILL.md file must contain instructions after the front matter."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Skill body empty"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-body-empty"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The Skill description must be non-empty and at most 1024 characters."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Skill description invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-description-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The SKILL.md front matter must contain only plain YAML values."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Skill front matter invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-front-matter-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The SKILL.md file must start with YAML front matter."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Skill front matter missing"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-front-matter-missing"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The Skill name must be lowercase kebab-case of at most 64 characters."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Skill name invalid"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-name-invalid"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The SKILL.md file is not valid UTF-8 text."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 422
-            },
-            "title": {
-              "const": "Skill not UTF-8"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-not-utf8"
-            }
-          }
-        },
-        {
-          "properties": {
-            "detail": {
-              "const": "The SKILL.md file exceeds the 64 KiB limit."
-            },
-            "failureStage": {
-              "const": null
-            },
-            "retryable": {
-              "const": false
-            },
-            "status": {
-              "const": 413
-            },
-            "title": {
-              "const": "Skill too large"
-            },
-            "type": {
-              "const": "https://tap.example/problems/skill-too-large"
-            }
-          }
         },
         {
           "properties": {
@@ -2087,20 +2034,13 @@
         },
         "type": {
           "enum": [
-            "https://tap.example/problems/agent-definition-invalid",
-            "https://tap.example/problems/agent-description-invalid",
-            "https://tap.example/problems/agent-instruction-invalid",
-            "https://tap.example/problems/agent-model-unsupported",
-            "https://tap.example/problems/agent-name-invalid",
-            "https://tap.example/problems/agent-skill-unavailable",
-            "https://tap.example/problems/agent-skills-invalid",
-            "https://tap.example/problems/agent-tool-unavailable",
             "https://tap.example/problems/answer-snapshot-unavailable",
             "https://tap.example/problems/answer-unavailable",
             "https://tap.example/problems/asset-revision-unavailable",
             "https://tap.example/problems/association-conflict",
             "https://tap.example/problems/authorization-denied",
             "https://tap.example/problems/automation-mapping-required",
+            "https://tap.example/problems/budget-exhausted",
             "https://tap.example/problems/citation-stale",
             "https://tap.example/problems/citation-unavailable",
             "https://tap.example/problems/conversation-integrity",
@@ -2113,17 +2053,16 @@
             "https://tap.example/problems/embedding-unavailable",
             "https://tap.example/problems/empty-document",
             "https://tap.example/problems/execution-provider-unavailable",
+            "https://tap.example/problems/feedback-not-allowed",
             "https://tap.example/problems/graph-fact-not-found",
+            "https://tap.example/problems/graph-job-busy",
             "https://tap.example/problems/graph-unavailable",
+            "https://tap.example/problems/graph-version-mismatch",
             "https://tap.example/problems/idempotency-conflict",
             "https://tap.example/problems/knowledge-projection-not-ready",
             "https://tap.example/problems/knowledge-review-not-found",
             "https://tap.example/problems/knowledge-review-state-conflict",
             "https://tap.example/problems/knowledge-runtime-unavailable",
-            "https://tap.example/problems/mcp-server-conflict",
-            "https://tap.example/problems/mcp-server-invalid",
-            "https://tap.example/problems/mcp-server-not-found",
-            "https://tap.example/problems/mcp-url-not-allowed",
             "https://tap.example/problems/model-not-selectable",
             "https://tap.example/problems/model-unavailable",
             "https://tap.example/problems/recorder-unavailable",
@@ -2132,13 +2071,6 @@
             "https://tap.example/problems/scope-mismatch",
             "https://tap.example/problems/search-execution-rejected",
             "https://tap.example/problems/search-unavailable",
-            "https://tap.example/problems/skill-body-empty",
-            "https://tap.example/problems/skill-description-invalid",
-            "https://tap.example/problems/skill-front-matter-invalid",
-            "https://tap.example/problems/skill-front-matter-missing",
-            "https://tap.example/problems/skill-name-invalid",
-            "https://tap.example/problems/skill-not-utf8",
-            "https://tap.example/problems/skill-too-large",
             "https://tap.example/problems/source-command-pending",
             "https://tap.example/problems/source-not-found",
             "https://tap.example/problems/source-selection-required",
@@ -2209,110 +2141,6 @@
       "title": "QueryPlanReadyPayload",
       "type": "object"
     },
-    "RelationCitation": {
-      "additionalProperties": false,
-      "properties": {
-        "citationId": {
-          "title": "Citationid",
-          "type": "string"
-        },
-        "claimIndex": {
-          "minimum": 0,
-          "title": "Claimindex",
-          "type": "integer"
-        },
-        "edgeId": {
-          "title": "Edgeid",
-          "type": "string"
-        },
-        "origin": {
-          "enum": [
-            "EXTRACTED",
-            "INFERRED"
-          ],
-          "title": "Origin",
-          "type": "string"
-        },
-        "pathEdgeIds": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Pathedgeids",
-          "type": "array"
-        },
-        "relationType": {
-          "title": "Relationtype",
-          "type": "string"
-        },
-        "snapshotId": {
-          "title": "Snapshotid",
-          "type": "string"
-        },
-        "sourceLabel": {
-          "title": "Sourcelabel",
-          "type": "string"
-        },
-        "sourceNodeId": {
-          "title": "Sourcenodeid",
-          "type": "string"
-        },
-        "targetLabel": {
-          "title": "Targetlabel",
-          "type": "string"
-        },
-        "targetNodeId": {
-          "title": "Targetnodeid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "citationId",
-        "snapshotId",
-        "edgeId",
-        "sourceNodeId",
-        "targetNodeId",
-        "sourceLabel",
-        "targetLabel",
-        "relationType",
-        "origin",
-        "claimIndex",
-        "pathEdgeIds"
-      ],
-      "title": "RelationCitation",
-      "type": "object"
-    },
-    "RelationCitationResolvedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "payload": {
-          "$ref": "#/$defs/RelationCitationResolvedPayload"
-        },
-        "type": {
-          "const": "relation_citation.resolved",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "payload"
-      ],
-      "title": "RelationCitationResolvedEvent",
-      "type": "object"
-    },
-    "RelationCitationResolvedPayload": {
-      "additionalProperties": false,
-      "properties": {
-        "citation": {
-          "$ref": "#/$defs/RelationCitation"
-        }
-      },
-      "required": [
-        "citation"
-      ],
-      "title": "RelationCitationResolvedPayload",
-      "type": "object"
-    },
     "RerankCompletedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2375,6 +2203,15 @@
           "title": "Answer",
           "type": "string"
         },
+        "answerKind": {
+          "default": "answer",
+          "enum": [
+            "answer",
+            "clarification"
+          ],
+          "title": "Answerkind",
+          "type": "string"
+        },
         "citations": {
           "items": {
             "$ref": "#/$defs/Citation"
@@ -2418,14 +2255,27 @@
           "title": "Degradedmode",
           "type": "boolean"
         },
+        "graphContext": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GraphContextSummaryView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "graphContextStatus": {
           "default": "NOT_SELECTED",
           "enum": [
             "APPLIED",
             "NOT_READY",
+            "STALE",
             "FAILED",
             "UNAVAILABLE",
-            "NOT_SELECTED"
+            "NOT_SELECTED",
+            "EMPTY"
           ],
           "title": "Graphcontextstatus",
           "type": "string"
@@ -2442,18 +2292,25 @@
           "default": null,
           "title": "Graphsnapshotid"
         },
+        "insightsFacts": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/InsightsFactView"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Insightsfacts"
+        },
         "queryPlanId": {
           "minLength": 1,
           "title": "Queryplanid",
           "type": "string"
-        },
-        "relationCitations": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/RelationCitation"
-          },
-          "title": "Relationcitations",
-          "type": "array"
         },
         "retrievalProfileId": {
           "minLength": 1,
@@ -2479,6 +2336,41 @@
         "citations"
       ],
       "title": "RetrievalAnswerResponse",
+      "type": "object"
+    },
+    "RetrievalHitsLabelView": {
+      "additionalProperties": false,
+      "description": "One evidence/relation label's display mapping, so the client can\nrender an inline `[S3]`/`[R1]` marker in a streaming draft as a badge\nshowing its source before the terminal answer (and its own `citation`\npayloads) ever arrive (spec SS2.3).",
+      "properties": {
+        "label": {
+          "maxLength": 4,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "title"
+      ],
+      "title": "RetrievalHitsLabelView",
       "type": "object"
     },
     "RetrievalHitsReadyEvent": {
@@ -2507,6 +2399,33 @@
           "minimum": 0,
           "title": "Authorizedhitcount",
           "type": "integer"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RetrievalHitsLabelView"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "stepId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stepid"
         },
         "traceId": {
           "minLength": 1,
@@ -2685,6 +2604,76 @@
         }
       ],
       "title": "StructuralAnchor"
+    },
+    "TaskStepEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "payload": {
+          "$ref": "#/$defs/TaskStepPayload"
+        },
+        "type": {
+          "const": "task.step",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "payload"
+      ],
+      "title": "TaskStepEvent",
+      "type": "object"
+    },
+    "TaskStepPayload": {
+      "additionalProperties": false,
+      "description": "One bounded tool-calling round's per-call progress (PR 5 Task 9):\n`status` moves `running` -> a terminal state (`completed`/`rejected`/\n`failed`); `step_id` is `f\"{turnId}:r{round}:c{index}\"`, unique per call.",
+      "properties": {
+        "durationMs": {
+          "minimum": 0,
+          "title": "Durationms",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "rejected",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "stepId": {
+          "minLength": 1,
+          "title": "Stepid",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 200,
+          "title": "Summary",
+          "type": "string"
+        },
+        "tool": {
+          "minLength": 1,
+          "title": "Tool",
+          "type": "string"
+        },
+        "toolRound": {
+          "minimum": 1,
+          "title": "Toolround",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stepId",
+        "tool",
+        "status",
+        "summary",
+        "durationMs",
+        "toolRound"
+      ],
+      "title": "TaskStepPayload",
+      "type": "object"
     },
     "TestPlanGenerationCanceledEvent": {
       "additionalProperties": false,
@@ -2912,6 +2901,18 @@
     "TurnCanceledPayload": {
       "additionalProperties": false,
       "properties": {
+        "partialAnswer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Partialanswer"
+        },
         "partialAnswerRetained": {
           "title": "Partialanswerretained",
           "type": "boolean"
@@ -3094,18 +3095,18 @@
     "event": {
       "discriminator": {
         "mapping": {
-          "answer.delta": "#/$defs/AnswerDeltaEvent",
-          "answer.reset": "#/$defs/AnswerResetEvent",
+          "answer.draft": "#/$defs/AnswerDraftEvent",
           "citation.resolved": "#/$defs/CitationResolvedEvent",
           "context.assembled": "#/$defs/ContextAssembledEvent",
           "conversation.turn.completed": "#/$defs/ConversationTurnCompletedEvent",
           "conversation.turn.requested": "#/$defs/ConversationTurnRequestedEvent",
+          "graph.context_ready": "#/$defs/GraphContextReadyEvent",
           "query.plan_ready": "#/$defs/QueryPlanReadyEvent",
-          "relation_citation.resolved": "#/$defs/RelationCitationResolvedEvent",
           "rerank.completed": "#/$defs/RerankCompletedEvent",
           "retrieval.hits_ready": "#/$defs/RetrievalHitsReadyEvent",
           "stage.completed": "#/$defs/StageCompletedEvent",
           "stage.started": "#/$defs/StageStartedEvent",
+          "task.step": "#/$defs/TaskStepEvent",
           "test-plan.generation.canceled": "#/$defs/TestPlanGenerationCanceledEvent",
           "test-plan.generation.failed": "#/$defs/TestPlanGenerationFailedEvent",
           "test-plan.generation.result_ready": "#/$defs/TestPlanGenerationResultEvent",
@@ -3139,19 +3140,19 @@
           "$ref": "#/$defs/RetrievalHitsReadyEvent"
         },
         {
+          "$ref": "#/$defs/TaskStepEvent"
+        },
+        {
+          "$ref": "#/$defs/GraphContextReadyEvent"
+        },
+        {
           "$ref": "#/$defs/RerankCompletedEvent"
         },
         {
-          "$ref": "#/$defs/AnswerDeltaEvent"
-        },
-        {
-          "$ref": "#/$defs/AnswerResetEvent"
+          "$ref": "#/$defs/AnswerDraftEvent"
         },
         {
           "$ref": "#/$defs/CitationResolvedEvent"
-        },
-        {
-          "$ref": "#/$defs/RelationCitationResolvedEvent"
         },
         {
           "$ref": "#/$defs/TurnCompletedEvent"

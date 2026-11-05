@@ -37,22 +37,3 @@ async def test_ready_sources_reports_current_revision_without_fake_publication()
     assert "knowledge_source.deleted_at IS NULL" in sql
     assert "knowledge_document.deleted_at IS NULL" in sql
     assert "knowledge_document.project_id" in sql
-
-
-@pytest.mark.asyncio
-async def test_overview_revision_listing_has_its_own_explicit_limit():
-    rows = MagicMock()
-    rows.mappings.return_value.all.return_value = []
-    session = AsyncMock()
-    session.execute.return_value = rows
-    sessions = MagicMock()
-    sessions.return_value.__aenter__.return_value = session
-    ready = MysqlReadySources(sessions, VALIDATION_SCOPE)
-    await ready.list_sources()
-    assert await ready.list_revisions(limit=2001) == ()
-    limits = [
-        str(call.args[0].compile(compile_kwargs={"literal_binds": True}))
-        for call in session.execute.await_args_list
-    ]
-    assert "LIMIT 100" in limits[0]
-    assert "LIMIT 2001" in limits[1]

@@ -10,7 +10,6 @@ from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
     GraphContextStatus,
-    RelationCitationEvidence,
     RetrievalSummary,
 )
 
@@ -24,7 +23,10 @@ class ProviderResult:
     citations: tuple[CitationEvidence, ...] = ()
     abstained: bool = False
     answer_plan_id: str | None = None
-    relation_citations: tuple[RelationCitationEvidence, ...] = ()
+    # Carries the richer graph context summary (status/version/seed/paths/
+    # relation counts) past `AnswerEvidence`'s fixed shape; consumed by the
+    # caller via `TurnProcessor.last_result`, not through `AnswerEvidence`.
+    graph_context: dict[str, object] | None = None
 
     def __post_init__(self):
         if (self.graph_context_status is GraphContextStatus.APPLIED) != bool(
@@ -41,9 +43,21 @@ class TurnProcessor:
         *,
         provider: Callable[[object], Awaitable[ProviderResult]],
         complete: Callable[[AnswerEvidence], object],
+        reraise: Callable[[BaseException], bool] | None = None,
     ):
         self.provider = provider
         self.complete = complete
+        # When set and it returns True for a provider exception, that
+        # exception is re-raised instead of being converted to a closed
+        # `failed` `AnswerEvidence`. Lets a caller running inside a node with
+        # `capture_failure=False` (e.g. `ChatTurnNodes.finalize`) escape the
+        # graph on a transient fault so the worker defers and resumes instead
+        # of permanently failing the Turn.
+        self.reraise = reraise
+        # The most recent provider `ProviderResult`, including fields (such
+        # as `graph_context`) that do not fit `AnswerEvidence`'s fixed
+        # shape. `None` until a successful `process()` call.
+        self.last_result: ProviderResult | None = None
 
     async def process(
         self, snapshot: object, *, provider_events: Iterable[object] = ()
@@ -55,6 +69,7 @@ class TurnProcessor:
         )
         try:
             result = await self.provider(snapshot)
+            self.last_result = result
             if result.answer_plan_id is not None:
                 diagnostics += (f"answer-plan:{result.answer_plan_id}",)
             outcome = "abstained" if result.abstained else "completed"
@@ -66,9 +81,10 @@ class TurnProcessor:
                 result.graph_snapshot_id,
                 result.citations,
                 diagnostics,
-                relation_citations=result.relation_citations,
             )
-        except Exception:
+        except Exception as error:
+            if self.reraise is not None and self.reraise(error):
+                raise
             evidence = AnswerEvidence(
                 "",
                 "failed",

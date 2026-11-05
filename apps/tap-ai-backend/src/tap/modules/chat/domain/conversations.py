@@ -11,7 +11,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
 
-from tap.modules.ai.domain.tools import ToolRejected, validate_allowlist
+from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
+from tap.modules.ai.domain.tools import known_tool_ids
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
@@ -34,6 +35,13 @@ def citation_evidence_digest(
     anchor: object,
     claim_text: str | None = None,
     origin: str | None = None,
+    citation_kind: str | None = None,
+    graph_version: str | None = None,
+    edge_id: str | None = None,
+    subject_node_id: str | None = None,
+    object_node_id: str | None = None,
+    relation_type: str | None = None,
+    relation_label: str | None = None,
 ) -> str:
     material: dict[str, object] = {
         "citationId": citation_id,
@@ -50,6 +58,24 @@ def citation_evidence_digest(
     # legacy rows' material unchanged preserves historical snapshot verification.
     if claim_text is not None or origin is not None:
         material.update({"claimText": claim_text, "origin": origin})
+    # Edge (R-label) citations additionally bind their graph provenance so a
+    # relation citation cannot be replayed against a different edge, graph
+    # version, or endpoint pair. Chunk (and legacy, `citation_kind is None`)
+    # citations must keep their pre-migration-0030 material unchanged, or every
+    # digest already bound into a Turn's `turn_artifact_link` would stop
+    # verifying on reload.
+    if citation_kind == "edge":
+        material.update(
+            {
+                "citationKind": citation_kind,
+                "graphVersion": graph_version,
+                "edgeId": edge_id,
+                "subjectNodeId": subject_node_id,
+                "objectNodeId": object_node_id,
+                "relationType": relation_type,
+                "relationLabel": relation_label,
+            }
+        )
     return content_digest(material)
 
 
@@ -61,6 +87,8 @@ class GraphContextStatus(StrEnum):
     FAILED = "FAILED"
     NOT_READY = "NOT_READY"
     NOT_SELECTED = "NOT_SELECTED"
+    STALE = "STALE"
+    EMPTY = "EMPTY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,10 +133,36 @@ class TurnInput:
     agent_output_schema_digest: str | None = None
     skill_instruction_templates: tuple[str, ...] = ()
     skill_instruction_template_digests: tuple[str, ...] = ()
+    # Server-computed facts about Skills merge_skill_selection skipped (disabled
+    # or task-inapplicable Skill, pinned Skill missing from the library); frozen
+    # into the Turn so a checkpoint resume/retry sees the same notices rather
+    # than recomputing them.
+    skill_notices: tuple[str, ...] = ()
+    # The caller's raw request (fix round 1, I-2): `skill_revision_ids` above is
+    # `merge_skill_selection`'s *applied* set (manual then pinned, deduped,
+    # disabled/inapplicable ids skipped) -- not a 1:1 echo of what the caller
+    # asked for, so it cannot detect an idempotency replay that requests a
+    # different set of Skills than the one already frozen. This field is that
+    # 1:1 echo: `_matches_replay` tells the two requests apart with it, and an
+    # applied revision listed here was activated manually, otherwise pinned.
+    requested_skill_revision_ids: tuple[str, ...] = ()
+    # The auto-activation candidate catalog frozen with the Turn (Skill Hub
+    # spec 1.3); `skill.activate` loads the frozen `revision_id`. Dropped from
+    # `material()` when empty so Turns frozen before it keep their digest.
+    skill_catalog: tuple[SkillCatalogEntry, ...] = ()
     acl_digest: str = "sha256:" + "0" * 64
     retrieval_policy_digest: str = "sha256:" + "0" * 64
     insights_query_id: str | None = None
     insights_report_refs: tuple[str, ...] = ()
+    # The persona version this Turn is pinned to (`TapperPersona.version`).
+    # `None` means every Turn frozen before this field existed, and reads as
+    # `tapper-persona-v1` (`persona_for(None)`) -- the only persona that ever
+    # existed, so this is not a behavior change for them. Dropped from
+    # `material()` below only when it is `None` (same pattern as
+    # `skill_notices` / `requested_skill_revision_ids`), so an old Turn's
+    # persisted digest does not retroactively change when this field is
+    # added; a pinned version is part of the digest.
+    persona_version: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.message, str) or not self.message.strip():
@@ -140,8 +194,6 @@ class TurnInput:
             or len(self.skill_revision_ids) != len(self.skill_instruction_template_digests)
         ):
             raise ValueError("skill revision execution content must be frozen")
-        if self.skill_instruction_templates and self.agent_revision_id is None:
-            raise ValueError("skill execution requires a frozen agent authority")
         if len({item.revision_id for item in self.resolved_resources}) != len(
             self.resolved_resources
         ):
@@ -194,17 +246,16 @@ class TurnInput:
                 != self.agent_output_schema_digest
             ):
                 raise ValueError("agent output schema digest differs from frozen content")
-        try:
-            validate_allowlist(self.agent_tool_allowlist)
-        except ToolRejected as error:
-            raise ValueError("agent tool authority is malformed") from error
-        if self.insights_query_id is None and self.insights_report_refs:
-            raise ValueError("Insights report refs require a historical query")
-        if self.insights_query_id is not None and (
-            not self.insights_query_id.strip()
-            or not self.insights_report_refs
-            or len(self.insights_report_refs) > 20
+        if set(self.agent_tool_allowlist) - known_tool_ids():
+            raise ValueError("agent tool authority is outside the closed allowlist")
+        if self.insights_report_refs and (
+            len(self.insights_report_refs) > 20
             or len(set(self.insights_report_refs)) != len(self.insights_report_refs)
+            or any(not isinstance(ref, str) or not ref.strip() for ref in self.insights_report_refs)
+        ):
+            raise ValueError("Insights report refs must be bounded, unique and nonblank")
+        if self.insights_query_id is not None and (
+            not self.insights_query_id.strip() or not self.insights_report_refs
         ):
             raise ValueError("Insights query and report refs must be bounded")
 
@@ -214,13 +265,23 @@ class TurnInput:
             value.pop("agent_label")
         if not self.skill_labels:
             value.pop("skill_labels")
+        if not self.skill_notices:
+            value.pop("skill_notices")
+        if not self.requested_skill_revision_ids:
+            value.pop("requested_skill_revision_ids")
+        if self.skill_catalog:
+            value["skill_catalog"] = list(value["skill_catalog"])
+        else:
+            value.pop("skill_catalog")
         resources = []
         for item in value["resolved_resources"]:
             resources.append({key: fact for key, fact in item.items() if fact is not None})
         value["resolved_resources"] = resources
-        if self.insights_query_id is None:
+        if self.insights_query_id is None and not self.insights_report_refs:
             value.pop("insights_query_id")
             value.pop("insights_report_refs")
+        if self.persona_version is None:
+            value.pop("persona_version")
         return {"projectId": project_id, "turnId": turn_id, **value}
 
 
@@ -280,36 +341,6 @@ class CitationEvidence:
 
 
 @dataclass(frozen=True, slots=True)
-class RelationCitationEvidence:
-    citation_id: str
-    snapshot_id: str
-    edge_id: str
-    source_node_id: str
-    target_node_id: str
-    source_label: str
-    target_label: str
-    relation_type: str
-    origin: str
-    claim_index: int
-    path_edge_ids: tuple[str, ...]
-    original_citation_ids: tuple[str, ...] = ()
-
-    def __post_init__(self):
-        if (
-            self.origin not in {"EXTRACTED", "INFERRED"}
-            or type(self.claim_index) is not int
-            or self.claim_index < 0
-        ):
-            raise ValueError("invalid relation citation provenance")
-        if (
-            not isinstance(self.path_edge_ids, tuple)
-            or not 1 <= len(self.path_edge_ids) <= 80
-            or self.edge_id not in self.path_edge_ids
-        ):
-            raise ValueError("invalid relation citation path")
-
-
-@dataclass(frozen=True, slots=True)
 class AnswerEvidence:
     answer: str
     outcome: str
@@ -319,7 +350,6 @@ class AnswerEvidence:
     citations: tuple[CitationEvidence, ...] = ()
     diagnostics: tuple[str, ...] = ()
     insights_explanation: dict[str, object] | None = None
-    relation_citations: tuple[RelationCitationEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if self.outcome not in {"completed", "abstained", "canceled", "failed"}:
@@ -362,8 +392,6 @@ class AnswerEvidenceSnapshot:
     @classmethod
     def _evidence_material(cls, value: AnswerEvidence) -> dict[str, object]:
         material = asdict(value)
-        if not value.relation_citations:
-            material.pop("relation_citations")
         if value.insights_explanation is None:
             material.pop("insights_explanation")
         return material
@@ -416,11 +444,23 @@ class ConversationEvent:
             "stage.started",
             "stage.completed",
             "retrieval.hits_ready",
+            "graph.context_ready",
+            # PR 5 (Task 9): one `task.step` per native tool call (running,
+            # then a terminal completed/rejected/failed), emitted by the
+            # `tools` graph node. Missing from this closed set is a
+            # production bug -- every real `task.step` emission through
+            # `ConversationService.emit` would raise the same
+            # `ValueError("unknown conversation event")` this MySQL
+            # integration test caught (Task 12).
+            "task.step",
             "rerank.completed",
+            # C-1: no code writes this anymore (PR 3 moved the model's answer
+            # to Redis drafts), but older `develop`/`main` builds persisted it
+            # as a real MySQL `chat_event` row. Loading a Conversation with
+            # such a row must not raise -- the HTTP/SSE layer is responsible
+            # for filtering it back out before it reaches a client.
             "answer.delta",
-            "answer.reset",
             "citation.resolved",
-            "relation_citation.resolved",
             "turn.completed",
             "turn.abstained",
             "turn.degraded",

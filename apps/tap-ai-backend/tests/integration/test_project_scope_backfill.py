@@ -1,16 +1,15 @@
 """Real owned 0007 backfill, preservation, constraints and pre-DDL rejection."""
 
-import pytest
+import os
 
-from tests.conftest import _mysql_gate
+import pytest
 
 REVISION = "0007_project_scope_backfill"
 
 
-def test_project_scope_nonempty_upgrade_and_replay(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _mysql_gate(request)
+def test_project_scope_nonempty_upgrade_and_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import run_migration_gate
 
     monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
@@ -25,11 +24,11 @@ def test_project_scope_nonempty_upgrade_and_replay(
 
 
 def test_project_scope_real_mysql_multiple_batches_and_nullable_stage(
-    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Observe real 0007 DDL and backfill stages without changing frozen fixtures."""
-    _mysql_gate(request)
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     import importlib.util
     from pathlib import Path
 

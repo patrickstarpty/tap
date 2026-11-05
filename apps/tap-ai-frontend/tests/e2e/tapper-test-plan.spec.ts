@@ -84,10 +84,33 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
 
   const agents = (await (
     await page.request.get(`${root}/ai/agents`)
-  ).json()) as { items: Array<{ revisionId: string }> };
+  ).json()) as {
+    items: Array<{
+      revisionId: string;
+      builtIn: boolean;
+      status: string;
+      isLatest: boolean;
+    }>;
+  };
+  const agent = agents.items.find(
+    (item) => item.builtIn && item.status === "enabled" && item.isLatest,
+  );
+  expect(agent).toBeDefined();
   const skills = (await (
     await page.request.get(`${root}/ai/skills`)
-  ).json()) as { items: Array<{ revisionId: string }> };
+  ).json()) as {
+    items: Array<{
+      revisionId: string;
+      builtIn: boolean;
+      status: string;
+      isLatest: boolean;
+    }>;
+  };
+  // Earlier specs leave disabled Skills behind; a disabled one is skipped for the answer.
+  const skill = skills.items.find(
+    (item) => item.builtIn && item.status === "enabled" && item.isLatest,
+  );
+  expect(skill).toBeDefined();
   const conversation = await page.request.post(`${root}/conversations`, {
     headers: { Origin: ORIGIN, "Idempotency-Key": `test-plan-chat-${marker}` },
     data: {
@@ -95,8 +118,8 @@ test("Tapper generates, reviews, deep-links, and publishes a grounded Test Plan"
       modelAlias: "qwen-plus",
       sourceRevisionIds: [sourceRevisionId],
       documentRevisionIds: [],
-      agentRevisionId: agents.items[0]!.revisionId,
-      skillRevisionIds: [skills.items[0]!.revisionId],
+      agentRevisionId: agent!.revisionId,
+      skillRevisionIds: [skill!.revisionId],
     },
   });
   expect(

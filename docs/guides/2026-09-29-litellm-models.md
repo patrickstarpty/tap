@@ -18,6 +18,8 @@
 | `supports_function_calling` | 是否支持函数/工具调用 |
 | `tapper_display_name` | 唯一的 Tapper 自定义字段，可选；前端展示名，缺省回退为 `model_name` |
 
+结构化输出请求除了以 `response_format`（文本为 `json_schema`，图片为 `json_object`）约束解码外，网关还会把同一份已校验、已过脱敏检查的紧凑 schema 追加到系统指令（可信部分，不进入用户上下文）。原因是实测 DashScope 的 `json_schema` 模式只约束解码、不把 schema 展示给模型（prompt token 不随 schema 增长），模型因此看不到枚举含义。schema 字节计入 256 KiB 请求上限。这段指令文本（`structured_schema_instruction`）也计入图谱抽取与测试设计的 profile 摘要，改动它会使旧图谱片段在 graph worker 启动回填时重新抽取、旧测试设计草稿失效。
+
 视觉 chat 模型（例如 `qwen3-vl-plus`）只要同时声明 `supports_response_schema: true`，也会出现在会话模型选择器中，这是预期行为：选择器只看 `mode: chat` 与结构化输出能力，不区分是否支持图片。
 
 同名的多个部署条目（LiteLLM 负载均衡的多副本）会合并为一个模型：`mode` 必须一致，能力字段取交集，`tapper_display_name` 取第一个非空值。

@@ -7,7 +7,6 @@ model_list:
     model_info:
       mode: chat
       supports_response_schema: true
-      supports_function_calling: true
       tapper_display_name: Qwen Plus
   - model_name: qwen-flash
     litellm_params:
@@ -17,7 +16,6 @@ model_list:
     model_info:
       mode: chat
       supports_response_schema: true
-      supports_function_calling: true
       tapper_display_name: Qwen Flash
   - model_name: qwen-max
     litellm_params:
@@ -27,7 +25,6 @@ model_list:
     model_info:
       mode: chat
       supports_response_schema: true
-      supports_function_calling: true
       tapper_display_name: Qwen Max
   - model_name: qwen3-vl-plus
     litellm_params:
@@ -38,13 +35,16 @@ model_list:
       mode: chat
       supports_vision: true
       supports_response_schema: true
-      supports_function_calling: true
       tapper_display_name: Qwen3 VL Plus
   - model_name: text-embedding-v4
     litellm_params:
       model: dashscope/text-embedding-v4
       api_key: os.environ/DASHSCOPE_API_KEY
       api_base: os.environ/DASHSCOPE_API_BASE
+      # LiteLLM has no built-in price for this model; without one every embedding cost is NULL.
+      # USD 国际站标价 $0.07/1M tokens（2026-10 核对前为近似值）；北京区按人民币计费，金额为近似值。
+      input_cost_per_token: 0.00000007
+      output_cost_per_token: 0
     model_info:
       mode: embedding
 general_settings:

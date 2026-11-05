@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import _mysql_gate
 from tests.object_settings import S3_SETTINGS
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -76,10 +75,9 @@ def test_identity_and_project_scope_revision_is_literal_and_registered(revision:
     assert validate_revision(revision) == revision
 
 
-def test_0006_identity_nonempty_upgrade_and_replay(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _mysql_gate(request)
+def test_0006_identity_nonempty_upgrade_and_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import run_migration_gate
 
     # This gate owns a different fresh database; never inherit the suite database.
@@ -99,10 +97,10 @@ def test_0006_identity_nonempty_upgrade_and_replay(
 
 
 def test_0008_audit_nonempty_upgrade_constraints_and_replay(
-    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _mysql_gate(request)
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import run_migration_gate
 
     monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
@@ -117,10 +115,9 @@ def test_0008_audit_nonempty_upgrade_constraints_and_replay(
     assert result["downgrade_replay"] == "passed"
 
 
-def test_0009_operations_nonempty_upgrade_constraints_and_replay(
-    request: pytest.FixtureRequest, monkeypatch
-):
-    _mysql_gate(request)
+def test_0009_operations_nonempty_upgrade_constraints_and_replay(monkeypatch):
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import run_migration_gate
 
     monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
@@ -638,6 +635,7 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,
                 default_chat_model="qwen-plus",
+                graph_extraction_profile_digest=tapper_runtime._graph_extraction_profile(_settings),
             )
 
         model = KnowledgeModelGateway(
@@ -703,8 +701,9 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
     asyncio.run(scenario())
 
 
-def test_0012_preserves_legacy_chat_as_conversation(request: pytest.FixtureRequest, monkeypatch):
-    _mysql_gate(request)
+def test_0012_preserves_legacy_chat_as_conversation(monkeypatch):
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import run_migration_gate
 
     monkeypatch.delenv("TAP_DATABASE_URL", raising=False)
@@ -887,10 +886,9 @@ def test_0012a_legacy_turn_without_input_snapshot_is_an_integrity_error(owned_pr
     asyncio.run(scenario())
 
 
-def test_0010a_preserves_nonempty_predecessor_and_round_trips_empty_command_ledger(
-    request: pytest.FixtureRequest, monkeypatch
-):
-    _mysql_gate(request)
+def test_0010a_preserves_nonempty_predecessor_and_round_trips_empty_command_ledger(monkeypatch):
+    if os.getenv("TAP_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("requires owned isolated MySQL")
     from scripts.migration_support import BASELINE_ROWS, run_migration_gate
 
     monkeypatch.delenv("TAP_DATABASE_URL", raising=False)

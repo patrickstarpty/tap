@@ -1,7 +1,21 @@
 import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
 import type { InsightsExplanationResult } from "../../../features/conversations/api/client";
+import type {
+  CitationLabelInfo,
+  DraftState,
+  GraphContextSummary,
+  TaskStepView,
+} from "../../../features/conversations/model/stream";
+import type { FeedbackValue } from "../../../features/conversations/feedback/AnswerFeedback";
 
 export type Locale = "en" | "zh";
+
+export interface TurnSkillUse {
+  skillId: string;
+  revisionId: string;
+  label: string;
+  mode: "manual" | "pinned" | "auto";
+}
 
 export type ModelId = string;
 
@@ -19,7 +33,13 @@ export function isModelId(value: unknown): value is ModelId {
 }
 
 export type ProductModule =
-  "tapper" | "agents" | "skills" | "library" | "test-management";
+  | "tapper"
+  | "agents"
+  | "skills"
+  | "library"
+  | "test-management"
+  | "low-code"
+  | "test-insights";
 
 export type TapperSurface = "chat" | "agents" | "skills" | "library";
 
@@ -45,9 +65,14 @@ export interface AssistantTurn {
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   response?: RetrievalAnswerResponse | null;
-  /** Provisional, not-yet-persisted answer text shown while the turn streams. */
-  streamingText?: string | null;
+  graphContext?: GraphContextSummary | null;
+  draft?: DraftState | null;
+  citationLabels?: Readonly<Record<string, CitationLabelInfo>>;
+  stage?: "verify" | null;
+  partialAnswer?: string | null;
+  steps?: readonly TaskStepView[];
   traceId?: string | null;
+  myFeedback?: FeedbackValue | null;
   attempt?: number;
   insightsExplanation?: InsightsExplanationResult;
   insightsQueryId?: string;
@@ -60,6 +85,10 @@ export interface AssistantTurn {
   answerEvidenceSnapshotDigest?: string | null;
   agentRevisionId?: string | null;
   skillRevisionIds?: readonly string[];
+  /** The Skills this Turn used and how each was activated; empty or absent
+   * for a Turn recorded before that was tracked. */
+  skillsUsed?: readonly TurnSkillUse[];
+  skillNotices?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
 }
 
@@ -80,6 +109,12 @@ export interface CatalogItem {
   name: string;
   description: string;
   instructions: string;
+  /** True for a Skill whose `applicableTasks` doesn't include
+   * `knowledge.answer` (spec §4.4) -- the composer's Skill picker greys
+   * it out and blocks selection instead of letting it be picked and
+   * silently ignored by every knowledge-answer turn. Always false/absent
+   * for Agents. */
+  notApplicable?: boolean;
 }
 
 export interface LibrarySource {

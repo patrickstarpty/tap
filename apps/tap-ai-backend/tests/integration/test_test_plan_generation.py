@@ -23,7 +23,6 @@ from tap.modules.test_management.domain.models import GenerationJobStatus
 from tap.modules.test_management.domain.validation import RevisionConflict
 from tap.modules.test_management.ports.generation import GenerationResponseUnknown
 from tap.platform.db.project_scope import scope_values
-from tests.integration.test_knowledge_publication import NOW as PUBLICATION_NOW
 from tests.integration.test_test_plan_publish import _draft
 from tests.integration.test_test_plan_repository import (
     _repository,
@@ -490,17 +489,6 @@ async def test_unknown_provider_response_is_held_for_reconciliation_without_reis
         await engine.dispose()
 
 
-class _RecordingNotifier:
-    def __init__(self) -> None:
-        self.published: list[str] = []
-
-    async def publish(self, scope, chat_id):  # type: ignore[no-untyped-def]
-        self.published.append(chat_id)
-
-    async def wait(self, scope, chat_id, timeout):  # type: ignore[no-untyped-def]
-        return False
-
-
 @pytest.mark.asyncio
 async def test_running_generation_can_be_cancelled_and_not_reclaimed(
     owned_project_mysql,
@@ -510,13 +498,9 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
     try:
         publication = await _seed_test_design_authority(sessions)
         await _seed_completed_turn(sessions, source_revision_id=publication.source_revision_ids[0])
-        notifier = _RecordingNotifier()
-        repository = MysqlTestPlanRepository(
-            sessions, scope=VALIDATION_SCOPE, model_alias="qwen-plus", notifier=notifier
-        )
+        repository = _repository(sessions)
         request = _request(publication)
-        # Fixed inside the seeded publication's validity window, not wall-clock time.
-        now = (PUBLICATION_NOW + timedelta(hours=1)).replace(tzinfo=None)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         await repository.request_generation(VALIDATION_SCOPE, request, now=now)
         claim = (
             await repository.claim_generation_jobs(
@@ -600,7 +584,5 @@ async def test_running_generation_can_be_cancelled_and_not_reclaimed(
         assert events[0]["payload"]["reason"] == "human-confirmation"
         assert events[1]["payload"]["reason"] == "canceled-by-user"
         assert last_sequence == 4
-        # Each committed generation event wakes stream readers; replays write nothing.
-        assert notifier.published == [request.conversation_id] * 2
     finally:
         await engine.dispose()

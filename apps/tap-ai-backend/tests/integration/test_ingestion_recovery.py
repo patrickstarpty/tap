@@ -4,11 +4,13 @@ import asyncio
 from contextlib import suppress
 from datetime import datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from tap.entrypoints import tapper_ingestion_worker
 from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.mysql_merge import GraphMergeOnSourceChange, MysqlProjectMergeQueue
+from tap.modules.graph.adapters.mysql_project import graph_project_merge_job
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application import ingestion
@@ -42,8 +44,8 @@ from tap.modules.knowledge.ports.documents import (
     ManifestChunk,
     ReserveUpload,
 )
+from tap.platform.db.project_scope import scope_predicates
 from tap.platform.db.session import create_engine_and_session_factory
-from tap.platform.retry import RetryPolicy
 
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
@@ -57,16 +59,6 @@ KNOWLEDGE_TABLES = (
     "knowledge_document",
     "knowledge_source",
 )
-
-
-def _terminal_failures(sessions) -> MysqlDocumentRepository:  # type: ignore[no-untyped-def]
-    """Seed a terminal failure without the transient backoff these scenarios do not cover."""
-    return MysqlDocumentRepository(
-        sessions,
-        scope=VALIDATION_SCOPE,
-        audit_factory=create_project_audit,
-        retry_policy=RetryPolicy(max_attempts=1),
-    )
 
 
 def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_mysql) -> None:  # type: ignore[no-untyped-def]
@@ -115,7 +107,7 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
                 source_hash,
                 "parser-unavailable",
             )
-            await _terminal_failures(sessions).fail_job(
+            await repository.fail_job(
                 JobFailure(
                     first.job_id,
                     first.lease_token,
@@ -202,6 +194,58 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
             assert tuple(revision) == (2, config_digest, parsed_digest)
         finally:
             await _clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_single_document_delete_requests_a_project_graph_merge(owned_project_mysql) -> None:  # type: ignore[no-untyped-def]
+    """Deleting one document (not a whole source) must also request a merge:
+    it removes a revision from the currently-ready set `MysqlMergeInputs`
+    replays, exactly like a whole-source delete does."""
+
+    async def scenario() -> None:
+        database_url = owned_project_mysql.url.replace("+pymysql", "+asyncmy")
+        engine, sessions = create_engine_and_session_factory(database_url)
+        try:
+            merge_queue = MysqlProjectMergeQueue(sessions)
+            repository = MysqlDocumentRepository(
+                sessions,
+                scope=VALIDATION_SCOPE,
+                audit_factory=create_project_audit,
+                source_deleted_projection=GraphMergeOnSourceChange(merge_queue),
+            )
+            reservation = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="delete-triggers-merge.md",
+                    media_type="text/markdown",
+                    source_content_hash=canonical_sha256(b"delete triggers merge"),
+                    size=24,
+                    now=datetime.now(),
+                    staging_key="staging:delete-triggers-merge",
+                )
+            )
+            await repository.activate_upload(
+                reservation, ArtifactLocator("artifact:delete-triggers-merge")
+            )
+
+            await repository.request_delete(DocumentId(reservation.document_id), datetime.now())
+
+            async with sessions() as session:
+                row = (
+                    (
+                        await session.execute(
+                            select(graph_project_merge_job).where(
+                                *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            assert row["due_at"] is not None
+            assert row["last_reason"] == "source-deleted"
+        finally:
             await engine.dispose()
 
     asyncio.run(scenario())
@@ -896,7 +940,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
                     embeddings_locator=ArtifactLocator("artifact:embeddings"),
                 )
             )
-            await _terminal_failures(sessions).fail_job(
+            await repository.fail_job(
                 JobFailure(
                     preparation.job_id,
                     preparation.lease_token,
@@ -1058,7 +1102,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
                     normalized_locator=ArtifactLocator("artifact:normalized"),
                 )
             )
-            await _terminal_failures(sessions).fail_job(
+            await repository.fail_job(
                 JobFailure(
                     preparation.job_id,
                     preparation.lease_token,

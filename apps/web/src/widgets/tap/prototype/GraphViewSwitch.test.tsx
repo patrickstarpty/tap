@@ -22,7 +22,6 @@ beforeEach(() => {
 
 afterEach(() => {
   setPrototypeFaults([]);
-  window.history.replaceState(null, "", "/");
 });
 
 const beneficiarySource: LibrarySource = {
@@ -150,29 +149,4 @@ it("retries a failed graph load", () => {
   expect(
     screen.getByLabelText("Life insurance knowledge graph"),
   ).toBeVisible();
-});
-
-it("opens the immutable cited path when the source has no current published graph", () => {
-  window.history.replaceState(
-    null,
-    "",
-    "/prototype?module=library&snapshot=prototype-health-disclosure&highlight=application-health&graphSource=sample-underwriting",
-  );
-  const { container } = render(
-    <LibraryWorkspace
-      copy={copy}
-      sources={[{ ...underwritingSource, hasPublishedGraph: false }]}
-      onAddSource={vi.fn()}
-      onRetrySource={vi.fn()}
-      onDeleteSource={vi.fn()}
-    />,
-  );
-  expect(screen.getByLabelText("Life insurance knowledge graph")).toBeVisible();
-  expect(
-    container.querySelectorAll('.tap-graph-edge[data-highlighted="true"]'),
-  ).toHaveLength(1);
-  expect(
-    container.querySelectorAll('.tap-graph-node[data-highlighted="true"]'),
-  ).toHaveLength(2);
-  window.history.replaceState(null, "", "/");
 });

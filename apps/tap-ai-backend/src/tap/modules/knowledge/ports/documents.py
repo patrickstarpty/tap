@@ -48,16 +48,6 @@ SAFE_JOB_ERRORS = frozenset(
         "index-unavailable",
         "index-reconciliation-failed",
         "artifact-unavailable",
-        "lease-exhausted",
-    }
-)
-TRANSIENT_INGESTION_ERRORS = frozenset(
-    {
-        "parser-unavailable",
-        "visual-analysis-unavailable",
-        "embedding-unavailable",
-        "index-unavailable",
-        "artifact-unavailable",
     }
 )
 SAFE_ERROR_SUMMARIES = {
@@ -75,7 +65,6 @@ SAFE_ERROR_SUMMARIES = {
     "index-unavailable": "索引服务暂时不可用，请稍后重试。",
     "index-reconciliation-failed": "索引发布校验失败，请重试。",
     "artifact-unavailable": "文档产物暂时不可用，请稍后重试。",
-    "lease-exhausted": "处理多次中断，已停止重试",
 }
 
 

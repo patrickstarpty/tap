@@ -66,6 +66,11 @@ EVENT_REGISTRY: Mapping[str, EventDefinition] = MappingProxyType(
         "knowledge.graph-snapshot.ready": _definition(
             "GraphSnapshot", "snapshotId", "snapshotId graphDigest evidenceDigest"
         ),
+        "knowledge.graph-project.ready": _definition(
+            "ProjectGraphVersion",
+            "versionId",
+            "versionId graphVersion fragmentDigest nodeCount edgeCount",
+        ),
         "knowledge.review.approved": _definition(
             "KnowledgeReview",
             "reviewId",

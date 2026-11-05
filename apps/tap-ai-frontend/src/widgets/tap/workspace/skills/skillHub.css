@@ -1,0 +1,374 @@
+/* Skill library (Skills page): candidate notice, period toolbar, summary
+   strip, filters and the card grid. Same house tokens as the Agent team
+   page (app/styles.css): white panels, 1px --tap-line borders, 12px radius. */
+
+.tap-skill-hub {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.tap-skill-hub-notice {
+  margin: 0;
+  border: 1px solid #f0d9a0;
+  border-radius: 12px;
+  background: #fff5dc;
+  padding: 10px 14px;
+  color: #805a0e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------- Toolbar: period, freshness, export ---------- */
+
+.tap-skill-hub-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.tap-skill-hub-toolbar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-left: auto;
+}
+
+/* ---------- Summary strip ---------- */
+
+.tap-skill-hub-summary dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.tap-skill-hub-summary dl > div {
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px;
+  box-shadow: var(--tap-shadow-card);
+}
+
+.tap-skill-hub-summary dt {
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tap-skill-hub-summary dd {
+  margin: 6px 0 0;
+  color: var(--tap-ink);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Filters ---------- */
+
+.tap-skill-hub-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.tap-skill-hub-filters label {
+  display: grid;
+  gap: 4px;
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tap-skill-hub-filters select,
+.tap-skill-hub-filters input {
+  min-height: 34px;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 10px;
+  color: var(--tap-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.tap-skill-hub-search {
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+
+.tap-skill-hub-filters select:focus-visible,
+.tap-skill-hub-filters input:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 1px;
+}
+
+/* ---------- States ---------- */
+
+.tap-skill-hub-state {
+  margin: 0;
+  border: 1px dashed var(--tap-line);
+  border-radius: 12px;
+  padding: 24px;
+  color: var(--tap-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.tap-skill-hub-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  border: 1px dashed var(--tap-line-strong);
+  border-radius: 14px;
+  background: #fff;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.tap-skill-hub-empty h2 {
+  margin: 0;
+  color: var(--tap-ink);
+  font-size: 16px;
+}
+
+.tap-skill-hub-empty p {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--tap-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tap-skill-hub-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ---------- Card grid ---------- */
+
+.tap-skill-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-skill-card {
+  display: flex;
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--tap-shadow-card);
+  transition: border-color 0.15s ease;
+}
+
+.tap-skill-card:hover {
+  border-color: var(--tap-line-strong);
+}
+
+.tap-skill-card article {
+  display: grid;
+  flex: 1;
+  grid-template-rows: auto 1fr auto;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.tap-skill-card-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tap-skill-card-title h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: -0.015em;
+}
+
+.tap-skill-card-title button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--tap-ink);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.tap-skill-card-title button:hover {
+  color: var(--tap-accent);
+}
+
+.tap-skill-card-title button:focus-visible {
+  outline: 2px solid var(--tap-focus);
+  outline-offset: 2px;
+}
+
+.tap-skill-card-status {
+  flex: none;
+  border-radius: 999px;
+  background: var(--tap-good-soft);
+  padding: 2px 8px;
+  color: var(--tap-good);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tap-skill-card-status[data-status="disabled"] {
+  background: var(--tap-soft);
+  color: var(--tap-muted);
+}
+
+.tap-skill-card-description {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--tap-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.tap-skill-card-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+  border-top: 1px solid var(--tap-soft);
+  padding-top: 10px;
+}
+
+.tap-skill-card-meta dt {
+  color: var(--tap-muted);
+  font-size: 11px;
+}
+
+.tap-skill-card-meta dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--tap-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Detail drawer: overview, compare, usage, settings ---------- */
+
+.tap-skill-overview {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.tap-skill-overview > div {
+  display: contents;
+}
+
+.tap-skill-overview dt {
+  color: var(--tap-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tap-skill-overview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tap-skill-compare-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.tap-skill-compare-pickers label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.tap-skill-compare-panes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.tap-skill-compare-pane pre {
+  overflow: auto;
+  max-height: 420px;
+  margin: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.tap-skill-usage,
+.tap-skill-settings {
+  display: grid;
+  gap: 16px;
+}
+
+.tap-skill-usage-note,
+.tap-skill-settings-note {
+  margin: 8px 0 0;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-skill-usage-rankings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.tap-skill-usage-ranking ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tap-skill-usage-ranking li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tap-skill-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

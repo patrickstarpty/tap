@@ -118,9 +118,6 @@ export interface Conversation {
 }
 
 export interface CatalogItem {
-  skillRevisionIds?: string[];
-  toolAllowlist?: string[];
-  modelAlias?: string;
   id: string;
   kind: CatalogKind;
   origin: CatalogOrigin;

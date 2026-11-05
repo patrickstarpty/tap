@@ -10,70 +10,6 @@
   ],
   "problems": [
     {
-      "code": "agent-definition-invalid",
-      "detail": "The Agent definition does not satisfy the revision contract.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent definition invalid",
-      "type": "https://tap.example/problems/agent-definition-invalid"
-    },
-    {
-      "code": "agent-description-invalid",
-      "detail": "The Agent description must be at most 1024 characters.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent description invalid",
-      "type": "https://tap.example/problems/agent-description-invalid"
-    },
-    {
-      "code": "agent-instruction-invalid",
-      "detail": "The system instruction must be non-empty and at most 16000 characters.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent instruction invalid",
-      "type": "https://tap.example/problems/agent-instruction-invalid"
-    },
-    {
-      "code": "agent-model-unsupported",
-      "detail": "The model must be in the catalog and support structured output.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent model unsupported",
-      "type": "https://tap.example/problems/agent-model-unsupported"
-    },
-    {
-      "code": "agent-name-invalid",
-      "detail": "The Agent name must be non-empty and at most 128 characters.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent name invalid",
-      "type": "https://tap.example/problems/agent-name-invalid"
-    },
-    {
-      "code": "agent-skill-unavailable",
-      "detail": "Every bound Skill revision must exist and be enabled in this Project.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent skill unavailable",
-      "type": "https://tap.example/problems/agent-skill-unavailable"
-    },
-    {
-      "code": "agent-skills-invalid",
-      "detail": "An Agent binds at most 16 distinct Skill revisions.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent skills invalid",
-      "type": "https://tap.example/problems/agent-skills-invalid"
-    },
-    {
-      "code": "agent-tool-unavailable",
-      "detail": "Every tool must be registered, enabled and within the 32-tool limit.",
-      "retryable": false,
-      "status": 422,
-      "title": "Agent tool unavailable",
-      "type": "https://tap.example/problems/agent-tool-unavailable"
-    },
-    {
       "code": "answer-snapshot-unavailable",
       "detail": "The grounded answer could not be committed atomically.",
       "failureStage": "answer",
@@ -122,6 +58,15 @@
       "status": 409,
       "title": "Automation mapping required",
       "type": "https://tap.example/problems/automation-mapping-required"
+    },
+    {
+      "code": "budget-exhausted",
+      "detail": "The answer stopped because its time, model-call or cost budget ran out.",
+      "failureStage": "answer",
+      "retryable": false,
+      "status": 422,
+      "title": "Answer budget exhausted",
+      "type": "https://tap.example/problems/budget-exhausted"
     },
     {
       "code": "citation-stale",
@@ -222,12 +167,29 @@
       "type": "https://tap.example/problems/execution-provider-unavailable"
     },
     {
+      "code": "feedback-not-allowed",
+      "detail": "Feedback is only accepted for a completed Turn.",
+      "retryable": false,
+      "status": 409,
+      "title": "Feedback not allowed",
+      "type": "https://tap.example/problems/feedback-not-allowed"
+    },
+    {
       "code": "graph-fact-not-found",
       "detail": "The graph fact is unavailable in this Project snapshot.",
       "retryable": false,
       "status": 404,
       "title": "Graph fact not found",
       "type": "https://tap.example/problems/graph-fact-not-found"
+    },
+    {
+      "code": "graph-job-busy",
+      "detail": "The graph extraction job is currently running under an active lease.",
+      "failureStage": "graph",
+      "retryable": false,
+      "status": 409,
+      "title": "Graph job busy",
+      "type": "https://tap.example/problems/graph-job-busy"
     },
     {
       "code": "graph-unavailable",
@@ -237,6 +199,15 @@
       "status": 503,
       "title": "Graph unavailable",
       "type": "https://tap.example/problems/graph-unavailable"
+    },
+    {
+      "code": "graph-version-mismatch",
+      "detail": "The requested graph version does not match the current version; current version is 1.",
+      "failureStage": "graph",
+      "retryable": false,
+      "status": 409,
+      "title": "Graph version mismatch",
+      "type": "https://tap.example/problems/graph-version-mismatch"
     },
     {
       "code": "idempotency-conflict",
@@ -277,38 +248,6 @@
       "status": 503,
       "title": "Knowledge runtime unavailable",
       "type": "https://tap.example/problems/knowledge-runtime-unavailable"
-    },
-    {
-      "code": "mcp-server-conflict",
-      "detail": "An MCP server with this slug already exists in this Project.",
-      "retryable": false,
-      "status": 409,
-      "title": "MCP server conflict",
-      "type": "https://tap.example/problems/mcp-server-conflict"
-    },
-    {
-      "code": "mcp-server-invalid",
-      "detail": "The slug, name or auth environment variable name is invalid.",
-      "retryable": false,
-      "status": 422,
-      "title": "MCP server invalid",
-      "type": "https://tap.example/problems/mcp-server-invalid"
-    },
-    {
-      "code": "mcp-server-not-found",
-      "detail": "The MCP server is unavailable in this Project.",
-      "retryable": false,
-      "status": 404,
-      "title": "MCP server not found",
-      "type": "https://tap.example/problems/mcp-server-not-found"
-    },
-    {
-      "code": "mcp-url-not-allowed",
-      "detail": "The MCP URL must be http(s) on a loopback or configured allowed host.",
-      "retryable": false,
-      "status": 422,
-      "title": "MCP URL not allowed",
-      "type": "https://tap.example/problems/mcp-url-not-allowed"
     },
     {
       "code": "model-not-selectable",
@@ -377,62 +316,6 @@
       "status": 503,
       "title": "Search unavailable",
       "type": "https://tap.example/problems/search-unavailable"
-    },
-    {
-      "code": "skill-body-empty",
-      "detail": "The SKILL.md file must contain instructions after the front matter.",
-      "retryable": false,
-      "status": 422,
-      "title": "Skill body empty",
-      "type": "https://tap.example/problems/skill-body-empty"
-    },
-    {
-      "code": "skill-description-invalid",
-      "detail": "The Skill description must be non-empty and at most 1024 characters.",
-      "retryable": false,
-      "status": 422,
-      "title": "Skill description invalid",
-      "type": "https://tap.example/problems/skill-description-invalid"
-    },
-    {
-      "code": "skill-front-matter-invalid",
-      "detail": "The SKILL.md front matter must contain only plain YAML values.",
-      "retryable": false,
-      "status": 422,
-      "title": "Skill front matter invalid",
-      "type": "https://tap.example/problems/skill-front-matter-invalid"
-    },
-    {
-      "code": "skill-front-matter-missing",
-      "detail": "The SKILL.md file must start with YAML front matter.",
-      "retryable": false,
-      "status": 422,
-      "title": "Skill front matter missing",
-      "type": "https://tap.example/problems/skill-front-matter-missing"
-    },
-    {
-      "code": "skill-name-invalid",
-      "detail": "The Skill name must be lowercase kebab-case of at most 64 characters.",
-      "retryable": false,
-      "status": 422,
-      "title": "Skill name invalid",
-      "type": "https://tap.example/problems/skill-name-invalid"
-    },
-    {
-      "code": "skill-not-utf8",
-      "detail": "The SKILL.md file is not valid UTF-8 text.",
-      "retryable": false,
-      "status": 422,
-      "title": "Skill not UTF-8",
-      "type": "https://tap.example/problems/skill-not-utf8"
-    },
-    {
-      "code": "skill-too-large",
-      "detail": "The SKILL.md file exceeds the 64 KiB limit.",
-      "retryable": false,
-      "status": 413,
-      "title": "Skill too large",
-      "type": "https://tap.example/problems/skill-too-large"
     },
     {
       "code": "source-command-pending",

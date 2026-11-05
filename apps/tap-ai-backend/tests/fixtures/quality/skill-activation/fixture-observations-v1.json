@@ -1,0 +1,27 @@
+{
+  "version": "skill-activation-observations-v1",
+  "observations": {
+    "act-01-bdd-address-change": [
+      "bdd-scenario-writer"
+    ],
+    "act-02-claims-hospitalization-documents": [
+      "claims-faq"
+    ],
+    "act-03-glossary-90-day-clause": [
+      "insurance-glossary"
+    ],
+    "act-04-defect-trend-billing": [
+      "defect-trend-analyzer"
+    ],
+    "act-05-citations-premium-holiday": [],
+    "act-06-release-notes-portal": [
+      "release-notes-drafter"
+    ],
+    "act-07-distractor-sum-assured-grace-period": [],
+    "act-08-distractor-release-notes-contents": [],
+    "act-09-distractor-coverage-before-claim": [],
+    "act-10-distractor-single-run-defect-count": [
+      "defect-trend-analyzer"
+    ]
+  }
+}

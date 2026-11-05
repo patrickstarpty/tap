@@ -1,271 +1,213 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
-from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
-from tap.modules.ai.domain.tools import (
-    RESERVED_TOOLS,
-    ToolDescriptor,
-    ToolEffect,
-    ToolExecutor,
-    ToolOrigin,
-    ToolRejected,
-    ToolResult,
-    validate_allowlist,
-    validate_tool_id,
-)
 
 
-def _descriptor(
-    tool_id: str,
-    *,
-    effect: ToolEffect = ToolEffect.READ,
-    origin: ToolOrigin = ToolOrigin.BUILTIN,
-    server_id: str | None = None,
-    enabled: bool = True,
-) -> ToolDescriptor:
-    return ToolDescriptor(
-        tool_id=tool_id,
-        display_name=tool_id,
-        description=f"{tool_id} tool",
-        input_schema={"type": "object", "properties": {}},
-        effect=effect,
-        origin=origin,
-        server_id=server_id,
-        enabled=enabled,
+def test_registry_lists_built_in_tools() -> None:
+    from tap.modules.ai.domain.tools import TOOL_REGISTRY, known_tool_ids
+
+    assert known_tool_ids() == frozenset(
+        {
+            "knowledge.search",
+            "knowledge.answer",
+            "graph.relations",
+            "insights.query",
+            "skill.activate",
+        }
+    )
+    assert len(TOOL_REGISTRY) == 5
+    required_tool_ids = {"knowledge.search", "knowledge.answer"}
+    for tool_id, definition in TOOL_REGISTRY.items():
+        assert definition.tool_id == tool_id
+        assert definition.names["en"].strip()
+        assert definition.names["zh"].strip()
+        assert definition.descriptions["en"].strip()
+        assert definition.descriptions["zh"].strip()
+        assert definition.required is (tool_id in required_tool_ids)
+
+
+def test_registry_has_five_tools_with_wire_names() -> None:
+    from tap.modules.ai.domain.tools import TOOL_REGISTRY, platform_tool_ids, required_tool_ids
+
+    assert list(TOOL_REGISTRY) == [
+        "knowledge.search",
+        "knowledge.answer",
+        "graph.relations",
+        "insights.query",
+        "skill.activate",
+    ]
+    assert TOOL_REGISTRY["knowledge.search"].wire_name == "knowledge_search"
+    assert TOOL_REGISTRY["knowledge.answer"].wire_name == "knowledge_answer"
+    assert TOOL_REGISTRY["graph.relations"].wire_name == "graph_relations"
+    assert TOOL_REGISTRY["insights.query"].wire_name == "insights_query"
+    assert TOOL_REGISTRY["skill.activate"].wire_name == "skill_activate"
+    assert TOOL_REGISTRY["knowledge.answer"].model_callable is False
+    assert required_tool_ids("knowledge.answer") == {"knowledge.search", "knowledge.answer"}
+    assert platform_tool_ids() == frozenset({"skill.activate"})
+
+
+def test_skill_activate_definition() -> None:
+    from tap.modules.ai.domain.tools import TOOL_REGISTRY
+
+    definition = TOOL_REGISTRY["skill.activate"]
+    assert definition.platform is True
+    assert definition.required is False
+    assert definition.default_enabled is True
+    assert definition.model_callable is True
+    assert definition.tasks == frozenset({"knowledge.answer"})
+    assert definition.input_schema == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name"],
+        "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 128}},
+    }
+    assert "only" in definition.descriptions["en"]
+    assert all(
+        not other.platform
+        for tool_id, other in TOOL_REGISTRY.items()
+        if tool_id != "skill.activate"
     )
 
 
-class _Echo:
-    async def invoke(
-        self, scope: ProjectScopeContext, arguments: Mapping[str, object]
-    ) -> ToolResult:
-        return ToolResult(content=str(dict(arguments)))
+def test_skill_activate_bypasses_agent_allowlist() -> None:
+    from tap.modules.ai.domain.tools import visible_tool_ids
+
+    assert visible_tool_ids(
+        agent_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+        relations_available=True,
+        insights_available=True,
+        skills_available=True,
+    ) == ("knowledge.search", "skill.activate")
+    assert visible_tool_ids(
+        agent_allowlist=None,
+        relations_available=True,
+        insights_available=True,
+        skills_available=True,
+    ) == ("knowledge.search", "graph.relations", "insights.query", "skill.activate")
 
 
-class _FakeMcp:
-    def __init__(self, descriptors: tuple[ToolDescriptor, ...]) -> None:
-        self._descriptors = descriptors
+def test_skill_activate_hidden_without_skills() -> None:
+    from tap.modules.ai.domain.tools import visible_tool_ids
 
-    async def descriptors(self, scope: ProjectScopeContext) -> tuple[ToolDescriptor, ...]:
-        return self._descriptors
-
-    async def executor(self, scope: ProjectScopeContext, tool_id: str) -> ToolExecutor:
-        return _Echo()
-
-
-@pytest.mark.parametrize(
-    "value", ["knowledge.search", "mcp.jira.search_issues", "graph.neighbors", "mcp.a-b.c-d"]
-)
-def test_tool_ids_accept_dotted_lowercase_names(value: str) -> None:
-    assert validate_tool_id(value) == value
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "Knowledge.search",
-        "knowledge..search",
-        "knowledge.",
-        ".search",
-        "knowledge",
-        "a.b.c.d.e",
-        "knowledge.search " + "x",
-        "https://untrusted.example/tool",
-        "k." + "x" * 127,
-        "",
-        1,
-    ],
-)
-def test_tool_ids_reject_malformed_names(value: object) -> None:
-    with pytest.raises(ToolRejected):
-        validate_tool_id(value)  # type: ignore[arg-type]
-
-
-def test_allowlist_is_bounded_to_32_tools() -> None:
-    values = [f"mcp.server.tool_{index}" for index in range(33)]
-    assert validate_allowlist(values[:32]) == frozenset(values[:32])
-    with pytest.raises(ToolRejected):
-        validate_allowlist(values)
-    with pytest.raises(ToolRejected):
-        validate_allowlist(["knowledge.search", "Bash"])
-
-
-def test_reserved_answer_capability_is_not_callable() -> None:
-    tools = builtin_tools()
-    assert RESERVED_TOOLS == frozenset({"knowledge.answer"})
-    answer, answer_executor = tools["knowledge.answer"]
-    search, _ = tools["knowledge.search"]
-    assert answer.callable is False and answer_executor is None
-    assert search.callable is True and search.effect is ToolEffect.READ
-    properties = search.input_schema["properties"]
-    assert isinstance(properties, dict)
-    assert properties["query"] == {"type": "string", "minLength": 1, "maxLength": 500}
-    assert properties["limit"] == {"type": "integer", "minimum": 1, "maximum": 8}
-
-
-def test_descriptor_rejects_inconsistent_origin_and_unbounded_schema() -> None:
-    with pytest.raises(ToolRejected):
-        _descriptor("mcp.jira.search", origin=ToolOrigin.MCP)
-    with pytest.raises(ToolRejected):
-        _descriptor("knowledge.search", origin=ToolOrigin.MCP, server_id="server")
-    with pytest.raises(ToolRejected):
-        ToolDescriptor(
-            tool_id="knowledge.search",
-            display_name="Search",
-            description="x" * 1025,
-            input_schema={"type": "object"},
-            effect=ToolEffect.READ,
-            origin=ToolOrigin.BUILTIN,
+    for allowlist in (None, frozenset({"knowledge.search", "skill.activate"})):
+        assert "skill.activate" not in visible_tool_ids(
+            agent_allowlist=allowlist,
+            relations_available=True,
+            insights_available=True,
         )
-    with pytest.raises(ToolRejected):
-        ToolDescriptor(
-            tool_id="knowledge.search",
-            display_name="Search",
-            description="Search",
-            input_schema={"type": "string"},
-            effect=ToolEffect.READ,
-            origin=ToolOrigin.BUILTIN,
+        assert "skill.activate" not in visible_tool_ids(
+            agent_allowlist=allowlist,
+            relations_available=True,
+            insights_available=True,
+            skills_available=False,
         )
 
 
-def test_descriptor_rejects_deeply_nested_schema_without_recursion_error() -> None:
-    nested: dict[str, object] = {}
-    cursor = nested
-    for _ in range(10_000):
-        child: dict[str, object] = {}
-        cursor["x"] = [child]
-        cursor = child
-    with pytest.raises(ToolRejected, match="tool-schema-invalid"):
-        ToolDescriptor(
-            tool_id="mcp.jira.search",
-            display_name="Search",
-            description="Search",
-            input_schema={"type": "object", "properties": nested},
-            effect=ToolEffect.READ,
-            origin=ToolOrigin.MCP,
-            server_id="jira-server",
-        )
+def test_visible_tools_respect_agent_allowlist_and_availability() -> None:
+    from tap.modules.ai.domain.tools import visible_tool_ids
 
-
-def test_well_formed_tools_is_shared() -> None:
-    from tap.modules.ai.adapters import litellm
-    from tap.modules.ai.domain import models, tools
-
-    assert litellm.well_formed_tools is tools.well_formed_tools
-    assert models.well_formed_tools is tools.well_formed_tools
-    assert tools.well_formed_tools(frozenset({"knowledge.search"}))
-    assert not tools.well_formed_tools({"knowledge.search"})
-    assert not tools.well_formed_tools(frozenset({"Bad Tool"}))
-
-
-@pytest.mark.asyncio
-async def test_registry_resolves_builtins_and_mcp_tools() -> None:
-    mcp = _FakeMcp(
-        (
-            _descriptor("mcp.jira.search_issues", origin=ToolOrigin.MCP, server_id="jira-server"),
-            _descriptor(
-                "mcp.jira.create_issue",
-                origin=ToolOrigin.MCP,
-                server_id="jira-server",
-                effect=ToolEffect.EXTERNAL,
-            ),
-            _descriptor(
-                "mcp.jira.disabled", origin=ToolOrigin.MCP, server_id="jira-server", enabled=False
-            ),
-        )
+    assert visible_tool_ids(
+        agent_allowlist=None, relations_available=True, insights_available=False
+    ) == ("knowledge.search", "graph.relations")
+    assert visible_tool_ids(
+        agent_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+        relations_available=True,
+        insights_available=True,
+    ) == ("knowledge.search",)
+    assert "graph.relations" not in visible_tool_ids(
+        agent_allowlist=None, relations_available=False, insights_available=True
     )
-    registry = ToolRegistry(builtin_tools(), mcp)
-
-    listed = {item.tool_id for item in await registry.list(VALIDATION_SCOPE)}
-    assert {"knowledge.search", "knowledge.answer", "mcp.jira.search_issues"} <= listed
-    assert (await registry.get(VALIDATION_SCOPE, "mcp.jira.search_issues")).server_id == (
-        "jira-server"
-    )
-    assert await registry.require_allowlist(
-        VALIDATION_SCOPE, ["knowledge.search", "knowledge.answer", "mcp.jira.create_issue"]
-    ) == frozenset({"knowledge.search", "knowledge.answer", "mcp.jira.create_issue"})
-    assert isinstance(await registry.executor(VALIDATION_SCOPE, "mcp.jira.search_issues"), _Echo)
-
-    for rejected in (["mcp.jira.unknown"], ["mcp.jira.disabled"], ["Bash"]):
-        with pytest.raises(ToolRejected):
-            await registry.require_allowlist(VALIDATION_SCOPE, rejected)
-    with pytest.raises(ToolRejected):
-        await registry.require_allowlist(VALIDATION_SCOPE, ["mcp.jira.create_issue"], system=True)
-    assert await registry.require_allowlist(
-        VALIDATION_SCOPE, ["mcp.jira.search_issues"], system=True
-    ) == frozenset({"mcp.jira.search_issues"})
-    with pytest.raises(ToolRejected):
-        await registry.get(VALIDATION_SCOPE, "mcp.jira.unknown")
-    with pytest.raises(ToolRejected):
-        await registry.executor(VALIDATION_SCOPE, "knowledge.answer")
-    with pytest.raises(ToolRejected):
-        await registry.executor(VALIDATION_SCOPE, "mcp.jira.disabled")
 
 
-@pytest.mark.asyncio
-async def test_registry_without_mcp_accepts_existing_revision_allowlist() -> None:
+def test_built_in_agent_v3_allowlist_includes_new_tools() -> None:
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.ai.application.assets import validation_asset_seed
 
-    agent = validation_asset_seed(VALIDATION_SCOPE).agents[0]
-    assert agent.tool_allowlist == frozenset({"knowledge.search", "knowledge.answer"})
-    registry = ToolRegistry(builtin_tools())
-    assert await registry.require_allowlist(VALIDATION_SCOPE, agent.tool_allowlist) == (
-        agent.tool_allowlist
+    seed = validation_asset_seed(VALIDATION_SCOPE)
+    assert [agent.revision_id for agent in seed.agents] == [
+        "validation-knowledge-agent-v2",
+        "validation-knowledge-agent-v3",
+    ]
+    v2, v3 = seed.agents
+    assert v3.tool_allowlist == frozenset(
+        {"knowledge.search", "knowledge.answer", "graph.relations", "insights.query"}
     )
-    with pytest.raises(ToolRejected):
-        await registry.require_allowlist(VALIDATION_SCOPE, ["mcp.jira.search_issues"])
+    assert v2.tool_allowlist == frozenset({"knowledge.search", "knowledge.answer"})
+    from tap.modules.ai.domain.assets import text_digest
+
+    assert v2.content_digest == text_digest("validation-ai-agent-v2")
 
 
-def test_revisions_accept_well_formed_tools_outside_builtins() -> None:
-    from tap.modules.ai.domain.assets import AiAgentRevision, AssetRevisionRejected, text_digest
-    from tap.modules.ai.domain.models import GenerationGovernance, schema_digest
-    from tap.modules.chat.domain.conversations import TurnInput
+def test_domain_rejects_unknown_tool() -> None:
+    from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
 
-    def agent(tools: frozenset[str]) -> AiAgentRevision:
-        return AiAgentRevision(
+    with pytest.raises(ValueError):
+        AiAgentRevision(
             revision_id="agent-revision",
             asset_id="agent",
             display_name="Agent",
             scope=VALIDATION_SCOPE,
             content_digest=text_digest("agent"),
             system_instruction_digest=text_digest("instruction"),
-            tool_allowlist=tools,
+            tool_allowlist=frozenset({"web.fetch"}),
             output_schema_digest=text_digest("schema"),
         )
 
-    assert agent(frozenset({"mcp.jira.search_issues", "knowledge.answer"}))
-    with pytest.raises(AssetRevisionRejected):
-        agent(frozenset({"Bash"}))
-    with pytest.raises(AssetRevisionRejected):
-        agent(frozenset(f"mcp.server.tool_{index}" for index in range(33)))
 
-    governance = {
-        "model_alias": "chat",
-        "system_instruction": "instruction",
-        "system_instruction_digest": text_digest("instruction"),
-        "skill_instructions": (),
-        "skill_instruction_digests": (),
-        "output_schema": {"type": "object"},
-        "output_schema_digest": schema_digest({"type": "object"}),
-        "revision_digests": (text_digest("agent"),),
-    }
-    GenerationGovernance(
-        tool_allowlist=frozenset({"knowledge.answer", "mcp.jira.search_issues"}),
-        **governance,  # type: ignore[arg-type]
-    )
-    with pytest.raises(ValueError):
-        GenerationGovernance(tool_allowlist=frozenset({"Bash"}), **governance)  # type: ignore[arg-type]
+def test_turn_input_and_governance_use_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tap.modules.ai.domain import tools as tools_module
+    from tap.modules.ai.domain.assets import AiAgentRevision, text_digest
+    from tap.modules.ai.domain.models import GenerationGovernance, schema_digest
+    from tap.modules.ai.domain.tools import ToolDefinition
+    from tap.modules.chat.domain.conversations import TurnInput
 
-    turn = {"message": "hello", "actor_id": "actor", "identity_mode": "validation"}
-    TurnInput(
-        model_alias="chat",
-        agent_tool_allowlist=("knowledge.answer", "mcp.jira.search_issues"),
-        **turn,
+    extra = dict(tools_module.TOOL_REGISTRY)
+    extra["x.test"] = ToolDefinition(
+        tool_id="x.test",
+        wire_name="x_test",
+        names={"en": "Test tool", "zh": "测试工具"},
+        descriptions={"en": "Test only.", "zh": "仅用于测试。"},
+        required=False,
+        default_enabled=False,
+        model_callable=True,
+        input_schema={},
+        tasks=frozenset({"knowledge.answer"}),
     )
-    with pytest.raises(ValueError):
-        TurnInput(model_alias="chat", agent_tool_allowlist=("Bash",), **turn)
+    monkeypatch.setattr(tools_module, "TOOL_REGISTRY", extra)
+
+    turn = TurnInput(
+        message="hello",
+        actor_id=VALIDATION_SCOPE.actor_id,
+        identity_mode=VALIDATION_SCOPE.identity_mode.value,
+        model_alias="qwen-plus",
+        agent_tool_allowlist=("x.test",),
+    )
+    assert turn.agent_tool_allowlist == ("x.test",)
+
+    schema = {"type": "object"}
+    governance = GenerationGovernance(
+        model_alias="qwen-plus",
+        system_instruction="instruction",
+        system_instruction_digest=text_digest("instruction"),
+        skill_instructions=(),
+        skill_instruction_digests=(),
+        tool_allowlist=frozenset({"x.test"}),
+        output_schema=schema,
+        output_schema_digest=schema_digest(schema),
+        revision_digests=(text_digest("rev"),),
+    )
+    assert governance.tool_allowlist == frozenset({"x.test"})
+
+    revision = AiAgentRevision(
+        revision_id="agent-revision",
+        asset_id="agent",
+        display_name="Agent",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("agent"),
+        system_instruction_digest=text_digest("instruction"),
+        tool_allowlist=frozenset({"x.test"}),
+        output_schema_digest=text_digest("schema"),
+    )
+    assert revision.tool_allowlist == frozenset({"x.test"})

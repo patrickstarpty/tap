@@ -10,7 +10,7 @@ from hashlib import sha256
 PARSE_INVENTORY_SCHEMA = "parse-inventory-v1"
 PARSE_INVENTORY_ALIGNMENT_SCHEMA = "parse-inventory-v2"
 PARSER_CONFIG_SCHEMA = "parser-config-v1"
-PARSER_IMPLEMENTATION_VERSION = "tapper-parser-v2"
+PARSER_IMPLEMENTATION_VERSION = "tapper-parser-v3"
 MAX_ORIGINAL_EXCERPT_BYTES = 16_000
 
 

@@ -44,6 +44,7 @@ class AbstentionReason(str, Enum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     CONFLICTING_SOURCES = "conflicting_sources"
     REVISION_MISMATCH = "revision_mismatch"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class DocumentAnchor(StreamContractModel):
@@ -106,6 +107,22 @@ class SourceRevisionRef(StreamContractModel):
     anchor: StructuralAnchor
 
 
+class GraphEndpointView(StreamContractModel):
+    """One edge citation endpoint (subject or object)."""
+
+    node_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1)
+
+
+class EdgeCitationView(StreamContractModel):
+    edge_id: str = Field(min_length=1, max_length=128)
+    graph_version: str = Field(min_length=1, max_length=64)
+    subject: GraphEndpointView
+    object: GraphEndpointView
+    relation_type: str = Field(min_length=1, max_length=64)
+    relation_label: str = Field(min_length=1, max_length=64)
+
+
 class Citation(StreamContractModel):
     citation_id: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
@@ -118,6 +135,14 @@ class Citation(StreamContractModel):
     publication_id: str | None = Field(default=None, min_length=1, max_length=256)
     approval_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     approved_item_id: str | None = Field(default=None, min_length=1, max_length=256)
+    kind: Literal["chunk", "edge"] = "chunk"
+    edge: EdgeCitationView | None = None
+
+    @model_validator(mode="after")
+    def validate_edge_kind(self):
+        if (self.kind == "edge") != (self.edge is not None):
+            raise ValueError("citation kind and edge payload must agree")
+        return self
 
 
 class AnswerClaim(StreamContractModel):
@@ -134,22 +159,27 @@ class AnswerClaim(StreamContractModel):
         return self
 
 
-class RelationCitation(StreamContractModel):
-    citation_id: str
-    snapshot_id: str
-    edge_id: str
-    source_node_id: str
-    target_node_id: str
-    source_label: str
-    target_label: str
-    relation_type: str
-    origin: Literal["EXTRACTED", "INFERRED"]
-    claim_index: Annotated[int, Field(strict=True, ge=0)]
-    path_edge_ids: list[str]
+class GraphContextSummaryView(StreamContractModel):
+    status: Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    query_seed_count: int = Field(default=0, ge=0)
+    paths: list[list[str]] = Field(default_factory=list)
+    relation_count: int = Field(ge=0)
+
+
+class InsightsFactView(StreamContractModel):
+    """Stream mirror of the HTTP `InsightsFactView` (PR 5 Task 8): one cited
+    `I<n>` Insights metric record, in citation order."""
+
+    label: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    value: float | int | None = None
+    as_of: str = Field(min_length=1)
 
 
 class RetrievalAnswerResponse(StreamContractModel):
-    relation_citations: list[RelationCitation] = []
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
     context_snapshot_id: str = Field(min_length=1)
@@ -160,12 +190,15 @@ class RetrievalAnswerResponse(StreamContractModel):
     answer: str
     abstained: bool
     abstention_reason: AbstentionReason | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
     claims: list[AnswerClaim]
     citations: list[Citation]
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
+    graph_context: GraphContextSummaryView | None = None
+    insights_facts: list[InsightsFactView] | None = None
 
 
 class TurnStartedPayload(StreamContractModel):
@@ -217,14 +250,65 @@ class StageCompletedEvent(StreamContractModel):
     payload: StageCompletedPayload
 
 
+class RetrievalHitsLabelView(StreamContractModel):
+    """One evidence/relation label's display mapping, so the client can
+    render an inline `[S3]`/`[R1]` marker in a streaming draft as a badge
+    showing its source before the terminal answer (and its own `citation`
+    payloads) ever arrive (spec SS2.3)."""
+
+    label: str = Field(min_length=1, max_length=4)
+    title: str = Field(min_length=1)
+    location: str | None = None
+
+
 class RetrievalHitsReadyPayload(StreamContractModel):
     trace_id: str = Field(min_length=1)
     authorized_hit_count: int = Field(ge=0)
+    labels: list[RetrievalHitsLabelView] | None = None
+    # PR 5 (Task 9): set when this hit-count came from a `tools` graph-node
+    # tool call (`knowledge.search`/`graph.relations`), so the client can
+    # correlate it with the `task.step` that produced it; `None` for the
+    # original `seed_search`-produced event.
+    step_id: str | None = None
 
 
 class RetrievalHitsReadyEvent(StreamContractModel):
     type: Literal["retrieval.hits_ready"]
     payload: RetrievalHitsReadyPayload
+
+
+class TaskStepPayload(StreamContractModel):
+    """One bounded tool-calling round's per-call progress (PR 5 Task 9):
+    `status` moves `running` -> a terminal state (`completed`/`rejected`/
+    `failed`); `step_id` is `f"{turnId}:r{round}:c{index}"`, unique per call."""
+
+    step_id: str = Field(min_length=1)
+    tool: str = Field(min_length=1)
+    status: Literal["running", "completed", "rejected", "failed"]
+    summary: str = Field(max_length=200)
+    duration_ms: int = Field(ge=0)
+    tool_round: int = Field(ge=1)
+
+
+class TaskStepEvent(StreamContractModel):
+    type: Literal["task.step"]
+    payload: TaskStepPayload
+
+
+class GraphContextReadyPayload(StreamContractModel):
+    status: Literal[
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY", "UNAVAILABLE", "NOT_SELECTED"
+    ]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    query_seed_count: int = Field(default=0, ge=0)
+    paths: list[list[str]] = Field(max_length=3)
+    relation_count: int = Field(ge=0, le=20)
+
+
+class GraphContextReadyEvent(StreamContractModel):
+    type: Literal["graph.context_ready"]
+    payload: GraphContextReadyPayload
 
 
 class RerankCompletedPayload(StreamContractModel):
@@ -237,22 +321,25 @@ class RerankCompletedEvent(StreamContractModel):
     payload: RerankCompletedPayload
 
 
-class AnswerDeltaPayload(StreamContractModel):
+class AnswerDraftPayload(StreamContractModel):
+    """One batched, redacted draft chunk of the model's in-progress answer,
+    streamed from Redis (never persisted to MySQL): `attempt`/`seq` order
+    drafts within one Turn attempt, not the envelope `sequence`, which is
+    carried only for the `ChatEventEnvelope` wrapper and is never advanced
+    or deduplicated against for this event type (spec SS task 6)."""
+
+    attempt: int = Field(ge=1)
+    seq: int = Field(ge=0)
     text: str
+    # Set by `DraftBatcher` when a redaction-driven rewrite changes an
+    # already-sent prefix: `text` is empty and the client must discard every
+    # earlier chunk for this attempt before accumulating what follows (I-2).
+    reset: bool = False
 
 
-class AnswerDeltaEvent(StreamContractModel):
-    type: Literal["answer.delta"]
-    payload: AnswerDeltaPayload
-
-
-class AnswerResetPayload(StreamContractModel):
-    attempt: Annotated[int, Field(ge=1, strict=True)]
-
-
-class AnswerResetEvent(StreamContractModel):
-    type: Literal["answer.reset"]
-    payload: AnswerResetPayload
+class AnswerDraftEvent(StreamContractModel):
+    type: Literal["answer.draft"]
+    payload: AnswerDraftPayload
 
 
 class CitationResolvedPayload(StreamContractModel):
@@ -262,15 +349,6 @@ class CitationResolvedPayload(StreamContractModel):
 class CitationResolvedEvent(StreamContractModel):
     type: Literal["citation.resolved"]
     payload: CitationResolvedPayload
-
-
-class RelationCitationResolvedPayload(StreamContractModel):
-    citation: RelationCitation
-
-
-class RelationCitationResolvedEvent(StreamContractModel):
-    type: Literal["relation_citation.resolved"]
-    payload: RelationCitationResolvedPayload
 
 
 class TurnCompletedPayload(StreamContractModel):
@@ -310,6 +388,7 @@ class TurnDegradedEvent(StreamContractModel):
 
 class TurnCanceledPayload(StreamContractModel):
     partial_answer_retained: bool
+    partial_answer: str | None = None
 
 
 class TurnCanceledEvent(StreamContractModel):
@@ -398,11 +477,11 @@ ChatStreamEvent = Annotated[
     | StageStartedEvent
     | StageCompletedEvent
     | RetrievalHitsReadyEvent
+    | TaskStepEvent
+    | GraphContextReadyEvent
     | RerankCompletedEvent
-    | AnswerDeltaEvent
-    | AnswerResetEvent
+    | AnswerDraftEvent
     | CitationResolvedEvent
-    | RelationCitationResolvedEvent
     | TurnCompletedEvent
     | TurnAbstainedEvent
     | TurnDegradedEvent

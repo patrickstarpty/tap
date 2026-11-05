@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import ipaddress
+import logging
 import math
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.contracts.http import (
@@ -25,15 +26,20 @@ from tap.interfaces.http.dependencies import HttpServices, ReadinessHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE, ValidationScopeProvider
 from tap.modules.access.application.ports import AuthorizationPolicy, ScopeProvider
 from tap.modules.access.application.scope import RequestFacts
-from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.access.domain.context import IdentityMode, ProjectScopeContext
+from tap.modules.agent_team.ports import RuntimeMetricsUnavailable
 from tap.modules.ai.adapters.litellm import (
     LiteLLMModelGateway,
     LiteLLMModelGatewayConfig,
 )
 from tap.modules.ai.adapters.litellm_catalog import LiteLLMCatalog, ModelRoles
 from tap.modules.ai.adapters.mysql_model_calls import MysqlModelCallRecorder
+from tap.modules.ai.application.agent_authoring import AgentAuthoringService
 from tap.modules.ai.application.catalog import ModelCatalog
+from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
+from tap.modules.chat.application.plan_answer import DEFAULT_PLANNER_TIMEOUT_SECONDS
+from tap.modules.chat.application.ports import SkillActivationRuntime
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
@@ -49,6 +55,7 @@ from tap.modules.knowledge.ports.search import (
     SearchPort,
 )
 from tap.operations.milvus.contracts import validate_milvus_role_usernames
+from tap.platform.budget import TurnBudget
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -60,9 +67,12 @@ if TYPE_CHECKING:
     )
 
     from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
-    from tap.modules.chat.application.notifier import ConversationEventNotifier
+    from tap.modules.agent_team.application.service import AgentTeamService
+    from tap.modules.agent_team.domain.models import Period
+    from tap.modules.agent_team.ports import AgentRuntimeStats, TrendPoint
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.chat.application.ports import DraftStream, EventWakeups
     from tap.modules.governance.ports.audit import ProjectAuditPort
-    from tap.modules.graph.application.cache import CachedSnapshotIndexes
     from tap.modules.knowledge.adapters.milvus.config import (
         MilvusIndexTarget,
         MilvusSearchConfig,
@@ -77,7 +87,10 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.documents import JobStage
+    from tap.modules.skill_hub.application.service import SkillHubService
+    from tap.modules.skill_hub.ports import SkillRuntimeStats
     from tap.operations.milvus.client import TapperDocumentMilvusClients
+    from tap.platform.storage.s3 import S3ObjectStore
 
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -89,8 +102,21 @@ _FIXED_RETRIEVAL_PROFILE = "quick-hybrid-v1"
 _FIXED_SCHEMA_VERSION = "doc-schema-v1"
 _FIXED_TENANT = "local"
 _FIXED_PROJECT = "tapper-demo"
+# A distinct object-store scope for Skill package bytes: see
+# _create_skill_objects for why this must not be VALIDATION_SCOPE.
+_SKILL_OBJECT_SCOPE = ProjectScopeContext(
+    enterprise_id=VALIDATION_SCOPE.enterprise_id,
+    project_id=f"{VALIDATION_SCOPE.project_id}-skills",
+    actor_id=VALIDATION_SCOPE.actor_id,
+    identity_mode=IdentityMode.VALIDATION,
+)
 _FIXED_GROUP = "tapper-local"
 _FIXED_ENVIRONMENT = "global"
+
+logger = logging.getLogger(__name__)
+# Conservative hosted-model output rate used to reject a graph extraction deadline
+# that cannot fit its own output budget.
+GRAPH_EXTRACTION_TOKENS_PER_SECOND = 40
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +133,15 @@ class TapperSettings:
     embedding_dimension: int
     poll_seconds: float
     job_batch_size: int
+    graph_batch_size: int
+    graph_batch_chars: int
+    graph_batch_retries: int
+    graph_align_embedding: bool
+    graph_align_threshold: float
+    graph_align_embedding_max_nodes: int
+    graph_overview_limit: int
+    graph_retrieval_augment: bool
+    graph_reasoning: bool
     collection: str
     alias: str
     corpus_version: str
@@ -137,8 +172,17 @@ class TapperSettings:
     milvus_provisioner_username: str
     milvus_provisioner_password: str = field(repr=False)
     e2e_mode: bool
+    redis_stream_socket_timeout_seconds: float = 20.0
+    redis_stream_pool_size: int = 50
     vision_model: str | None = None
     vision_timeout_seconds: float = 60.0
+    planner_timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS
+    model_stream_idle_seconds: float = 15.0
+    model_stream_max_seconds: float = 180.0
+    graph_extraction_timeout_seconds: float = 240.0
+    graph_extraction_max_tokens: int = 8192
+    graph_worker_concurrency: int = 4
+    worker_shutdown_grace_seconds: float = 10.0
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_region: str = ""
@@ -156,6 +200,35 @@ class TapperSettings:
     insights_expires_at: str = ""
     insights_max_micros_per_token: int = 0
     otel_exporter_otlp_endpoint: str | None = None
+    langfuse_host: str | None = None
+    langfuse_public_key: str | None = field(default=None, repr=False)
+    langfuse_secret_key: str | None = field(default=None, repr=False)
+    langfuse_environment: str = "local"
+    langfuse_sync_settle_seconds: int = 60
+    agent_team_runtime_metrics: Literal["langfuse", "turn_table"] = "langfuse"
+    trace_redaction_rules: Path | None = None
+    turn_max_attempts: int = 3
+    turn_budget: TurnBudget = field(default_factory=TurnBudget)
+    claim_lock_wait_seconds: int = 5
+
+    def __post_init__(self) -> None:
+        # The gateway rejects a request whose timeout exceeds its own; the
+        # planner would report that as an invalid plan on every turn.
+        if self.planner_timeout_seconds > self.model_timeout_seconds:
+            raise ValueError(
+                "TAPPER_PLANNER_TIMEOUT_SECONDS must not exceed TAPPER_MODEL_TIMEOUT_SECONDS"
+            )
+        # A deadline too short for the output budget turns a detectable truncation
+        # into a timeout (then retried): require at least one second per
+        # GRAPH_EXTRACTION_TOKENS_PER_SECOND output tokens.
+        if (
+            self.graph_extraction_timeout_seconds * GRAPH_EXTRACTION_TOKENS_PER_SECOND
+            < self.graph_extraction_max_tokens
+        ):
+            raise ValueError(
+                "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS is too short for "
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS"
+            )
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, str]) -> TapperSettings:
@@ -356,6 +429,98 @@ class TapperSettings:
             else None
         )
 
+        langfuse_host_raw = values.get("LANGFUSE_HOST", "")
+        if not isinstance(langfuse_host_raw, str):
+            raise ValueError("LANGFUSE_HOST must be a string")
+        langfuse_host = (
+            _loopback_url(
+                values,
+                "LANGFUSE_HOST",
+                langfuse_host_raw,
+                schemes=frozenset({"http"}),
+                allow_userinfo=False,
+                root_only=True,
+            )
+            if langfuse_host_raw
+            else None
+        )
+        langfuse_public_key = _value(values, "LANGFUSE_PUBLIC_KEY", "") or None
+        langfuse_secret_key = _value(values, "LANGFUSE_SECRET_KEY", "") or None
+        if langfuse_host is not None and (not langfuse_public_key or not langfuse_secret_key):
+            raise ValueError(
+                "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when LANGFUSE_HOST is set"
+            )
+        langfuse_environment = _identity(values, "TAP_LANGFUSE_ENVIRONMENT", "local")
+        langfuse_sync_settle_seconds = _integer(
+            values,
+            "TAP_LANGFUSE_SYNC_SETTLE_SECONDS",
+            60,
+            minimum=10,
+            maximum=86400,
+        )
+        agent_team_runtime_metrics = cast(
+            Literal["langfuse", "turn_table"],
+            _fixed_choice(
+                values,
+                "TAP_AGENT_TEAM_RUNTIME_METRICS",
+                default="langfuse",
+                choices=frozenset({"langfuse", "turn_table"}),
+            ),
+        )
+        if agent_team_runtime_metrics == "turn_table" and demo_mode != "e2e":
+            raise ValueError("TAP_AGENT_TEAM_RUNTIME_METRICS=turn_table requires TAP_DEMO_MODE=e2e")
+        claim_lock_wait_seconds = _integer(
+            values,
+            "TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS",
+            5,
+            minimum=1,
+            maximum=50,
+        )
+        turn_max_attempts = _integer(
+            values,
+            "TAPPER_TURN_MAX_ATTEMPTS",
+            3,
+            minimum=1,
+            maximum=10,
+        )
+        turn_budget = TurnBudget(
+            max_tool_rounds=_integer(
+                values,
+                "TAPPER_TURN_MAX_TOOL_ROUNDS",
+                6,
+                minimum=1,
+                maximum=20,
+            ),
+            max_seconds=_duration(
+                values,
+                "TAPPER_TURN_MAX_SECONDS",
+                180.0,
+                minimum=10,
+                maximum=1800,
+            ),
+            max_model_calls=_integer(
+                values,
+                "TAPPER_TURN_MAX_MODEL_CALLS",
+                10,
+                minimum=1,
+                maximum=50,
+            ),
+            max_cost_micros=_integer(
+                values,
+                "TAPPER_TURN_MAX_COST_MICROS",
+                0,
+                minimum=0,
+                maximum=100_000_000,
+            ),
+        )
+        trace_redaction_rules_raw = _value(values, "TAP_TRACE_REDACTION_RULES", "")
+        trace_redaction_rules: Path | None = None
+        if trace_redaction_rules_raw:
+            candidate = Path(trace_redaction_rules_raw)
+            if not candidate.is_file():
+                raise ValueError("TAP_TRACE_REDACTION_RULES must point to an existing file")
+            trace_redaction_rules = candidate
+
         return cls(
             api_host=api_host,
             parser_socket=_value(
@@ -380,6 +545,63 @@ class TapperSettings:
                 minimum=1,
                 maximum=50,
             ),
+            graph_batch_size=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_SIZE",
+                100,
+                minimum=1,
+                maximum=200,
+            ),
+            graph_batch_chars=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_CHARS",
+                3000,
+                minimum=500,
+                maximum=50000,
+            ),
+            graph_batch_retries=_integer(
+                values,
+                "TAPPER_GRAPH_BATCH_RETRIES",
+                3,
+                minimum=1,
+                maximum=10,
+            ),
+            graph_align_embedding=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_ALIGN_EMBEDDING",
+                default="0",
+                choices=frozenset({"0", "1"}),
+            )
+            == "1",
+            graph_align_threshold=_ratio(values, "TAPPER_GRAPH_ALIGN_THRESHOLD", 0.92),
+            graph_align_embedding_max_nodes=_integer(
+                values,
+                "TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES",
+                2000,
+                minimum=1,
+                maximum=20000,
+            ),
+            graph_overview_limit=_integer(
+                values,
+                "TAPPER_GRAPH_OVERVIEW_LIMIT",
+                150,
+                minimum=10,
+                maximum=500,
+            ),
+            graph_retrieval_augment=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_RETRIEVAL_AUGMENT",
+                default="1",
+                choices=frozenset({"0", "1"}),
+            )
+            == "1",
+            graph_reasoning=_fixed_choice(
+                values,
+                "TAPPER_GRAPH_REASONING",
+                default="1",
+                choices=frozenset({"0", "1"}),
+            )
+            == "1",
             collection=collection,
             alias=alias,
             corpus_version=corpus,
@@ -417,6 +639,38 @@ class TapperSettings:
             vision_timeout_seconds=_duration(
                 values, "TAPPER_VISION_TIMEOUT_SECONDS", 60.0, maximum=60
             ),
+            planner_timeout_seconds=_duration(
+                values,
+                "TAPPER_PLANNER_TIMEOUT_SECONDS",
+                DEFAULT_PLANNER_TIMEOUT_SECONDS,
+                maximum=60,
+            ),
+            model_stream_idle_seconds=_duration(
+                values, "TAPPER_MODEL_STREAM_IDLE_SECONDS", 15.0, maximum=60
+            ),
+            model_stream_max_seconds=_duration(
+                values, "TAPPER_MODEL_STREAM_MAX_SECONDS", 180.0, maximum=300
+            ),
+            graph_extraction_timeout_seconds=_duration(
+                values, "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", 240.0, maximum=300
+            ),
+            graph_extraction_max_tokens=_integer(
+                values,
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS",
+                8192,
+                minimum=1024,
+                maximum=32768,
+            ),
+            graph_worker_concurrency=_integer(
+                values,
+                "TAPPER_GRAPH_WORKER_CONCURRENCY",
+                4,
+                minimum=1,
+                maximum=16,
+            ),
+            worker_shutdown_grace_seconds=_duration(
+                values, "TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS", 10.0, maximum=300
+            ),
             milvus_uri=milvus_uri,
             milvus_database=_identity(values, "MILVUS_DATABASE", "default"),
             milvus_reader_username=milvus_reader_username,
@@ -430,6 +684,12 @@ class TapperSettings:
                 "tap-local-Provisioner1!",
             ),
             e2e_mode=demo_mode == "e2e",
+            redis_stream_socket_timeout_seconds=_duration(
+                values, "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS", 20.0, minimum=3.0, maximum=120.0
+            ),
+            redis_stream_pool_size=_integer(
+                values, "TAP_REDIS_STREAM_POOL_SIZE", 50, minimum=1, maximum=500
+            ),
             insights_base_url=values.get("TAP_INSIGHTS_BASE_URL", ""),
             insights_delegated_user_token=values.get("TAP_INSIGHTS_DELEGATED_USER_TOKEN", ""),
             insights_service_token=values.get("TAP_INSIGHTS_SERVICE_TOKEN", ""),
@@ -437,7 +697,48 @@ class TapperSettings:
             insights_expires_at=values.get("TAP_INSIGHTS_DELEGATED_EXPIRES_AT", ""),
             insights_max_micros_per_token=price,
             otel_exporter_otlp_endpoint=otel_exporter_otlp_endpoint,
+            langfuse_host=langfuse_host,
+            langfuse_public_key=langfuse_public_key,
+            langfuse_secret_key=langfuse_secret_key,
+            langfuse_environment=langfuse_environment,
+            langfuse_sync_settle_seconds=langfuse_sync_settle_seconds,
+            agent_team_runtime_metrics=agent_team_runtime_metrics,
+            trace_redaction_rules=trace_redaction_rules,
+            turn_max_attempts=turn_max_attempts,
+            turn_budget=turn_budget,
+            claim_lock_wait_seconds=claim_lock_wait_seconds,
         )
+
+
+class _UnavailableAgentRuntimeMetrics:
+    """`AgentRuntimeMetrics` stand-in used when `TAP_AGENT_TEAM_RUNTIME_METRICS`
+    is `langfuse` but `LANGFUSE_HOST` is not configured: every call raises
+    `RuntimeMetricsUnavailable` so the Agent team view reports
+    `runtimeStatus: "unavailable"` rather than silently reporting zeros."""
+
+    async def agent_stats(self, project_id: str, period: "Period") -> list["AgentRuntimeStats"]:
+        del project_id, period
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
+
+    async def trend(
+        self, project_id: str, period: "Period", granularity: str
+    ) -> list["TrendPoint"]:
+        del project_id, period, granularity
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
+
+    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        del project_id, agent_keys
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
+
+
+class _UnavailableSkillRuntimeMetrics:
+    """`SkillRuntimeMetrics` stand-in for the same case as
+    `_UnavailableAgentRuntimeMetrics`: the Skill Hub detail and export report
+    `runtimeStatus: "unavailable"` rather than zeros."""
+
+    async def skill_stats(self, project_id: str, period: "Period") -> list["SkillRuntimeStats"]:
+        del project_id, period
+        raise RuntimeMetricsUnavailable("LANGFUSE_HOST is not configured")
 
 
 class _AsyncCloseable(Protocol):
@@ -668,6 +969,10 @@ class TapperApiRuntime:
     quality_models: KnowledgeModelGateway
     _resources: OwnedResources
     failure_controller: TapperFailureController | None = None
+    skill_authoring: SkillAuthoringService | None = None
+    # Skill Hub: what the generation worker (which reuses this runtime) runs
+    # `skill.activate` through.
+    skill_activation_runtime: SkillActivationRuntime | None = None
 
     async def aclose(self) -> None:
         await self._resources.aclose()
@@ -684,18 +989,14 @@ async def create_api_runtime(
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
-        from tap.modules.graph.application.cache import CachedSnapshotIndexes
-
         engine, repository = await _create_database(settings)
         resources.push(engine)
         artifacts = _create_blob(settings)
         resources.push(artifacts)
         redis = _create_redis(settings)
         resources.push(redis)
-        notification_redis = _create_notification_redis(settings)
-        resources.push(notification_redis)
-        from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
-
+        redis_stream_block = _create_redis_stream_block_client(settings)
+        resources.push(redis_stream_block)
         failure_controller = _create_stage_controller(settings, redis)
         embeddings = _create_embeddings(
             settings,
@@ -724,6 +1025,13 @@ async def create_api_runtime(
         )
         scope_provider, authorization_policy = _create_validation_authority(engine)
         asset_catalog = await _create_asset_catalog(engine, repository.scope)
+        skill_objects = _create_skill_objects(settings)
+        resources.push(skill_objects)
+        skill_authoring = SkillAuthoringService(
+            asset_catalog,
+            skill_objects,
+            scope=repository.scope,
+        )
         from tap.modules.knowledge.adapters.managed_chunk_search import ManagedChunkSearch
 
         chunk_index = await _create_document_index(settings, engine)
@@ -743,15 +1051,47 @@ async def create_api_runtime(
             asset_catalog=asset_catalog,
             conversation_sessions=async_sessionmaker(engine, expire_on_commit=False),
             graph_sessions=async_sessionmaker(engine, expire_on_commit=False),
-            graph_indexes=CachedSnapshotIndexes(),
             test_plan_sessions=async_sessionmaker(engine, expire_on_commit=False),
             review_sessions=async_sessionmaker(engine, expire_on_commit=False),
-            mcp_sessions=async_sessionmaker(engine, expire_on_commit=False),
             parser_socket=settings.parser_socket,
             corpus_version=settings.corpus_version,
-            conversation_notifier=RedisConversationEventNotifier(notification_redis),
+            graph_overview_limit=settings.graph_overview_limit,
+            graph_retrieval_augment=settings.graph_retrieval_augment,
+            graph_reasoning=settings.graph_reasoning,
+            turn_max_attempts=settings.turn_max_attempts,
+            planner_timeout_seconds=settings.planner_timeout_seconds,
+            event_wakeups=_create_event_wakeups(redis),
+            draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
-        services = replace(services, chunk_manager=chunk_manager)
+        model_catalog = services.model_catalog
+        if model_catalog is None:
+            agent_authoring = None
+        else:
+            agent_authoring = AgentAuthoringService(
+                asset_catalog, model_catalog, scope=repository.scope
+            )
+        agent_team = _create_agent_team_service(settings, engine, repository.scope, resources)
+        skill_hub = _create_skill_hub_service(
+            settings, engine, repository.scope, resources, asset_catalog
+        )
+        from tap.modules.chat.adapters.mysql_skill_activations import (
+            MysqlSkillActivationRuntime,
+            MysqlTurnSkillActivations,
+        )
+
+        skill_sessions = async_sessionmaker(engine, expire_on_commit=False)
+        skill_activation_runtime = MysqlSkillActivationRuntime(
+            asset_catalog, skill_sessions, scope=repository.scope
+        )
+        services = replace(
+            services,
+            chunk_manager=chunk_manager,
+            skill_authoring=skill_authoring,
+            agent_authoring=agent_authoring,
+            agent_team=agent_team,
+            skill_hub=skill_hub,
+            skill_activations=MysqlTurnSkillActivations(skill_sessions, scope=repository.scope),
+        )
         if settings.insights_base_url:
             if services.insights_knowledge_search is None:
                 raise ValueError("Insights knowledge evidence authority is unavailable")
@@ -803,6 +1143,8 @@ async def create_api_runtime(
             quality_models=embeddings,
             _resources=resources,
             failure_controller=failure_controller,
+            skill_authoring=skill_authoring,
+            skill_activation_runtime=skill_activation_runtime,
         )
     except BaseException as error:
         await resources.aclose(error)
@@ -907,7 +1249,10 @@ async def _create_database(
     try:
         scope = await ValidationScopeProvider().current(RequestFacts())
         repository = _build_document_repository(
-            sessions, scope=scope, default_chat_model=settings.default_chat_model
+            sessions,
+            scope=scope,
+            default_chat_model=settings.default_chat_model,
+            graph_extraction_profile_digest=_graph_extraction_profile(settings),
         )
     except BaseException as error:
         local = OwnedResources()
@@ -922,7 +1267,9 @@ def _open_database(
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
     from tap.platform.db.session import create_engine_and_session_factory
 
-    return create_engine_and_session_factory(settings.database_url)
+    return create_engine_and_session_factory(
+        settings.database_url, claim_lock_wait_seconds=settings.claim_lock_wait_seconds
+    )
 
 
 def _build_document_repository(
@@ -930,6 +1277,7 @@ def _build_document_repository(
     *,
     scope: ProjectScopeContext,
     default_chat_model: str,
+    graph_extraction_profile_digest: str,
 ) -> MysqlDocumentRepository:
     from tap.entrypoints.prompt_suggestion_knowledge import (
         CompositeReadyProjection,
@@ -937,6 +1285,10 @@ def _build_document_repository(
     )
     from tap.modules.chat.adapters.mysql_suggestions import MysqlSuggestionStore
     from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore, MysqlGraphReadyProjection
+    from tap.modules.graph.adapters.mysql_merge import (
+        GraphMergeOnSourceChange,
+        MysqlProjectMergeQueue,
+    )
     from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 
     graph_jobs = MysqlGraphJobStore(sessions)
@@ -949,8 +1301,13 @@ def _build_document_repository(
         sessions,
         scope=scope,
         audit_factory=create_project_audit,
+        source_deleted_projection=GraphMergeOnSourceChange(MysqlProjectMergeQueue(sessions)),
         ready_projection=CompositeReadyProjection(
-            MysqlGraphReadyProjection(graph_jobs, model_alias=default_chat_model),
+            MysqlGraphReadyProjection(
+                graph_jobs,
+                model_alias=default_chat_model,
+                extraction_profile_digest=graph_extraction_profile_digest,
+            ),
             SuggestionReadyProjection(suggestion_store),
         ),
     )
@@ -971,30 +1328,100 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
         redis = _create_redis(settings)
         resources.push(redis)
 
+        from tap.entrypoints.graph_project_knowledge import (
+            MysqlCurrentRevisions,
+            MysqlPublishedChunkLocators,
+        )
         from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
         from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
         from tap.modules.graph.adapters.model_gateway_extraction import ModelGatewayGraphExtraction
         from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
+        from tap.modules.graph.application.backfill import backfill_graph_jobs
+        from tap.modules.graph.application.merge_worker import (
+            MergingGraphWorker,
+            ProjectGraphMergeWorker,
+        )
+        from tap.modules.graph.application.merger import ProjectGraphMerger
         from tap.modules.graph.application.worker import GraphWorker
         from tap.modules.graph.ports.extraction import GraphExtractionPort
         from tap.modules.knowledge.ports.documents import ArtifactStore
         from tap.platform.messaging.redis_dispatch import AsyncRedisStream
         from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
 
+        model_embeddings: KnowledgeModelGateway | None = None
+        if settings.graph_extraction_mode == "model" or settings.graph_align_embedding:
+            model_embeddings = _create_embeddings(
+                settings,
+                recorder=MysqlModelCallRecorder(sessions),
+                timeout_ceiling_seconds=(
+                    settings.graph_extraction_timeout_seconds
+                    if settings.graph_extraction_mode == "model"
+                    else None
+                ),
+                max_concurrency=settings.graph_worker_concurrency,
+            )
+            _push_if_owned(resources, model_embeddings)
         if settings.graph_extraction_mode == "model":
-            embeddings = _create_embeddings(settings, recorder=MysqlModelCallRecorder(sessions))
-            _push_if_owned(resources, embeddings)
+            assert model_embeddings is not None
             extractor: GraphExtractionPort = ModelGatewayGraphExtraction(
-                embeddings.gateway, timeout_seconds=settings.model_timeout_seconds
+                model_embeddings.gateway,
+                timeout_seconds=settings.graph_extraction_timeout_seconds,
+                max_output_tokens=settings.graph_extraction_max_tokens,
             )
         else:
             extractor = DeterministicGraphExtraction()
+        merge_queue = MysqlProjectMergeQueue(sessions, cache=None, debounce=_GRAPH_MERGE_DEBOUNCE)
+        label_embeddings = None
+        if settings.graph_align_embedding:
+            assert model_embeddings is not None
+            label_embeddings = _label_embedder(model_embeddings)
+        merge_worker = ProjectGraphMergeWorker(
+            queue=merge_queue,
+            inputs=MysqlMergeInputs(
+                sessions,
+                MysqlCurrentRevisions(sessions, scope=scope),
+                extraction_profile_digest=_graph_extraction_profile(settings),
+            ),
+            merger=ProjectGraphMerger(align_threshold=settings.graph_align_threshold),
+            scope=scope,
+            worker_id=settings.worker_id + "-graph-merge",
+            embeddings=label_embeddings,
+            embedding_max_nodes=settings.graph_align_embedding_max_nodes,
+        )
+        graph_jobs = MysqlGraphJobStore(sessions, merge_queue=merge_queue)
+        published_locators = MysqlPublishedChunkLocators(sessions, scope=scope)
+
+        async def backfill() -> None:
+            result = await backfill_graph_jobs(
+                scope=scope,
+                published=await published_locators.published(),
+                jobs=graph_jobs,
+                merge_queue=merge_queue,
+                extraction_profile_digest=_graph_extraction_profile(settings),
+                model_alias=settings.default_chat_model,
+                now=datetime.now(UTC).replace(tzinfo=None),
+            )
+            logger.info(
+                "graph backfill: requested=%d requeued=%d skipped=%d merge_requested=%s",
+                result.requested,
+                result.requeued,
+                result.skipped,
+                result.merge_requested,
+            )
+
         worker = GraphWorker(
-            jobs=MysqlGraphJobStore(sessions),
+            jobs=graph_jobs,
             artifacts=cast(ArtifactStore, artifacts),
             extractor=extractor,
             scope=scope,
             worker_id=settings.worker_id + "-graph",
+            batch_size=settings.graph_batch_size,
+            batch_chars=settings.graph_batch_chars,
+            batch_retries=settings.graph_batch_retries,
+            lease_duration=_graph_worker_lease(settings),
+            concurrency=settings.graph_worker_concurrency,
+            claim_interval_seconds=settings.poll_seconds,
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,
@@ -1004,10 +1431,46 @@ async def create_graph_worker_runtime(settings: TapperSettings) -> WorkerRuntime
             consumer_name=settings.worker_id + "-graph",
             aggregate_type="GraphSnapshot",
         )
-        return WorkerRuntime(worker=worker, wakeups=wakeups, resources=(resources,))
+        return WorkerRuntime(
+            # Merge ready fragments while other documents are still extracting.
+            worker=MergingGraphWorker(
+                extraction=worker,
+                merge=merge_worker,
+                merge_interval_seconds=settings.poll_seconds,
+            ),
+            wakeups=wakeups,
+            resources=(resources,),
+            startup=backfill,
+        )
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("graph worker resource settlement unexpectedly returned")
+
+
+# Fragment completions from concurrent extraction slots often land seconds
+# apart; each merge is a full replay that publishes a version, so the graph
+# worker's own merge requests (fragment ready, backfill) wait this long and
+# coalesce. Source deletes and publication changes from the API stay immediate.
+_GRAPH_MERGE_DEBOUNCE = timedelta(seconds=5)
+
+
+def _graph_extraction_profile(settings: TapperSettings) -> str:
+    """The one extraction profile digest this process requests, backfills and merges."""
+
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+
+    return extraction_profile_digest(settings.graph_extraction_mode)
+
+
+def _graph_worker_lease(settings: TapperSettings) -> timedelta:
+    """A graph job lease that outlives one full extraction call plus bookkeeping.
+
+    The worker renews its lease between batches and around retries, never during a
+    model call, so the lease must cover the whole extraction deadline; otherwise a
+    long batch would lose its lease mid-call and the job would be reclaimed.
+    """
+
+    return timedelta(seconds=max(60.0, settings.graph_extraction_timeout_seconds + 60.0))
 
 
 async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
@@ -1051,10 +1514,6 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
                 ),
             )
         )
-        notification_redis = _create_notification_redis(settings)
-        resources.push(notification_redis)
-        from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
-
         worker_id = settings.worker_id + "-test-design"
         worker = TestDesignWorker(
             jobs=MysqlTestPlanRepository(
@@ -1062,7 +1521,7 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
                 scope=scope,
                 model_alias=settings.default_chat_model,
                 knowledge_requires_publication=False,
-                notifier=RedisConversationEventNotifier(notification_redis),
+                wakeups=_create_event_wakeups(redis),
             ),
             generator=generator,
             scope=scope,
@@ -1100,7 +1559,8 @@ async def create_suggestion_worker_runtime(settings: TapperSettings) -> WorkerRu
     api_runtime = await create_api_runtime(settings)
     service = api_runtime.http_services.prompt_suggestions
     store = api_runtime.http_services.prompt_suggestion_store
-    if service is None or store is None:
+    scope = api_runtime.http_services.scope
+    if service is None or store is None or scope is None:
         await api_runtime.aclose()
         raise ValueError("prompt suggestion composition is unavailable")
     worker = SuggestionRefreshWorker(
@@ -1108,6 +1568,7 @@ async def create_suggestion_worker_runtime(settings: TapperSettings) -> WorkerRu
         service=service,
         worker_id=settings.worker_id + "-suggestions",
         clock=lambda: datetime.now(UTC),
+        scope=scope,
     )
     # SuggestionRefreshWorker.run_once takes limit as keyword-only, which the
     # BoundedWorker Protocol's positional-or-keyword signature doesn't admit
@@ -1139,6 +1600,38 @@ def _create_blob(settings: TapperSettings) -> KnowledgeArtifactStore:
     )
 
 
+def _create_skill_objects(settings: TapperSettings) -> S3ObjectStore:
+    """A dedicated object store connection for Skill package bytes.
+
+    Deliberately independent of ``_create_blob``'s Knowledge artifact store
+    (rather than reaching into its ``.objects`` attribute) so unit tests that
+    stub ``_create_blob`` with a narrow double are unaffected. Uses a distinct
+    ``store_id`` and ``ProjectScopeContext`` (not ``VALIDATION_SCOPE``) so its
+    S3 staging prefix never overlaps Knowledge's: ``ManagedObjectStore``
+    derives the staging key prefix from the scope alone, and Knowledge's
+    ingestion worker scavenges anything under its own prefix older than one
+    hour — Skill staging (24h TTL, purged by ``purge_expired_imports``) must
+    never be visible to that sweep.
+    """
+
+    from pydantic import SecretStr
+
+    from tap.platform.storage.s3 import S3ObjectConfig, S3ObjectStore
+
+    return S3ObjectStore(
+        S3ObjectConfig(
+            endpoint=settings.s3_endpoint,
+            bucket=settings.s3_bucket,
+            region=settings.s3_region,
+            access_key=SecretStr(settings.s3_access_key),
+            secret_key=SecretStr(settings.s3_secret_key),
+            store_id=f"{settings.s3_store_id}-skills",
+            timeout_seconds=settings.blob_timeout_seconds,
+        ),
+        scope=_SKILL_OBJECT_SCOPE,
+    )
+
+
 def _create_redis(settings: TapperSettings) -> Redis:
     from redis.asyncio import Redis
 
@@ -1153,21 +1646,73 @@ def _create_redis(settings: TapperSettings) -> Redis:
     )
 
 
-def _create_notification_redis(settings: TapperSettings) -> Redis:
-    """Dedicated client: each SSE wait holds a subscription for up to 15 seconds."""
+def _create_redis_stream_block_client(settings: TapperSettings) -> Redis:
+    """A separate connection pool dedicated to blocking `XREAD BLOCK` SSE reads.
+
+    `_create_redis`'s general-purpose client caps `socket_timeout` at 5s
+    (bounded by `ready_timeout_seconds`), so issuing a multi-second `XREAD
+    BLOCK` over it would raise a bogus socket timeout well before the
+    requested block window elapses, and a busy SSE fleet would starve other
+    Redis operations of that pool's 20 connections. This client's
+    `socket_timeout` is `settings.redis_stream_socket_timeout_seconds`;
+    `RedisDraftStream.read` now clamps every `block_ms` to stay safely under
+    it (see its `_BLOCK_MARGIN_SECONDS`), so this no longer needs to be set
+    above every caller's window by hand. Its pool is sized by
+    `settings.redis_stream_pool_size` for concurrent SSE readers.
+    """
     from redis.asyncio import Redis
 
     return Redis.from_url(
         settings.redis_url,
         decode_responses=True,
+        max_connections=settings.redis_stream_pool_size,
         socket_connect_timeout=min(5.0, settings.ready_timeout_seconds),
+        socket_timeout=settings.redis_stream_socket_timeout_seconds,
         socket_keepalive=True,
         health_check_interval=30,
     )
 
 
+def _create_event_wakeups(redis: Redis) -> EventWakeups:
+    """One `EventWakeups` per process, over the process's general-purpose
+    Redis client (writes only, never blocks). The generation worker's `main()`
+    does not construct its own: it calls `create_api_runtime` directly and
+    reuses `runtime.http_services.conversations`/`.draft_stream`, so this one
+    composition already reaches both the API and the generation worker."""
+
+    from tap.modules.chat.adapters.redis_drafts import AsyncRedisStreams, RedisEventWakeups
+
+    return RedisEventWakeups(redis=cast(AsyncRedisStreams, redis))
+
+
+def _create_draft_stream(redis: Redis, block_redis: Redis, settings: TapperSettings) -> DraftStream:
+    """One `DraftStream` per process: non-blocking ops (`append`/`replay`/
+    `partial_text`) go over the shared general-purpose client; `read`'s
+    blocking `XREAD` goes over the dedicated `block_redis` pool (see
+    `_create_redis_stream_block_client`) so it cannot be starved by, or
+    starve, other Redis traffic, and cannot raise a false
+    `DraftStreamUnavailable` from the general client's short socket timeout."""
+
+    from tap.modules.chat.adapters.redis_drafts import AsyncRedisStreams, RedisDraftStream
+
+    return RedisDraftStream(
+        redis=cast(AsyncRedisStreams, redis),
+        block_redis=cast(AsyncRedisStreams, block_redis),
+        socket_timeout_seconds=settings.redis_stream_socket_timeout_seconds,
+    )
+
+
 async def _redact_model_context(text: str) -> str:
     return await PatternEgressRedactor(max_chars=262144).redact_text(text)
+
+
+async def _redact_chat_egress(text: str) -> str:
+    """Chat-facing egress (knowledge answer/chat context and planner prompts):
+    the only callers that redact phone/ID numbers (personal_data=True, C1).
+    Everything else (graph extraction, Insights, test design, suggestions,
+    retrieval queries) keeps the v1 rule set via `_redact_model_context` so
+    the gateway's own enforcement check never rejects their raw content."""
+    return await PatternEgressRedactor(max_chars=262144, personal_data=True).redact_text(text)
 
 
 def _gated_ready_sources(list_sources, flowchart_gate, project_id: str):
@@ -1181,12 +1726,13 @@ def _gated_ready_sources(list_sources, flowchart_gate, project_id: str):
     return gated
 
 
-def _answer_planner(models: KnowledgeModelGateway):
+def _answer_planner(models: KnowledgeModelGateway, *, timeout_seconds: float):
     from tap.modules.chat.adapters.model_gateway_planner import ModelGatewayPlanner
     from tap.modules.chat.application.plan_answer import AnswerPlanner
 
     return AnswerPlanner(
-        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_model_context)
+        ModelGatewayPlanner(models.gateway, scope=models.scope, redact=_redact_chat_egress),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -1202,7 +1748,19 @@ def _create_embeddings(
     max_retries: int = 1,
     catalog: LiteLLMCatalog | None = None,
     recorder: ModelCallRecorder | None = None,
+    timeout_ceiling_seconds: float | None = None,
+    max_concurrency: int | None = None,
 ) -> KnowledgeModelGateway:
+    # The gateway rejects any call whose own deadline exceeds this ceiling; long
+    # batch callers (graph extraction) raise it without changing interactive
+    # deadlines, which each call still sets for itself.
+    ceiling = (
+        max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
+        if settings.vision_model
+        else settings.model_timeout_seconds
+    )
+    if timeout_ceiling_seconds is not None:
+        ceiling = max(ceiling, timeout_ceiling_seconds)
     config = LiteLLMModelGatewayConfig(
         base_url=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
@@ -1210,12 +1768,13 @@ def _create_embeddings(
             settings.default_chat_model, settings.embedding_model, settings.vision_model
         ),
         embedding_dimension=settings.embedding_dimension,
-        timeout_seconds=(
-            max(settings.model_timeout_seconds, settings.vision_timeout_seconds)
-            if settings.vision_model
-            else settings.model_timeout_seconds
-        ),
+        timeout_seconds=ceiling,
         max_retries=max_retries,
+        stream_idle_seconds=settings.model_stream_idle_seconds,
+        stream_max_seconds=settings.model_stream_max_seconds,
+        # Never below the default 4 slots; a wider graph worker needs one slot per
+        # concurrent extraction or its calls would queue against their deadlines.
+        max_concurrency=max(4, max_concurrency or 4),
     )
     gateway: LiteLLMModelGateway
     if settings.e2e_mode:
@@ -1235,12 +1794,29 @@ def _create_embeddings(
     return KnowledgeModelGateway(
         gateway,
         scope=VALIDATION_SCOPE,
-        redact=_redact_model_context,
+        redact=_redact_chat_egress,
+        # `embed`/`embed_documents` (ingestion and the graph-merge label
+        # embedder, plus retrieval query embedding -- search must match
+        # indexed text) stay on the v1 redactor, never the chat-only
+        # personal-data rules (C1 residual).
+        embedding_redact=_redact_model_context,
         embedding_alias=settings.embedding_model,
         chat_alias=settings.default_chat_model,
         embedding_dimension=settings.embedding_dimension,
         timeout_seconds=settings.model_timeout_seconds,
     )
+
+
+def _label_embedder(
+    embeddings: KnowledgeModelGateway,
+) -> Callable[[Sequence[str]], Awaitable[Sequence[tuple[float, ...]]]]:
+    """Adapt `KnowledgeModelGateway.embed` (one text in, one vector out) to the
+    project graph merge worker's bulk `embeddings` callable."""
+
+    async def embed_many(texts: Sequence[str]) -> Sequence[tuple[float, ...]]:
+        return tuple([(await embeddings.embed(text)).vector for text in texts])
+
+    return embed_many
 
 
 async def _create_document_index(
@@ -1507,7 +2083,9 @@ def _create_validation_authority(engine: AsyncEngine) -> tuple[ScopeProvider, Au
     return ValidationScopeProvider(), ValidationAuthorizationPolicy(registry)
 
 
-async def _create_asset_catalog(engine: AsyncEngine, scope: ProjectScopeContext) -> object:
+async def _create_asset_catalog(
+    engine: AsyncEngine, scope: ProjectScopeContext
+) -> MysqlAssetCatalog:
     """Create and seed the only server-approved, project-scoped AI catalog."""
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -1518,6 +2096,152 @@ async def _create_asset_catalog(engine: AsyncEngine, scope: ProjectScopeContext)
     catalog = MysqlAssetCatalog(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
     await catalog.seed(validation_asset_seed(scope))
     return catalog
+
+
+def _create_agent_team_service(
+    settings: TapperSettings,
+    engine: AsyncEngine,
+    scope: ProjectScopeContext,
+    resources: OwnedResources,
+) -> "AgentTeamService":
+    """Wire the Agent team view's runtime metrics adapter (controller
+    rulings): `turn_table` only when `TAP_DEMO_MODE=e2e` (validated in
+    `TapperSettings.from_mapping`); `langfuse` with `LANGFUSE_HOST`
+    configured gets the real adapter over one shared, process-owned
+    `httpx.AsyncClient` and reports sync lag; `langfuse` without
+    `LANGFUSE_HOST` always raises `RuntimeMetricsUnavailable` and never
+    reports `"syncing"`. `CachedRuntimeMetrics` wraps whichever inner
+    adapter is chosen so both pick up the same TTL caching."""
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.agent_team.adapters.cached_metrics import CachedRuntimeMetrics
+    from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore
+    from tap.modules.agent_team.application.service import AgentTeamService
+    from tap.modules.agent_team.ports import AgentRuntimeMetrics
+
+    check_sync_lag = False
+    cache_ttl_seconds = 300
+    failure_ttl_seconds = 30
+    inner: AgentRuntimeMetrics
+    if settings.agent_team_runtime_metrics == "turn_table":
+        # MySQL-backed and cheap: caching would only serve stale counts (the
+        # browser journey reloads right after running a turn).
+        cache_ttl_seconds = 0
+        failure_ttl_seconds = 0
+        from tap.modules.agent_team.adapters.turn_table_metrics import TurnTableRuntimeMetrics
+
+        inner = TurnTableRuntimeMetrics(async_sessionmaker(engine, expire_on_commit=False))
+    elif settings.langfuse_host is not None:
+        import httpx
+
+        from tap.modules.agent_team.adapters.langfuse_metrics import LangfuseRuntimeMetrics
+
+        langfuse_client = httpx.AsyncClient()
+        resources.push(langfuse_client)
+        inner = LangfuseRuntimeMetrics(
+            langfuse_client,
+            host=settings.langfuse_host,
+            public_key=settings.langfuse_public_key or "",
+            secret_key=settings.langfuse_secret_key or "",
+            environment=settings.langfuse_environment,
+        )
+        check_sync_lag = True
+    else:
+        inner = _UnavailableAgentRuntimeMetrics()
+
+    store = MysqlAgentTeamStore(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
+    return AgentTeamService(
+        store,
+        CachedRuntimeMetrics(
+            inner, ttl_seconds=cache_ttl_seconds, failure_ttl_seconds=failure_ttl_seconds
+        ),
+        scope=scope,
+        clock=lambda: datetime.now(UTC),
+        check_sync_lag=check_sync_lag,
+        sync_settle_seconds=settings.langfuse_sync_settle_seconds,
+    )
+
+
+def _create_skill_hub_service(
+    settings: TapperSettings,
+    engine: AsyncEngine,
+    scope: ProjectScopeContext,
+    resources: OwnedResources,
+    asset_catalog: "MysqlAssetCatalog",
+) -> "SkillHubService":
+    """Wire the Skill Hub's runtime metrics adapter with the Agent team
+    view's rules (`_create_agent_team_service`): the turn-table adapter only
+    under `TAP_AGENT_TEAM_RUNTIME_METRICS=turn_table` (uncached); the Langfuse
+    adapter over its own process-owned `httpx.AsyncClient` when
+    `LANGFUSE_HOST` is configured, reporting sync lag from the Agent team
+    store's `oldest_unsynced_age`; otherwise always unavailable and never
+    `"syncing"`. `CachedSkillRuntimeMetrics` wraps whichever adapter is
+    chosen."""
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore
+    from tap.modules.skill_hub.adapters.cached_metrics import CachedSkillRuntimeMetrics
+    from tap.modules.skill_hub.adapters.mysql import MysqlSkillHubStore
+    from tap.modules.skill_hub.application.service import SkillHubService
+    from tap.modules.skill_hub.ports import SkillRuntimeMetrics
+    from tap.platform.reporting.ttl_cache import TtlSingleFlightCache
+
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    sync_lag: Callable[[], Awaitable[timedelta | None]] | None = None
+    cache_ttl_seconds = 300
+    failure_ttl_seconds = 30
+    inner: SkillRuntimeMetrics
+    if settings.agent_team_runtime_metrics == "turn_table":
+        # MySQL-backed and cheap: caching would only serve stale counts.
+        cache_ttl_seconds = 0
+        failure_ttl_seconds = 0
+        from tap.modules.skill_hub.adapters.turn_table_metrics import (
+            TurnTableSkillRuntimeMetrics,
+        )
+
+        inner = TurnTableSkillRuntimeMetrics(sessions)
+    elif settings.langfuse_host is not None:
+        import httpx
+
+        from tap.modules.skill_hub.adapters.langfuse_metrics import LangfuseSkillRuntimeMetrics
+        from tap.platform.reporting.langfuse_metrics_client import LangfuseMetricsClient
+
+        langfuse_client = httpx.AsyncClient()
+        resources.push(langfuse_client)
+        inner = LangfuseSkillRuntimeMetrics(
+            LangfuseMetricsClient(
+                langfuse_client,
+                host=settings.langfuse_host,
+                public_key=settings.langfuse_public_key or "",
+                secret_key=settings.langfuse_secret_key or "",
+                environment=settings.langfuse_environment,
+            )
+        )
+        agent_team_store = MysqlAgentTeamStore(sessions, scope=scope)
+        settle = timedelta(seconds=settings.langfuse_sync_settle_seconds)
+
+        async def langfuse_sync_lag() -> timedelta | None:
+            return await agent_team_store.oldest_unsynced_age(now=datetime.now(UTC), settle=settle)
+
+        sync_lag = langfuse_sync_lag
+    else:
+        inner = _UnavailableSkillRuntimeMetrics()
+
+    return SkillHubService(
+        MysqlSkillHubStore(sessions, scope=scope),
+        CachedSkillRuntimeMetrics(
+            inner,
+            TtlSingleFlightCache(
+                ttl_seconds=cache_ttl_seconds, failure_ttl_seconds=failure_ttl_seconds
+            ),
+        ),
+        asset_catalog=asset_catalog,
+        scope=scope,
+        clock=lambda: datetime.now(UTC),
+        sync_lag=sync_lag,
+    )
 
 
 def _assemble_http_services(
@@ -1533,13 +2257,17 @@ def _assemble_http_services(
     asset_catalog: object | None = None,
     conversation_sessions: object | None = None,
     graph_sessions: object | None = None,
-    graph_indexes: CachedSnapshotIndexes | None = None,
     test_plan_sessions: object | None = None,
     review_sessions: async_sessionmaker[AsyncSession] | None = None,
-    mcp_sessions: async_sessionmaker[AsyncSession] | None = None,
     parser_socket: str | None = None,
     corpus_version: str = "tapper-demo-v1",
-    conversation_notifier: ConversationEventNotifier | None = None,
+    graph_overview_limit: int = 150,
+    graph_retrieval_augment: bool = True,
+    graph_reasoning: bool = True,
+    turn_max_attempts: int = 3,
+    planner_timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
+    event_wakeups: EventWakeups | None = None,
+    draft_stream: DraftStream | None = None,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -1565,6 +2293,10 @@ def _assemble_http_services(
     publication_authority = None
     flowchart_gate = None
     if review_sessions is not None:
+        from tap.modules.graph.adapters.mysql_merge import (
+            GraphMergeOnSourceChange,
+            MysqlProjectMergeQueue,
+        )
         from tap.modules.knowledge.adapters.mysql_review import MysqlKnowledgeReviewRepository
         from tap.modules.knowledge.application.publication import (
             FlowchartPublicationGate,
@@ -1574,9 +2306,64 @@ def _assemble_http_services(
         review_repository = MysqlKnowledgeReviewRepository(
             review_sessions,
             scope=repository.scope,  # type: ignore[arg-type]
+            publication_projection=GraphMergeOnSourceChange(
+                MysqlProjectMergeQueue(review_sessions)
+            ),
         )
         # Chunks index directly; flowchart images still answer only after review.
         flowchart_gate = FlowchartPublicationGate(PublishedKnowledgeAuthority(review_repository))
+
+    graph = None
+    project_graph = None
+    graph_jobs = None
+    graph_node_enrichment = None
+    relation_analysis = None
+    if graph_sessions is not None:
+        from tap.modules.graph.adapters.mysql import MysqlGraphStore
+        from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+        from tap.modules.graph.adapters.mysql_merge import MysqlProjectMergeQueue
+        from tap.modules.graph.adapters.mysql_node_enrichment import MysqlGraphNodeEnrichment
+        from tap.modules.graph.adapters.mysql_project_store import MysqlProjectGraphStore
+        from tap.modules.graph.application.project_queries import ProjectGraphCache
+
+        graph = MysqlGraphStore(graph_sessions)  # type: ignore[arg-type]
+        project_graph_cache = ProjectGraphCache()
+        project_graph = MysqlProjectGraphStore(
+            graph_sessions,  # type: ignore[arg-type]
+            cache=project_graph_cache,
+        )
+        graph_jobs = MysqlGraphJobStore(
+            graph_sessions,  # type: ignore[arg-type]
+            merge_queue=MysqlProjectMergeQueue(
+                graph_sessions,  # type: ignore[arg-type]
+                cache=project_graph_cache,
+            ),
+        )
+        graph_node_enrichment = MysqlGraphNodeEnrichment(
+            graph_sessions,  # type: ignore[arg-type]
+            artifacts,
+        )
+        # The legacy keyword-matching graph enrichment is retired;
+        # `relation_analysis` below is the answer flow's sole remaining
+        # graph-reasoning entry point.
+        if graph_reasoning:
+            from tap.modules.ai.application.agents.registry import AgentRegistry
+            from tap.modules.ai.application.agents.relation_analysis import (
+                RelationAnalysisAgent,
+            )
+            from tap.modules.knowledge.adapters.artifact_snippets import ArtifactChunkSnippets
+            from tap.modules.knowledge.application.retrieve import RegisteredRelationAnalysis
+
+            registry = AgentRegistry()
+            registry.register(
+                RelationAnalysisAgent(
+                    project_graph,
+                    ArtifactChunkSnippets(repository, cast(CitationArtifactStore, artifacts)),
+                    publication_authority=publication_authority,
+                    flowchart_gate=flowchart_gate,
+                )
+            )
+            relation_analysis = RegisteredRelationAnalysis(registry, scope=repository.scope)
 
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
@@ -1591,6 +2378,8 @@ def _assemble_http_services(
         redactor=redactor,
         publication_authority=publication_authority,
         flowchart_gate=flowchart_gate,
+        relation_analysis=relation_analysis,
+        retrieval_augment=graph_retrieval_augment,
     )
     answer_service = AnswerService(
         repository=cast(AnswerSnapshotRepository, repository),
@@ -1607,54 +2396,36 @@ def _assemble_http_services(
     )
     conversations = None
     traces = None
+    feedback = None
     if conversation_sessions is not None:
         from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
         from tap.modules.chat.application.conversations import ConversationService
-        from tap.modules.chat.application.notifier import InMemoryConversationEventNotifier
 
-        notifier = conversation_notifier or InMemoryConversationEventNotifier()
         conversations = ConversationService(
             MysqlConversationRepository(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
-                notifier=notifier,
+                max_turn_attempts=turn_max_attempts,
             ),
             scope=repository.scope,
-            notifier=notifier,
+            wakeups=event_wakeups,
+            drafts=draft_stream,
         )
         from tap.modules.ai.adapters.mysql_traces import MysqlTraceHttpService
 
         traces = MysqlTraceHttpService(conversation_sessions)  # type: ignore[arg-type]
-    graph = None
-    graph_enricher = None
-    graph_overview = None
-    if graph_sessions is not None:
-        from tap.modules.graph.adapters.mysql import MysqlGraphStore
-        from tap.modules.graph.application.cache import CachedSnapshotIndexes
-        from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 
-        indexes = graph_indexes if graph_indexes is not None else CachedSnapshotIndexes()
-        graph = MysqlGraphStore(graph_sessions, indexes=indexes)  # type: ignore[arg-type]
-        graph_enricher = GraphAnswerEnricher(graph, publication_authority=publication_authority)
-        if review_sessions is not None:
-            from tap.modules.graph.application.overview import GraphOverviewService
-            from tap.modules.knowledge.adapters.mysql_ready_sources import (
-                MysqlReadySources as OverviewReadySources,
-            )
-            from tap.modules.knowledge.application.graph_sources import (
-                PublishedKnowledgeGraphSources,
-            )
+        from tap.modules.chat.adapters.mysql_feedback import MysqlFeedbackRepository
+        from tap.modules.chat.application.feedback import FeedbackService
 
-            graph_overview = GraphOverviewService(
-                graph,
-                PublishedKnowledgeGraphSources(
-                    OverviewReadySources(review_sessions, repository.scope).list_revisions,
-                    project_id=repository.scope.project_id,
-                    gate=flowchart_gate,
-                    authority=publication_authority,
-                ),
-                indexes,
-            )
+        feedback = FeedbackService(
+            MysqlFeedbackRepository(
+                conversation_sessions,  # type: ignore[arg-type]
+                scope=repository.scope,
+            ),
+            conversations,
+            scope=repository.scope,
+        )
     test_plans = None
     if test_plan_sessions is not None:
         from tap.modules.test_management.adapters.mysql import MysqlTestPlanRepository
@@ -1666,7 +2437,7 @@ def _assemble_http_services(
                 scope=repository.scope,  # type: ignore[arg-type]
                 model_alias=embeddings.chat_alias,
                 knowledge_requires_publication=False,
-                notifier=conversations.notifier if conversations is not None else None,
+                wakeups=event_wakeups,
             )
         )
     knowledge_reviews = None
@@ -1708,9 +2479,16 @@ def _assemble_http_services(
         searches=search_service,
         sources=SourceService(cast(SourceRepository, repository), documents),
         corpus_version=corpus_version,
-        graph_enricher=graph_enricher,
         models=embeddings,
-        answer_planner=_answer_planner(embeddings),
+        answer_planner=_answer_planner(embeddings, timeout_seconds=planner_timeout_seconds),
+        # Bounded like `_redact_chat_egress`, not the smaller query-only
+        # `redactor` above: a saved answer (and its `redaction_report` use
+        # for an incoming chat message) can be far longer than an 8,000-char
+        # retrieval query -- up to `litellm.py`'s `max_answer_chars=16000`.
+        # personal_data=True (C1): output redaction and the input hit report
+        # are chat egress, so phone/ID rules apply here too.
+        redactor=PatternEgressRedactor(max_chars=262144, personal_data=True),
+        relations_available=relation_analysis is not None,
     )
     prompt_suggestions = None
     prompt_suggestion_store = None
@@ -1740,6 +2518,7 @@ def _assemble_http_services(
             knowledge=KnowledgeSuggestionSources(
                 conversation_sessions,  # type: ignore[arg-type]
                 scope=repository.scope,
+                project_graph=project_graph,
             ),
             usage=MysqlSuggestionUsage(
                 conversation_sessions,  # type: ignore[arg-type]
@@ -1750,6 +2529,7 @@ def _assemble_http_services(
                 scope=embeddings.scope,
                 alias=embeddings.chat_alias,
                 timeout_seconds=embeddings.timeout_seconds,
+                redact=_redact_model_context,
             ),
             # Grounding replays the chat planner and answer pipeline, so a shown
             # suggestion is one that a click would answer with citations.
@@ -1765,68 +2545,33 @@ def _assemble_http_services(
             id_factory=lambda: uuid4().hex,
             clock=lambda: datetime.now(UTC),
         )
-    from tap.modules.ai.application.agent_authoring import AgentAuthoringService
-    from tap.modules.ai.application.skill_import import SkillImportService
-    from tap.modules.ai.application.tool_registry import ToolRegistry, builtin_tools
-
-    mcp_servers = None
-    mcp_tools = None
-    if mcp_sessions is not None:
-        from tap.modules.ai.adapters.mcp_client import StreamableHttpMcpClient
-        from tap.modules.ai.adapters.mysql_mcp import (
-            MysqlMcpServerRepository,
-            MysqlMcpToolSource,
-        )
-        from tap.modules.ai.application.mcp_servers import McpServerService
-        from tap.modules.ai.domain.mcp import mcp_allowed_hosts
-
-        mcp_hosts = mcp_allowed_hosts()
-        mcp_client = StreamableHttpMcpClient(extra_hosts=mcp_hosts)
-        mcp_repository = MysqlMcpServerRepository(mcp_sessions, scope=repository.scope)
-        mcp_servers = McpServerService(mcp_repository, mcp_client, extra_hosts=mcp_hosts)
-        mcp_tools = MysqlMcpToolSource(
-            mcp_sessions, mcp_client, scope=repository.scope, extra_hosts=mcp_hosts
-        )
-    tool_registry = ToolRegistry(builtin_tools(), mcp=mcp_tools)
-    from tap.modules.ai.application.tool_loop import AgentToolRuntime
-
-    agent_tools = AgentToolRuntime(embeddings.gateway, mcp=mcp_tools, redact=_redact_model_context)
-    model_catalog = ModelCatalog(
-        embeddings.gateway,
-        scope=embeddings.scope,
-        default_alias=embeddings.chat_alias,
-    )
     return HttpServices(
         asset_catalog=asset_catalog,  # type: ignore[arg-type]
-        tool_registry=tool_registry,
-        skill_imports=None
-        if asset_catalog is None
-        else SkillImportService(asset_catalog, tool_registry),  # type: ignore[arg-type]
-        agent_authoring=None
-        if asset_catalog is None
-        else AgentAuthoringService(
-            asset_catalog,  # type: ignore[arg-type]
-            tool_registry,
-            model_catalog,
+        model_catalog=ModelCatalog(
+            embeddings.gateway,
+            scope=embeddings.scope,
+            default_alias=embeddings.chat_alias,
         ),
-        model_catalog=model_catalog,
-        mcp_servers=mcp_servers,
         knowledge=knowledge_http,
         readiness=readiness,
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,
         scope=repository.scope,
         conversations=conversations,
+        feedback=feedback,
         prompt_suggestions=prompt_suggestions,
         prompt_suggestion_store=prompt_suggestion_store,
         traces=traces,
         graph=graph,
-        graph_overview=graph_overview,
+        project_graph=project_graph,
+        graph_jobs=graph_jobs,
+        graph_overview_limit=graph_overview_limit,
+        graph_node_enrichment=graph_node_enrichment,
         test_plans=test_plans,
         knowledge_reviews=knowledge_reviews,
         insights_knowledge_search=answer_service,
         insights_publication_authority=publication_authority,
-        agent_tools=agent_tools,
+        draft_stream=draft_stream,
     )
 
 
@@ -1948,14 +2693,35 @@ def _duration(
     default: float,
     *,
     maximum: float,
+    minimum: float | None = None,
 ) -> float:
+    """Parse a finite duration bounded above by `maximum`.
+
+    `minimum` is an inclusive closed lower bound when given; omitted, the lower
+    bound stays the historical exclusive 0 (a duration, not a count).
+    """
     raw = _value(values, name, str(default))
     try:
         parsed = float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a finite duration") from None
-    if not math.isfinite(parsed) or not 0 < parsed <= maximum:
+    if minimum is None:
+        if not math.isfinite(parsed) or not 0 < parsed <= maximum:
+            raise ValueError(f"{name} must be a finite bounded duration")
+    elif not math.isfinite(parsed) or not minimum <= parsed <= maximum:
         raise ValueError(f"{name} must be a finite bounded duration")
+    return parsed
+
+
+def _ratio(values: Mapping[str, str], name: str, default: float) -> float:
+    """Parse a float bounded to the closed [0, 1] interval (e.g. a similarity threshold)."""
+    raw = _value(values, name, str(default))
+    try:
+        parsed = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a finite ratio") from None
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be between 0 and 1")
     return parsed
 
 

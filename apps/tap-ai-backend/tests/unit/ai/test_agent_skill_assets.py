@@ -180,3 +180,131 @@ def test_answer_authority_rejects_missing_tool_wrong_task_and_unrecoverable_cont
             replace(skill, applicable_tasks=frozenset({"automation.generate"})),
             task="knowledge.answer",
         )
+
+
+def test_authoring_fields_reject_invalid_source_kind_description_and_oversized_instruction() -> (
+    None
+):
+    from tap.modules.ai.domain.assets import (
+        AiAgentRevision,
+        AssetRevisionRejected,
+        SkillFile,
+        SkillRevision,
+        text_digest,
+    )
+
+    def _agent(**overrides: object) -> None:
+        values: dict[str, object] = {
+            "revision_id": "agent-revision",
+            "asset_id": "agent",
+            "display_name": "Agent",
+            "scope": VALIDATION_SCOPE,
+            "content_digest": text_digest("agent"),
+            "system_instruction_digest": text_digest("instruction"),
+            "tool_allowlist": frozenset({"knowledge.search"}),
+            "output_schema_digest": text_digest("schema"),
+        }
+        values.update(overrides)
+        AiAgentRevision(**values)
+
+    def _skill(**overrides: object) -> None:
+        SkillRevision(
+            revision_id="skill-revision",
+            asset_id="skill",
+            display_name="Skill",
+            scope=VALIDATION_SCOPE,
+            content_digest=text_digest("skill"),
+            instruction_template_digest=text_digest("template"),
+            applicable_tasks=frozenset({"knowledge.answer"}),
+            **overrides,
+        )
+
+    with pytest.raises(AssetRevisionRejected):
+        _agent(source_kind="unapproved")
+    with pytest.raises(AssetRevisionRejected):
+        _skill(source_kind="unapproved")
+    with pytest.raises(AssetRevisionRejected):
+        _agent(description="x" * 1025)
+    with pytest.raises(AssetRevisionRejected):
+        _skill(description="x" * 1025)
+    oversized_instruction = "x" * (32 * 1024 + 1)
+    with pytest.raises(AssetRevisionRejected):
+        _agent(
+            system_instruction=oversized_instruction,
+            system_instruction_digest=text_digest(oversized_instruction),
+        )
+    # Backward-compatible defaults: existing built-in construction still works.
+    _agent(source_kind="built_in", description=None)
+    _skill(source_kind="authored", description="A valid description.")
+    with pytest.raises(AssetRevisionRejected):
+        SkillFile(
+            relative_path="../escape.md",
+            size_bytes=10,
+            sha256="a" * 64,
+            category="reference",
+            attached=True,
+        )
+    with pytest.raises(AssetRevisionRejected):
+        SkillFile(
+            relative_path="references/notes.md",
+            size_bytes=10,
+            sha256="a" * 64,
+            category="not-a-category",  # type: ignore[arg-type]
+            attached=True,
+        )
+    valid_file = SkillFile(
+        relative_path="references/notes.md",
+        size_bytes=10,
+        sha256="a" * 64,
+        category="reference",
+        attached=True,
+    )
+    assert valid_file.relative_path == "references/notes.md"
+
+
+def test_skill_instruction_template_digest_covers_attached_reference_text() -> None:
+    from tap.modules.ai.domain.assets import AssetRevisionRejected, SkillRevision, text_digest
+
+    body = "Follow the governed answer flow."
+    attached = "Reference excerpt text."
+    combined_digest = text_digest(body + attached)
+
+    revision = SkillRevision(
+        revision_id="skill-revision",
+        asset_id="skill",
+        display_name="Skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("skill"),
+        instruction_template_digest=combined_digest,
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template=body,
+        attached_references=attached,
+    )
+    assert revision.instruction_template_digest == combined_digest
+
+    # Old rows with no attached references keep the original digest formula.
+    legacy_digest = text_digest(body)
+    legacy = SkillRevision(
+        revision_id="legacy-revision",
+        asset_id="skill",
+        display_name="Skill",
+        scope=VALIDATION_SCOPE,
+        content_digest=text_digest("skill"),
+        instruction_template_digest=legacy_digest,
+        applicable_tasks=frozenset({"knowledge.answer"}),
+        instruction_template=body,
+    )
+    assert legacy.instruction_template_digest == legacy_digest
+
+    with pytest.raises(AssetRevisionRejected):
+        SkillRevision(
+            revision_id="skill-revision",
+            asset_id="skill",
+            display_name="Skill",
+            scope=VALIDATION_SCOPE,
+            content_digest=text_digest("skill"),
+            instruction_template_digest=legacy_digest,
+            applicable_tasks=frozenset({"knowledge.answer"}),
+            instruction_template=body,
+            attached_references=attached,
+        )

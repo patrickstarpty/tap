@@ -19,6 +19,9 @@ export type TurnTraceSummary = components["schemas"]["TurnTraceSummary"];
 export type TraceSpanView = components["schemas"]["TraceSpanView"];
 export type ModelCallView = components["schemas"]["ModelCallView"];
 export type ModelCallDetail = components["schemas"]["ModelCallDetail"];
+export type AnswerFeedbackRequest =
+  components["schemas"]["AnswerFeedbackRequest"];
+export type AnswerFeedbackView = components["schemas"]["AnswerFeedbackView"];
 export type InsightsExplanationRequest =
   components["schemas"]["InsightsExplanationRequest"] & {
     conversationId?: string;
@@ -144,6 +147,17 @@ export interface ConversationClient {
     signal?: AbortSignal,
   ): Promise<TurnTrace>;
   modelCall(callId: string, signal?: AbortSignal): Promise<ModelCallDetail>;
+  putFeedback(
+    conversationId: string,
+    turnId: string,
+    body: AnswerFeedbackRequest,
+    signal?: AbortSignal,
+  ): Promise<AnswerFeedbackView>;
+  deleteFeedback(
+    conversationId: string,
+    turnId: string,
+    signal?: AbortSignal,
+  ): Promise<void>;
   stream(
     conversationId: string,
     lastSequence: number,
@@ -325,6 +339,26 @@ export function createConversationClient({
           ),
         ),
       ),
+    putFeedback: (id, turnId, body, signal) =>
+      request<AnswerFeedbackView>(
+        `/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/feedback`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal,
+        },
+      ),
+    async deleteFeedback(id, turnId, signal) {
+      const response = await fetcher(
+        new Request(
+          `${root}/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}/feedback`,
+          { method: "DELETE", signal },
+        ),
+      );
+      // Deletion answers 204 with no body; only failures carry a problem.
+      if (!response.ok) await checkedJson(response);
+    },
     async *stream(id, lastSequence, signal) {
       const response = await fetcher(
         new Request(`${root}/${encodeURIComponent(id)}/stream`, {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Self
@@ -53,164 +53,216 @@ class ModelCatalogPage(ContractModel):
     items: Annotated[list[ModelCatalogItem], Field(max_length=32)]
 
 
+# Skill Hub's closed category set (mirrors `skill_metadata.SKILL_CATEGORIES`).
+SkillCategoryName = Literal[
+    "test-design", "automation", "knowledge", "analysis", "writing", "other"
+]
+_SkillIdList = Annotated[
+    list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+    Field(max_length=64),
+]
+
+
 class AiAgentRevisionSummary(ContractModel):
     revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    agent_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)] | None = None
     content_digest: CanonicalSha256
-    tool_allowlist: Annotated[list[ToolId], Field(max_length=32)]
+    tool_allowlist: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=32),
+    ]
     output_schema_digest: CanonicalSha256
+    source_kind: Literal["imported", "authored", "built_in"]
+    built_in: StrictBool
+    status: Literal["enabled", "disabled"]
+    is_latest: StrictBool
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list)
+    default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
+        None
+    )
+    # Always `false` since Skill Hub: pinned Skills load their latest revision.
+    has_skill_updates: StrictBool = Field(default=False, deprecated=True)
+    pinned_skill_ids: _SkillIdList = Field(default_factory=list)
+    excluded_skill_ids: _SkillIdList = Field(default_factory=list)
+
+
+class AiAgentRevisionDetail(AiAgentRevisionSummary):
+    # Optional (unlike AgentDraftRequest's required field below): every
+    # agent created/revised through this API always has one (validated at
+    # write time), but a revision read back whose stored value is absent
+    # must not 500 against a `min_length=1` requirement — mirrors
+    # `description`'s `| None` pattern above.
+    system_instruction: (
+        Annotated[str, Field(strict=True, min_length=1, max_length=40_000)] | None
+    ) = None
 
 
 class AiAgentRevisionPage(ContractModel):
-    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=64)]
+    # Also backs the revision-history endpoint (`GET /ai/agents/{agentId}/revisions`),
+    # whose item count is a revision count, not an asset count -- bounded well above
+    # the asset-list cap so a long-lived Agent's full history still fits (C-1).
+    items: Annotated[list[AiAgentRevisionSummary], Field(max_length=1000)]
+
+
+class AgentDraftRequest(ContractModel):
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=40_000)]
+    # Deprecated: each revision is mapped to its Skill and merged into
+    # `pinned_skill_ids`.
+    skill_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]],
+        Field(max_length=64),
+    ] = Field(default_factory=list, deprecated=True)
+    tool_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=32),
+    ] = Field(default_factory=list)
+    default_model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = (
+        None
+    )
+    pinned_skill_ids: _SkillIdList = Field(default_factory=list)
+    excluded_skill_ids: _SkillIdList = Field(default_factory=list)
+
+
+class AgentReviseRequest(AgentDraftRequest):
+    base_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+
+
+class AgentSkillsRequest(ContractModel):
+    pinned_skill_ids: _SkillIdList
+    excluded_skill_ids: _SkillIdList
+
+
+class ToolDescriptor(ContractModel):
+    tool_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    required: StrictBool
+    default_enabled: StrictBool
+
+
+class ToolPage(ContractModel):
+    items: Annotated[list[ToolDescriptor], Field(max_length=32)]
 
 
 class SkillRevisionSummary(ContractModel):
     revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     asset_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    skill_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
     display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)] | None = None
     content_digest: CanonicalSha256
     applicable_tasks: Annotated[
         list[Literal["knowledge.answer", "test-plan.generate", "automation.generate"]],
         Field(min_length=1, max_length=3),
     ]
+    source_kind: Literal["imported", "authored", "built_in"]
+    built_in: StrictBool
+    status: Literal["enabled", "disabled"]
+    is_latest: StrictBool
+    category: SkillCategoryName | None = None
+    # SemVer from frontmatter `metadata.version`; absent means "show r<n>".
+    version_label: Annotated[str, Field(strict=True, min_length=1, max_length=32)] | None = None
 
 
 class SkillRevisionPage(ContractModel):
-    items: Annotated[list[SkillRevisionSummary], Field(max_length=64)]
+    # Also backs the revision-history endpoint (`GET /ai/skills/{skillId}/revisions`);
+    # see `AiAgentRevisionPage` (C-1).
+    items: Annotated[list[SkillRevisionSummary], Field(max_length=1000)]
 
 
-class SkillRevisionView(SkillRevisionSummary):
-    instruction_template: Annotated[str | None, Field(max_length=65536)] = None
-    status: Literal["enabled", "disabled"]
-    origin: Literal["seed", "import", "editor"]
-    description: Annotated[str | None, Field(max_length=1024)] = None
-    requested_tools: Annotated[
-        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
-        Field(max_length=64),
-    ] = Field(default_factory=list)
-    adopted_from_revision_id: Annotated[
-        str | None, Field(strict=True, min_length=1, max_length=64)
-    ] = None
+class SkillFileView(ContractModel):
+    relative_path: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    size_bytes: Annotated[int, Field(strict=True, ge=0)]
+    sha256: Annotated[
+        str, Field(strict=True, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    ]
+    category: Literal["skill", "reference", "script", "asset", "other"]
+    attached: StrictBool
 
 
-class SkillImportResult(ContractModel):
-    """An inert Skill revision; requested tools are informational and never granted."""
+class SkillRevisionDetail(SkillRevisionSummary):
+    instructions: Annotated[str, Field(strict=True, max_length=300_000)] | None = None
+    attached_references: Annotated[str, Field(strict=True, max_length=100_000)] | None = None
+    frontmatter: dict[str, JsonValue] | None = None
+    files: Annotated[list[SkillFileView], Field(max_length=500)] = Field(default_factory=list)
 
-    revision: SkillRevisionView
+
+class SkillImportPreviewItem(ContractModel):
+    root: Annotated[str, Field(strict=True, max_length=255)]
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    frontmatter: dict[str, JsonValue]
+    files: Annotated[list[SkillFileView], Field(max_length=500)]
     warnings: Annotated[
-        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
-        Field(max_length=64),
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=512)]],
+        Field(max_length=50),
     ] = Field(default_factory=list)
+    conflict_skill_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
 
 
-class SkillCreateRequest(ContractModel):
-    name: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
-    description: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
-    instructions: Annotated[str, Field(strict=True, min_length=1, max_length=65536)]
+class SkillImportPreview(ContractModel):
+    import_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    expires_at: datetime
+    # A package may contain up to 500 files (global constraint); in the
+    # degenerate case of one file (SKILL.md) per Skill, that is up to 500
+    # Skills in a single preview -- align with the package limit rather
+    # than an arbitrary lower cap.
+    skills: Annotated[list[SkillImportPreviewItem], Field(max_length=500)]
 
 
-class SkillStatusRequest(ContractModel):
-    status: Literal["enabled", "disabled"]
+class SkillImportTextRequest(ContractModel):
+    text: Annotated[str, Field(strict=True, min_length=1, max_length=300_000)]
 
 
-class AgentDraftRequest(ContractModel):
-    """Authoring input; bounds are re-checked by the service with specific problem codes."""
-
-    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
-    description: Annotated[str, Field(strict=True, max_length=4096)] = ""
-    system_instruction: Annotated[str, Field(strict=True, min_length=1, max_length=32_000)]
-    skill_revision_ids: Annotated[
-        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
-        Field(max_length=64),
-    ] = Field(default_factory=list)
-    tool_allowlist: Annotated[
-        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
-        Field(max_length=64),
-    ] = Field(default_factory=list)
-    model_alias: Annotated[str | None, Field(strict=True, min_length=1, max_length=256)] = None
-
-
-class AiAgentRevisionView(AiAgentRevisionSummary):
-    status: Literal["enabled", "disabled"]
-    origin: Literal["seed", "editor"]
-    description: Annotated[str | None, Field(max_length=1024)] = None
-    system_instruction: Annotated[str | None, Field(max_length=16_000)] = None
-    skill_revision_ids: Annotated[
-        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
-        Field(max_length=16),
-    ] = Field(default_factory=list)
-    model_alias: Annotated[str | None, Field(strict=True, min_length=1, max_length=128)] = None
-    adopted_from_revision_id: Annotated[
-        str | None, Field(strict=True, min_length=1, max_length=64)
-    ] = None
-
-
-class AiAgentManagementPage(ContractModel):
-    items: list[AiAgentRevisionView]
-
-
-class SkillManagementPage(ContractModel):
-    items: list[SkillRevisionView]
-
-
-class AgentStatusRequest(ContractModel):
-    status: Literal["enabled", "disabled"]
-
-
-class ToolView(ContractModel):
-    tool_id: ToolId
-    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    description: Annotated[str, Field(strict=True, max_length=1024)]
-    effect: Literal["read", "propose", "external"]
-    origin: Literal["builtin", "mcp"]
-    server_id: Annotated[str | None, Field(strict=True, min_length=1, max_length=64)] = None
-    enabled: bool
-    callable: bool
-
-
-class ToolPage(ContractModel):
-    items: Annotated[list[ToolView], Field(max_length=4096)]
-
-
-class McpServerCreateRequest(ContractModel):
-    """Registration input; `authHeaderEnv` names an environment variable, never a secret."""
-
-    slug: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
-    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
-    url: Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
-    auth_header_env: Annotated[str | None, Field(strict=True, min_length=1, max_length=256)] = None
-
-
-class McpServerUpdateRequest(ContractModel):
-    enabled: Annotated[bool, Field(strict=True)]
-
-
-class McpSkippedToolView(ContractModel):
-    """A server tool left out of the registry because its name or schema is unusable."""
-
-    name: Annotated[str, Field(strict=True, max_length=128)]
-    reason: Literal["name-invalid", "schema-invalid", "descriptor-invalid"]
-
-
-class McpServerView(ContractModel):
-    server_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
-    slug: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
-    display_name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
-    url: Annotated[str, Field(strict=True, min_length=1, max_length=2048)]
-    auth_header_env: Annotated[str | None, Field(strict=True, max_length=128)] = None
-    enabled: bool
-    last_synced_at: str | None = None
-    last_error: Annotated[str | None, Field(strict=True, max_length=64)] = None
-    tools: Annotated[list[ToolView], Field(max_length=64)] = Field(default_factory=list)
-    skipped_tools: Annotated[list[McpSkippedToolView], Field(max_length=64)] = Field(
-        default_factory=list
+class SkillImportSelection(ContractModel):
+    root: Annotated[str, Field(strict=True, max_length=255)]
+    as_new_revision_of: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = (
+        None
     )
+    # For a new Skill without a frontmatter `metadata.category`; ignored when
+    # attaching a revision to an existing Skill.
+    category: SkillCategoryName | None = None
 
 
-class McpServerPage(ContractModel):
-    items: Annotated[list[McpServerView], Field(max_length=256)]
+class SkillImportCommitRequest(ContractModel):
+    # See `SkillImportPreview.skills` (package file-count limit).
+    selections: Annotated[list[SkillImportSelection], Field(min_length=1, max_length=500)]
+
+
+class SkillImportCommitResult(ContractModel):
+    revisions: Annotated[list[SkillRevisionDetail], Field(max_length=500)]
+
+
+class SkillDraftRequest(ContractModel):
+    name: Annotated[str, Field(strict=True, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=64)]
+    description: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
+    instructions: Annotated[str, Field(strict=True, min_length=1, max_length=300_000)]
+    applicable_tasks: (
+        Annotated[
+            list[Literal["knowledge.answer", "test-plan.generate", "automation.generate"]],
+            Field(min_length=1, max_length=3),
+        ]
+        | None
+    ) = None
+    # Only read when creating a Skill; a revise keeps the Skill's category.
+    category: SkillCategoryName | None = None
+
+
+class SkillReviseRequest(SkillDraftRequest):
+    base_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+
+
+class SkillProblem(ContractModel):
+    code: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    detail: Annotated[str, Field(strict=True, min_length=1, max_length=1024)]
 
 
 class SourceFamily(str, Enum):
@@ -246,6 +298,7 @@ class AbstentionReason(str, Enum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     CONFLICTING_SOURCES = "conflicting_sources"
     REVISION_MISMATCH = "revision_mismatch"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class DocumentStatus(str, Enum):
@@ -358,15 +411,6 @@ CanonicalSha256 = Annotated[
         min_length=71,
         max_length=71,
         pattern=r"^sha256:[0-9a-f]{64}$",
-    ),
-]
-ToolId = Annotated[
-    str,
-    Field(
-        strict=True,
-        min_length=3,
-        max_length=128,
-        pattern=r"^[a-z][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*){1,3}$",
     ),
 ]
 PathValue = Annotated[
@@ -970,6 +1014,23 @@ class RetrievalHit(ContractModel):
         return self
 
 
+class GraphEndpointView(ContractModel):
+    """One edge citation endpoint (subject or object), nested under
+    `EdgeCitationView`."""
+
+    node_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1)
+
+
+class EdgeCitationView(ContractModel):
+    edge_id: str = Field(min_length=1, max_length=128)
+    graph_version: str = Field(min_length=1, max_length=64)
+    subject: GraphEndpointView
+    object: GraphEndpointView
+    relation_type: str = Field(min_length=1, max_length=64)
+    relation_label: str = Field(min_length=1, max_length=64)
+
+
 class RetrievalCitation(ContractModel):
     citation_id: str = Field(min_length=1)
     evidence_label: str = Field(min_length=1)
@@ -982,6 +1043,8 @@ class RetrievalCitation(ContractModel):
     publication_id: ShortIdentifier | None = None
     approval_digest: CanonicalSha256 | None = None
     approved_item_id: ShortIdentifier | None = None
+    kind: Literal["chunk", "edge"] = "chunk"
+    edge: EdgeCitationView | None = None
 
     @model_validator(mode="after")
     def validate_internal_source_family(self, info: ValidationInfo) -> Self:
@@ -991,6 +1054,12 @@ class RetrievalCitation(ContractModel):
         expected = context["source_family"]
         if not isinstance(expected, SourceFamily) or expected is not self.source.derived_family:
             raise ValueError("citation family does not match source provenance")
+        return self
+
+    @model_validator(mode="after")
+    def validate_edge_kind(self) -> Self:
+        if (self.kind == "edge") != (self.edge is not None):
+            raise ValueError("citation kind and edge payload must agree")
         return self
 
 
@@ -1013,22 +1082,29 @@ class RetrievalSearchResponse(ContractModel):
     hits: list[RetrievalHit]
 
 
-class RelationCitationView(ContractModel):
-    citation_id: str
-    snapshot_id: str
-    edge_id: str
-    source_node_id: str
-    target_node_id: str
-    source_label: str
-    target_label: str
-    relation_type: str
-    origin: Literal["EXTRACTED", "INFERRED"]
-    claim_index: Annotated[int, Field(strict=True, ge=0)]
-    path_edge_ids: Annotated[list[str], Field(min_length=1, max_length=80)]
+class GraphContextSummaryView(ContractModel):
+    status: Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "EMPTY"]
+    graph_version: str | None = None
+    seed_count: int = Field(ge=0)
+    query_seed_count: int = Field(default=0, ge=0)
+    paths: list[list[str]] = Field(default_factory=list)
+    relation_count: int = Field(ge=0)
+
+
+class InsightsFactView(ContractModel):
+    """One `I<n>`-labeled Insights metric record a claim actually cited
+    (LangGraph PR 5, Task 8). No knowledge citation is ever generated for an
+    Insights label -- a cited record surfaces here instead, in citation
+    order."""
+
+    label: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    value: float | int | None = None
+    as_of: str = Field(min_length=1)
 
 
 class RetrievalAnswerResponse(ContractModel):
-    relation_citations: list[RelationCitationView] = []
     trace_id: str = Field(min_length=1)
     query_plan_id: str = Field(min_length=1)
     context_snapshot_id: str = Field(min_length=1)
@@ -1039,12 +1115,15 @@ class RetrievalAnswerResponse(ContractModel):
     answer: str
     abstained: bool
     abstention_reason: AbstentionReason | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
     claims: list[RetrievalClaim]
     citations: Annotated[list[RetrievalCitation], Field(max_length=20)]
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
     ] = "NOT_SELECTED"
     graph_snapshot_id: str | None = None
+    graph_context: GraphContextSummaryView | None = None
+    insights_facts: list[InsightsFactView] | None = None
 
     @model_validator(mode="after")
     def validate_graph_context(self) -> Self:
@@ -1055,18 +1134,19 @@ class RetrievalAnswerResponse(ContractModel):
     @model_validator(mode="after")
     def validate_claim_spans(self) -> Self:
         citation_ids = {citation.citation_id for citation in self.citations}
-        paragraphs = _answer_paragraph_spans(self.answer)
         previous_end = 0
         for claim in self.claims:
             if not set(claim.citation_ids) <= citation_ids:
                 raise ValueError("claim citations must exist in the answer citation set")
             if "\n\n" in claim.text:
                 raise ValueError("claim text must not contain a paragraph separator")
-            matches = [
-                (start, end) for start, end in paragraphs if self.answer[start:end] == claim.text
-            ]
+            # A claim is a cited sentence, not necessarily a whole paragraph
+            # (LangGraph PR 3: inline `[S1]`/`[R1]` markers can cite one sentence
+            # inside a Markdown list/paragraph that also carries uncited prose)
+            # -- it just has to be locatable at exactly one offset in the answer.
+            matches = _answer_text_occurrences(self.answer, claim.text)
             if len(matches) != 1 or matches[0] != (claim.answer_start, claim.answer_end):
-                raise ValueError("claim text must occupy one unique complete answer paragraph")
+                raise ValueError("claim text must occupy one unique answer span")
             if claim.answer_end < claim.answer_start:
                 raise ValueError("claim answer offsets must be ordered")
             if claim.answer_start < previous_end:
@@ -1075,24 +1155,24 @@ class RetrievalAnswerResponse(ContractModel):
                 raise ValueError("claim answer span exceeds the answer")
             if self.answer[claim.answer_start : claim.answer_end] != claim.text:
                 raise ValueError("claim text must match its answer span")
-            if claim.answer_start != 0 and not self.answer[: claim.answer_start].endswith("\n\n"):
-                raise ValueError("claim answer span must start on a paragraph boundary")
-            if claim.answer_end != len(self.answer) and not self.answer[
-                claim.answer_end :
-            ].startswith("\n\n"):
-                raise ValueError("claim answer span must end on a paragraph boundary")
             previous_end = claim.answer_end
         return self
 
 
-def _answer_paragraph_spans(answer: str) -> tuple[tuple[int, int], ...]:
-    """Return complete answer-paragraph spans using Unicode code-point offsets."""
-    start = 0
+def _answer_text_occurrences(answer: str, text: str) -> tuple[tuple[int, int], ...]:
+    """Every non-overlapping `[start, end)` span where `answer[start:end] ==
+    text`, using Unicode code-point offsets; an empty `text` never occurs."""
+
+    if not text:
+        return ()
     spans: list[tuple[int, int]] = []
-    for paragraph in answer.split("\n\n"):
-        end = start + len(paragraph)
-        spans.append((start, end))
-        start = end + 2
+    start = 0
+    while True:
+        found = answer.find(text, start)
+        if found == -1:
+            break
+        spans.append((found, found + len(text)))
+        start = found + len(text)
     return tuple(spans)
 
 
@@ -1182,6 +1262,20 @@ class ConversationCreateRequest(ContractModel):
     document_revision_ids: Annotated[list[str], Field(max_length=50)] = []
     agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
+    # Task 8: a plain conversation Turn may freeze `insightsReportRefs` alone
+    # (no historical `insights_query_id` -- that field has no HTTP entry
+    # point yet, joint analysis is covered by integration tests only, user
+    # decision B). Bounded/unique/nonblank the same as
+    # `TurnInput.insights_report_refs` -- per-item constraints below (not
+    # just the list-level `max_length`) so a blank or duplicate ref fails
+    # here as a 4xx validation error, not `TurnInput.__post_init__`'s
+    # `ValueError` surfacing as a misleading 503 (fix round 1, I-1).
+    insights_report_refs: Annotated[
+        list[
+            Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+        ],
+        Field(max_length=20),
+    ] = []
 
     @field_validator("message")
     @classmethod
@@ -1190,6 +1284,13 @@ class ConversationCreateRequest(ContractModel):
             raise ValueError("message must be nonblank")
         return value
 
+    @field_validator("insights_report_refs")
+    @classmethod
+    def unique_insights_report_refs(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("insights report refs must be unique")
+        return values
+
 
 class ConversationResolvedResourceView(ContractModel):
     source_id: str
@@ -1197,6 +1298,16 @@ class ConversationResolvedResourceView(ContractModel):
     source_revision_id: str | None = None
     document_revision_id: str
     label: str
+
+
+class ConversationTurnSkillView(ContractModel):
+    """One Skill the Turn used: frozen (`manual`/`pinned`) or loaded by the
+    model through `skill.activate` (`auto`)."""
+
+    skill_id: str
+    revision_id: str
+    label: str
+    mode: Literal["manual", "pinned", "auto"]
 
 
 class ConversationTurnInputView(ContractModel):
@@ -1211,11 +1322,24 @@ class ConversationTurnInputView(ContractModel):
     agent_label: str | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
+    skill_notices: list[str] = []
+    skills_used: list[ConversationTurnSkillView] = []
     insights_query_id: str | None = None
 
 
+class AnswerFeedbackRequest(ContractModel):
+    """Owner-only up/down rating on a completed Turn; comment is down-only."""
+
+    rating: Literal["up", "down"]
+    comment: Annotated[str, Field(strict=True, min_length=1, max_length=500)] | None = None
+
+
+class AnswerFeedbackView(ContractModel):
+    rating: Literal["up", "down"]
+    comment: str | None = None
+
+
 class ConversationTurnSummary(ContractModel):
-    relation_citations: list[RelationCitationView] = []
     turn_id: str
     state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
     attempt: StrictInt
@@ -1223,11 +1347,13 @@ class ConversationTurnSummary(ContractModel):
     answer_evidence_snapshot_id: str | None = None
     answer_evidence_snapshot_digest: CanonicalSha256 | None = None
     graph_context_status: (
-        Literal["APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"] | None
+        Literal["APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"]
+        | None
     ) = None
     graph_snapshot_id: str | None = None
     input: ConversationTurnInputView
     trace_id: str | None = None
+    my_feedback: AnswerFeedbackView | None = None
 
 
 class ConversationSummary(ContractModel):
@@ -1325,11 +1451,13 @@ class ConversationEventItem(ContractModel):
         "stage.started",
         "stage.completed",
         "retrieval.hits_ready",
+        "graph.context_ready",
         "rerank.completed",
-        "answer.delta",
-        "answer.reset",
+        # PR 5 (Task 9/12): one `task.step` per native tool call, persisted
+        # the same way every other mid-turn event is (see `ConversationEvent`,
+        # `modules/chat/domain/conversations.py`).
+        "task.step",
         "citation.resolved",
-        "relation_citation.resolved",
         "turn.completed",
         "turn.abstained",
         "turn.degraded",
@@ -1348,18 +1476,6 @@ class ConversationEventItem(ContractModel):
 
 class ConversationEventPage(ContractModel):
     items: list[ConversationEventItem]
-
-
-class GraphSnapshotView(ContractModel):
-    snapshot_id: str
-    source_set_digest: CanonicalSha256
-    source_revision_ids: list[str]
-    document_revision_ids: list[str]
-    status: Literal["CANDIDATE", "READY", "FAILED"]
-
-
-class GraphSnapshotPage(ContractModel):
-    items: list[GraphSnapshotView]
 
 
 class GraphNodeView(ContractModel):
@@ -1390,7 +1506,6 @@ class GraphEvidenceView(ContractModel):
 
 
 class GraphSubgraphView(ContractModel):
-    is_active_snapshot: bool = True
     snapshot_id: str
     nodes: list[GraphNodeView]
     edges: list[GraphEdgeView]
@@ -1398,9 +1513,14 @@ class GraphSubgraphView(ContractModel):
 
 
 class GraphSearchRequest(ContractModel):
-    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     query: Annotated[str, Field(strict=True, min_length=1, max_length=500)]
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+    source_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=50),
+    ] = []
+    graph_version: StrictInt | None = None
 
 
 class GraphNeighborRequest(ContractModel):
@@ -1409,55 +1529,118 @@ class GraphNeighborRequest(ContractModel):
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
 
 
-class GraphSubgraphRequest(ContractModel):
-    snapshot_id: Annotated[str, Field(min_length=1, max_length=128)]
-    edge_ids: Annotated[list[str], Field(min_length=1, max_length=80)]
-
-
 class GraphPathRequest(ContractModel):
-    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    snapshot_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+    max_hops: Annotated[StrictInt, Field(ge=1, le=3)] = 3
+    source_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=50),
+    ] = []
+    graph_version: StrictInt | None = None
 
 
-class GraphOverviewRequest(ContractModel):
-    node_limit: Annotated[StrictInt, Field(ge=1, le=300)] = 150
+class ProjectGraphCommunityView(ContractModel):
+    community_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    label: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    size: StrictInt
 
 
-class GraphOverviewMemberView(ContractModel):
-    snapshot_id: str
-    node_id: str
-    source_id: str
+class ProjectGraphView(ContractModel):
+    graph_version: StrictInt | None = None
+    status: Literal["EMPTY", "MERGING", "READY", "FAILED"]
+    node_count: StrictInt
+    edge_count: StrictInt
+    communities: list[ProjectGraphCommunityView] = []
+    merged_at: datetime | None = None
+    extracting_revision_ids: list[str] = []
+    partial_revision_ids: list[str] = []
 
 
-class GraphOverviewNodeView(ContractModel):
-    overview_node_id: str
-    label: str
-    node_type: str
-    degree: int
-    members: list[GraphOverviewMemberView]
+class ProjectGraphNodeView(ContractModel):
+    node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    label: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    node_type: Annotated[str, Field(strict=True, min_length=1, max_length=32)]
+    canonical_key: Annotated[str, Field(strict=True, min_length=1, max_length=512)]
+    degree: StrictInt
+    community_id: str | None = None
+    aliases: list[str] = []
 
 
-class GraphOverviewEdgeView(ContractModel):
-    overview_edge_id: str
-    source: str
-    target: str
-    relation_type: str
-    support: int
+class ProjectGraphEdgeView(ContractModel):
+    edge_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    target_node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    relation_type: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    relation_label: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    origin: Literal["EXTRACTED", "INFERRED"]
+    confidence: float
 
 
-class GraphOverviewStatsView(ContractModel):
-    source_count: int
-    node_type_counts: dict[str, int]
-    truncated: bool
+class ProjectGraphEvidenceView(ContractModel):
+    owner_kind: Literal["node", "edge"]
+    owner_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    document_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    chunk_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    anchor: dict[str, object]
+    content_digest: CanonicalSha256 | None = None
+    snippet: Annotated[str, Field(strict=True, min_length=1, max_length=300)] | None = None
 
 
-class GraphOverviewView(ContractModel):
-    nodes: list[GraphOverviewNodeView]
-    edges: list[GraphOverviewEdgeView]
-    stats: GraphOverviewStatsView
-    snapshot_ids: list[str]
+class ProjectGraphSubgraphView(ContractModel):
+    graph_version: StrictInt
+    nodes: list[ProjectGraphNodeView]
+    edges: list[ProjectGraphEdgeView]
+    evidence: list[ProjectGraphEvidenceView] = []
+
+
+class ProjectGraphRelationGroupView(ContractModel):
+    relation_type: Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+    edges: list[ProjectGraphEdgeView]
+
+
+class ProjectGraphSourceGroupView(ContractModel):
+    source_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    document_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    source_name: str | None = None
+    evidence: list[ProjectGraphEvidenceView]
+
+
+class ProjectGraphNodeDetailView(ContractModel):
+    graph_version: StrictInt
+    node: ProjectGraphNodeView
+    community: ProjectGraphCommunityView | None = None
+    sources: list[ProjectGraphSourceGroupView] = []
+    relations: list[ProjectGraphRelationGroupView] = []
+    neighbors: list[ProjectGraphNodeView] = []
+
+
+class ProjectGraphNeighborRequest(ContractModel):
+    node_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
+    node_limit: Annotated[StrictInt, Field(ge=1, le=500)] = 50
+    source_revision_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(max_length=50),
+    ] = []
+    graph_version: StrictInt | None = None
+
+
+class ProjectGraphHighlightRequest(ContractModel):
+    edge_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]],
+        Field(min_length=1, max_length=50),
+    ]
+    graph_version: StrictInt | None = None
+
+
+class GraphFragmentRetryView(ContractModel):
+    revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
+    requeued_batches: StrictInt
+    job_status: Literal["PENDING", "RUNNING", "READY", "FAILED"]
 
 
 class TestPlanGenerationRequestBody(ContractModel):
@@ -1725,3 +1908,359 @@ class PromptSuggestionItem(ContractModel):
 
 class PromptSuggestionPage(ContractModel):
     items: list[PromptSuggestionItem]
+
+
+# -- Agent team view (spec 2026-10-22-agent-team-view-design.md, section 5) -
+
+
+class AgentTeamPeriod(ContractModel):
+    from_: date = Field(alias="from")
+    to: date
+
+
+class AgentTeamServedActor(ContractModel):
+    actor_id: str
+    runs: int
+
+
+class AgentTeamTrendPoint(ContractModel):
+    bucket_start: date
+    agent_key: str
+    runs: int
+    failures: int
+    latency_total_ms: int
+    cost_usd: Decimal
+
+
+class AgentTeamMemberRow(ContractModel):
+    agent_key: str
+    name: str
+    kind: Literal["custom", "built_in", "tapper_default"]
+    job_title: str | None
+    owner_actor_id: str | None
+    joined_at: datetime | None
+    status: Literal["active", "idle", "disabled"] | None
+    runs: int | None
+    failures: int | None
+    abstained: int | None
+    canceled: int | None
+    latency_total_ms: int | None
+    latency_p50_ms: int | None
+    cost_usd: Decimal | None
+    served_count: int | None
+    top_served: list[AgentTeamServedActor]
+    last_run_at: datetime | None
+    satisfaction: float | None
+    satisfaction_sample: Literal["ok", "insufficient"]
+    last_maintenance_at: datetime | None
+    pending_feedback: int
+    maintenance: dict[str, int]
+    trend: list[AgentTeamTrendPoint]
+    generation_calls: int | None
+    tool_calls: int | None
+    calls_per_run: float | None
+
+
+class AgentTeamSummary(ContractModel):
+    agent_total: int
+    active: int | None
+    idle: int | None
+    owners_avg: float
+    served_avg: float | None
+    runs: int | None
+    latency_total_ms: int | None
+    cost_usd: Decimal | None
+    maintenance_total: int
+
+
+class AgentTeamPersonRow(ContractModel):
+    actor_id: str
+    owned_agents: int
+    owned_runs: int | None
+    served_by_agents: int | None
+    runs: int | None
+    maintenance: int
+
+
+class AgentTeamOrgChartEdge(ContractModel):
+    from_: str = Field(alias="from")
+    to: str
+    kind: Literal["owns", "serves"]
+
+
+class AgentTeamOrgChart(ContractModel):
+    people: list[str]
+    agents: list[str]
+    edges: list[AgentTeamOrgChartEdge]
+
+
+class AgentTeamPendingFeedbackItem(ContractModel):
+    feedback_id: str
+    agent_key: str
+    turn_id: str
+    conversation_id: str
+    actor_id: str
+    rating: str | None
+    comment: str | None
+    updated_at: datetime
+
+
+class AgentTeamResolvedFeedback(ContractModel):
+    feedback_id: str
+    agent_key: str
+    turn_id: str
+    conversation_id: str
+    actor_id: str
+    rating: str | None
+    comment: str | None
+    updated_at: datetime
+    # Null when the feedback was not pending (plain thumbs-up or withdrawn)
+    # and was returned unchanged instead of resolved.
+    resolved_at: datetime | None
+    resolved_by: str | None
+    resolution_note: str | None
+
+
+class AgentTeamPersonDetail(ContractModel):
+    person: AgentTeamPersonRow
+    owned: list[AgentTeamMemberRow]
+    served: list[AgentTeamMemberRow]
+    pending_feedback: list[AgentTeamPendingFeedbackItem]
+
+
+class AgentTeamHistoryEvent(ContractModel):
+    event_id: str
+    agent_id: str
+    actor_id: str
+    kind: Literal[
+        "revised",
+        "skill_upgraded",
+        "disabled",
+        "enabled",
+        "feedback_resolved",
+        "owner_transferred",
+    ]
+    revision_id: str | None
+    feedback_id: str | None
+    note: str | None
+    occurred_at: datetime
+
+
+class AgentTeamHistoryPage(ContractModel):
+    events: list[AgentTeamHistoryEvent]
+    next_cursor: str | None
+
+
+class AgentTeamPeriodReport(ContractModel):
+    summary: AgentTeamSummary
+    members: list[AgentTeamMemberRow]
+    people: list[AgentTeamPersonRow]
+
+
+class AgentTeamReport(ContractModel):
+    current: AgentTeamPeriodReport
+    previous: AgentTeamPeriodReport
+    previous_period: AgentTeamPeriod
+
+
+class AgentTeamViewEnvelope(ContractModel):
+    """Shared read envelope (spec 5): `runtimeStatus`/`computedAt` (5.1),
+    the echoed period/timezone/granularity (2.1)."""
+
+    runtime_status: Literal["ok", "syncing", "unavailable"]
+    computed_at: datetime
+    timezone: str
+    period: AgentTeamPeriod
+    granularity: Literal["day", "week", "month"]
+
+
+class AgentTeamSummaryView(AgentTeamViewEnvelope):
+    data: AgentTeamSummary
+
+
+class AgentTeamMembersView(AgentTeamViewEnvelope):
+    data: list[AgentTeamMemberRow]
+
+
+class AgentTeamMemberDetail(ContractModel):
+    row: AgentTeamMemberRow
+    current_revision_id: str | None
+    served: list[AgentTeamServedActor]
+    pending_feedback: list[AgentTeamPendingFeedbackItem]
+
+
+class AgentTeamMemberView(AgentTeamViewEnvelope):
+    data: AgentTeamMemberDetail
+
+
+class AgentTeamPeopleView(AgentTeamViewEnvelope):
+    data: list[AgentTeamPersonRow]
+
+
+class AgentTeamPersonView(AgentTeamViewEnvelope):
+    data: AgentTeamPersonDetail
+
+
+class AgentTeamOrgChartView(AgentTeamViewEnvelope):
+    data: AgentTeamOrgChart
+
+
+class AgentTeamReportView(AgentTeamViewEnvelope):
+    data: AgentTeamReport
+
+
+class AgentProfileUpdateRequest(ContractModel):
+    job_title: str | None = None
+
+
+class AgentOwnerTransferRequest(ContractModel):
+    # Not named `actor_id`/`actorId`: the request-scope guard
+    # (`interfaces/http/scope.py::_has_authority`) rejects any request body
+    # carrying a key that normalizes to an identity field (including
+    # `actorId`) as caller-asserted identity, regardless of route -- this
+    # body names the *new owner*, not the caller, so it needs a distinct key.
+    new_owner_actor_id: str
+
+
+class AgentTeamFeedbackResolveRequest(ContractModel):
+    note: str | None = None
+
+
+# -- Skill Hub (spec 2026-11-01-skill-hub-design.md, section 5) -------------
+
+
+class SkillHubSkill(ContractModel):
+    """A Skill and its latest revision (`SkillRecord`); `version` is the
+    display version (SemVer `metadata.version`, else `r<revisionNumber>`).
+    `originActorId` is the importer (an imported latest revision's actor)
+    or else the creator (the first revision's actor)."""
+
+    skill_id: str
+    name: str
+    description: str | None
+    category: SkillCategoryName
+    version: str
+    latest_revision_id: str
+    revision_number: int
+    source_kind: Literal["imported", "authored", "built_in"]
+    origin_kind: Literal["files", "zip", "paste", "authored", "built_in", "unknown"]
+    origin_ref: str | None
+    origin_imported_at: datetime | None
+    origin_actor_id: str
+    owner_actor_id: str
+    owner_assigned_at: datetime
+    status: Literal["enabled", "disabled"]
+    applicable_tasks: list[str]
+    compatibility: str | None
+    updated_at: datetime
+    built_in: bool
+
+
+class SkillHubModeCounts(ContractModel):
+    """Activation runs per mode; not additive across Skills (a run using N
+    Skills counts once for each)."""
+
+    manual: int
+    pinned: int
+    auto: int
+
+
+class SkillHubCatalogItem(ContractModel):
+    skill: SkillHubSkill
+    activations: int
+    by_mode: SkillHubModeCounts
+
+
+class SkillHubRuntimeStats(ContractModel):
+    runs: int
+    failures: int
+    latency_total_ms: int
+    cost_usd: Decimal
+
+
+class SkillHubUsage(ContractModel):
+    """`runtime` is null only while the runtime backend is unavailable;
+    `lastUsedAt` is not limited to the period."""
+
+    by_mode: SkillHubModeCounts
+    users: int
+    satisfaction: float | None
+    satisfaction_sample: Literal["ok", "insufficient"]
+    last_used_at: datetime | None
+    pinned_by_agents: int
+    runtime: SkillHubRuntimeStats | None
+
+
+class SkillHubRankedKey(ContractModel):
+    key: str
+    runs: int
+
+
+class SkillHubDetail(ContractModel):
+    skill: SkillHubSkill
+    usage: SkillHubUsage
+    revisions: list[SkillRevisionSummary]
+    files: list[SkillFileView]
+    pinned_by: list[str]
+    top_agents: list[SkillHubRankedKey]
+    top_callers: list[SkillHubRankedKey]
+
+
+class SkillHubUsagePoint(ContractModel):
+    bucket_start: date
+    mode: Literal["manual", "pinned", "auto"]
+    runs: int
+
+
+class SkillHubUsageSeries(ContractModel):
+    points: list[SkillHubUsagePoint]
+    by_mode: SkillHubModeCounts
+
+
+class SkillHubLibrarySummary(ContractModel):
+    skill_total: int
+    enabled: int
+    used_in_period: int
+    unused: int
+    auto_share: float | None
+    candidate_count: int
+    candidate_limit: int
+
+
+class SkillHubViewEnvelope(ContractModel):
+    """Same read envelope as the Agent team view. The library, summary and
+    usage views are MySQL-only and always report `ok`; only the detail
+    (and the export) can report `syncing`/`unavailable`."""
+
+    runtime_status: Literal["ok", "syncing", "unavailable"]
+    computed_at: datetime
+    timezone: str
+    period: AgentTeamPeriod
+    granularity: Literal["day", "week", "month"]
+
+
+class SkillHubCatalogView(SkillHubViewEnvelope):
+    data: list[SkillHubCatalogItem]
+
+
+class SkillHubDetailView(SkillHubViewEnvelope):
+    data: SkillHubDetail
+
+
+class SkillHubUsageView(SkillHubViewEnvelope):
+    data: SkillHubUsageSeries
+
+
+class SkillHubSummaryView(SkillHubViewEnvelope):
+    data: SkillHubLibrarySummary
+
+
+class SkillProfileUpdateRequest(ContractModel):
+    category: SkillCategoryName
+
+
+class SkillOwnerTransferRequest(ContractModel):
+    # Not `actorId`: the request-scope guard rejects any body key that
+    # normalizes to an identity field as caller-asserted identity (see
+    # `AgentOwnerTransferRequest`).
+    new_owner_actor_id: str

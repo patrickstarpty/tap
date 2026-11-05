@@ -10,7 +10,7 @@
 
 ## 指南
 
-- [TAP 产品原型基准规范](guides/2026-09-22-product-prototype-baseline.md)
+- [TAP 产品原型基准规范](guides/2026-09-22-product-prototype-baseline.md)（2026-10-14 停用，保留作历史）
 - [前端开发上手指引](guides/2026-09-27-frontend-developer-onboarding.md)
 - [后端开发上手指引](guides/2026-09-27-backend-developer-onboarding.md)
 - [Tapper 开发者指南](guides/2026-09-13-tapper-developer-guide.md)
@@ -20,8 +20,6 @@
 - [知识审核工作台](guides/2026-09-27-knowledge-review-workbench.md)
 - [Azure 接入扩展点](guides/2026-09-29-azure-integration.md)
 - [LiteLLM 模型目录指南](guides/2026-09-29-litellm-models.md)
-- [Skills、Agents 与 MCP](guides/2026-11-04-skills-agents-mcp.md)
-- [V1 增量验证记录](guides/2026-11-04-v1-completion-validation.md)
 
 ## 约定
 

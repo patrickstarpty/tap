@@ -61,39 +61,6 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   expect(revision).toBeDefined();
   preparePublishedFixture([revision!.revisionId]);
 
-  const skillName = `conversation-skill-${Date.now()}`;
-  await page.goto("/");
-  await page.getByRole("button", { name: "Skills", exact: true }).click();
-  await page.getByLabel("Import SKILL.md").setInputFiles({
-    name: "SKILL.md",
-    mimeType: "text/markdown",
-    buffer: Buffer.from(
-      `---\nname: ${skillName}\ndescription: Check underwriting evidence.\n---\nUse published evidence and cite sources.`,
-    ),
-  });
-  const importDialog = page.getByRole("dialog", { name: "Import SKILL.md" });
-  await expect(importDialog).toContainText(skillName);
-  await importDialog.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByRole("listitem", { name: skillName })).toBeVisible();
-  const agentName = `Conversation reviewer ${Date.now()}`;
-  await page.getByRole("button", { name: "Agents", exact: true }).click();
-  await page.getByRole("button", { name: "Create agent", exact: true }).click();
-  const agentDialog = page.getByRole("dialog", { name: "Create agent" });
-  await agentDialog
-    .getByRole("textbox", { name: "Name", exact: true })
-    .fill(agentName);
-  await agentDialog
-    .getByRole("textbox", { name: "Description" })
-    .fill("Review underwriting evidence.");
-  await agentDialog
-    .getByRole("textbox", { name: "Instructions" })
-    .fill("Answer from published knowledge and cite evidence.");
-  await agentDialog
-    .getByRole("checkbox", { name: new RegExp(skillName) })
-    .check();
-  await agentDialog.getByRole("button", { name: "Save agent" }).click();
-  await expect(page.getByRole("listitem", { name: agentName })).toBeVisible();
-
   const [agentsResponse, skillsResponse, modelsResponse] = await Promise.all([
     page.request.get(`${root}/ai/agents`),
     page.request.get(`${root}/ai/skills`),
@@ -103,7 +70,13 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   expect(skillsResponse.status()).toBe(200);
   expect(modelsResponse.status()).toBe(200);
   const agents = (await agentsResponse.json()) as {
-    items: Array<{ revisionId: string; displayName: string }>;
+    items: Array<{
+      builtIn: boolean;
+      status: string;
+      isLatest: boolean;
+      revisionId: string;
+      displayName: string;
+    }>;
   };
   const skills = (await skillsResponse.json()) as {
     items: Array<{ revisionId: string; displayName: string }>;
@@ -112,18 +85,13 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     defaultAlias: string;
     items: Array<{ alias: string; displayName: string }>;
   };
-  const selectedAgent = agents.items.find(
-    (item) => item.displayName === agentName,
-  )!;
-  const selectedSkill = skills.items.find(
-    (item) => item.displayName === skillName,
-  )!;
-  expect(selectedAgent).toBeDefined();
-  expect(selectedSkill).toBeDefined();
   const defaultModel = models.items.find(
     (model) => model.alias === models.defaultAlias,
   );
-  expect(agents.items.length).toBeGreaterThan(0);
+  const agent = agents.items.find(
+    (item) => item.builtIn && item.status === "enabled" && item.isLatest,
+  );
+  expect(agent).toBeDefined();
   expect(skills.items.length).toBeGreaterThan(0);
   expect(defaultModel).toBeDefined();
 
@@ -134,10 +102,12 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     .check();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Agents" }).click();
-  await page.getByRole("option", { name: selectedAgent.displayName }).click();
+  await page.getByRole("option", { name: agent!.displayName }).click();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Skills" }).click();
-  await page.getByRole("option", { name: selectedSkill.displayName }).click();
+  await page
+    .getByRole("option", { name: skills.items[0]!.displayName })
+    .click();
   await page
     .getByRole("button", {
       name: `Select model, current model ${defaultModel!.displayName}`,
@@ -147,6 +117,19 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     .getByRole("menuitemradio", { name: defaultModel!.displayName })
     .click();
   await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  // The deterministic turn can finish within a few hundred milliseconds, so
+  // the draft may be on screen for less than one Playwright polling interval.
+  // Record every DOM commit instead of polling for the transient state.
+  await page.evaluate(() => {
+    const seen = { draft: false, citation: false };
+    (window as unknown as { tapperDraftSeen: typeof seen }).tapperDraftSeen =
+      seen;
+    new MutationObserver(() => {
+      if (document.querySelector(".tapper-draft-answer")) seen.draft = true;
+      if (document.querySelector(".tapper-draft-citation"))
+        seen.citation = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
   const acceptedResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -159,6 +142,25 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     conversationId: string;
     turnId: string;
   };
+
+  // The generating draft (`answer.draft` frames assembled into `DraftAnswer`)
+  // must be rendered, with at least one inline citation badge resolved from
+  // `retrieval.hits_ready`, before the turn reaches a terminal state and the
+  // final `GroundedAnswer` replaces it.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                tapperDraftSeen: { draft: boolean; citation: boolean };
+              }
+            ).tapperDraftSeen,
+        ),
+      { timeout: 15_000 },
+    )
+    .toEqual({ draft: true, citation: true });
 
   await expect
     .poll(
@@ -174,6 +176,61 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       { timeout: 45_000 },
     )
     .toMatch(/completed|abstained/u);
+
+  // AnswerFeedback only renders for a "completed" turn (shouldShowAnswerFeedback
+  // in TapperWorkspace.tsx); the preceding poll also accepts "abstained", so
+  // assert the stricter state explicitly here to fail fast with a clear
+  // message if the fixture produced an abstained answer instead.
+  const preFeedbackStateResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const preFeedbackStateBody = (await preFeedbackStateResponse.json()) as {
+    turns: Array<{ state: string }>;
+  };
+  expect(preFeedbackStateBody.turns[0]?.state).toBe("completed");
+
+  // The draft is gone now that the turn is terminal and the final answer
+  // (with its own "Open source citation 1" button, asserted further below)
+  // has replaced it.
+  await expect(page.locator(".tapper-draft-answer")).toHaveCount(0);
+
+  const notHelpfulButton = page.getByRole("button", {
+    name: /^(Not helpful|没帮助)$/u,
+  });
+  await expect(notHelpfulButton).toBeVisible();
+  await notHelpfulButton.click();
+  const feedbackComment = `feedback comment ${Date.now()}`;
+  await page
+    .getByRole("textbox", {
+      name: /^(Add a comment \(optional\)|补充说明（可选）)$/u,
+    })
+    .fill(feedbackComment);
+  const feedbackSubmitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname ===
+        `${root}/conversations/${accepted.conversationId}/turns/${accepted.turnId}/feedback`,
+  );
+  await page.getByRole("button", { name: /^(Submit|提交)$/u }).click();
+  expect((await feedbackSubmitted).status()).toBe(200);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: /^(Not helpful|没帮助)$/u }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const feedbackCheckResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const feedbackCheckBody = (await feedbackCheckResponse.json()) as {
+    turns: Array<{
+      turnId: string;
+      myFeedback: { rating: string; comment: string | null } | null;
+    }>;
+  };
+  const feedbackTurn = feedbackCheckBody.turns.find(
+    (turn) => turn.turnId === accepted.turnId,
+  );
+  expect(feedbackTurn?.myFeedback?.rating).toBe("down");
+  expect(feedbackTurn?.myFeedback?.comment).toBe(feedbackComment);
 
   const traceResponse = await page.request.get(
     `${root}/conversations/${accepted.conversationId}/turns/${accepted.turnId}/trace`,
@@ -234,34 +291,22 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
     items: Array<{
       sequence: number;
       eventType: string;
-      payload: {
-        text?: string;
-        answer?: { citations?: Array<{ citationId: string }> };
-      };
+      payload: { answer?: { citations?: Array<{ citationId: string }> } };
     }>;
   };
   expect(eventPage.items.map((item) => item.eventType)).toEqual(
     expect.arrayContaining([
       "conversation.turn.requested",
-      "answer.delta",
+      "retrieval.hits_ready",
       "turn.completed",
       "conversation.turn.completed",
     ]),
   );
-  // The grounded answer streams: partial text is persisted before the Turn completes.
-  const completedSequence = eventPage.items.find(
-    (item) => item.eventType === "turn.completed",
-  )!.sequence;
-  const deltas = eventPage.items.filter(
-    (item) => item.eventType === "answer.delta",
-  );
-  expect(deltas.length).toBeGreaterThan(0);
-  for (const delta of deltas) {
-    expect(delta.sequence).toBeLessThan(completedSequence);
-  }
-  expect(deltas.map((delta) => delta.payload.text ?? "").join("")).not.toBe("");
+  // `answer.draft` SSE frames carry no MySQL sequence (PR 3) and are never
+  // persisted as `ChatEventEnvelope` rows, so resume uses the durable
+  // `retrieval.hits_ready` event's sequence as the Last-Event-ID instead.
   const resumeFrom = eventPage.items.find(
-    (item) => item.eventType === "answer.delta",
+    (item) => item.eventType === "retrieval.hits_ready",
   )!.sequence;
   const citationId = eventPage.items.find(
     (item) => item.eventType === "turn.completed",
@@ -371,6 +416,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
   const stop = page.getByRole("button", { name: "Stop generating" });
   await expect(stop).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
+  // The `[e2e-cancel]` deterministic gateway hook (Task 9) paces every
+  // piece but the last at the normal 0.02s cadence before holding the long
+  // cancellation delay, so a non-empty draft chunk has already cleared
+  // `DraftBatcher`'s holdback margin and reached Redis by the time Stop is
+  // clickable -- this must be visible before Stop is clicked, not just
+  // after.
+  await expect(page.locator(".tapper-draft-answer").first()).toBeVisible({
+    timeout: 15_000,
+  });
   const canceledPromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -391,8 +445,15 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
         ?.state;
     })
     .toBe("canceled");
+  // `DraftAnswer`'s canceled view (Task 9): the partial draft's "Stopped ·
+  // not verified" / "已停止 · 未核对依据" `role="status"` notice replaces
+  // the "Stop generating" control; the partial draft never joins the
+  // citation system, so no citation badge from the canceled turn is ever
+  // shown.
   await expect(
-    page.getByText("Generation stopped.", { exact: true }),
+    page.getByText(/^(Stopped · not verified|已停止 · 未核对依据)$/u, {
+      exact: true,
+    }),
   ).toBeVisible();
 
   const deleted = await page.request.delete(
@@ -464,12 +525,12 @@ test("durable Conversation uses approved context, resumes SSE, and restores in T
       .getByText(prompt, { exact: true }),
   ).toBeVisible();
   await writeConversationState({
-    agentLabel: selectedAgent.displayName,
+    agentLabel: agent!.displayName,
     citationId: citationId!,
     conversationId: accepted.conversationId,
     modelAlias: models.defaultAlias,
     prompt,
-    skillLabel: selectedSkill.displayName,
+    skillLabel: skills.items[0]!.displayName,
     sourceId: createdSourceId,
     sourceLabel: sourceFilename,
     turnId: accepted.turnId,
@@ -630,6 +691,455 @@ test("a published source's suggested question grounds a Tapper answer", async ({
       headers: {
         Origin: ORIGIN,
         "Idempotency-Key": `suggestion-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
+});
+
+test("an abstained answer replaces the draft", async ({ page }) => {
+  // `AuthorizedRetrieval._hit_is_in_execution` (retrieve.py) admits every
+  // hit whose family/corpus/embedding version match once no `SCOPE`
+  // resource narrows the search, so an unrestricted question almost
+  // always finds *some* evidence in whatever the project already has
+  // published -- there is no content-only way to force a genuinely
+  // empty-evidence abstain deterministically against a shared E2E corpus.
+  // The isolated browser E2E instead appends ` [e2e-abstain]` to the
+  // question, a test-only marker `DeterministicModelGateway` recognizes
+  // (Task 9 fix round 1, `apps/tap-ai-backend/src/tap/testing/
+  // deterministic_model_gateway.py`): it forces the fake model's answer to
+  // carry no inline `[S1]`/`[R1]` markers at all, exactly the shape
+  // `parse_inline_answer` (and a real model, per `KnowledgeModelGateway`'s
+  // platform instruction) already treats as "no grounded claim" --
+  // `verify_answer`'s `if not generation.text and not claims` then
+  // abstains deterministically regardless of what evidence was retrieved.
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  const sourceFilename = `abstain-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `abstain-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Abstain evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as { source: { sourceId: string } };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(sourceFilename, "u") })
+    .check();
+
+  const prompt = `Abstained question ${Date.now()} [e2e-abstain]`;
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toMatch(/abstained|completed/u);
+
+  const stateResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}`,
+  );
+  const stateBody = (await stateResponse.json()) as {
+    turns: Array<{ state: string }>;
+  };
+  // Fail fast with a clear message if the fixture unexpectedly grounded
+  // this question instead of abstaining.
+  expect(stateBody.turns[0]?.state).toBe("abstained");
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: { answer?: { abstained?: boolean } };
+    }>;
+  };
+  const abstainedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.abstained",
+  );
+  expect(abstainedEvent?.payload.answer?.abstained).toBe(true);
+
+  // `GroundedAnswer`'s abstained view (an `Alert` titled from `ANSWER_COPY`)
+  // has replaced whatever was showing while the turn was running -- the
+  // draft is gone and the "Stop generating"/`DraftAnswer` machinery never
+  // lingers past a terminal abstained state.
+  await expect(
+    page.getByText(
+      /^(The selected sources do not contain enough evidence to answer this question\.|所选来源中没有足够证据回答这个问题。)$/u,
+    ),
+  ).toBeVisible();
+  await expect(page.locator(".tapper-draft-answer")).toHaveCount(0);
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `abstain-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
+});
+
+test("multi-step tool calls show steps before the cited answer", async ({
+  page,
+}) => {
+  // LangGraph PR 5 Task 12: `[e2e-tool:knowledge.search:<argument text>]`
+  // is matched by `DeterministicModelGateway`'s fake tool-calling path
+  // (`apps/tap-ai-backend/src/tap/testing/deterministic_model_gateway.py`)
+  // against the question text, forcing one native `knowledge.search` tool
+  // call before the model's final answer -- exercising the real
+  // `model -> tools -> model` round trip end to end (`task.step`
+  // running/completed, `retrieval.hits_ready`, then the cited answer),
+  // not just the deterministic single-shot answer path the other tests
+  // in this file cover.
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  const sourceFilename = `multi-step-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `multi-step-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Multi-step evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as { source: { sourceId: string } };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(sourceFilename, "u") })
+    .check();
+
+  const prompt = `What does the identity policy require ${Date.now()} [e2e-tool:knowledge.search:verified identity evidence]`;
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+
+  // Task 10's fix keeps the `task.step` row rendered in `.tap-task-steps`
+  // after the turn completes (not just transiently while running), so this
+  // asserts the visible text directly instead of a MutationObserver: one
+  // round of the `knowledge.search` tool, showing its terminal "completed"
+  // status in the UI, per locale.
+  await expect(
+    page
+      .locator(".tap-task-steps")
+      .getByText(
+        /Round 1 · Knowledge search · Done|第 1 轮 · 知识检索 · 完成/u,
+      ),
+  ).toBeVisible({ timeout: 10_000 });
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: {
+        tool?: string;
+        status?: string;
+        answer?: { citations?: Array<{ citationId: string }> };
+      };
+    }>;
+  };
+  const toolSteps = eventPage.items.filter(
+    (item) => item.eventType === "task.step",
+  );
+  expect(toolSteps.some((item) => item.payload.status === "completed")).toBe(
+    true,
+  );
+  const completedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  );
+  expect(
+    completedEvent?.payload.answer?.citations?.length ?? 0,
+  ).toBeGreaterThan(0);
+
+  // The finalized answer still shows a citation badge after the tool
+  // round -- the same accessible chip every other grounded answer in this
+  // file asserts on.
+  await expect(
+    page
+      .getByRole("button", {
+        name: /Open source citation 1|打开来源引用 1/u,
+      })
+      .first(),
+  ).toBeVisible({ timeout: 5_000 });
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `multi-step-cleanup-${createdSourceId}`,
+      },
+    },
+  );
+  expect(deleted.status()).toBe(204);
+});
+
+test("a clarification reply renders without citations", async ({ page }) => {
+  // LangGraph PR 5 Task 5/10/12: `[e2e-clarify]` forces the deterministic
+  // fake model to reply with a `CLARIFY:`-prefixed answer -- the Turn
+  // completes with `answerKind = "clarification"` and no claims/citations
+  // (spec gap ruling), rendered through `ClarificationAnswer` instead of
+  // `GroundedAnswer`.
+  //
+  // Fix round 1 (Important 1): with no source selected, `AnswerPlanner.plan`
+  // routes deterministically to `clarify` with `missing=("sources",)`
+  // *before any model call* (`plan_answer.py`), and `_stopped_answer`
+  // (`knowledge_service.py`) answers from the fixed "select an authorized
+  // project source" template -- the fake gateway's own `CLARIFY:` branch is
+  // never reached. A source must be selected, exactly like the multi-step
+  // case, so the Turn's route actually reaches the model and its
+  // `[e2e-clarify]`-driven reply.
+  const runtimeResponse = await page.request.get("/api/v1/runtime-mode");
+  expect(runtimeResponse.status()).toBe(200);
+  const runtime = (await runtimeResponse.json()) as { projectId: string };
+  const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
+
+  const sourceFilename = `clarify-evidence-${Date.now()}.md`;
+  const upload = await page.request.post(`${root}/knowledge/sources`, {
+    headers: {
+      Origin: ORIGIN,
+      "Idempotency-Key": `clarify-source-${Date.now()}`,
+    },
+    multipart: {
+      upload: {
+        name: sourceFilename,
+        mimeType: "text/markdown",
+        buffer: Buffer.from(
+          `# Clarify evidence ${Date.now()}\n\nA policy application requires verified identity evidence.`,
+        ),
+      },
+    },
+  });
+  expect(upload.status()).toBe(202);
+  const uploaded = (await upload.json()) as { source: { sourceId: string } };
+  const createdSourceId = uploaded.source.sourceId;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+        );
+        const detail = (await response.json()) as { readyCount: number };
+        return detail.readyCount;
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
+  const detailResponse = await page.request.get(
+    `${root}/knowledge/sources/${createdSourceId}?limit=50`,
+  );
+  const sourceDetail = (await detailResponse.json()) as {
+    documents: { items: Array<{ revisionId: string; status: string }> };
+  };
+  const revision = sourceDetail.documents.items.find(
+    (item) => item.status === "ready",
+  );
+  expect(revision).toBeDefined();
+  preparePublishedFixture([revision!.revisionId]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: new RegExp(sourceFilename, "u") })
+    .check();
+
+  const prompt = `Which product do you mean ${Date.now()} [e2e-clarify]`;
+  await page.getByRole("textbox", { name: "Message Tapper" }).fill(prompt);
+  const acceptedResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `${root}/conversations`,
+  );
+  await page.getByRole("button", { name: "Send" }).click();
+  const acceptedResponse = await acceptedResponsePromise;
+  expect(acceptedResponse.status()).toBe(202);
+  const accepted = (await acceptedResponse.json()) as {
+    conversationId: string;
+    turnId: string;
+  };
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${root}/conversations/${accepted.conversationId}`,
+        );
+        const body = (await response.json()) as {
+          turns: Array<{ state: string }>;
+        };
+        return body.turns[0]?.state;
+      },
+      { timeout: 45_000 },
+    )
+    .toBe("completed");
+
+  const eventsResponse = await page.request.get(
+    `${root}/conversations/${accepted.conversationId}/events`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const eventPage = (await eventsResponse.json()) as {
+    items: Array<{
+      eventType: string;
+      payload: {
+        answer?: { answerKind?: string; citations?: unknown[] };
+      };
+    }>;
+  };
+  const completedEvent = eventPage.items.find(
+    (item) => item.eventType === "turn.completed",
+  );
+  expect(completedEvent?.payload.answer?.answerKind).toBe("clarification");
+  expect(completedEvent?.payload.answer?.citations).toEqual([]);
+
+  await expect(
+    page.getByText(/^(Needs more information|需要补充信息)$/u),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/请说明你指的是哪个产品或版本|which product or version/iu),
+  ).toBeVisible();
+  // No citation chip and no redaction/injection warning should ever
+  // appear on a clarification -- `claims`/`citations` are contractually
+  // empty.
+  await expect(
+    page.getByRole("button", { name: /Open source citation/u }),
+  ).toHaveCount(0);
+
+  const deleted = await page.request.delete(
+    `${root}/knowledge/sources/${createdSourceId}`,
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `clarify-cleanup-${createdSourceId}`,
       },
     },
   );

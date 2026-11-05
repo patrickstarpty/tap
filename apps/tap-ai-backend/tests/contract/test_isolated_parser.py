@@ -101,6 +101,9 @@ def test_e2e_manifest_preserves_restart_and_security_journeys():
             "tests/e2e/knowledge-review.spec.ts",
             "tests/e2e/tapper-test-plan.spec.ts",
             "tests/e2e/knowledge-graph.spec.ts",
+            "tests/e2e/skills-agents.spec.ts",
+            "tests/e2e/skill-hub.spec.ts",
+            "tests/e2e/agent-team.spec.ts",
         ],
         "app-restart": ["tests/e2e/persistence.spec.ts"],
         "compose-restart": ["tests/e2e/persistence.spec.ts"],
@@ -147,6 +150,54 @@ def test_parser_build_inputs_start_worker_protocol_from_staged_sources(tmp_path)
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == PARSER_VERSION
+
+
+def _module_file(src: Path, module: str) -> Path | None:
+    base = src.joinpath(*module.split("."))
+    for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def test_parser_build_inputs_cover_the_tap_import_closure_of_parser_modules():
+    """A parser module missing from the image whitelist fails every parse at import."""
+    import ast
+
+    root = Path(__file__).resolve().parents[4]
+    src = root / "apps/tap-ai-backend/src"
+    inputs = json.loads((root / "deploy/parser/build-inputs.json").read_text())
+    pending = [
+        "tap.modules.knowledge.adapters.document_parsers",
+        "tap.modules.knowledge.adapters.artifact_codecs",
+        "tap.modules.knowledge.adapters.parser_protocol",
+    ]
+    closure: set[str] = set()
+    while pending:
+        module = pending.pop()
+        path = _module_file(src, module)
+        if path is None or str(path.relative_to(root)) in closure:
+            continue
+        closure.add(str(path.relative_to(root)))
+        tree = ast.parse(path.read_text())
+        type_only = {
+            id(child)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If) and ast.unparse(node.test).endswith("TYPE_CHECKING")
+            for statement in node.body
+            for child in ast.walk(statement)
+        }
+        for node in ast.walk(tree):
+            if id(node) in type_only:
+                continue
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [node.module] + [f"{node.module}.{alias.name}" for alias in node.names]
+            pending.extend(name for name in names if name.startswith("tap."))
+
+    assert closure <= set(inputs["sources"]), sorted(closure - set(inputs["sources"]))
 
 
 def test_parser_build_inputs_include_image_decoder():
@@ -206,7 +257,7 @@ async def test_parser_control_distinguishes_clean_half_close_from_truncation(dat
 
 def native_journey():
     return {
-        "stats": {"expected": 6, "unexpected": 0, "flaky": 0, "skipped": 0},
+        "stats": {"expected": 9, "unexpected": 0, "flaky": 0, "skipped": 0},
         "suites": [
             {
                 "specs": [
@@ -231,6 +282,9 @@ def native_journey():
                 "knowledge-review.spec.ts",
                 "tapper-test-plan.spec.ts",
                 "knowledge-graph.spec.ts",
+                "skills-agents.spec.ts",
+                "skill-hub.spec.ts",
+                "agent-team.spec.ts",
             ]
         ],
     }
@@ -260,7 +314,7 @@ def test_native_e2e_report_rejects_nonpassing_or_incomplete_evidence(drift):
     if drift == "unexpected":
         native["suites"][0]["specs"][0]["file"] = "other.spec.ts"
     if drift == "count":
-        native["stats"]["expected"] = 7
+        native["stats"]["expected"] = 10
     if drift == "error":
         native["errors"] = [{"message": "private error"}]
     with pytest.raises(ValueError):
@@ -291,8 +345,11 @@ def test_native_e2e_projection_preserves_identity_and_discards_content():
         "tests/e2e/knowledge-review.spec.ts",
         "tests/e2e/tapper-test-plan.spec.ts",
         "tests/e2e/knowledge-graph.spec.ts",
+        "tests/e2e/skills-agents.spec.ts",
+        "tests/e2e/skill-hub.spec.ts",
+        "tests/e2e/agent-team.spec.ts",
     }
-    assert result["counts"]["passed"] == 6
+    assert result["counts"]["passed"] == 9
     assert "private canary" not in json.dumps(result)
 
 

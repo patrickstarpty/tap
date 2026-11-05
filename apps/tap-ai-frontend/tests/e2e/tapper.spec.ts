@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type Page, type Request } from "@playwright/test";
 
 import {
@@ -15,7 +16,10 @@ import {
   type JourneyState,
   type SafeDocumentState,
 } from "./fixtureBuilder";
-import { preparePublishedFixture } from "./publicationFixture";
+import {
+  preparePublishedFixture,
+  waitForProjectGraph,
+} from "./publicationFixture";
 
 const STAGES = [
   "stored",
@@ -33,6 +37,11 @@ function knowledgePath(page: Page, suffix: string): string {
   const projectId = projectByPage.get(page);
   if (projectId === undefined) throw new Error("Runtime Project is required");
   return `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge/${suffix}`;
+}
+function projectRoot(page: Page): string {
+  const projectId = projectByPage.get(page);
+  if (projectId === undefined) throw new Error("Runtime Project is required");
+  return `/api/v1/projects/${encodeURIComponent(projectId)}`;
 }
 
 interface DocumentSummary {
@@ -185,6 +194,31 @@ function assertReadyTimeline(detail: DocumentDetail): void {
   }
 }
 
+function assertFailedTimeline(
+  detail: DocumentDetail,
+  failedStage: IngestionStage,
+  safeCode: string,
+): void {
+  expect(detail.status).toBe("failed");
+  expect(detail.stage).toBe(failedStage);
+  expect(detail.errorCode).toBe(safeCode);
+  expect(detail.stages.map((snapshot) => snapshot.stage)).toEqual(STAGES);
+  const failedIndex = STAGES.indexOf(failedStage);
+  for (const [index, snapshot] of detail.stages.entries()) {
+    if (index < failedIndex) {
+      expect(snapshot.state).toBe("completed");
+      expect(typeof snapshot.completedAt).toBe("string");
+      expect(snapshot.errorCode ?? null).toBeNull();
+    } else if (index === failedIndex) {
+      expect(snapshot.state).toBe("failed");
+      expect(snapshot.errorCode).toBe(safeCode);
+    } else {
+      expect(snapshot.state).toBe("pending");
+      expect(snapshot.errorCode ?? null).toBeNull();
+    }
+  }
+}
+
 async function assertLibraryStatus(
   page: Page,
   file: E2EFilePayload,
@@ -225,36 +259,75 @@ async function armFailure(page: Page, stage: string): Promise<void> {
   });
 }
 
-// Transient stage failures are retried automatically with backoff on the same
-// job; the one-shot E2E failure control cannot arm a persistent failure, so the
-// manual retry path is covered by backend ingestion retry tests instead.
-async function failOnceThenRecover(
+async function retryThroughApi(
+  page: Page,
+  current: DocumentReceipt,
+): Promise<DocumentReceipt> {
+  const response = await page.request.post(
+    knowledgePath(page, `documents/${current.document.documentId}/retry`),
+    {
+      headers: {
+        Origin: ORIGIN,
+        "Idempotency-Key": `retry-${current.document.documentId}`,
+      },
+    },
+  );
+  expect(response.status()).toBe(202);
+  return {
+    ...receipt((await response.json()) as unknown),
+    sourceId: current.sourceId,
+  };
+}
+
+async function failOnceThenRetry(
   page: Page,
   stage: "parsing" | "embedding" | "publishing",
+  safeCode: string,
   file: E2EFilePayload,
 ): Promise<{ detail: DocumentDetail; receipt: DocumentReceipt }> {
   await armFailure(page, stage);
-  const accepted = await upload(page, file);
+  let accepted = await upload(page, file);
   const initialDocumentId = accepted.document.documentId;
-  const detail = await waitForStatus(page, initialDocumentId, "ready");
-  assertReadyTimeline(detail);
-  expect(detail.documentId).toBe(initialDocumentId);
-  const documents = await page.request.get(
-    knowledgePath(page, "documents?limit=50"),
+  const initialJobId = accepted.jobId;
+  const failed = await waitForStatus(
+    page,
+    accepted.document.documentId,
+    "failed",
   );
-  expect(documents.status()).toBe(200);
-  const listed = (
-    asObject((await documents.json()) as unknown).items as Array<{
-      documentId: string;
-    }>
-  ).filter((item) => item.documentId === initialDocumentId);
-  expect(listed).toHaveLength(1);
+  assertFailedTimeline(failed, stage, safeCode);
+
+  await assertLibraryStatus(page, file, "Failed");
+  accepted = await retryThroughApi(page, accepted);
+  expect(accepted.document.documentId).toBe(initialDocumentId);
+  expect(accepted.jobId).toBe(initialJobId);
+  const detail = await waitForStatus(
+    page,
+    accepted.document.documentId,
+    "ready",
+  );
+  assertReadyTimeline(detail);
+  const settingsResponse = await page.request.get(
+    knowledgePath(page, `documents/${initialDocumentId}/chunk-settings`),
+  );
+  expect(settingsResponse.status()).toBe(200);
+  const settings = (await settingsResponse.json()) as {
+    originalRevisionId: string;
+  };
+  expect(settings.originalRevisionId).toBe(failed.revisionId);
+  expect(detail.revisionId).not.toBe(settings.originalRevisionId);
   const originalResponse = await page.request.get(
     knowledgePath(page, `documents/${initialDocumentId}/original`),
   );
   expect(originalResponse.status()).toBe(200);
   const originalBytes = await originalResponse.body();
   expect(originalBytes.equals(file.buffer)).toBe(true);
+  expect(
+    `sha256:${createHash("sha256").update(originalBytes).digest("hex")}`,
+  ).toBe(failed.sourceContentHash);
+  // Managed indexing has its own job; original retry checkpoint preservation is
+  // covered in backend test_managed_chunks.py::
+  // test_mutations_persist_reindex_and_fence_old_revisions (real MySQL).
+  // API retry does not invalidate the browser's terminal failed-document cache.
   await page.reload();
   await assertLibraryStatus(page, file, "Ready");
   return { detail, receipt: accepted };
@@ -491,35 +564,14 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     policy!.detail.revisionId,
     selectedReference!.detail.revisionId,
   ]);
-  let readySnapshotId: string | undefined;
-  const graphDeadline = Date.now() + 60_000;
-  while (!readySnapshotId && Date.now() < graphDeadline) {
-    const publishedGraphSnapshots = await page.request.get(
-      knowledgePath(page, "graph/snapshots"),
-      { params: { sourceRevisionId: policy!.detail.revisionId } },
-    );
-    expect(publishedGraphSnapshots.status()).toBe(200);
-    const snapshot = (await publishedGraphSnapshots.json()) as {
-      items: Array<{
-        snapshotId: string;
-        status: "CANDIDATE" | "READY" | "FAILED";
-      }>;
-    };
-    readySnapshotId = snapshot.items.find(
-      (item) => item.status === "READY",
-    )?.snapshotId;
-    if (!readySnapshotId) await page.waitForTimeout(500);
-  }
-  expect(readySnapshotId, "graph snapshot becomes READY").toBeTruthy();
+  await waitForProjectGraph(page, projectRoot(page), [
+    policy!.detail.revisionId,
+  ]);
   const publishedGraph = await page.request.post(
     knowledgePath(page, "graph/query"),
     {
       headers: { Origin: ORIGIN },
-      data: {
-        snapshotId: readySnapshotId!,
-        query: "*",
-        nodeLimit: 500,
-      },
+      data: { query: "*", nodeLimit: 500 },
     },
   );
   expect(publishedGraph.status()).toBe(200);
@@ -555,19 +607,22 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
   }
   expect(policyPreview).toBeDefined();
 
-  const parsing = await failOnceThenRecover(
+  const parsing = await failOnceThenRetry(
     page,
     "parsing",
+    "parser-unavailable",
     fixtures.parsingFailure,
   );
-  const embedding = await failOnceThenRecover(
+  const embedding = await failOnceThenRetry(
     page,
     "embedding",
+    "embedding-unavailable",
     fixtures.embeddingFailure,
   );
-  const publishing = await failOnceThenRecover(
+  const publishing = await failOnceThenRetry(
     page,
     "publishing",
+    "index-unavailable",
     fixtures.publishingFailure,
   );
 

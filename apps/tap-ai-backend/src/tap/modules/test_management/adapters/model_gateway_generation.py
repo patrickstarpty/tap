@@ -7,7 +7,13 @@ import json
 import math
 from typing import cast
 
-from tap.modules.ai.domain.models import ModelOperation, ModelRequest, schema_digest, text_digest
+from tap.modules.ai.domain.models import (
+    ModelOperation,
+    ModelRequest,
+    schema_digest,
+    structured_profile_digest,
+    text_digest,
+)
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.test_management.domain.models import (
     BddKeyword,
@@ -173,9 +179,9 @@ TEST_DESIGN_PROMPT = (
     "Generate Draft "
     "content only; never publish or change workflow state."
 )
-TEST_DESIGN_PROFILE_DIGEST = text_digest(
-    TEST_DESIGN_PROMPT + "\n" + schema_digest(TEST_DESIGN_SCHEMA)
-)
+# Includes the gateway's schema instruction (what the model is shown), so a
+# gateway wording change also retires drafts from the old model route revision.
+TEST_DESIGN_PROFILE_DIGEST = structured_profile_digest(TEST_DESIGN_PROMPT, TEST_DESIGN_SCHEMA)
 
 
 def design_model_revision_id(model_alias: str) -> str:

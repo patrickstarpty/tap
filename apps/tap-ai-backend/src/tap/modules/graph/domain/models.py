@@ -10,9 +10,31 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal, Mapping
 
+from tap.modules.graph.domain.vocabulary import (
+    NODE_ALIAS_LENGTH_MAX,
+    NODE_ALIAS_MAX,
+    NODE_TYPES,
+    RELATION_LABEL_MAX,
+)
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 MAX_GRAPH_DEPTH = 2
+# The public query bound (search/neighbor/path ``node_limit``): how many nodes one
+# API response may return. Unrelated to how many facts a Fragment draft may hold --
+# see MAX_FRAGMENT_NODES below -- the two happened to share this constant only
+# because they were both originally 500.
 MAX_GRAPH_NODES = 500
+# How many nodes/edges a GraphSnapshotDraft (one document's Fragment, or one
+# extraction batch) may hold. The real-model run's largest single document
+# (18 batches) merged to 516 nodes/2,036 edges, just over the previous 500/2,000
+# bound shared with MAX_GRAPH_NODES above; the merge truncated it, silently
+# dropping 16 nodes and 36 edges from the published graph. 3x headroom over that
+# document covers real growth without a per-document cap in sight; the
+# node/edge-count validation this bounds is linear in each (dict/set operations
+# keyed by id), so CPU cost for an actually-oversized document scales the same
+# 3x, not worse.
+MAX_FRAGMENT_NODES = 1_500
+MAX_FRAGMENT_EDGES = 6_000
 
 
 def _identifier(name: str, value: str) -> None:
@@ -28,10 +50,6 @@ def source_set_digest(source_revision_ids: tuple[str, ...]) -> str:
     return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
 
 
-class GraphFactNotFound(LookupError):
-    pass
-
-
 class RelationOrigin(StrEnum):
     EXTRACTED = "EXTRACTED"
     INFERRED = "INFERRED"
@@ -44,7 +62,7 @@ class GraphSnapshot:
     source_revision_ids: tuple[str, ...]
     document_revision_ids: tuple[str, ...]
     source_set_digest: str
-    status: Literal["CANDIDATE", "READY", "FAILED"] = "CANDIDATE"
+    status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"] = "CANDIDATE"
 
     def __post_init__(self) -> None:
         _identifier("snapshot_id", self.snapshot_id)
@@ -55,7 +73,7 @@ class GraphSnapshot:
             raise ValueError("document revisions must be canonical")
         if self.source_set_digest != source_set_digest(self.source_revision_ids):
             raise ValueError("source set digest does not match snapshot")
-        if self.status not in {"CANDIDATE", "READY", "FAILED"}:
+        if self.status not in {"CANDIDATE", "READY", "PARTIAL", "FAILED"}:
             raise ValueError("invalid snapshot status")
 
     @classmethod
@@ -66,7 +84,7 @@ class GraphSnapshot:
         project_id: str,
         source_revision_ids: tuple[str, ...],
         document_revision_ids: tuple[str, ...],
-        status: Literal["CANDIDATE", "READY", "FAILED"] = "CANDIDATE",
+        status: Literal["CANDIDATE", "READY", "PARTIAL", "FAILED"] = "CANDIDATE",
     ) -> GraphSnapshot:
         sources = tuple(sorted(source_revision_ids))
         documents = tuple(sorted(document_revision_ids))
@@ -90,6 +108,7 @@ class GraphNode:
     node_type: str
     canonical_key: str
     evidence_ids: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name, value in (("node_id", self.node_id), ("snapshot_id", self.snapshot_id)):
@@ -101,10 +120,16 @@ class GraphNode:
             or len(self.canonical_key) > 512
         ):
             raise ValueError("node label and canonical key must be nonblank")
-        if self.node_type not in {"ENTITY", "CONCEPT", "REQUIREMENT", "SYSTEM", "ACTOR"}:
+        if self.node_type not in NODE_TYPES:
             raise ValueError("unknown node type")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("node evidence identities must be unique")
+        if (
+            len(self.aliases) > NODE_ALIAS_MAX
+            or len(self.aliases) != len(set(self.aliases))
+            or any(not alias or len(alias) > NODE_ALIAS_LENGTH_MAX for alias in self.aliases)
+        ):
+            raise ValueError("node aliases must be unique, bounded and nonblank")
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +222,7 @@ class GraphEdge:
     origin: RelationOrigin
     confidence: float
     evidence_ids: tuple[str, ...] = ()
+    relation_label: str = ""
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -218,6 +244,8 @@ class GraphEdge:
             raise ValueError("extracted relation requires evidence")
         if self.origin is RelationOrigin.INFERRED and self.evidence_ids:
             raise ValueError("inferred relation cannot claim direct evidence")
+        if len(self.relation_label) > RELATION_LABEL_MAX:
+            raise ValueError("relation label is too long")
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +291,11 @@ class GraphSnapshotDraft:
         evidence_ids = {item.evidence_id for item in self.evidence}
         edge_ids = {item.edge_id for item in self.edges}
         provenance_ids = {item.provenance_id for item in self.provenance}
-        if not self.nodes or len(self.nodes) > MAX_GRAPH_NODES or len(self.edges) > 2_000:
+        if (
+            not self.nodes
+            or len(self.nodes) > MAX_FRAGMENT_NODES
+            or len(self.edges) > MAX_FRAGMENT_EDGES
+        ):
             raise ValueError("graph snapshot exceeds fact bounds")
         if (
             len(node_ids) != len(self.nodes)

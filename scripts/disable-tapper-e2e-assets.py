@@ -19,20 +19,20 @@ async def main() -> None:
     engine = create_async_engine(database_url)
     try:
         async with engine.begin() as connection:
-            # The journey now authors assets as well as using seeds. Every row in
-            # this closed disposable Project is fixture-owned, including imports.
-            for table in ("ai_agent_revision", "skill_revision"):
+            for table, revision_id in (
+                ("ai_agent_revision", "validation-knowledge-agent-v3"),
+                ("skill_revision", "validation-citation-skill-v2"),
+            ):
                 result = await connection.execute(
                     text(
                         f"UPDATE {table} SET status='disabled' "
                         "WHERE enterprise_id='local' AND project_id='tapper-demo' "
-                        "AND status='enabled'"
+                        "AND revision_id=:revision_id AND status='enabled'"
                     ),
+                    {"revision_id": revision_id},
                 )
-                if result.rowcount < 1:
-                    raise RuntimeError(
-                        f"owned {table} had no enabled fixture revisions"
-                    )
+                if result.rowcount != 1:
+                    raise RuntimeError(f"owned {table} revision was not enabled")
     finally:
         await engine.dispose()
 

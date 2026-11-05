@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import inspect
 import io
 import json
 import logging
@@ -77,6 +76,229 @@ def test_otlp_endpoint_accepts_loopback() -> None:
     assert settings.otel_exporter_otlp_endpoint == "http://127.0.0.1:26006"
 
 
+def test_langfuse_settings_default_to_disabled_and_local() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.langfuse_host is None
+    assert settings.langfuse_public_key is None
+    assert settings.langfuse_secret_key is None
+    assert settings.langfuse_environment == "local"
+    assert settings.langfuse_sync_settle_seconds == 60
+    assert settings.trace_redaction_rules is None
+
+
+def test_settings_reject_non_loopback_langfuse_host() -> None:
+    with pytest.raises(ValueError, match="LANGFUSE_HOST"):
+        TapperSettings.from_mapping(
+            S3_SETTINGS
+            | {
+                "LANGFUSE_HOST": "http://10.0.0.5:23000",
+                "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+                "LANGFUSE_SECRET_KEY": "sk-lf-local",
+            }
+        )
+
+
+def test_settings_require_keys_when_host_set() -> None:
+    with pytest.raises(ValueError, match="LANGFUSE_PUBLIC_KEY"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"LANGFUSE_HOST": "http://127.0.0.1:23000"})
+
+
+def test_settings_accept_loopback_langfuse_host_with_keys() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+            "TAP_LANGFUSE_ENVIRONMENT": "tapper-demo",
+            "TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "90",
+        }
+    )
+
+    assert settings.langfuse_host == "http://127.0.0.1:23000"
+    assert settings.langfuse_public_key == "pk-lf-local"
+    assert settings.langfuse_secret_key == "sk-lf-local"
+    assert settings.langfuse_environment == "tapper-demo"
+    assert settings.langfuse_sync_settle_seconds == 90
+
+
+def test_settings_reject_settle_seconds_below_minimum() -> None:
+    with pytest.raises(ValueError, match="TAP_LANGFUSE_SYNC_SETTLE_SECONDS"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "9"})
+
+
+def test_settings_reject_settle_seconds_above_maximum() -> None:
+    with pytest.raises(ValueError, match="TAP_LANGFUSE_SYNC_SETTLE_SECONDS"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_LANGFUSE_SYNC_SETTLE_SECONDS": "86401"})
+
+
+def test_settings_reject_missing_trace_redaction_rules_file(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist.yaml"
+    with pytest.raises(ValueError, match="TAP_TRACE_REDACTION_RULES"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_TRACE_REDACTION_RULES": str(missing)})
+
+
+def test_settings_accept_existing_trace_redaction_rules_file(tmp_path: Path) -> None:
+    rules_path = tmp_path / "custom-rules.yaml"
+    rules_path.write_text("rules: []\n", encoding="utf-8")
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAP_TRACE_REDACTION_RULES": str(rules_path)}
+    )
+
+    assert settings.trace_redaction_rules == rules_path
+
+
+def test_agent_team_runtime_metrics_defaults_to_langfuse() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.agent_team_runtime_metrics == "langfuse"
+
+
+def test_agent_team_runtime_metrics_turn_table_rejected_outside_e2e_mode() -> None:
+    with pytest.raises(ValueError, match="TAP_AGENT_TEAM_RUNTIME_METRICS"):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table"})
+
+
+def test_agent_team_runtime_metrics_turn_table_accepted_in_e2e_mode() -> None:
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table",
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "TAPPER_GRAPH_EXTRACTION_MODE": "fake",
+        }
+    )
+
+    assert settings.agent_team_runtime_metrics == "turn_table"
+
+
+def test_agent_team_service_uses_unavailable_adapter_without_langfuse_host() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import (
+        OwnedResources,
+        _create_agent_team_service,
+        _UnavailableAgentRuntimeMetrics,
+    )
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.langfuse_host is None
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    resources = OwnedResources()
+    try:
+        service = _create_agent_team_service(settings, engine, VALIDATION_SCOPE, resources)
+        assert isinstance(service._metrics._inner, _UnavailableAgentRuntimeMetrics)
+        assert service._check_sync_lag is False
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_agent_team_service_does_not_cache_turn_table_metrics() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import OwnedResources, _create_agent_team_service
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.agent_team.adapters.turn_table_metrics import TurnTableRuntimeMetrics
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table",
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "TAPPER_GRAPH_EXTRACTION_MODE": "fake",
+        }
+    )
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    try:
+        service = _create_agent_team_service(settings, engine, VALIDATION_SCOPE, OwnedResources())
+        assert isinstance(service._metrics._inner, TurnTableRuntimeMetrics)
+        assert service._metrics._ttl_seconds == 0
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_skill_hub_service_uses_unavailable_adapter_without_langfuse_host() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import (
+        OwnedResources,
+        _create_skill_hub_service,
+        _UnavailableSkillRuntimeMetrics,
+    )
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    try:
+        service = _create_skill_hub_service(
+            settings, engine, VALIDATION_SCOPE, OwnedResources(), object()
+        )
+        assert isinstance(service._metrics._inner, _UnavailableSkillRuntimeMetrics)
+        assert service._sync_lag is None
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_skill_hub_service_does_not_cache_turn_table_metrics() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import OwnedResources, _create_skill_hub_service
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.skill_hub.adapters.turn_table_metrics import TurnTableSkillRuntimeMetrics
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "TAP_AGENT_TEAM_RUNTIME_METRICS": "turn_table",
+            "TAP_DEMO_MODE": "e2e",
+            "TAPPER_MODEL_BACKEND": "fake",
+            "TAPPER_GRAPH_EXTRACTION_MODE": "fake",
+        }
+    )
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    try:
+        service = _create_skill_hub_service(
+            settings, engine, VALIDATION_SCOPE, OwnedResources(), object()
+        )
+        assert isinstance(service._metrics._inner, TurnTableSkillRuntimeMetrics)
+        assert service._metrics._cache._ttl_seconds == 0
+        assert service._sync_lag is None
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_skill_hub_service_uses_langfuse_with_sync_lag_when_host_set() -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tap.entrypoints.tapper_runtime import OwnedResources, _create_skill_hub_service
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.skill_hub.adapters.langfuse_metrics import LangfuseSkillRuntimeMetrics
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+        }
+    )
+    engine = create_async_engine("mysql+asyncmy://u:p@127.0.0.1:1/db")
+    resources = OwnedResources()
+    try:
+        service = _create_skill_hub_service(settings, engine, VALIDATION_SCOPE, resources, object())
+        assert isinstance(service._metrics._inner, LangfuseSkillRuntimeMetrics)
+        assert service._metrics._cache._ttl_seconds == 300
+        assert service._sync_lag is not None
+    finally:
+        asyncio.run(resources.aclose())
+        asyncio.run(engine.dispose())
+
+
 def test_settings_read_model_roles() -> None:
     settings = TapperSettings.from_mapping(
         S3_SETTINGS
@@ -100,6 +322,262 @@ def test_settings_defaults() -> None:
         ).vision_model
         == "qwen3-vl-plus"
     )
+
+
+def test_graph_batch_settings_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    # The character budget is the primary batch bound; the chunk count only caps
+    # documents split into very many tiny chunks.
+    assert settings.graph_batch_chars == 3000
+    assert settings.graph_batch_size == 100 and settings.graph_batch_retries == 3
+
+    for name, value in (
+        ("TAPPER_GRAPH_BATCH_SIZE", "0"),
+        ("TAPPER_GRAPH_BATCH_SIZE", "201"),
+        ("TAPPER_GRAPH_BATCH_CHARS", "499"),
+        ("TAPPER_GRAPH_BATCH_CHARS", "50001"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
+def test_turn_max_attempts_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.turn_max_attempts == 3
+
+    for name, value in (
+        ("TAPPER_TURN_MAX_ATTEMPTS", "0"),
+        ("TAPPER_TURN_MAX_ATTEMPTS", "11"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
+def test_redis_stream_socket_timeout_defaults_and_bounds() -> None:
+    """M-1: the socket timeout must stay above `RedisDraftStream`'s 2s block
+    margin with real safety margin, so 3.0s is the floor -- a value at or
+    below that fails fast as a settings error instead of surfacing later as
+    `RedisDraftStream.__init__`'s `ValueError`."""
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.redis_stream_socket_timeout_seconds == 20.0
+
+    for value in ("0", "1", "2", "2.9", "121"):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": value}
+            )
+
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": "3"}
+    )
+    assert settings.redis_stream_socket_timeout_seconds == 3.0
+
+
+def test_turn_budget_defaults_and_bounds() -> None:
+    from tap.platform.budget import TurnBudget
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.turn_budget == TurnBudget()
+
+    for name, value in (
+        ("TAPPER_TURN_MAX_TOOL_ROUNDS", "0"),
+        ("TAPPER_TURN_MAX_TOOL_ROUNDS", "21"),
+        ("TAPPER_TURN_MAX_SECONDS", "5"),
+        ("TAPPER_TURN_MAX_SECONDS", "1801"),
+        ("TAPPER_TURN_MAX_MODEL_CALLS", "0"),
+        ("TAPPER_TURN_MAX_MODEL_CALLS", "51"),
+        ("TAPPER_TURN_MAX_COST_MICROS", "100000001"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
+def test_graph_extraction_budget_settings_are_separate_from_the_model_timeout() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    # 8192 tokens at roughly 45 tokens/s need about 180 s; the deadline leaves
+    # headroom so a long batch is caught as truncation, not as a timeout.
+    assert settings.graph_extraction_timeout_seconds == 240.0
+    assert settings.graph_extraction_max_tokens == 8192
+    # Interactive calls keep their existing deadline.
+    assert settings.model_timeout_seconds == 15.0
+
+    for name, value in (
+        ("TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", "301"),
+        ("TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS", "0"),
+        ("TAPPER_GRAPH_EXTRACTION_MAX_TOKENS", "1023"),
+        ("TAPPER_GRAPH_EXTRACTION_MAX_TOKENS", "32769"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: value})
+
+
+def test_graph_extraction_deadline_must_cover_its_output_budget() -> None:
+    # At least one second per 40 output tokens.
+    for timeout, budget in (("120", "8192"), ("300", "12001"), ("30", "2048")):
+        with pytest.raises(ValueError, match="TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS"):
+            TapperSettings.from_mapping(
+                S3_SETTINGS
+                | {
+                    "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": timeout,
+                    "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS": budget,
+                }
+            )
+    for timeout, budget in (("60", "2048"), ("300", "12000"), ("205", "8192")):
+        settings = TapperSettings.from_mapping(
+            S3_SETTINGS
+            | {
+                "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": timeout,
+                "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS": budget,
+            }
+        )
+        assert settings.graph_extraction_max_tokens == int(budget)
+
+
+def test_default_graph_worker_lease_is_five_minutes() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert module._graph_worker_lease(settings).total_seconds() == 300.0
+
+
+def test_graph_worker_concurrency_defaults_to_four_and_widens_gateway_slots() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.graph_worker_concurrency == 4
+    for value in ("0", "17"):
+        with pytest.raises(ValueError):
+            module.TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAPPER_GRAPH_WORKER_CONCURRENCY": value}
+            )
+
+    wide = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_WORKER_CONCURRENCY": "8"}
+    )
+    assert module._create_embeddings(settings).gateway._config.max_concurrency == 4
+    models = module._create_embeddings(wide, max_concurrency=wide.graph_worker_concurrency)
+    assert models.gateway._config.max_concurrency == 8
+
+
+def test_worker_shutdown_grace_is_bounded_and_reaches_the_loop_settings() -> None:
+    from tap.entrypoints.tapper_ingestion_worker import worker_settings_from_tapper
+
+    module = _runtime()
+    assert module.TapperSettings.from_mapping(S3_SETTINGS).worker_shutdown_grace_seconds == 10.0
+    for value in ("0", "301"):
+        with pytest.raises(ValueError):
+            module.TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS": value}
+            )
+    settings = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_WORKER_SHUTDOWN_GRACE_SECONDS": "30"}
+    )
+    assert worker_settings_from_tapper(settings).shutdown_grace_seconds == 30.0
+
+
+def test_claim_lock_wait_is_bounded_and_reaches_every_claiming_engine() -> None:
+    import asyncio
+
+    from tap.entrypoints import relay_reconciler
+    from tap.platform.db.lock_contention import claim_lock_wait_seconds
+
+    module = _runtime()
+    assert module.TapperSettings.from_mapping(S3_SETTINGS).claim_lock_wait_seconds == 5
+    for value in ("0", "51", "2.5", "five"):
+        with pytest.raises(ValueError):
+            module.TapperSettings.from_mapping(
+                S3_SETTINGS | {"TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS": value}
+            )
+    environment = S3_SETTINGS | {"TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS": "3"}
+    settings = module.TapperSettings.from_mapping(environment)
+    relay = relay_reconciler.load_settings(environment)
+    assert settings.claim_lock_wait_seconds == relay.claim_lock_wait_seconds == 3
+
+    async def configured() -> tuple[int, int]:
+        engine, sessions = module._open_database(settings)
+        relay_engine, relay_sessions = relay_reconciler._open_database(relay)
+        try:
+            return claim_lock_wait_seconds(sessions), claim_lock_wait_seconds(relay_sessions)
+        finally:
+            await engine.dispose()
+            await relay_engine.dispose()
+
+    assert asyncio.run(configured()) == (3, 3)
+
+
+def test_graph_worker_gateway_and_lease_cover_the_extraction_deadline() -> None:
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS": "300"}
+    )
+
+    default_models = module._create_embeddings(settings)
+    graph_models = module._create_embeddings(
+        settings, timeout_ceiling_seconds=settings.graph_extraction_timeout_seconds
+    )
+
+    assert default_models.gateway._config.timeout_seconds == 15.0
+    assert graph_models.gateway._config.timeout_seconds == 300.0
+    # A lease shorter than one model call would lapse mid-batch.
+    assert module._graph_worker_lease(settings).total_seconds() > 300.0
+
+
+def test_graph_alignment_settings_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert (
+        settings.graph_align_embedding,
+        settings.graph_align_threshold,
+        settings.graph_overview_limit,
+        settings.graph_align_embedding_max_nodes,
+    ) == (False, 0.92, 150, 2000)
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_THRESHOLD": "1.5"})
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_THRESHOLD": "-0.1"})
+
+
+def test_graph_reasoning_flags_default_on_and_reject_other_values() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+
+    assert settings.graph_retrieval_augment is True
+    assert settings.graph_reasoning is True
+
+    disabled = TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_REASONING": "0"})
+    assert disabled.graph_reasoning is False
+
+    disabled_augment = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_RETRIEVAL_AUGMENT": "0"}
+    )
+    assert disabled_augment.graph_retrieval_augment is False
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_RETRIEVAL_AUGMENT": "yes"})
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_REASONING": "yes"})
+
+
+def test_graph_align_embedding_max_nodes_defaults_and_bounds() -> None:
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.graph_align_embedding_max_nodes == 2000
+
+    overridden = TapperSettings.from_mapping(
+        S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES": "500"}
+    )
+    assert overridden.graph_align_embedding_max_nodes == 500
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES": "0"})
+
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"TAPPER_GRAPH_ALIGN_EMBEDDING_MAX_NODES": "20001"}
+        )
 
 
 @pytest.mark.parametrize(
@@ -1158,13 +1636,13 @@ def test_review_graph_uses_configured_isolated_parser() -> None:
     assert parser.socket_path == "/tmp/tap-review-parser.sock"
 
 
-def test_graph_store_uses_the_process_snapshot_index_cache() -> None:
-    from tap.modules.graph.adapters.mysql import MysqlGraphStore
-    from tap.modules.graph.application.cache import CachedSnapshotIndexes
-
+@pytest.mark.parametrize("graph_reasoning", [True, False])
+def test_graph_reasoning_flag_controls_whether_relation_analysis_is_wired(
+    graph_reasoning: bool,
+) -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
-    indexes = CachedSnapshotIndexes()
+
     services = module._assemble_http_services(
         repository=SimpleNamespace(scope=VALIDATION_SCOPE),
         artifacts=object(),
@@ -1175,38 +1653,19 @@ def test_graph_store_uses_the_process_snapshot_index_cache() -> None:
         scope_provider=object(),
         authorization_policy=object(),
         graph_sessions=object(),
-        graph_indexes=indexes,
+        graph_reasoning=graph_reasoning,
     )
 
-    assert isinstance(services.graph, MysqlGraphStore)
-    assert services.graph._indexes is indexes
-    assert "graph_indexes=CachedSnapshotIndexes()" in inspect.getsource(module.create_api_runtime)
-
-
-def test_graph_overview_shares_the_process_snapshot_index_cache() -> None:
-    from tap.modules.graph.application.cache import CachedSnapshotIndexes
-    from tap.modules.graph.application.overview import GraphOverviewService
-
-    module = _runtime()
-    settings = module.TapperSettings.from_mapping(valid_settings())
-    indexes = CachedSnapshotIndexes()
-    services = module._assemble_http_services(
-        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
-        artifacts=object(),
-        search=object(),
-        embeddings=module._create_embeddings(settings),
-        readiness=object(),
-        redactor=object(),
-        scope_provider=object(),
-        authorization_policy=object(),
-        graph_sessions=object(),
-        graph_indexes=indexes,
-        review_sessions=object(),
-    )
-
-    assert isinstance(services.graph_overview, GraphOverviewService)
-    assert services.graph_overview._indexes is indexes
-    assert services.graph_overview._store is services.graph
+    retrieval = services.knowledge._answers._knowledge._retrieval
+    if graph_reasoning:
+        assert retrieval._relation_analysis is not None
+    else:
+        assert retrieval._relation_analysis is None
+    # I-2 (Task 6 fix round 1): `KnowledgeHttpService.relations_available` --
+    # whether `graph.relations` can ever succeed for this deployment -- must
+    # track the same `relation_analysis is not None` wiring, not default to
+    # `False` regardless of `graph_reasoning`.
+    assert services.knowledge.relations_available is graph_reasoning
 
 
 def test_runtime_has_no_legacy_combined_model_factory() -> None:
@@ -1274,8 +1733,6 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     monkeypatch.setattr(module, "_create_database", create_database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: blob)
     monkeypatch.setattr(module, "_create_redis", lambda _settings: redis)
-    notification_redis = Resource("notification-redis")
-    monkeypatch.setattr(module, "_create_notification_redis", lambda _settings: notification_redis)
     monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: model)
     monkeypatch.setattr(module, "_create_search", create_search)
 
@@ -1299,12 +1756,12 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     assert runtime.http_services.readiness is readiness
     assert runtime.http_services.knowledge._documents._repository is repository
     assert runtime.failure_controller is None
-    from tap.platform.messaging.redis_chat_notifier import RedisConversationEventNotifier
-
-    conversations = runtime.http_services.conversations
-    assert isinstance(conversations.notifier, RedisConversationEventNotifier)
-    assert conversations.notifier._redis is notification_redis
-    assert conversations.repository.notifier is conversations.notifier
+    # Agent authoring composes the same asset catalog and the runtime's
+    # ModelCatalog, the same way skill authoring composes the asset catalog
+    # and the object store (otherwise every Agent write route 503s).
+    assert runtime.http_services.skill_authoring is not None
+    assert runtime.http_services.agent_authoring is not None
+    assert runtime.http_services.agent_authoring._models is runtime.http_services.model_catalog
     await runtime.aclose()
     await runtime.aclose()
     assert runtime.http_services.chunk_manager.index is chunk_index
@@ -1312,15 +1769,7 @@ async def test_create_api_runtime_owns_real_graph_once_in_reverse_order(monkeypa
     search_adapter = runtime.http_services.knowledge._answers._knowledge._retrieval._search
     assert search_adapter.search_port is search
     assert search_adapter.authority is runtime.http_services.chunk_manager
-    assert events == [
-        "chunk-index",
-        "search",
-        "model",
-        "notification-redis",
-        "redis",
-        "blob",
-        "engine",
-    ]
+    assert events == ["chunk-index", "search", "model", "redis", "blob", "engine"]
 
 
 @pytest.mark.asyncio
@@ -1378,6 +1827,124 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
 
     assert runtime.failure_controller._redis is redis
     assert runtime.failure_controller._project == "tap-tapper-e2e"
+    await runtime.aclose()
+
+
+def test_assemble_http_services_wires_event_wakeups_and_draft_stream() -> None:
+    """`ConversationService` gets `EventWakeups` and `HttpServices` carries the
+    composed `DraftStream`, so the same object the API uses also reaches the
+    generation worker (its `main()` calls `create_api_runtime` directly and
+    reuses `runtime.http_services.conversations`/`.draft_stream`)."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    wakeups = object()
+    draft_stream = object()
+
+    services = module._assemble_http_services(
+        repository=SimpleNamespace(scope=VALIDATION_SCOPE),
+        artifacts=object(),
+        search=object(),
+        embeddings=module._create_embeddings(settings),
+        readiness=object(),
+        redactor=object(),
+        scope_provider=object(),
+        authorization_policy=object(),
+        conversation_sessions=object(),
+        test_plan_sessions=object(),
+        event_wakeups=wakeups,
+        draft_stream=draft_stream,
+    )
+
+    assert services.conversations is not None
+    assert services.conversations._wakeups is wakeups
+    assert services.test_plans is not None
+    assert services.test_plans._repository._wakeups is wakeups
+    assert services.draft_stream is draft_stream
+
+
+@pytest.mark.asyncio
+async def test_create_api_runtime_composes_draft_stream_over_a_dedicated_block_client(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """I-1/I-2: blocking `XREAD` must use a separate client/pool from the
+    general-purpose Redis client, sized and timed by its own settings."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(
+        valid_settings()
+        | {
+            "TAP_REDIS_STREAM_SOCKET_TIMEOUT_SECONDS": "30",
+            "TAP_REDIS_STREAM_POOL_SIZE": "77",
+        }
+    )
+
+    class Resource:
+        async def aclose(self) -> None:
+            return None
+
+    class RedisResource(Resource):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def set(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return True
+
+        async def getdel(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+    engine = Resource()
+    artifacts = Resource()
+    general_redis = RedisResource("general")
+    block_redis = RedisResource("block")
+    search = Resource()
+    chunk_index = Resource()
+    captured: dict[str, object] = {}
+
+    async def database(_settings):  # type: ignore[no-untyped-def]
+        return engine, SimpleNamespace(scope=VALIDATION_SCOPE)
+
+    async def create_search(_settings, *, audit_sink, owners=None):  # type: ignore[no-untyped-def]
+        return search, object(), object()
+
+    def create_redis_stream_block_client(received_settings):  # type: ignore[no-untyped-def]
+        captured["block_client_settings"] = received_settings
+        return block_redis
+
+    def assemble_http_services(**kwargs):  # type: ignore[no-untyped-def]
+        captured["event_wakeups"] = kwargs.get("event_wakeups")
+        captured["draft_stream"] = kwargs.get("draft_stream")
+        return HttpServices()
+
+    monkeypatch.setattr(module, "_create_database", database)
+    monkeypatch.setattr(module, "_create_blob", lambda _settings: artifacts)
+    monkeypatch.setattr(module, "_create_redis", lambda _settings: general_redis)
+    monkeypatch.setattr(
+        module, "_create_redis_stream_block_client", create_redis_stream_block_client
+    )
+    monkeypatch.setattr(module, "_create_embeddings", lambda _settings, **_kwargs: object())
+    monkeypatch.setattr(module, "_create_search", create_search)
+
+    async def create_index(_settings, _engine):
+        return chunk_index
+
+    monkeypatch.setattr(module, "_create_document_index", create_index)
+    monkeypatch.setattr(module, "_create_readiness", lambda **_kwargs: object())
+
+    async def create_asset_catalog(*_args):  # type: ignore[no-untyped-def]
+        return object()
+
+    monkeypatch.setattr(module, "_create_asset_catalog", create_asset_catalog)
+    monkeypatch.setattr(module, "_assemble_http_services", assemble_http_services)
+
+    runtime = await module.create_api_runtime(settings)
+
+    assert captured["block_client_settings"] is settings
+    event_wakeups = captured["event_wakeups"]
+    draft_stream = captured["draft_stream"]
+    assert event_wakeups is not None and draft_stream is not None
+    assert event_wakeups._redis is general_redis
+    assert draft_stream._redis is general_redis
+    assert draft_stream._block_redis is block_redis
+    assert draft_stream.max_block_ms == 28_000  # 30s - the 2s block margin
     await runtime.aclose()
 
 
@@ -1493,6 +2060,34 @@ async def test_real_adapter_helpers_build_only_closed_configs_without_provider_i
 
 
 @pytest.mark.asyncio
+async def test_embed_documents_keeps_phone_and_id_numbers_unredacted() -> None:
+    """C1 residual: `_create_embeddings`'s `KnowledgeModelGateway` must wire
+    a dedicated v1 `embedding_redact` (`_redact_model_context`), distinct
+    from the chat-only v2 `redact` (`_redact_chat_egress`) -- so document
+    ingestion, the graph-merge label embedder, and retrieval query
+    embedding never silently drop phone/ID numbers from indexed text
+    (which would also collapse two labels differing only by such a number
+    onto the same vector), while the chat answer context still redacts
+    them."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    model = module._create_embeddings(settings)
+
+    assert model._embedding_redact is module._redact_model_context
+    assert model._redact is module._redact_chat_egress
+    assert model._embedding_redact is not model._redact
+
+    embedded = await model._embedding_redact("hotline 13800138000, id 11010519491231002X")
+    assert embedded == "hotline 13800138000, id 11010519491231002X"
+
+    chat_redacted = await model._redact("hotline 13800138000, id 11010519491231002X")
+    assert "13800138000" not in chat_redacted
+    assert "11010519491231002X" not in chat_redacted
+
+    await model.aclose()
+
+
+@pytest.mark.asyncio
 async def test_database_helper_disposes_engine_if_repository_construction_fails(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1508,7 +2103,7 @@ async def test_database_helper_disposes_engine_if_repository_construction_fails(
     engine = Engine()
     monkeypatch.setattr(module, "_open_database", lambda _settings: (engine, object()))
 
-    def fail_repository(_sessions, *, scope, default_chat_model):  # type: ignore[no-untyped-def]
+    def fail_repository(_sessions, **_kwargs):  # type: ignore[no-untyped-def]
         raise primary
 
     monkeypatch.setattr(module, "_build_document_repository", fail_repository)
@@ -1741,8 +2336,15 @@ async def test_graph_worker_runtime_is_independent_and_owns_only_its_resources(
 
     runtime = await module.create_graph_worker_runtime(settings)
 
-    assert runtime.worker._artifacts is blob
-    assert runtime.worker._worker_id == settings.worker_id + "-graph"
+    from tap.modules.graph.application.merge_worker import MergingGraphWorker
+
+    # The project merge runs alongside extraction, not only after it.
+    assert isinstance(runtime.worker, MergingGraphWorker)
+    assert runtime.pending_work is None
+    # The worker's own merge requests coalesce over a short window.
+    assert runtime.worker._merge._queue._debounce.total_seconds() == 5
+    assert runtime.worker.extraction._artifacts is blob
+    assert runtime.worker.extraction._worker_id == settings.worker_id + "-graph"
     assert runtime.wakeups._group_name == "tapper-graph"
     assert runtime.wakeups._aggregate_type == "GraphSnapshot"
     await runtime.resources[0].aclose()
@@ -2643,3 +3245,61 @@ def test_vision_timeout_override_keeps_text_requests_and_unconfigured_gateway_bo
     assert settings.vision_timeout_seconds == 45
     assert models.gateway._config.timeout_seconds == 45
     assert models.timeout_seconds == 15
+
+
+def test_planner_timeout_defaults_to_the_measured_budget_and_wires_into_the_planner():
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    assert settings.planner_timeout_seconds == 6.0
+    models = module._create_embeddings(settings)
+    planner = module._answer_planner(models, timeout_seconds=settings.planner_timeout_seconds)
+    assert planner._timeout_seconds == 6.0
+
+    custom = module.TapperSettings.from_mapping(
+        valid_settings() | {"TAPPER_PLANNER_TIMEOUT_SECONDS": "4.5"}
+    )
+    assert custom.planner_timeout_seconds == 4.5
+
+
+def test_stream_idle_and_max_timeouts_default_and_wire_into_the_gateway():
+    """Capability-4 validation D3: streamed answers get an idle and an overall
+    bound of their own instead of sharing the 15 s model timeout."""
+    module = _runtime()
+    settings = module.TapperSettings.from_mapping(valid_settings())
+    assert settings.model_stream_idle_seconds == 15.0
+    assert settings.model_stream_max_seconds == 180.0
+    config = module._create_embeddings(settings).gateway._config
+    assert (config.stream_idle_seconds, config.stream_max_seconds) == (15.0, 180.0)
+
+    custom = module.TapperSettings.from_mapping(
+        valid_settings()
+        | {"TAPPER_MODEL_STREAM_IDLE_SECONDS": "20", "TAPPER_MODEL_STREAM_MAX_SECONDS": "240"}
+    )
+    config = module._create_embeddings(custom).gateway._config
+    assert (config.stream_idle_seconds, config.stream_max_seconds) == (20.0, 240.0)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TAPPER_MODEL_STREAM_IDLE_SECONDS", "0"),
+        ("TAPPER_MODEL_STREAM_IDLE_SECONDS", "61"),
+        ("TAPPER_MODEL_STREAM_MAX_SECONDS", "nan"),
+        ("TAPPER_MODEL_STREAM_MAX_SECONDS", "301"),
+    ],
+)
+def test_stream_timeouts_are_bounded_settings(name, value):
+    module = _runtime()
+    with pytest.raises(ValueError, match=name):
+        module.TapperSettings.from_mapping(valid_settings() | {name: value})
+
+
+@pytest.mark.parametrize("value", ["0", "nan", "16"])
+def test_planner_timeout_must_fit_inside_the_model_gateway_timeout(value):
+    """The gateway rejects a request whose timeout exceeds its own, which the
+    planner would silently report as an invalid plan on every turn."""
+    module = _runtime()
+    with pytest.raises(ValueError, match="TAPPER_PLANNER_TIMEOUT_SECONDS"):
+        module.TapperSettings.from_mapping(
+            valid_settings() | {"TAPPER_PLANNER_TIMEOUT_SECONDS": value}
+        )

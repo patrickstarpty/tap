@@ -81,22 +81,7 @@ export function LibraryWorkspace({
   const [loadFailed, setLoadFailed] = useState(() =>
     isPrototypeFaultActive("library-load-failed"),
   );
-  const [graphView, setGraphView] = useState<GraphView>(() => {
-    const sourceId = new URLSearchParams(window.location.search).get(
-      "graphSource",
-    );
-    return sourceId ? { kind: "source", sourceId } : { kind: "domain" };
-  });
-  const [citedSnapshot, setCitedSnapshot] = useState(
-    () =>
-      new URLSearchParams(window.location.search).get("snapshot") ===
-      "prototype-health-disclosure",
-  );
-  const highlightedEdgeIds = (
-    new URLSearchParams(window.location.search).get("highlight") ?? ""
-  )
-    .split(",")
-    .filter(Boolean);
+  const [graphView, setGraphView] = useState<GraphView>({ kind: "domain" });
   const [graphLoadFailed, setGraphLoadFailed] = useState(() =>
     isPrototypeFaultActive("graph-load-failed"),
   );
@@ -280,315 +265,276 @@ export function LibraryWorkspace({
         </div>
       ) : (
         <>
-          <div className="tap-library-toolbar">
-            <div
-              className="tap-section-tabs"
-              role="tablist"
-              aria-label={copy.library.heading}
+        <div className="tap-library-toolbar">
+          <div
+            className="tap-section-tabs"
+            role="tablist"
+            aria-label={copy.library.heading}
+          >
+            <button
+              ref={graphTabRef}
+              id="tap-library-graph-tab"
+              type="button"
+              role="tab"
+              aria-selected={mode === "graph"}
+              aria-controls="tap-library-graph-panel"
+              tabIndex={mode === "graph" ? 0 : -1}
+              onClick={() => setMode("graph")}
+              onKeyDown={(event) => handleTabKeyDown(event, "graph")}
             >
-              <button
-                ref={graphTabRef}
-                id="tap-library-graph-tab"
-                type="button"
-                role="tab"
-                aria-selected={mode === "graph"}
-                aria-controls="tap-library-graph-panel"
-                tabIndex={mode === "graph" ? 0 : -1}
-                onClick={() => setMode("graph")}
-                onKeyDown={(event) => handleTabKeyDown(event, "graph")}
-              >
-                {copy.library.knowledgeGraph}
-              </button>
-              <button
-                ref={listTabRef}
-                id="tap-library-list-tab"
-                type="button"
-                role="tab"
-                aria-selected={mode === "list"}
-                aria-controls="tap-library-list-panel"
-                tabIndex={mode === "list" ? 0 : -1}
-                onClick={() => setMode("list")}
-                onKeyDown={(event) => handleTabKeyDown(event, "list")}
-              >
-                {copy.library.all}
-              </button>
-            </div>
-            <div className="tap-library-filters">
-              <div className="tap-library-search-actions">
-                <Input
-                  className="tap-library-search"
-                  aria-label={copy.library.search}
-                  placeholder={copy.library.search}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <Button
-                  className="tap-library-clear"
-                  disabled={!filtersActive}
-                  onClick={() => {
-                    setQuery("");
-                    setTypeFilter("all");
-                    setStatusFilter("all");
-                  }}
-                >
-                  {copy.library.clearFilters}
-                </Button>
-              </div>
-              <label>
-                <span>{copy.library.typeFilter}</span>
-                <select
-                  aria-label={copy.library.typeFilter}
-                  value={typeFilter}
-                  onChange={(event) => setTypeFilter(event.target.value)}
-                >
-                  <option value="all">{copy.library.allTypes}</option>
-                  {availableTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>{copy.library.statusFilter}</span>
-                <select
-                  aria-label={copy.library.statusFilter}
-                  value={statusFilter}
-                  onChange={(event) =>
-                    setStatusFilter(event.target.value as LibraryStatusFilter)
-                  }
-                >
-                  <option value="all">{copy.library.allStatuses}</option>
-                  <option value="ready">{copy.library.ready}</option>
-                  <option value="processing">{copy.library.processing}</option>
-                  <option value="failed">{copy.library.failed}</option>
-                </select>
-              </label>
-              <span className="tap-library-result-count" aria-live="polite">
-                {visibleSources.length}/{sources.length}{" "}
-                {copy.library.sourceCount}
-              </span>
-            </div>
+              {copy.library.knowledgeGraph}
+            </button>
+            <button
+              ref={listTabRef}
+              id="tap-library-list-tab"
+              type="button"
+              role="tab"
+              aria-selected={mode === "list"}
+              aria-controls="tap-library-list-panel"
+              tabIndex={mode === "list" ? 0 : -1}
+              onClick={() => setMode("list")}
+              onKeyDown={(event) => handleTabKeyDown(event, "list")}
+            >
+              {copy.library.all}
+            </button>
           </div>
-
-          {mode === "list" ? (
-            <div
-              id="tap-library-list-panel"
-              role="tabpanel"
-              aria-labelledby="tap-library-list-tab"
-            >
-              <div
-                className="tap-library-view-switch"
-                role="group"
-                aria-label={copy.library.sources}
+          <div className="tap-library-filters">
+            <div className="tap-library-search-actions">
+              <Input
+                className="tap-library-search"
+                aria-label={copy.library.search}
+                placeholder={copy.library.search}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <Button
+                className="tap-library-clear"
+                disabled={!filtersActive}
+                onClick={() => {
+                  setQuery("");
+                  setTypeFilter("all");
+                  setStatusFilter("all");
+                }}
               >
-                <Button
-                  type="text"
-                  aria-label={copy.library.cardView}
-                  title={copy.library.cardView}
-                  aria-pressed={view === "cards"}
-                  icon={<AppstoreOutlined />}
-                  onClick={() => setView("cards")}
-                />
-                <Button
-                  type="text"
-                  aria-label={copy.library.listView}
-                  title={copy.library.listView}
-                  aria-pressed={view === "list"}
-                  icon={<BarsOutlined />}
-                  onClick={() => setView("list")}
-                />
-              </div>
-              <div className="tap-library-browser">
-                <div>
-                  {visibleSources.length === 0 ? (
-                    <div className="tap-catalog-empty">
-                      {copy.library.noResults}
-                    </div>
-                  ) : (
-                    <ul
-                      className={`tap-library-list tap-file-list${view === "cards" ? " tap-file-list--cards" : ""}`}
-                      aria-label={copy.library.sources}
-                    >
-                      {visibleSources.map((source) => (
-                        <li key={source.id}>
-                          <div className="tap-file-summary">
-                            <FileTypeIcon type={source.type} />
-                            <span className="tap-library-source-copy">
-                              <strong>{source.name}</strong>
-                              <span>
-                                {source.isExample
-                                  ? `${copy.library.example} · `
-                                  : ""}
-                                {source.description}
-                              </span>
+                {copy.library.clearFilters}
+              </Button>
+            </div>
+            <label>
+              <span>{copy.library.typeFilter}</span>
+              <select
+                aria-label={copy.library.typeFilter}
+                value={typeFilter}
+                onChange={(event) => setTypeFilter(event.target.value)}
+              >
+                <option value="all">{copy.library.allTypes}</option>
+                {availableTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{copy.library.statusFilter}</span>
+              <select
+                aria-label={copy.library.statusFilter}
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(event.target.value as LibraryStatusFilter)
+                }
+              >
+                <option value="all">{copy.library.allStatuses}</option>
+                <option value="ready">{copy.library.ready}</option>
+                <option value="processing">{copy.library.processing}</option>
+                <option value="failed">{copy.library.failed}</option>
+              </select>
+            </label>
+            <span className="tap-library-result-count" aria-live="polite">
+              {visibleSources.length}/{sources.length} {copy.library.sourceCount}
+            </span>
+          </div>
+        </div>
+
+        {mode === "list" ? (
+          <div
+            id="tap-library-list-panel"
+            role="tabpanel"
+            aria-labelledby="tap-library-list-tab"
+          >
+            <div
+              className="tap-library-view-switch"
+              role="group"
+              aria-label={copy.library.sources}
+            >
+              <Button
+                type="text"
+                aria-label={copy.library.cardView}
+                title={copy.library.cardView}
+                aria-pressed={view === "cards"}
+                icon={<AppstoreOutlined />}
+                onClick={() => setView("cards")}
+              />
+              <Button
+                type="text"
+                aria-label={copy.library.listView}
+                title={copy.library.listView}
+                aria-pressed={view === "list"}
+                icon={<BarsOutlined />}
+                onClick={() => setView("list")}
+              />
+            </div>
+            <div className="tap-library-browser">
+              <div>
+                {visibleSources.length === 0 ? (
+                  <div className="tap-catalog-empty">
+                    {copy.library.noResults}
+                  </div>
+                ) : (
+                  <ul
+                    className={`tap-library-list tap-file-list${view === "cards" ? " tap-file-list--cards" : ""}`}
+                    aria-label={copy.library.sources}
+                  >
+                    {visibleSources.map((source) => (
+                      <li key={source.id}>
+                        <div className="tap-file-summary">
+                          <FileTypeIcon type={source.type} />
+                          <span className="tap-library-source-copy">
+                            <strong>{source.name}</strong>
+                            <span>
+                              {source.isExample
+                                ? `${copy.library.example} · `
+                                : ""}
+                              {source.description}
                             </span>
-                            {view === "cards" ? (
-                              <div
-                                className="tap-file-card-content"
-                                aria-hidden="true"
-                              >
-                                <FileContent
-                                  source={source}
-                                  fallback={copy.library.noPreview}
-                                />
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="tap-file-actions">
-                            <span
-                              className="tap-library-status"
-                              data-status={source.status}
+                          </span>
+                          {view === "cards" ? (
+                            <div
+                              className="tap-file-card-content"
+                              aria-hidden="true"
                             >
-                              {sourceStatus(source)}
-                            </span>
-                            {source.reviewState && onInspectSource ? (
-                              <Button
-                                type="text"
-                                aria-label={`${copy.navigation.library === "Library" ? "Manage chunks" : "管理切片"} ${source.name}`}
-                                onClick={(event) =>
-                                  onInspectSource(
-                                    source.id,
-                                    event.currentTarget,
-                                  )
-                                }
-                              >
-                                {copy.navigation.library === "Library"
-                                  ? "Manage chunks"
-                                  : "管理切片"}
-                              </Button>
-                            ) : null}
+                              <FileContent
+                                source={source}
+                                fallback={copy.library.noPreview}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="tap-file-actions">
+                          <span
+                            className="tap-library-status"
+                            data-status={source.status}
+                          >
+                            {sourceStatus(source)}
+                          </span>
+                          {source.reviewState && onInspectSource ? (
                             <Button
                               type="text"
-                              aria-label={`${copy.library.viewSourceButton} ${source.name}`}
+                              aria-label={`${copy.navigation.library === "Library" ? "Manage chunks" : "管理切片"} ${source.name}`}
                               onClick={(event) =>
-                                openDetail(source.id, event.currentTarget)
+                                onInspectSource(source.id, event.currentTarget)
                               }
                             >
-                              {copy.library.viewSourceButton}
+                              {copy.navigation.library === "Library"
+                                ? "Manage chunks"
+                                : "管理切片"}
                             </Button>
-                            {source.downloadUrl ? (
-                              <a
-                                className="tap-file-download"
-                                href={source.downloadUrl}
-                                download={source.name}
-                                aria-label={`${copy.library.download} ${source.name}`}
-                                title={copy.library.download}
-                              >
-                                <DownloadOutlined aria-hidden="true" />
-                              </a>
-                            ) : null}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                          ) : null}
+                          <Button
+                            type="text"
+                            aria-label={`${copy.library.viewSourceButton} ${source.name}`}
+                            onClick={(event) =>
+                              openDetail(source.id, event.currentTarget)
+                            }
+                          >
+                            {copy.library.viewSourceButton}
+                          </Button>
+                          {source.downloadUrl ? (
+                            <a
+                              className="tap-file-download"
+                              href={source.downloadUrl}
+                              download={source.name}
+                              aria-label={`${copy.library.download} ${source.name}`}
+                              title={copy.library.download}
+                            >
+                              <DownloadOutlined aria-hidden="true" />
+                            </a>
+                          ) : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
-          ) : (
-            <div
-              id="tap-library-graph-panel"
-              role="tabpanel"
-              aria-labelledby="tap-library-graph-tab"
-            >
-              {graphLoadFailed ? (
-                <div className="tap-library-load-error">
-                  <p role="alert">{copy.library.graphLoadFailed}</p>
-                  <Button
-                    onClick={() => {
-                      clearPrototypeFault("graph-load-failed");
-                      setGraphLoadFailed(false);
-                    }}
-                  >
-                    {copy.navigation.retry}
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <GraphViewSwitch
+          </div>
+        ) : (
+          <div
+            id="tap-library-graph-panel"
+            role="tabpanel"
+            aria-labelledby="tap-library-graph-tab"
+          >
+            {graphLoadFailed ? (
+              <div className="tap-library-load-error">
+                <p role="alert">{copy.library.graphLoadFailed}</p>
+                <Button
+                  onClick={() => {
+                    clearPrototypeFault("graph-load-failed");
+                    setGraphLoadFailed(false);
+                  }}
+                >
+                  {copy.navigation.retry}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <GraphViewSwitch
+                  copy={copy}
+                  sources={facetSources}
+                  value={graphView}
+                  onChange={setGraphView}
+                />
+                {graphView.kind === "domain" ? (
+                  <KnowledgeGraph
                     copy={copy}
+                    query={query}
                     sources={facetSources}
-                    value={graphView}
-                    onChange={setGraphView}
+                    onViewSource={(source) => {
+                      setQuery(source.name);
+                      setMode("list");
+                      listTabRef.current?.focus();
+                    }}
                   />
-                  {graphView.kind === "domain" ? (
-                    <KnowledgeGraph
-                      copy={copy}
-                      query={query}
-                      sources={facetSources}
-                      onViewSource={(source) => {
-                        setQuery(source.name);
-                        setMode("list");
-                        listTabRef.current?.focus();
-                      }}
-                    />
-                  ) : (
-                    (() => {
-                      const selectedSource =
-                        sources.find(
-                          (source) => source.id === graphView.sourceId,
-                        ) ?? null;
-                      if (
-                        !selectedSource ||
-                        (!selectedSource.hasPublishedGraph && !citedSnapshot)
-                      ) {
-                        return (
-                          <div className="tap-catalog-empty">
-                            {copy.library.graphEmpty}
-                          </div>
-                        );
-                      }
+                ) : (
+                  (() => {
+                    const selectedSource =
+                      sources.find(
+                        (source) => source.id === graphView.sourceId,
+                      ) ?? null;
+                    if (!selectedSource?.hasPublishedGraph) {
                       return (
-                        <>
-                          {citedSnapshot ? (
-                            <Button
-                              onClick={() => {
-                                const url = new URL(window.location.href);
-                                url.searchParams.delete("snapshot");
-                                url.searchParams.delete("highlight");
-                                window.history.replaceState(
-                                  null,
-                                  "",
-                                  `${url.pathname}${url.search}`,
-                                );
-                                setCitedSnapshot(false);
-                              }}
-                            >
-                              {copy.navigation.library === "知识库"
-                                ? "返回当前图谱"
-                                : "Back to current graph"}
-                            </Button>
-                          ) : null}
-                          {citedSnapshot &&
-                          !selectedSource.hasPublishedGraph ? (
-                            <p role="status">
-                              {copy.navigation.library === "知识库"
-                                ? "图谱已更新，显示的是历史快照。"
-                                : "The graph has been updated. Showing the historical snapshot."}
-                            </p>
-                          ) : null}
-                          <KnowledgeGraph
-                            copy={copy}
-                            query={query}
-                            sources={[selectedSource]}
-                            highlightedEdgeIds={
-                              citedSnapshot ? highlightedEdgeIds : []
-                            }
-                            onViewSource={(source) => {
-                              setQuery(source.name);
-                              setMode("list");
-                              listTabRef.current?.focus();
-                            }}
-                          />
-                        </>
+                        <div className="tap-catalog-empty">
+                          {copy.library.graphEmpty}
+                        </div>
                       );
-                    })()
-                  )}
-                </>
-              )}
-            </div>
-          )}
+                    }
+                    return (
+                      <KnowledgeGraph
+                        copy={copy}
+                        query={query}
+                        sources={[selectedSource]}
+                        onViewSource={(source) => {
+                          setQuery(source.name);
+                          setMode("list");
+                          listTabRef.current?.focus();
+                        }}
+                      />
+                    );
+                  })()
+                )}
+              </>
+            )}
+          </div>
+        )}
         </>
       )}
 

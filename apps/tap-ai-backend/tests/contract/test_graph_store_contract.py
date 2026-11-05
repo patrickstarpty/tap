@@ -62,15 +62,13 @@ def _draft(identity: str = "snapshot-1") -> GraphSnapshotDraft:
 
 
 @pytest.mark.asyncio
-async def test_publish_replaces_only_the_same_project_and_source_set_active_pointer():
+async def test_publish_keeps_each_snapshot_retrievable_by_its_own_id():
     store = InMemoryGraphStore()
     first = await store.publish(VALIDATION_SCOPE, _draft("snapshot-1"))
     await store.publish(VALIDATION_SCOPE, _draft("snapshot-2"))
     assert first.snapshot_id == "snapshot-1"
-    assert (
-        await store.active_snapshot(VALIDATION_SCOPE, ("source-revision-1",))
-    ).snapshot_id == "snapshot-2"
     assert (await store.get_snapshot(VALIDATION_SCOPE, "snapshot-1")).snapshot_id == "snapshot-1"
+    assert (await store.get_snapshot(VALIDATION_SCOPE, "snapshot-2")).snapshot_id == "snapshot-2"
 
 
 @pytest.mark.asyncio
@@ -83,7 +81,6 @@ async def test_cross_project_reads_return_no_graph_facts():
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode=IdentityMode.VALIDATION,
     )
-    assert await store.active_snapshot(other, ("source-revision-1",)) is None
     assert await store.get_snapshot(other, "snapshot-1") is None
 
 

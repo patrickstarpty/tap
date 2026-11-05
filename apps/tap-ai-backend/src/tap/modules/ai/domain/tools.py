@@ -1,167 +1,285 @@
-"""Provider-neutral tool descriptors and allowlist format rules."""
+"""Built-in tool registry: the single closed set of tool ids agents may request.
+
+This replaces the hard-coded ``{"knowledge.search", "knowledge.answer"}`` closed
+sets previously duplicated across the Agent/Skill domain, chat turn input, model
+gateway governance, and the LiteLLM adapter's request validation. Every one of
+those call sites now derives its closed set from :func:`known_tool_ids`, so
+adding a built-in tool means adding one entry here.
+
+``wire_name`` is the online function name a model-calling adapter exposes to
+the model (OpenAI-style function names reject ``.``); ``input_schema`` is the
+closed JSON Schema object the model must satisfy for a tool call; only
+``model_callable`` tools are ever offered to a model (``knowledge.answer`` is
+a governance marker, never an invocable function). ``platform`` tools (Skill
+Hub's ``skill.activate``) are offered to every Agent and Tapper whenever their
+runtime precondition holds: they bypass the Agent allowlist, may not be listed
+in an Agent's ``toolIds`` and are not part of the public tool listing.
+"""
 
 from __future__ import annotations
 
-import json
-import re
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
-
-if TYPE_CHECKING:
-    from tap.modules.access.domain.context import ProjectScopeContext
-
-RESERVED_TOOLS = frozenset({"knowledge.answer"})
-MAX_ALLOWLIST_TOOLS = 32
-_TOOL_ID = re.compile(r"[a-z][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*){1,3}")
-_MAX_TOOL_ID_LENGTH = 128
-_MAX_DISPLAY_NAME_LENGTH = 128
-_MAX_DESCRIPTION_LENGTH = 1024
-_MAX_SCHEMA_BYTES = 16 * 1024
-_MAX_SCHEMA_DEPTH = 16
+from typing import Mapping
 
 
-class ToolRejected(ValueError):
-    """A tool identity, descriptor, or allowlist is malformed or not authorized."""
-
-    def __init__(self, reason: str = "tool-rejected") -> None:
-        super().__init__(reason)
-
-
-class ToolEffect(StrEnum):
-    READ = "read"
-    PROPOSE = "propose"
-    EXTERNAL = "external"
-
-
-class ToolOrigin(StrEnum):
-    BUILTIN = "builtin"
-    MCP = "mcp"
-
-
-def validate_tool_id(value: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) > _MAX_TOOL_ID_LENGTH
-        or _TOOL_ID.fullmatch(value) is None
-    ):
-        raise ToolRejected("tool-id-invalid")
-    return value
-
-
-def validate_allowlist(values: Iterable[str]) -> frozenset[str]:
-    if isinstance(values, str | bytes):
-        raise ToolRejected("tool-allowlist-invalid")
-    try:
-        items = list(values)
-    except TypeError as error:
-        raise ToolRejected("tool-allowlist-invalid") from error
-    if len(items) > MAX_ALLOWLIST_TOOLS:
-        raise ToolRejected("tool-allowlist-too-large")
-    return frozenset(validate_tool_id(item) for item in items)
-
-
-def well_formed_tools(values: object) -> bool:
-    if type(values) is not frozenset:
-        return False
-    try:
-        validate_allowlist(values)
-    except ToolRejected:
-        return False
-    return True
-
-
-def _within_schema_depth(value: object, limit: int) -> bool:
-    """Iteratively bound container depth so hostile schemas cannot exhaust the stack."""
-
-    pending: list[tuple[object, int]] = [(value, 0)]
-    while pending:
-        item, depth = pending.pop()
-        if isinstance(item, Mapping):
-            children: Iterable[object] = item.values()
-        elif isinstance(item, list | tuple):
-            children = item
-        else:
-            continue
-        if depth + 1 > limit:
-            return False
-        pending.extend((child, depth + 1) for child in children)
-    return True
-
-
-def _mapping_json(value: object) -> dict[object, object]:
-    if isinstance(value, Mapping):
-        return dict(value)
-    raise TypeError("tool schema must be JSON")
-
-
-def _validate_schema(value: Mapping[str, object]) -> None:
-    if not isinstance(value, Mapping) or value.get("type") != "object":
-        raise ToolRejected("tool-schema-invalid")
-    if not _within_schema_depth(value, _MAX_SCHEMA_DEPTH):
-        raise ToolRejected("tool-schema-invalid")
-    try:
-        encoded = json.dumps(
-            dict(value), allow_nan=False, separators=(",", ":"), default=_mapping_json
-        )
-    except (TypeError, ValueError, RecursionError) as error:
-        raise ToolRejected("tool-schema-invalid") from error
-    if len(encoded.encode("utf-8")) > _MAX_SCHEMA_BYTES:
-        raise ToolRejected("tool-schema-invalid")
-
-
-@dataclass(frozen=True, slots=True)
-class ToolDescriptor:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolDefinition:
     tool_id: str
-    display_name: str
-    description: str
+    wire_name: str
+    names: Mapping[str, str]
+    descriptions: Mapping[str, str]
+    required: bool
+    default_enabled: bool
+    model_callable: bool
     input_schema: Mapping[str, object]
-    effect: ToolEffect
-    origin: ToolOrigin
-    server_id: str | None = None
-    enabled: bool = True
-
-    def __post_init__(self) -> None:
-        validate_tool_id(self.tool_id)
-        if (
-            not isinstance(self.display_name, str)
-            or not self.display_name.strip()
-            or len(self.display_name) > _MAX_DISPLAY_NAME_LENGTH
-            or not isinstance(self.description, str)
-            or len(self.description) > _MAX_DESCRIPTION_LENGTH
-            or not isinstance(self.effect, ToolEffect)
-            or not isinstance(self.origin, ToolOrigin)
-            or type(self.enabled) is not bool
-        ):
-            raise ToolRejected("tool-descriptor-invalid")
-        is_mcp = self.origin is ToolOrigin.MCP
-        if is_mcp != self.tool_id.startswith("mcp.") or is_mcp != (
-            isinstance(self.server_id, str) and bool(self.server_id.strip())
-        ):
-            raise ToolRejected("tool-descriptor-invalid")
-        _validate_schema(self.input_schema)
-
-    @property
-    def callable(self) -> bool:
-        return self.tool_id not in RESERVED_TOOLS
+    tasks: frozenset[str]
+    platform: bool = False
 
 
-@dataclass(frozen=True)
-class ToolResult:
-    content: str
-    truncated: bool = False
-    evidence: tuple[object, ...] = ()
-    is_error: bool = False
+_KNOWLEDGE_SEARCH_SCHEMA: Mapping[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 500},
+        "sourceIds": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string", "minLength": 1, "maxLength": 128},
+        },
+    },
+}
+
+_GRAPH_RELATIONS_SCHEMA: Mapping[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 500},
+    },
+}
+
+_INSIGHTS_QUERY_SCHEMA: Mapping[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["metricIds", "filters", "from", "to", "timezone", "asOf"],
+    "properties": {
+        "metricIds": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "first_pass_rate",
+                    "final_pass_rate",
+                    "retry_recovery_rate",
+                    "recovery_contribution_rate",
+                    "skipped_count",
+                    "p95_duration_seconds",
+                ],
+            },
+        },
+        "filters": {
+            "type": "object",
+            "additionalProperties": False,
+            # Optional, mirroring `StructuredInsightsTool.invoke`, which reads each
+            # of these with `filters.get(key, ())` rather than requiring them.
+            "required": [],
+            "properties": {
+                "sourceIds": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+                "runIds": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+                "buildIds": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+                "branches": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+                "environments": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+                "configurations": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                },
+            },
+        },
+        "from": {"type": "string", "minLength": 1, "maxLength": 32},
+        "to": {"type": "string", "minLength": 1, "maxLength": 32},
+        "timezone": {"type": "string", "minLength": 1, "maxLength": 64},
+        "asOf": {"type": "string", "minLength": 1, "maxLength": 64},
+    },
+}
+
+_SKILL_ACTIVATE_SCHEMA: Mapping[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name"],
+    "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    },
+}
+
+TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
+    "knowledge.search": ToolDefinition(
+        tool_id="knowledge.search",
+        wire_name="knowledge_search",
+        names={"en": "Knowledge Search", "zh": "知识检索"},
+        descriptions={
+            "en": "Searches approved knowledge sources for passages relevant to the turn.",
+            "zh": "在已核准的知识来源中检索与当前对话相关的内容。",
+        },
+        required=True,
+        default_enabled=True,
+        model_callable=True,
+        input_schema=_KNOWLEDGE_SEARCH_SCHEMA,
+        tasks=frozenset({"knowledge.answer"}),
+    ),
+    "knowledge.answer": ToolDefinition(
+        tool_id="knowledge.answer",
+        wire_name="knowledge_answer",
+        names={"en": "Knowledge Answer", "zh": "知识问答"},
+        descriptions={
+            "en": "Produces a governed, citation-grounded answer from retrieved knowledge.",
+            "zh": "基于检索到的知识生成受治理、带引用依据的回答。",
+        },
+        required=True,
+        default_enabled=True,
+        model_callable=False,
+        input_schema={},
+        tasks=frozenset({"knowledge.answer"}),
+    ),
+    "graph.relations": ToolDefinition(
+        tool_id="graph.relations",
+        wire_name="graph_relations",
+        names={"en": "Graph Relations", "zh": "关系图谱"},
+        descriptions={
+            "en": "Explores entity relations within the turn's frozen knowledge scope.",
+            "zh": "在当前对话冻结的知识范围内检索实体关系。",
+        },
+        required=False,
+        default_enabled=True,
+        model_callable=True,
+        input_schema=_GRAPH_RELATIONS_SCHEMA,
+        tasks=frozenset({"knowledge.answer"}),
+    ),
+    "insights.query": ToolDefinition(
+        tool_id="insights.query",
+        wire_name="insights_query",
+        names={"en": "Insights Query", "zh": "测试洞察查询"},
+        descriptions={
+            "en": "Queries authorized TAP Insights metrics frozen for the turn.",
+            "zh": "查询当前对话冻结授权的 TAP Insights 指标。",
+        },
+        required=False,
+        default_enabled=True,
+        model_callable=True,
+        input_schema=_INSIGHTS_QUERY_SCHEMA,
+        tasks=frozenset({"knowledge.answer"}),
+    ),
+    "skill.activate": ToolDefinition(
+        tool_id="skill.activate",
+        wire_name="skill_activate",
+        names={"en": "Skill Activate", "zh": "激活 Skill"},
+        descriptions={
+            "en": (
+                "Loads the full instructions of a Skill listed under Available Skills. "
+                "Call it only when the task needs that Skill."
+            ),
+            "zh": "读入“可用 Skills”中某个 Skill 的完整指令。仅在任务需要该 Skill 时调用。",
+        },
+        required=False,
+        default_enabled=True,
+        model_callable=True,
+        input_schema=_SKILL_ACTIVATE_SCHEMA,
+        tasks=frozenset({"knowledge.answer"}),
+        platform=True,
+    ),
+}
+
+_WIRE_NAME_INDEX: Mapping[str, str] = {
+    definition.wire_name: tool_id for tool_id, definition in TOOL_REGISTRY.items()
+}
 
 
-class ToolExecutor(Protocol):
-    async def invoke(
-        self, scope: ProjectScopeContext, arguments: Mapping[str, object]
-    ) -> ToolResult: ...
+def known_tool_ids() -> frozenset[str]:
+    """The closed set of tool ids an agent's ``tool_allowlist`` may draw from."""
+
+    return frozenset(TOOL_REGISTRY)
 
 
-class McpToolSource(Protocol):
-    async def descriptors(self, scope: ProjectScopeContext) -> tuple[ToolDescriptor, ...]: ...
+def required_tool_ids(task: str) -> frozenset[str]:
+    """Tool ids that are required (non-closable) for the given task."""
 
-    async def executor(self, scope: ProjectScopeContext, tool_id: str) -> ToolExecutor: ...
+    return frozenset(
+        tool_id
+        for tool_id, definition in TOOL_REGISTRY.items()
+        if definition.required and task in definition.tasks
+    )
+
+
+def platform_tool_ids() -> frozenset[str]:
+    """Tool ids offered outside the Agent allowlist (never in ``toolIds``)."""
+
+    return frozenset(
+        tool_id for tool_id, definition in TOOL_REGISTRY.items() if definition.platform
+    )
+
+
+def tool_for_wire_name(name: str) -> ToolDefinition | None:
+    """Resolve a model-facing online function name back to its tool definition."""
+
+    tool_id = _WIRE_NAME_INDEX.get(name)
+    if tool_id is None:
+        return None
+    return TOOL_REGISTRY[tool_id]
+
+
+def visible_tool_ids(
+    *,
+    agent_allowlist: frozenset[str] | None,
+    relations_available: bool,
+    insights_available: bool,
+    skills_available: bool = False,
+) -> tuple[str, ...]:
+    """Model-callable tool ids visible for this turn, in registry order.
+
+    Starts from the model-callable, non-platform subset of the registry, drops
+    ``graph.relations``/``insights.query`` when their runtime availability is
+    false, and intersects with ``agent_allowlist`` when one is given. Platform
+    tools are then appended when ``skills_available`` (a non-empty Skill
+    catalog), regardless of the allowlist.
+    """
+
+    visible = [
+        tool_id
+        for tool_id, definition in TOOL_REGISTRY.items()
+        if definition.model_callable and not definition.platform
+    ]
+    if not relations_available:
+        visible = [tool_id for tool_id in visible if tool_id != "graph.relations"]
+    if not insights_available:
+        visible = [tool_id for tool_id in visible if tool_id != "insights.query"]
+    if agent_allowlist is not None:
+        visible = [tool_id for tool_id in visible if tool_id in agent_allowlist]
+    if skills_available:
+        visible.extend(
+            tool_id
+            for tool_id, definition in TOOL_REGISTRY.items()
+            if definition.model_callable and definition.platform
+        )
+    return tuple(visible)

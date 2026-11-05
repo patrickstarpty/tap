@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from enum import Enum
-from typing import TypeAlias
+from dataclasses import dataclass, field
+from enum import Enum, StrEnum
+from types import MappingProxyType
+from typing import Literal, Mapping, TypeAlias
+
+
+class RelationContextStatus(StrEnum):
+    """Outcome of one relation analysis subgraph run; owned by the domain so
+    `AnswerResponse`/`RelationOutcome` do not depend on the application layer.
+    Re-exported (not redefined) from `application.relation_analysis` for the
+    existing import sites."""
+
+    APPLIED = "APPLIED"
+    NOT_READY = "NOT_READY"
+    STALE = "STALE"
+    FAILED = "FAILED"
+    EMPTY = "EMPTY"
 
 
 class SourceFamily(str, Enum):
@@ -46,6 +60,7 @@ class AbstentionReason(str, Enum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     CONFLICTING_SOURCES = "conflicting_sources"
     REVISION_MISMATCH = "revision_mismatch"
+    OUT_OF_SCOPE = "out_of_scope"
 
 
 class ContextLayerKind(str, Enum):
@@ -532,6 +547,22 @@ class ModelCallProvenance:
 
 
 @dataclass(frozen=True, slots=True)
+class EdgeCitation:
+    """Project-graph edge facts for an `R`-labeled citation. `relation_label`
+    is the merged edge's display label (never blank -- the project merge falls back to
+    `relation_type` when a relation has no explicit label)."""
+
+    edge_id: str
+    graph_version: str
+    subject_node_id: str
+    subject_label: str
+    object_node_id: str
+    object_label: str
+    relation_type: str
+    relation_label: str
+
+
+@dataclass(frozen=True, slots=True)
 class Citation:
     family: SourceFamily
     citation_id: str
@@ -545,6 +576,8 @@ class Citation:
     publication_id: str | None = None
     approval_digest: str | None = None
     approved_item_id: str | None = None
+    kind: Literal["chunk", "edge"] = "chunk"
+    edge: EdgeCitation | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.family, SourceFamily):
@@ -552,6 +585,8 @@ class Citation:
         _digest("citation chunk content hash", self.chunk_content_hash)
         if self.approval_digest is not None:
             _digest("citation approval digest", self.approval_digest)
+        if (self.kind == "edge") != (self.edge is not None):
+            raise ValueError("citation kind and edge payload must agree")
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,18 +618,35 @@ class SearchResponse:
 
 
 @dataclass(frozen=True, slots=True)
-class RelationCitation:
-    citation_id: str
-    snapshot_id: str
-    edge_id: str
-    source_node_id: str
-    target_node_id: str
-    source_label: str
-    target_label: str
-    relation_type: str
-    origin: str
-    claim_index: int
-    path_edge_ids: tuple[str, ...]
+class RelationOutcome:
+    """Turn-level summary of the relation analysis subgraph run behind an answer,
+    carried on `AnswerResponse` for HTTP/event projection; never carries merged
+    aliases or raw relation records -- those stay internal to the answer pipeline."""
+
+    status: RelationContextStatus
+    graph_version: str | None
+    seed_count: int
+    paths: tuple[tuple[str, ...], ...]
+    relation_count: int
+    query_seed_count: int = 0
+    diagnostics: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
+
+
+@dataclass(frozen=True, slots=True)
+class InsightsFact:
+    """One `I<n>`-labeled Insights metric record a claim actually cited
+    (LangGraph PR 5, Task 8): no knowledge citation is ever generated for an
+    Insights label, so a cited record is surfaced to the caller through this
+    instead, in citation order."""
+
+    label: str
+    query_id: str
+    metric_id: str
+    value: float | int | None
+    as_of: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -610,10 +662,12 @@ class AnswerResponse:
     citations: tuple[Citation, ...]
     embedding_provenance: ModelCallProvenance
     answer_provenance: ModelCallProvenance | None
-    relation_citations: tuple[RelationCitation, ...] = ()
     abstention_reason: AbstentionReason | None = None
     degraded_mode: bool = False
     degradation_reasons: tuple[str, ...] = ()
+    relation: RelationOutcome | None = None
+    answer_kind: Literal["answer", "clarification"] = "answer"
+    insights_facts: tuple[InsightsFact, ...] = ()
 
 
 def _validate_retrieval_intent(

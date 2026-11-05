@@ -22,7 +22,6 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.6",
-    "@types/js-yaml": "4.0.9",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.1.0",
@@ -45,12 +44,10 @@
     "antd": "6.6.1",
     "graphology": "0.26.0",
     "graphology-layout-forceatlas2": "0.10.1",
-    "js-yaml": "4.3.1",
     "openapi-fetch": "0.17.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
-    "rehype-sanitize": "6.0.0",
-    "sigma": "3.0.2"
+    "rehype-sanitize": "6.0.0"
   }
 }

@@ -114,6 +114,14 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    // Vite's dependency scan starts from `index.html` and does not follow
+    // `new Worker(new URL(...))`, so packages imported only by a worker
+    // (e.g. graphology in the graph layout worker) would otherwise be
+    // discovered on first use, re-optimized and followed by a full page
+    // reload in the middle of a running session.
+    entries: ["index.html", "src/**/*.worker.ts"],
+  },
   server: {
     host: webHost,
     port: webPort,

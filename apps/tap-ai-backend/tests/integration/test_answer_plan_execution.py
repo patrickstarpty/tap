@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from tap.modules.access.application.authorize import build_retrieval_policy_context
 from tap.modules.access.domain.policy import Classification, ProjectPolicy, VerifiedSubjectFacts
 from tap.modules.ai.application.interaction_graph import InteractionGraph
+from tap.modules.chat.application.conversations import ClaimBatch
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.knowledge.api import KnowledgeAPI
@@ -68,6 +69,8 @@ async def planned():
                     "source_ids": list(value().source_ids),
                 },
             ],
+            "agent_intent": "multi_step_qa",
+            "intent_reason": "compares two chapters",
         }
 
     return await AnswerPlanner(model).plan(value())
@@ -393,13 +396,18 @@ async def test_worker_routes_in_graph_persists_plan_and_binds_completion(questio
 
     class Repository:
         async def claim_queued(self, **kwargs):
-            return (
+            return ClaimBatch(
                 (
-                    "chat-a",
-                    SimpleNamespace(
-                        turn_id="turn-a", lease_token="lease-a", input_snapshot=snapshot
+                    (
+                        "chat-a",
+                        SimpleNamespace(
+                            turn_id="turn-a",
+                            lease_token="lease-a",
+                            input_snapshot=snapshot,
+                            attempt=1,
+                        ),
                     ),
-                ),
+                )
             )
 
     class Conversations:
@@ -469,13 +477,18 @@ async def test_worker_records_preplanning_publication_denial_as_failed_turn(leas
 
     class Repository:
         async def claim_queued(self, **kwargs):
-            return (
+            return ClaimBatch(
                 (
-                    "chat-denied",
-                    SimpleNamespace(
-                        turn_id="turn-denied", lease_token="lease-denied", input_snapshot=snapshot
+                    (
+                        "chat-denied",
+                        SimpleNamespace(
+                            turn_id="turn-denied",
+                            lease_token="lease-denied",
+                            attempt=1,
+                            input_snapshot=snapshot,
+                        ),
                     ),
-                ),
+                )
             )
 
     class Conversations:
@@ -604,9 +617,17 @@ async def test_http_selected_plan_returns_citations_from_existing_answer_boundar
     class Scoped:
         scope = VALIDATION_SCOPE
 
-        async def answer_frozen(self, *args, **kwargs):
+        # `answer_conversation` now composes the resumable prepare / generate /
+        # verify / finalize phases rather than calling `answer_frozen` as one
+        # call; returning the finished answer straight from `prepare_frozen`
+        # exercises the same abstain-at-prepare short circuit `AnswerService`
+        # itself supports, so `generate_frozen`/`verify_frozen` need no double.
+        async def prepare_frozen(self, *args, **kwargs):
             assert kwargs["answer_execution"].plan_id == plan.plan_id
             return answer_response()
+
+        async def save_frozen(self, *args, **kwargs) -> None:
+            return None
 
     service = KnowledgeHttpService(documents=Scoped(), answers=Scoped(), citations=Scoped())
     result = await service.answer_conversation(

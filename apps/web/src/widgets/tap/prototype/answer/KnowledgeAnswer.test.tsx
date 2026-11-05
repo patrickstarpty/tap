@@ -112,26 +112,3 @@ it("warns about limited retrieval above the answer", () => {
     "Some sources could not be searched. This answer uses the remaining sources.",
   );
 });
-
-it("opens a relation citation with the source graph snapshot and path", () => {
-  const onOpenRelation = vi.fn();
-  render(
-    <KnowledgeAnswer
-      turn={turn({ answerState: "completed" })}
-      onRetry={vi.fn()}
-      onStop={vi.fn()}
-      onOpenCitation={vi.fn()}
-      onOpenRelation={onOpenRelation}
-    />,
-  );
-  fireEvent.click(
-    screen.getByRole("button", {
-      name: "Application —requires→ Health disclosure",
-    }),
-  );
-  expect(onOpenRelation).toHaveBeenCalledWith({
-    snapshotId: "prototype-health-disclosure",
-    edgeIds: ["application-health"],
-    sourceId: "sample-beneficiary",
-  });
-});

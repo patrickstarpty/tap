@@ -1,15 +1,31 @@
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.fake_extraction import DeterministicGraphExtraction
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.worker import GraphWorker
-from tap.modules.graph.domain.jobs import GraphJobRequest, GraphJobStatus
-from tap.modules.graph.domain.models import GraphSnapshotDraft
+from tap.modules.graph.domain.jobs import (
+    GraphBatchStatus,
+    GraphFragmentBatch,
+    GraphJobLeaseLost,
+    GraphJobRequest,
+    GraphJobStatus,
+)
+from tap.modules.graph.domain.models import (
+    Evidence,
+    GraphNode,
+    GraphSearchQuery,
+    GraphSnapshotDraft,
+)
 from tap.modules.knowledge.domain.documents import ChunkDraft
+
+NOW = datetime(2026, 9, 13, 9, 0, 0)
 
 
 class Artifacts:
@@ -37,9 +53,23 @@ class Extractor:
         return self._draft
 
 
+def _request_chunks(chunks, *, revision_id: str) -> tuple[dict, ...]:
+    return tuple(
+        {
+            "sourceRevisionId": revision_id,
+            "documentRevisionId": revision_id,
+            "chunkId": str(chunk.chunk_id),
+            "content": chunk.content,
+            "anchor": json.loads(chunk.anchor_json),
+            "contentDigest": chunk.chunk_content_hash,
+        }
+        for chunk in chunks
+    )
+
+
 @pytest.mark.asyncio
 async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
-    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
 
     jobs = InMemoryGraphJobStore()
     request = GraphJobRequest.create(
@@ -51,7 +81,8 @@ async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
     )
     job = await jobs.request(VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 9, 0, 0))
     chunks = await Artifacts().read_chunks("art1.chunks")
-    draft = deterministic_draft(job.snapshot, chunks, filename="revision-1")
+    request_chunks = _request_chunks(chunks, revision_id="revision-1")
+    draft = rule_based_draft(job.snapshot, request_chunks, filename="revision-1")
     worker = GraphWorker(
         jobs=jobs,
         artifacts=Artifacts(),
@@ -67,3 +98,1589 @@ async def test_worker_publishes_a_claimed_job_atomically(monkeypatch) -> None:
     assert result.ready == 1
     assert result.failed == 0
     assert (await jobs.get_job(VALIDATION_SCOPE, job.job_id)).status is GraphJobStatus.READY
+
+
+def _batch_chunks(count: int) -> tuple[ChunkDraft, ...]:
+    return tuple(
+        ChunkDraft(
+            chunk_id=f"chunk-{index}",
+            logical_chunk_id=f"logical-{index}",
+            root_id="document-1",
+            parent_id=None,
+            content=f"Entity 0 and Policy, content {index}",
+            anchor_json='{"endOffset":1,"headingPath":[],"startOffset":0,"type":"document"}',
+            source_content_hash="sha256:" + "b" * 64,
+            chunk_content_hash="sha256:" + "a" * 64,
+        )
+        for index in range(count)
+    )
+
+
+class BatchArtifacts:
+    def __init__(self, *, locator: str = "art-batches.chunks", count: int = 25) -> None:
+        self._locator = locator
+        self._chunks = _batch_chunks(count)
+
+    async def read_chunks(self, locator):
+        assert locator == self._locator
+        return self._chunks
+
+
+def _draft_for_batch(snapshot, batch_index: int, chunk_ids: tuple[str, ...]) -> GraphSnapshotDraft:
+    revision_id = snapshot.source_revision_ids[0]
+    evidence = tuple(
+        Evidence(
+            f"evidence-{batch_index}-{chunk_id}",
+            snapshot.snapshot_id,
+            revision_id,
+            revision_id,
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+        for chunk_id in chunk_ids
+    )
+    node = GraphNode(
+        f"node-{batch_index}",
+        snapshot.snapshot_id,
+        f"Entity {batch_index}",
+        "CONCEPT",
+        f"entity-{batch_index}",
+        tuple(item.evidence_id for item in evidence),
+    )
+    return GraphSnapshotDraft(snapshot, (node,), (), evidence, ())
+
+
+class CountingExtractor:
+    def __init__(self, *, fail_batch_indices: frozenset[int] = frozenset()) -> None:
+        self.requests: list = []
+        self._fail_batch_indices = fail_batch_indices
+
+    async def extract(self, request):
+        self.requests.append(request)
+        if request.batch_index in self._fail_batch_indices:
+            raise RuntimeError("synthetic batch failure")
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+async def _requested_job(jobs: InMemoryGraphJobStore, *, locator: str = "art-batches.chunks"):
+    request = GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id="revision-1",
+        chunks_locator=locator,
+        extraction_profile_digest="sha256:" + "1" * 64,
+        model_alias="qwen-plus",
+    )
+    return await jobs.request(VALIDATION_SCOPE, request, now=NOW)
+
+
+@pytest.mark.asyncio
+async def test_worker_extracts_in_batches_and_publishes_ready(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert [request.batch_index for request in extractor.requests] == [0, 1, 2]
+    second_request = extractor.requests[1]
+    assert second_request.idempotency_key.endswith(":batch:1")
+    # Batch 0's raw "node-0" id is namespaced ("b0-node-0") before it is offered to
+    # later batches as a known entity -- see test_batch_ids_are_namespaced_except_known_entities.
+    assert any(entity["id"] == "b0-node-0" for entity in second_request.known_entities)
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_retries_with_backoff_then_partial(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor(fail_batch_indices=frozenset({0}))
+    sleeps: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        sleep=_record_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert sleeps == [1.0, 2.0]
+    assert result.partial == 1
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    batch0 = next(batch for batch in batches if batch.batch_index == 0)
+    assert batch0.status is GraphBatchStatus.FAILED
+    assert batch0.attempt == 3
+    assert batch0.failure_code == "RuntimeError"
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "PARTIAL"
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_logs_message_and_stack_trace(monkeypatch, caplog) -> None:
+    # A batch failure used to record only the exception class name (``RuntimeError``),
+    # with no message or stack trace anywhere -- undiagnosable once it reached a real
+    # failure like "graph extraction cites a dangling chunk ref". The worker must log
+    # the message and stack trace itself (the batch's own failure_code is unchanged).
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor(fail_batch_indices=frozenset({0}))
+
+    async def _no_sleep(seconds: float) -> None:
+        return None
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        sleep=_no_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    with caplog.at_level("WARNING"):
+        await worker.run_once(limit=1)
+
+    records = [
+        record for record in caplog.records if "graph extraction batch failed" in record.message
+    ]
+    assert records, "expected a batch failure log record"
+    assert all("synthetic batch failure" in record.message for record in records)
+    assert all("failure_code=RuntimeError" in record.message for record in records)
+    assert all(record.exc_info is not None for record in records)
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_ready_batches(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    pre_claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="seed-worker",
+            now=NOW,
+            lease_duration=timedelta(seconds=1),
+            limit=1,
+        )
+    )[0]
+    batch0_chunk_ids = tuple(f"chunk-{index}" for index in range(10))
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        pre_claim,
+        GraphFragmentBatch(
+            job.snapshot.snapshot_id,
+            0,
+            batch0_chunk_ids,
+            GraphBatchStatus.READY,
+            draft=_draft_for_batch(job.snapshot, 0, batch0_chunk_ids),
+        ),
+        now=NOW,
+    )
+
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=5))
+
+    result = await worker.run_once(limit=1)
+
+    assert [request.batch_index for request in extractor.requests] == [1, 2]
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_all_batches_failed_fails_the_job(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor(fail_batch_indices=frozenset({0, 1, 2}))
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=1,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.failed == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.FAILED
+    assert updated.failure_code == "graph-extraction-failed"
+    assert updated.snapshot.status == "FAILED"
+
+
+class LeaseLostJobs(InMemoryGraphJobStore):
+    async def renew(self, scope, claim, *, now, lease_duration):
+        raise GraphJobLeaseLost(claim.job_id)
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_between_batches_stops_without_publishing(monkeypatch) -> None:
+    jobs = LeaseLostJobs()
+    job = await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.lease_lost == 1
+    assert len(extractor.requests) == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.RUNNING
+
+
+class BrokenArtifacts:
+    async def read_chunks(self, locator):
+        raise RuntimeError("blob store unavailable")
+
+
+@pytest.mark.asyncio
+async def test_read_chunks_error_fails_the_job_and_run_once_returns(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-broken.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BrokenArtifacts(),
+        extractor=CountingExtractor(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.claimed == 1
+    assert result.failed == 1
+    assert result.lease_lost == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.FAILED
+    assert updated.failure_code == "RuntimeError"
+    assert updated.snapshot.status == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_stored_pending_attempt_at_the_limit_becomes_failed(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    pre_claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="seed-worker",
+            now=NOW,
+            lease_duration=timedelta(seconds=1),
+            limit=1,
+        )
+    )[0]
+    batch0_chunk_ids = tuple(f"chunk-{index}" for index in range(10))
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        pre_claim,
+        GraphFragmentBatch(
+            job.snapshot.snapshot_id,
+            0,
+            batch0_chunk_ids,
+            GraphBatchStatus.PENDING,
+            attempt=2,
+            failure_code="RuntimeError",
+        ),
+        now=NOW,
+    )
+
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=2,  # lowered below the stored attempt count for batch 0
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=5))
+
+    result = await worker.run_once(limit=1)
+
+    # Batch 0 is never retried through the extractor; it is recorded FAILED outright.
+    assert [request.batch_index for request in extractor.requests] == [1, 2]
+    assert result.partial == 1
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    batch0 = next(batch for batch in batches if batch.batch_index == 0)
+    assert batch0.status is GraphBatchStatus.FAILED
+    assert batch0.attempt == 2
+    assert batch0.failure_code == "graph-batch-retry-limit-exceeded"
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "PARTIAL"
+
+
+class EmptyBatchExtractor:
+    """Simulates a model that grounds nothing for one batch of boilerplate chunks."""
+
+    def __init__(self, *, empty_batch_indices: frozenset[int]) -> None:
+        self.requests: list = []
+        self._empty_batch_indices = empty_batch_indices
+
+    async def extract(self, request):
+        self.requests.append(request)
+        if request.batch_index in self._empty_batch_indices:
+            return None
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+@pytest.mark.asyncio
+async def test_empty_batch_succeeds_without_retries_and_job_stays_ready(monkeypatch) -> None:
+    # A batch that grounds nothing (all boilerplate chunks) must be recorded
+    # READY with no draft and must not burn the retry budget or turn a healthy
+    # document PARTIAL.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    extractor = EmptyBatchExtractor(empty_batch_indices=frozenset({1}))
+    sleeps: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        sleep=_record_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert sleeps == []
+    assert result.ready == 1
+    assert result.partial == 0
+    assert result.failed == 0
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    batch1 = next(batch for batch in batches if batch.batch_index == 1)
+    assert batch1.status is GraphBatchStatus.READY
+    assert batch1.draft is None
+    assert batch1.attempt == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_a_stored_empty_ready_batch(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    pre_claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="seed-worker",
+            now=NOW,
+            lease_duration=timedelta(seconds=1),
+            limit=1,
+        )
+    )[0]
+    batch0_chunk_ids = tuple(f"chunk-{index}" for index in range(10))
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        pre_claim,
+        GraphFragmentBatch(
+            job.snapshot.snapshot_id, 0, batch0_chunk_ids, GraphBatchStatus.READY, draft=None
+        ),
+        now=NOW,
+    )
+
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=5))
+
+    result = await worker.run_once(limit=1)
+
+    assert [request.batch_index for request in extractor.requests] == [1, 2]
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_resume_recomputes_a_batch_whose_chunk_ids_changed(monkeypatch) -> None:
+    # T6: a stored batch is only reused if its chunk_ids still match this run's
+    # split -- otherwise (e.g. batch_size changed between runs) it is recomputed
+    # rather than silently reused for the wrong chunks.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    pre_claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="seed-worker",
+            now=NOW,
+            lease_duration=timedelta(seconds=1),
+            limit=1,
+        )
+    )[0]
+    stale_chunk_ids = ("chunk-0",)  # not this run's batch 0 (chunk-0..chunk-9)
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        pre_claim,
+        GraphFragmentBatch(
+            job.snapshot.snapshot_id,
+            0,
+            stale_chunk_ids,
+            GraphBatchStatus.READY,
+            draft=_draft_for_batch(job.snapshot, 0, stale_chunk_ids),
+        ),
+        now=NOW,
+    )
+
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=5))
+
+    result = await worker.run_once(limit=1)
+
+    # Batch 0 is recomputed through the extractor (its stale chunk_ids did not
+    # match this run's split), unlike test_resume_skips_ready_batches.
+    assert [request.batch_index for request in extractor.requests] == [0, 1, 2]
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+class FailOnFailJobs(InMemoryGraphJobStore):
+    async def fail(self, scope, claim, *, failure_code, now):
+        raise RuntimeError("database unavailable")
+
+
+@pytest.mark.asyncio
+async def test_fail_itself_raising_counts_as_lease_lost_instead_of_crashing(monkeypatch) -> None:
+    # A non-GraphJobLeaseLost exception from jobs.fail() (e.g. a
+    # database error while recording the failure) must not escape run_once and
+    # crash the worker process.
+    jobs = FailOnFailJobs()
+    job = await _requested_job(jobs, locator="art-broken.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BrokenArtifacts(),
+        extractor=CountingExtractor(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.lease_lost == 1
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.RUNNING
+
+
+class RecordingSleepExtractor:
+    def __init__(self) -> None:
+        self.requests: list = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        raise RuntimeError("synthetic failure")
+
+
+@pytest.mark.asyncio
+async def test_backoff_sleep_never_exceeds_the_lease_duration(monkeypatch) -> None:
+    # With a large configured backoff, the sleep before the next attempt must
+    # stay below the lease duration that was just renewed, instead of risking the
+    # lease expiring while still asleep.
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    sleeps: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=RecordingSleepExtractor(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        backoff_seconds=1000.0,
+        lease_duration=timedelta(seconds=60),
+        sleep=_record_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    await worker.run_once(limit=1)
+
+    assert sleeps
+    assert all(seconds < 60.0 for seconds in sleeps)
+
+
+class EventOrderJobs(InMemoryGraphJobStore):
+    """Records "renew" each time the lease is renewed, for ordering assertions."""
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self._events = events
+
+    async def renew(self, scope, claim, *, now, lease_duration):
+        self._events.append("renew")
+        return await super().renew(scope, claim, now=now, lease_duration=lease_duration)
+
+
+class EventExtractor:
+    """Like CountingExtractor, but also logs "extract" into a shared events list."""
+
+    def __init__(self, events: list[str], *, fail_batch_indices: frozenset[int]) -> None:
+        self._events = events
+        self._fail_batch_indices = fail_batch_indices
+
+    async def extract(self, request):
+        self._events.append("extract")
+        if request.batch_index in self._fail_batch_indices:
+            raise RuntimeError("synthetic batch failure")
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+@pytest.mark.asyncio
+async def test_renews_the_lease_again_after_the_backoff_sleep(monkeypatch) -> None:
+    # Capping the backoff sleep below the lease duration is not
+    # enough on its own -- the sleep plus the next attempt's own extract() call
+    # can still together outlive the lease that was renewed only *before* the
+    # sleep. Renew again right after waking up too, so the event right after
+    # each "sleep" is "renew", never the next attempt's "extract" landing
+    # before a renew ever happens.
+    events: list[str] = []
+    jobs = EventOrderJobs(events)
+    await _requested_job(jobs)
+    extractor = EventExtractor(events, fail_batch_indices=frozenset({0}))
+
+    async def _record_sleep(seconds: float) -> None:
+        events.append("sleep")
+
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=3,
+        sleep=_record_sleep,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.partial == 1
+    sleep_positions = [index for index, event in enumerate(events) if event == "sleep"]
+    assert len(sleep_positions) == 2  # batch 0 fails twice before succeeding on attempt 3
+    for position in sleep_positions:
+        assert events[position + 1] == "renew"
+
+
+@pytest.mark.asyncio
+async def test_record_batch_rejects_a_mismatched_snapshot_id() -> None:
+    # T3: record_batch must guard that the batch it is given belongs to the
+    # claim's own snapshot, not some other job's.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs)
+    claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE, worker_id="w1", now=NOW, lease_duration=timedelta(seconds=60), limit=1
+        )
+    )[0]
+    assert job.snapshot.snapshot_id == claim.snapshot.snapshot_id
+
+    with pytest.raises(ValueError, match="snapshot"):
+        await jobs.record_batch(
+            VALIDATION_SCOPE,
+            claim,
+            GraphFragmentBatch(
+                "a-different-snapshot-id",
+                0,
+                ("chunk-0",),
+                GraphBatchStatus.FAILED,
+                attempt=1,
+                failure_code="x",
+            ),
+            now=NOW,
+        )
+
+
+@pytest.mark.asyncio
+async def test_every_chunk_of_a_long_document_is_extracted_in_bounded_batches(
+    monkeypatch,
+) -> None:
+    # A document longer than any former per-document read cap: every chunk must reach
+    # the extractor, and no single extraction call may carry more than batch_size.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-long.chunks")
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-long.chunks", count=1_234),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=100,
+        batch_chars=None,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert [request.batch_index for request in extractor.requests] == list(range(13))
+    assert max(len(request.chunks) for request in extractor.requests) == 100
+    requested_chunk_ids = [
+        str(item["chunkId"]) for request in extractor.requests for item in request.chunks
+    ]
+    assert requested_chunk_ids == [f"chunk-{index}" for index in range(1_234)]
+    batches = await jobs.load_batches(VALIDATION_SCOPE, job)
+    assert len(batches) == 13
+    assert all(batch.status is GraphBatchStatus.READY for batch in batches)
+
+
+class SizedArtifacts:
+    def __init__(self, sizes: tuple[int, ...]) -> None:
+        self._chunks = tuple(
+            ChunkDraft(
+                chunk_id=f"chunk-{index}",
+                logical_chunk_id=f"logical-{index}",
+                root_id="document-1",
+                parent_id=None,
+                content="字" * size,
+                anchor_json='{"endOffset":1,"headingPath":[],"startOffset":0,"type":"document"}',
+                source_content_hash="sha256:" + "b" * 64,
+                chunk_content_hash="sha256:" + "a" * 64,
+            )
+            for index, size in enumerate(sizes)
+        )
+
+    async def read_chunks(self, locator):
+        return self._chunks
+
+
+@pytest.mark.asyncio
+async def test_worker_batches_by_character_budget(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=SizedArtifacts((2_500,) * 5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=100,
+        batch_chars=6_000,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert [len(request.chunks) for request in extractor.requests] == [2, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_extraction_requests_carry_the_document_filename_as_title(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "claims-handbook.pdf"})
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert len(extractor.requests) == 3
+    assert {request.document_title for request in extractor.requests} == {"claims-handbook.pdf"}
+
+
+@pytest.mark.asyncio
+async def test_extraction_title_falls_back_to_the_revision_id_without_a_filename(
+    monkeypatch,
+) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    await worker.run_once(limit=1)
+
+    assert {request.document_title for request in extractor.requests} == {"revision-1"}
+
+
+class ManyNodesExtractor:
+    def __init__(self, *, nodes_per_batch: int) -> None:
+        self._nodes_per_batch = nodes_per_batch
+        self.requests: list = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        chunk_id = str(request.chunks[0]["chunkId"])
+        evidence = Evidence(
+            "ev1",
+            request.snapshot.snapshot_id,
+            "revision-1",
+            "revision-1",
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+        # Ids are already batch-qualified at the raw level (unlike a real model's),
+        # deliberately independent of namespacing, so this test exercises the
+        # truncation fix in assemble_fragment in isolation from the namespacing fix.
+        nodes = tuple(
+            GraphNode(
+                f"node-{request.batch_index}-{i}",
+                request.snapshot.snapshot_id,
+                f"Entity {i}",
+                "CONCEPT",
+                f"entity-{request.batch_index}-{i}",
+                ("ev1",),
+            )
+            for i in range(self._nodes_per_batch)
+        )
+        return GraphSnapshotDraft(request.snapshot, nodes, (), (evidence,), ())
+
+
+@pytest.mark.asyncio
+async def test_oversized_merged_draft_completes_instead_of_crashing(monkeypatch) -> None:
+    # 300 distinct nodes per batch, two batches: each batch's own draft is within the
+    # 500-node cap, but the merge (600 distinct nodes) is not.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-oversized.chunks")
+    extractor = ManyNodesExtractor(nodes_per_batch=300)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-oversized.chunks", count=2),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=1,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    # A crash (surfaced pre-fix as the job going FAILED, since assemble_fragment would
+    # raise on construction) is what this test guards against; READY confirms the
+    # merge was truncated to the 500-node cap instead of raising.
+    assert result.ready == 1
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+
+
+class ModelStyleExtractor:
+    """Simulates a model that restarts its own id counter (``n1``/``ev1``/...) every call."""
+
+    def __init__(self) -> None:
+        self.requests: list = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        chunk_id = str(request.chunks[0]["chunkId"])
+        evidence = Evidence(
+            "ev1",
+            request.snapshot.snapshot_id,
+            "revision-1",
+            "revision-1",
+            chunk_id,
+            {"kind": "text", "start": 0, "end": 5},
+            "sha256:" + "a" * 64,
+        )
+        if request.batch_index in (0, 1):
+            # Batches 0 and 1 each mint a brand-new, unrelated entity -- but both
+            # calls restart the model's own id counter at "n1", purely coincidentally
+            # colliding on the same raw id.
+            label = "Policy" if request.batch_index == 0 else "Claim"
+            node = GraphNode(
+                "n1", request.snapshot.snapshot_id, label, "CONCEPT", label.lower(), ("ev1",)
+            )
+            return GraphSnapshotDraft(request.snapshot, (node,), (), (evidence,), ())
+        # Batch 2: echo one of the known entities' own (already namespaced) id
+        # verbatim, exactly as a well-behaved model reusing a real-world entity it
+        # was told about would.
+        reused_id = str(request.known_entities[0]["id"])
+        node = GraphNode(
+            reused_id, request.snapshot.snapshot_id, "Policy", "CONCEPT", "policy", ("ev1",)
+        )
+        return GraphSnapshotDraft(request.snapshot, (node,), (), (evidence,), ())
+
+
+@pytest.mark.asyncio
+async def test_batch_ids_are_namespaced_except_known_entities(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-three-batches.chunks")
+    extractor = ModelStyleExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-three-batches.chunks", count=3),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=1,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.partial == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    node_id_by_batch = {
+        batch.batch_index: next(iter(batch.draft.nodes)).node_id for batch in batches
+    }
+
+    # Batches 0 and 1 each minted the raw id "n1" for an unrelated entity; both got
+    # namespaced, so they don't collide with each other or with the raw literal.
+    assert node_id_by_batch[0] != "n1"
+    assert node_id_by_batch[1] != "n1"
+    assert node_id_by_batch[0] != node_id_by_batch[1]
+    # Batch 2 echoed a known entity's exact (already namespaced) id and kept it as-is
+    # -- an intentional reuse, not a fresh id, so it was not re-prefixed.
+    assert node_id_by_batch[2] in {node_id_by_batch[0], node_id_by_batch[1]}
+
+
+class RepeatedContentArtifacts:
+    """12 chunks, all with the same content, split into 2 batches of 10/2."""
+
+    def __init__(self, *, locator: str, content: str) -> None:
+        self._locator = locator
+        self._content = content
+
+    async def read_chunks(self, locator):
+        assert locator == self._locator
+        return tuple(
+            ChunkDraft(
+                chunk_id=f"chunk-{index}",
+                logical_chunk_id=f"logical-{index}",
+                root_id="document-1",
+                parent_id=None,
+                content=self._content,
+                anchor_json=(
+                    '{"endOffset":%d,"headingPath":[],"startOffset":0,"type":"document"}'
+                    % len(self._content)
+                ),
+                source_content_hash="sha256:" + "b" * 64,
+                chunk_content_hash="sha256:" + "a" * 64,
+            )
+            for index in range(12)
+        )
+
+
+@pytest.mark.asyncio
+async def test_batches_a_related_document_through_the_real_rule_based_extractor(
+    monkeypatch,
+) -> None:
+    # Related document: the real DeterministicGraphExtraction, batch_size 10, 12
+    # chunks all containing the same relation sentence -- each batch
+    # independently grounds the same two real-world entities under its own
+    # batch-namespaced ids, exercising the real canonical-key merge end to
+    # end rather than hand-built drafts.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-related.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-related.chunks", content="核保流程需要健康告知。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert result.partial == 0
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    by_key = {node.canonical_key: node for node in published.nodes}
+    assert set(by_key) == {"核保流程", "健康告知"}
+    assert len(published.edges) == 1
+    assert published.edges[0].source_node_id == by_key["核保流程"].node_id
+    assert published.edges[0].target_node_id == by_key["健康告知"].node_id
+
+
+@pytest.mark.asyncio
+async def test_batches_a_relation_less_document_into_one_document_node(monkeypatch) -> None:
+    # Relation-less document: the real DeterministicGraphExtraction, batch_size 10, 12
+    # relation-less chunks -- each batch independently mints its own
+    # "document:<revision>" fallback node; the real canonical-key merge
+    # must collapse them into exactly one, with zero edges, READY rather than
+    # failing MySQL's uq_graph_node_canonical constraint.
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-relationless.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-relationless.chunks", content="今天天气很好。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert result.partial == 0
+    assert result.failed == 0
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    assert updated.status is GraphJobStatus.READY
+    assert updated.snapshot.status == "READY"
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert len(published.nodes) == 1
+    assert published.nodes[0].canonical_key.startswith("document:")
+    assert published.edges == ()
+    # Grounding must be complete, not just nonempty: one evidence id per chunk
+    # across both batches (10 + 2), not merely whichever batch happened to
+    # survive the canonical-key merge.
+    assert len(published.nodes[0].evidence_ids) == 12
+    assert {item.chunk_id for item in published.evidence} == {
+        f"chunk-{index}" for index in range(12)
+    }
+
+
+@pytest.mark.asyncio
+async def test_relation_less_document_node_is_labelled_with_the_filename(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "weather-notes.md"})
+    job = await _requested_job(jobs, locator="art-relationless.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=RepeatedContentArtifacts(
+            locator="art-relationless.chunks", content="今天天气很好。"
+        ),
+        extractor=DeterministicGraphExtraction(),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert [node.label for node in published.nodes] == ["weather-notes.md"]
+    assert published.nodes[0].canonical_key == "document:revision-1"
+
+
+@pytest.mark.asyncio
+async def test_empty_model_batches_publish_a_fallback_labelled_with_the_filename(
+    monkeypatch,
+) -> None:
+    jobs = InMemoryGraphJobStore(document_titles={"revision-1": "weather-notes.md"})
+    job = await _requested_job(jobs)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(count=3),
+        extractor=EmptyBatchExtractor(empty_batch_indices=frozenset({0})),
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    updated = await jobs.get_job(VALIDATION_SCOPE, job.job_id)
+    published = await jobs._graph.search(
+        VALIDATION_SCOPE, GraphSearchQuery(updated.snapshot.snapshot_id, "*", node_limit=500)
+    )
+    assert [node.label for node in published.nodes] == ["weather-notes.md"]
+
+
+class AnyLocatorArtifacts:
+    def __init__(self, *, count: int) -> None:
+        self._chunks = _batch_chunks(count)
+
+    async def read_chunks(self, locator):
+        return self._chunks
+
+
+class OverlapTrackingExtractor:
+    """Counts concurrent extract calls and every (snapshot, batch) it extracts."""
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self._asyncio = asyncio
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.in_flight_by_snapshot: dict[str, int] = {}
+        self.max_in_flight_per_snapshot = 0
+        self.extracted: list[tuple[str, int]] = []
+
+    async def extract(self, request):
+        snapshot_id = request.snapshot.snapshot_id
+        self.in_flight += 1
+        self.in_flight_by_snapshot[snapshot_id] = self.in_flight_by_snapshot.get(snapshot_id, 0) + 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        self.max_in_flight_per_snapshot = max(
+            self.max_in_flight_per_snapshot, self.in_flight_by_snapshot[snapshot_id]
+        )
+        self.extracted.append((snapshot_id, request.batch_index))
+        for _ in range(3):
+            await self._asyncio.sleep(0)
+        self.in_flight -= 1
+        self.in_flight_by_snapshot[snapshot_id] -= 1
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        return _draft_for_batch(request.snapshot, request.batch_index, chunk_ids)
+
+
+async def _request_jobs(jobs: InMemoryGraphJobStore, count: int) -> None:
+    for index in range(count):
+        await jobs.request(
+            VALIDATION_SCOPE,
+            GraphJobRequest.create(
+                scope=VALIDATION_SCOPE,
+                revision_id=f"revision-{index}",
+                chunks_locator=f"art-{index}.chunks",
+                extraction_profile_digest="sha256:" + "1" * 64,
+                model_alias="qwen-plus",
+            ),
+            now=NOW,
+        )
+
+
+def _concurrent_worker(jobs, extractor, *, worker_id: str, concurrency: int) -> GraphWorker:
+    return GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=25),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id=worker_id,
+        batch_size=10,
+        concurrency=concurrency,
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_extracts_up_to_its_concurrency_jobs_at_once(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 6)
+    extractor = OverlapTrackingExtractor()
+    worker = _concurrent_worker(jobs, extractor, worker_id="graph-worker-1", concurrency=4)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=10)
+
+    assert (result.claimed, result.ready, result.failed) == (6, 6, 0)
+    assert extractor.max_in_flight == 4
+    # Batches of one job stay sequential: later batches reuse earlier entities.
+    assert extractor.max_in_flight_per_snapshot == 1
+    assert len(extractor.extracted) == 6 * 3
+    assert len(set(extractor.extracted)) == len(extractor.extracted)
+    for job in await jobs.list_jobs(VALIDATION_SCOPE):
+        assert job.status is GraphJobStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_concurrent_workers_never_extract_the_same_batch_twice(monkeypatch) -> None:
+    import asyncio
+
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 7)
+    extractor = OverlapTrackingExtractor()
+    first = _concurrent_worker(jobs, extractor, worker_id="graph-worker-1", concurrency=2)
+    second = _concurrent_worker(jobs, extractor, worker_id="graph-worker-2", concurrency=3)
+    for worker in (first, second):
+        monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    results = await asyncio.gather(first.run_once(limit=10), second.run_once(limit=10))
+
+    assert sum(result.claimed for result in results) == 7
+    assert sum(result.ready for result in results) == 7
+    assert len(extractor.extracted) == 7 * 3
+    assert len(set(extractor.extracted)) == len(extractor.extracted)
+    assert extractor.max_in_flight <= 5
+
+
+@pytest.mark.asyncio
+async def test_concurrent_worker_claims_no_more_than_its_limit(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 6)
+    extractor = OverlapTrackingExtractor()
+    worker = _concurrent_worker(jobs, extractor, worker_id="graph-worker-1", concurrency=4)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=3)
+
+    assert (result.claimed, result.ready) == (3, 3)
+    statuses = [job.status for job in await jobs.list_jobs(VALIDATION_SCOPE)]
+    pending = [status for status in statuses if status is GraphJobStatus.PENDING]
+    assert len(pending) == 3
+
+
+def test_worker_concurrency_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        _concurrent_worker(
+            InMemoryGraphJobStore(), OverlapTrackingExtractor(), worker_id="w", concurrency=0
+        )
+
+
+class GatedExtractor(OverlapTrackingExtractor):
+    """Holds every extract call until `expected` distinct jobs are in flight at
+    once, so the test proves later claims happened while earlier jobs still ran."""
+
+    def __init__(self, *, expected: int) -> None:
+        super().__init__()
+        self._expected = expected
+        self._snapshots: set[str] = set()
+        self._all_in_flight = self._asyncio.Event()
+
+    async def extract(self, request):
+        self._snapshots.add(request.snapshot.snapshot_id)
+        if len(self._snapshots) >= self._expected:
+            self._all_in_flight.set()
+        await self._all_in_flight.wait()
+        return await super().extract(request)
+
+
+class ArrivingJobs(InMemoryGraphJobStore):
+    """The first claim finds one job; four more are queued right after it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.claim_calls = 0
+
+    async def claim(self, scope, *, worker_id, now, lease_duration, limit):
+        self.claim_calls += 1
+        claims = await super().claim(
+            scope, worker_id=worker_id, now=now, lease_duration=lease_duration, limit=limit
+        )
+        if self.claim_calls == 1:
+            for index in range(1, 5):
+                await self.request(
+                    scope,
+                    GraphJobRequest.create(
+                        scope=scope,
+                        revision_id=f"revision-late-{index}",
+                        chunks_locator=f"art-late-{index}.chunks",
+                        extraction_profile_digest="sha256:" + "1" * 64,
+                        model_alias="qwen-plus",
+                    ),
+                    now=now,
+                )
+        return claims
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_claiming_while_slots_are_free(monkeypatch) -> None:
+    jobs = ArrivingJobs()
+    await _request_jobs(jobs, 1)
+    extractor = GatedExtractor(expected=5)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        concurrency=5,
+        claim_interval_seconds=0.001,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    result = await worker.run_once(limit=10)
+
+    # The first claim got 1 job with 5 slots free; the next loop claimed the
+    # 4 that arrived while the first was still extracting.
+    assert (result.claimed, result.ready) == (5, 5)
+    assert extractor.max_in_flight == 5
+
+
+@pytest.mark.asyncio
+async def test_worker_reclaims_a_job_whose_lease_expires_mid_run(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 2)
+    clock = {"now": NOW}
+    # A crashed worker holds the second job; its lease outlives the first claim.
+    [abandoned] = await jobs.claim(
+        VALIDATION_SCOPE,
+        worker_id="crashed-worker",
+        now=NOW,
+        lease_duration=timedelta(seconds=30),
+        limit=1,
+    )
+
+    class AdvancingExtractor(GatedExtractor):
+        async def extract(self, request):
+            # Time passes during the model call, expiring the crashed lease.
+            clock["now"] = NOW + timedelta(seconds=45)
+            return await super().extract(request)
+
+    extractor = AdvancingExtractor(expected=2)
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        concurrency=4,
+        claim_interval_seconds=0.001,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: clock["now"])
+
+    result = await worker.run_once(limit=10)
+
+    assert (result.claimed, result.ready) == (2, 2)
+    reclaimed = await jobs.get_job(VALIDATION_SCOPE, abandoned.job_id)
+    assert reclaimed.status is GraphJobStatus.READY
+
+
+class BlockingExtractor(OverlapTrackingExtractor):
+    """Signals when a model call starts, then blocks until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = self._asyncio.Event()
+        self.release = self._asyncio.Event()
+
+    async def extract(self, request):
+        self.started.set()
+        await self.release.wait()
+        return await super().extract(request)
+
+
+def _blocking_worker(jobs, extractor, *, concurrency: int = 1) -> GraphWorker:
+    return GraphWorker(
+        jobs=jobs,
+        artifacts=AnyLocatorArtifacts(count=5),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        concurrency=concurrency,
+        claim_interval_seconds=0.001,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stop_claiming_lets_running_jobs_finish_without_claiming_more(monkeypatch) -> None:
+    import asyncio
+
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 3)
+    extractor = BlockingExtractor()
+    worker = _blocking_worker(jobs, extractor, concurrency=2)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await extractor.started.wait()
+    worker.stop_claiming()
+    extractor.release.set()
+    result = await run
+
+    assert (result.claimed, result.ready) == (2, 2)
+    statuses = sorted(job.status.value for job in await jobs.list_jobs(VALIDATION_SCOPE))
+    assert statuses == ["PENDING", "READY", "READY"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_run_releases_its_job_leases(monkeypatch) -> None:
+    import asyncio
+
+    jobs = InMemoryGraphJobStore()
+    await _request_jobs(jobs, 1)
+    extractor = BlockingExtractor()
+    worker = _blocking_worker(jobs, extractor)
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await extractor.started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    [job] = await jobs.list_jobs(VALIDATION_SCOPE)
+    assert job.status is GraphJobStatus.PENDING
+    # Another worker takes it over at once instead of waiting out the lease.
+    reclaimed = await jobs.claim(
+        VALIDATION_SCOPE,
+        worker_id="graph-worker-2",
+        now=NOW + timedelta(seconds=2),
+        lease_duration=timedelta(seconds=60),
+        limit=1,
+    )
+    assert [claim.job_id for claim in reclaimed] == [job.job_id]
+
+
+@pytest.mark.asyncio
+async def test_known_entities_offered_to_a_batch_are_those_its_text_mentions(monkeypatch) -> None:
+    jobs = InMemoryGraphJobStore()
+    await _requested_job(jobs)
+    extractor = CountingExtractor()
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+
+    await worker.run_once(limit=1)
+
+    # Every chunk mentions "Entity 0"; no chunk mentions "Entity 1".
+    assert [
+        [entity["id"] for entity in request.known_entities] for request in extractor.requests
+    ] == [[], ["b0-node-0"], ["b0-node-0"]]
+
+
+class TruncatingExtractor:
+    """Replays the real failure: the model output for a batch of more than
+    ``fits`` chunks is cut off at the token budget; smaller inputs fit."""
+
+    def __init__(self, *, fits: int = 2, always_truncate: frozenset[str] = frozenset()) -> None:
+        self.requests: list = []
+        self._fits = fits
+        self._always_truncate = always_truncate
+
+    async def extract(self, request):
+        from tap.modules.graph.domain.extraction import GraphExtractionTruncated
+
+        self.requests.append(request)
+        chunk_ids = tuple(str(item["chunkId"]) for item in request.chunks)
+        if len(chunk_ids) > self._fits or self._always_truncate.intersection(chunk_ids):
+            raise GraphExtractionTruncated()
+        revision_id = request.snapshot.source_revision_ids[0]
+        evidence = tuple(
+            Evidence(
+                f"c{index}",
+                request.snapshot.snapshot_id,
+                revision_id,
+                revision_id,
+                chunk_id,
+                {"kind": "text", "start": 0, "end": 5},
+                "sha256:" + "a" * 64,
+            )
+            for index, chunk_id in enumerate(chunk_ids, start=1)
+        )
+        node = GraphNode(
+            "n1",
+            request.snapshot.snapshot_id,
+            f"Entity {chunk_ids[0]}",
+            "CONCEPT",
+            f"entity-{chunk_ids[0]}",
+            tuple(item.evidence_id for item in evidence),
+        )
+        return GraphSnapshotDraft(request.snapshot, (node,), (), evidence, ())
+
+
+async def _run_truncating(monkeypatch, extractor, *, count: int = 4, batch_retries: int = 3):
+    jobs = InMemoryGraphJobStore()
+    job = await _requested_job(jobs, locator="art-truncating.chunks")
+    worker = GraphWorker(
+        jobs=jobs,
+        artifacts=BatchArtifacts(locator="art-truncating.chunks", count=count),
+        extractor=extractor,
+        scope=VALIDATION_SCOPE,
+        worker_id="graph-worker-1",
+        batch_size=10,
+        batch_retries=batch_retries,
+        backoff_seconds=0,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW + timedelta(seconds=1))
+    result = await worker.run_once(limit=1)
+    batches = await jobs.load_batches(VALIDATION_SCOPE, SimpleNamespace(snapshot=job.snapshot))
+    return result, batches
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_batch_is_split_in_two_and_both_halves_kept(monkeypatch) -> None:
+    extractor = TruncatingExtractor()
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2]
+    assert [request.idempotency_key.rsplit(":", 3)[1:] for request in extractor.requests[1:]] == [
+        ["0", "half", "0"],
+        ["0", "half", "1"],
+    ]
+    assert result.ready == 1 and result.partial == 0
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.READY and batch.failure_code is None
+    assert sorted(node.label for node in batch.draft.nodes) == ["Entity chunk-0", "Entity chunk-2"]
+    assert len({node.node_id for node in batch.draft.nodes}) == 2
+    assert {item.chunk_id for item in batch.draft.evidence} == {
+        "chunk-0",
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_half_truncated_again_is_lost_but_the_other_half_is_kept(monkeypatch) -> None:
+    extractor = TruncatingExtractor(always_truncate=frozenset({"chunk-0"}))
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    # One split only: the truncated half is not split again or retried.
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2]
+    assert result.partial == 1
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.READY
+    assert batch.failure_code == "graph-batch-half-truncated"
+    assert [node.label for node in batch.draft.nodes] == ["Entity chunk-2"]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_still_truncated_after_the_split_fails_without_retrying(
+    monkeypatch,
+) -> None:
+    extractor = TruncatingExtractor(fits=1)
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2]
+    assert result.failed == 1
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.FAILED
+    assert batch.failure_code == "GraphExtractionTruncated"
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_single_chunk_batch_fails_without_retrying(monkeypatch) -> None:
+    extractor = TruncatingExtractor(fits=0)
+
+    result, batches = await _run_truncating(monkeypatch, extractor, count=1)
+
+    assert len(extractor.requests) == 1 and result.failed == 1
+    assert batches[0].failure_code == "GraphExtractionTruncated"
+
+
+class FlakyHalfExtractor(TruncatingExtractor):
+    """Truncates the whole batch; the first half call fails once with a transient error."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._failed_once = False
+
+    async def extract(self, request):
+        if len(request.chunks) <= 2 and not self._failed_once:
+            self._failed_once = True
+            self.requests.append(request)
+            raise RuntimeError("transient half failure")
+        return await super().extract(request)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_split_goes_straight_to_the_halves(monkeypatch) -> None:
+    extractor = FlakyHalfExtractor()
+
+    result, batches = await _run_truncating(monkeypatch, extractor)
+
+    # Whole batch (truncated), half 0 (transient error), then the retry re-runs only
+    # the two halves instead of the whole batch again.
+    assert [len(request.chunks) for request in extractor.requests] == [4, 2, 2, 2]
+    assert result.ready == 1
+    (batch,) = batches
+    assert batch.status is GraphBatchStatus.READY and batch.attempt == 2

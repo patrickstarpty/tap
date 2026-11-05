@@ -1,0 +1,223 @@
+{
+  "schemaVersion": "intent-golden-v1",
+  "labeledBy": "tap-ai-pr5-task-11",
+  "labeledAt": "2026-10-19",
+  "cases": [
+    {
+      "id": "knowledge-qa-1",
+      "question": "保单的犹豫期是多少天？",
+      "locale": "zh",
+      "expectedIntent": "knowledge_qa"
+    },
+    {
+      "id": "knowledge-qa-2",
+      "question": "What is the waiting period before a policy takes effect?",
+      "locale": "en",
+      "expectedIntent": "knowledge_qa"
+    },
+    {
+      "id": "knowledge-qa-3",
+      "question": "测试用例评审的通过标准是什么？",
+      "locale": "zh",
+      "expectedIntent": "knowledge_qa"
+    },
+    {
+      "id": "knowledge-qa-4",
+      "question": "What does a smoke test verify before a release?",
+      "locale": "en",
+      "expectedIntent": "knowledge_qa"
+    },
+    {
+      "id": "knowledge-qa-5",
+      "question": "理赔申请需要提交哪些材料？",
+      "locale": "zh",
+      "expectedIntent": "knowledge_qa"
+    },
+    {
+      "id": "knowledge-qa-6",
+      "question": "What is the default severity level for a blocking defect?",
+      "locale": "en",
+      "expectedIntent": "knowledge_qa"
+    },
+    {
+      "id": "multi-step-qa-1",
+      "question": "比较定期寿险和终身寿险在保费上的不同。",
+      "locale": "zh",
+      "expectedIntent": "multi_step_qa"
+    },
+    {
+      "id": "multi-step-qa-2",
+      "question": "Compare the regression suite and the smoke suite in terms of coverage.",
+      "locale": "en",
+      "expectedIntent": "multi_step_qa"
+    },
+    {
+      "id": "multi-step-qa-3",
+      "question": "对比第一版和第二版测试计划的范围差异。",
+      "locale": "zh",
+      "expectedIntent": "multi_step_qa"
+    },
+    {
+      "id": "multi-step-qa-4",
+      "question": "What is the difference between unit tests and integration tests in this project?",
+      "locale": "en",
+      "expectedIntent": "multi_step_qa"
+    },
+    {
+      "id": "multi-step-qa-5",
+      "question": "分别说明核保和理赔两个流程在时限上的区别。",
+      "locale": "zh",
+      "expectedIntent": "multi_step_qa"
+    },
+    {
+      "id": "multi-step-qa-6",
+      "question": "Compare how the healthcare rider and the accident rider calculate payouts.",
+      "locale": "en",
+      "expectedIntent": "multi_step_qa"
+    },
+    {
+      "id": "document-analysis-1",
+      "question": "请总结这份测试报告的完整内容。",
+      "locale": "zh",
+      "expectedIntent": "document_analysis"
+    },
+    {
+      "id": "document-analysis-2",
+      "question": "Summarize the entire test plan document from start to finish.",
+      "locale": "en",
+      "expectedIntent": "document_analysis"
+    },
+    {
+      "id": "document-analysis-3",
+      "question": "分析这份理赔政策文件的全部章节。",
+      "locale": "zh",
+      "expectedIntent": "document_analysis"
+    },
+    {
+      "id": "document-analysis-4",
+      "question": "Review the full spreadsheet of defect records and summarize the trends.",
+      "locale": "en",
+      "expectedIntent": "document_analysis"
+    },
+    {
+      "id": "document-analysis-5",
+      "question": "请完整梳理这份需求文档中的所有条款。",
+      "locale": "zh",
+      "expectedIntent": "document_analysis"
+    },
+    {
+      "id": "document-analysis-6",
+      "question": "Go through the whole test case file and list every precondition.",
+      "locale": "en",
+      "expectedIntent": "document_analysis"
+    },
+    {
+      "id": "insights-analysis-1",
+      "question": "最近一次回归测试的通过率是多少？",
+      "locale": "zh",
+      "expectedIntent": "insights_analysis"
+    },
+    {
+      "id": "insights-analysis-2",
+      "question": "What is the failure rate of the smoke suite this week?",
+      "locale": "en",
+      "expectedIntent": "insights_analysis"
+    },
+    {
+      "id": "insights-analysis-3",
+      "question": "本季度测试用例的执行成功率如何？",
+      "locale": "zh",
+      "expectedIntent": "insights_analysis"
+    },
+    {
+      "id": "insights-analysis-4",
+      "question": "What is the pass rate trend for the regression suite over the last month?",
+      "locale": "en",
+      "expectedIntent": "insights_analysis"
+    },
+    {
+      "id": "insights-analysis-5",
+      "question": "上线前测试的缺陷密度指标是多少？",
+      "locale": "zh",
+      "expectedIntent": "insights_analysis"
+    },
+    {
+      "id": "insights-analysis-6",
+      "question": "What is the current success rate of the automated test pipeline?",
+      "locale": "en",
+      "expectedIntent": "insights_analysis"
+    },
+    {
+      "id": "clarify-1",
+      "question": "它和上一版相比有什么变化？",
+      "locale": "zh",
+      "expectedIntent": "clarify"
+    },
+    {
+      "id": "clarify-2",
+      "question": "How does it differ from the previous version?",
+      "locale": "en",
+      "expectedIntent": "clarify"
+    },
+    {
+      "id": "clarify-3",
+      "question": "这个和之前那个有什么区别？",
+      "locale": "zh",
+      "expectedIntent": "clarify"
+    },
+    {
+      "id": "clarify-4",
+      "question": "What changed compared to it?",
+      "locale": "en",
+      "expectedIntent": "clarify"
+    },
+    {
+      "id": "clarify-5",
+      "question": "跟上一版本比，这部分修改了什么？",
+      "locale": "zh",
+      "expectedIntent": "clarify"
+    },
+    {
+      "id": "clarify-6",
+      "question": "Is it still valid after the update?",
+      "locale": "en",
+      "expectedIntent": "clarify"
+    },
+    {
+      "id": "out-of-scope-1",
+      "question": "Can you give me a recipe for chocolate cake?",
+      "locale": "en",
+      "expectedIntent": "out_of_scope"
+    },
+    {
+      "id": "out-of-scope-2",
+      "question": "Write me a poem about the ocean.",
+      "locale": "en",
+      "expectedIntent": "out_of_scope"
+    },
+    {
+      "id": "out-of-scope-3",
+      "question": "帮我写一首关于春天的诗。",
+      "locale": "zh",
+      "expectedIntent": "out_of_scope"
+    },
+    {
+      "id": "out-of-scope-4",
+      "question": "今天天气怎么样，适合出去玩吗？",
+      "locale": "zh",
+      "expectedIntent": "out_of_scope"
+    },
+    {
+      "id": "out-of-scope-5",
+      "question": "帮我推荐一部好看的电影。",
+      "locale": "zh",
+      "expectedIntent": "out_of_scope"
+    },
+    {
+      "id": "out-of-scope-6",
+      "question": "Tell me a joke unrelated to testing or insurance.",
+      "locale": "en",
+      "expectedIntent": "out_of_scope"
+    }
+  ]
+}

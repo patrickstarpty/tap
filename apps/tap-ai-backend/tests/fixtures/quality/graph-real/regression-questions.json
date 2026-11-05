@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "graph-regression-questions-v1",
+  "groups": [
+    {
+      "id": "prompt-suggestions-2026-10-05",
+      "requiredCount": 17,
+      "questions": []
+    },
+    {
+      "id": "general",
+      "requiredCount": 10,
+      "questions": []
+    }
+  ]
+}

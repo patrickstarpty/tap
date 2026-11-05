@@ -8,6 +8,23 @@ import { CITATION_EN, COPY, safeCitationProblem } from "../copy";
 type RetrievalCitation = RetrievalAnswerResponse["citations"][number];
 type DocumentAnchor = Extract<CitationPreview["anchor"], { type: "document" }>;
 
+/**
+ * The shape `useConversationCitation`/`useConversationCitations` return —
+ * read by `CitationViewer` itself, and also reused by `EvidencePanel` and
+ * `RelationHoverCard` (both in `features/knowledge`, which cannot import
+ * `features/conversations` directly per the `no-feature-to-feature`
+ * architecture rule) so every citation snippet resolves the turn's own
+ * historical answer instead of a since-republished source's current
+ * content, with the same loading/error/retry handling.
+ */
+export interface HistoricalCitationQuery {
+  data?: CitationPreview;
+  error: unknown;
+  isError: boolean;
+  isFetching: boolean;
+  refetch: () => Promise<unknown>;
+}
+
 function isOptionalNumber(value: unknown): value is number | null | undefined {
   return (
     value === null ||
@@ -118,13 +135,7 @@ export function CitationViewer({
     generation: number;
     id: string;
   } | null;
-  historicalQuery?: {
-    data?: CitationPreview;
-    error: unknown;
-    isError: boolean;
-    isFetching: boolean;
-    refetch: () => Promise<unknown>;
-  };
+  historicalQuery?: HistoricalCitationQuery;
   onClose: () => void;
   returnFocusTo?: HTMLElement | null;
   locale?: "en" | "zh";

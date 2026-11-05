@@ -7,6 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tap.contracts.chat_stream import EdgeCitationView as StreamEdgeCitationView
+from tap.contracts.chat_stream import GraphEndpointView as StreamGraphEndpointView
+from tap.contracts.http import EdgeCitationView as HttpEdgeCitationView
+from tap.contracts.http import GraphEndpointView as HttpGraphEndpointView
 from tap.contracts.http import RetrievalHit
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -161,11 +165,11 @@ def test_exporter_emits_closed_retrieval_intent_and_complete_chat_event_union(
         "stage.started",
         "stage.completed",
         "retrieval.hits_ready",
+        "task.step",
+        "graph.context_ready",
         "rerank.completed",
-        "answer.delta",
-        "answer.reset",
+        "answer.draft",
         "citation.resolved",
-        "relation_citation.resolved",
         "conversation.turn.requested",
         "conversation.turn.completed",
         "turn.completed",
@@ -195,7 +199,7 @@ def test_exporter_emits_private_events_and_problem_registry_without_public_leak(
     internal = json.loads((tmp_path / "events/project-event.schema.json").read_bytes())
     problems = json.loads((tmp_path / "problem-types.json").read_bytes())
     types = {variant["properties"]["event_type"]["const"] for variant in internal["oneOf"]}
-    assert len(types) == 27
+    assert len(types) == 28
     assert "conversation.turn.requested" in types
     assert "ai.graph-run.checkpointed" in types
     assert any(
@@ -287,3 +291,29 @@ def test_generated_conversation_validation_responses_are_problem_details(tmp_pat
                     "schema": {"$ref": "#/components/schemas/ProblemDetails"}
                 }
             }
+
+
+def _without_descriptions(node: object) -> object:
+    """Strip `description` keys so docstring wording differences don't mask
+    a real field-name/type/bounds drift between two JSON schemas."""
+    if isinstance(node, dict):
+        return {
+            key: _without_descriptions(value) for key, value in node.items() if key != "description"
+        }
+    if isinstance(node, list):
+        return [_without_descriptions(item) for item in node]
+    return node
+
+
+def test_edge_citation_view_schema_matches_between_stream_and_http_contracts() -> None:
+    """`chat_stream.EdgeCitationView`/`GraphEndpointView`
+    are deliberately separate models from their HTTP-contract counterparts
+    (chat_stream.py is kept apart from the HTTP DTO graph), but they must
+    still describe the exact same wire shape so the two contracts cannot
+    silently drift apart."""
+    assert _without_descriptions(
+        StreamEdgeCitationView.model_json_schema(by_alias=True)
+    ) == _without_descriptions(HttpEdgeCitationView.model_json_schema(by_alias=True))
+    assert _without_descriptions(
+        StreamGraphEndpointView.model_json_schema(by_alias=True)
+    ) == _without_descriptions(HttpGraphEndpointView.model_json_schema(by_alias=True))

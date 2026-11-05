@@ -715,7 +715,7 @@ def test_only_failed_ingestion_retries_from_first_incomplete_stage_without_secre
                     job_id=claimed.job_id,
                     lease_token=claimed.lease_token,
                     expected_stage=JobStage.PARSING,
-                    error_code="invalid-document",
+                    error_code="embedding-unavailable",
                     failed_at=datetime(2026, 8, 27, 10, 30),
                 )
             )
@@ -1135,7 +1135,7 @@ def test_retry_and_delete_share_job_then_document_lock_order_without_deadlock(
                     job_id=ingestion.job_id,
                     lease_token=ingestion.lease_token,
                     expected_stage=JobStage.STORED,
-                    error_code="invalid-document",
+                    error_code="parser-unavailable",
                     failed_at=datetime(2026, 8, 27, 12, 21),
                 )
             )

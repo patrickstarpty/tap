@@ -1,0 +1,931 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timedelta
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import func, insert, select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from tap.entrypoints import graph_operator, tapper_runtime
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.model_gateway_extraction import GRAPH_EXTRACTION_PROFILE_DIGEST
+from tap.modules.graph.adapters.mysql import MysqlGraphStore, graph_fragment_batch, graph_node
+from tap.modules.graph.adapters.mysql import graph_snapshot as graph_snapshot_table
+from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
+from tap.modules.graph.adapters.mysql_merge import MysqlMergeInputs, MysqlProjectMergeQueue
+from tap.modules.graph.adapters.mysql_project import (
+    graph_merge_log,
+    graph_project_alias,
+    graph_project_edge,
+    graph_project_edge_evidence,
+    graph_project_merge_job,
+    graph_project_node,
+    graph_project_node_source,
+    graph_project_version,
+)
+from tap.modules.graph.application.alignment import alignment_key
+from tap.modules.graph.application.fragments import assemble_fragment
+from tap.modules.graph.application.merge_jobs import ProjectMergeLeaseLost
+from tap.modules.graph.application.merger import ProjectGraphMerger
+from tap.modules.graph.domain.jobs import (
+    GraphBatchStatus,
+    GraphFragmentBatch,
+    GraphJobRequest,
+    GraphJobStatus,
+)
+from tap.modules.graph.domain.models import (
+    Evidence,
+    GraphEdge,
+    GraphNode,
+    GraphSnapshotDraft,
+    RelationOrigin,
+)
+from tap.modules.graph.domain.project import project_node_id
+from tap.modules.knowledge.adapters.mysql_documents import (
+    knowledge_document,
+    knowledge_document_revision,
+    knowledge_source,
+)
+from tap.platform.db.project_scope import scope_predicates, scope_values
+from tests.object_settings import S3_SETTINGS
+from tests.owned_mysql import owned_project_database_url
+
+NOW = datetime(2026, 10, 7, 9, 0, 0)
+# MysqlMergeInputs only replays fragments whose extraction_profile_digest matches
+# the current extraction profile, so fragments seeded for these tests must use
+# the real digest -- not an arbitrary placeholder -- or the merge join finds
+# nothing.
+_PROFILE_DIGEST = GRAPH_EXTRACTION_PROFILE_DIGEST
+
+
+class FakeCurrentRevisions:
+    """A mutable set of currently-published revision ids, for tests to shrink
+    (simulating a source delete) between merges."""
+
+    def __init__(self, revision_ids: set[str]) -> None:
+        self.revision_ids = revision_ids
+
+    async def current_revision_ids(self, scope) -> frozenset[str]:
+        del scope
+        return frozenset(self.revision_ids)
+
+
+@pytest_asyncio.fixture
+async def sessions(owned_project_mysql):
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        await engine.dispose()
+
+
+def _request(revision_id: str, *, digest: str = _PROFILE_DIGEST) -> GraphJobRequest:
+    return GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id=revision_id,
+        chunks_locator=f"art-{revision_id}.chunks",
+        extraction_profile_digest=digest,
+        model_alias="qwen-plus",
+    )
+
+
+def _draft(
+    request: GraphJobRequest,
+    nodes: list[tuple[str, str, str, str]],
+    edges: list[tuple[str, str, str, str, float, str]] | None = None,
+) -> GraphSnapshotDraft:
+    snapshot = request.snapshot
+    evidence = []
+    graph_nodes = []
+    for node_id, label, node_type, canonical_key in nodes:
+        evidence_id = f"ev-{snapshot.snapshot_id}-{node_id}"
+        evidence.append(
+            Evidence(
+                evidence_id=evidence_id,
+                snapshot_id=snapshot.snapshot_id,
+                source_revision_id=snapshot.source_revision_ids[0],
+                document_revision_id=snapshot.document_revision_ids[0],
+                chunk_id=f"chunk-{snapshot.snapshot_id}-{node_id}",
+                anchor={"kind": "text", "start": 0, "end": 4},
+                content_digest="sha256:" + ("c" * 64),
+            )
+        )
+        graph_nodes.append(
+            GraphNode(
+                node_id, snapshot.snapshot_id, label, node_type, canonical_key, (evidence_id,)
+            )
+        )
+    graph_edges = []
+    for edge_id, source, target, relation_type, confidence, relation_label in edges or []:
+        evidence_id = f"ev-{snapshot.snapshot_id}-{edge_id}"
+        evidence.append(
+            Evidence(
+                evidence_id=evidence_id,
+                snapshot_id=snapshot.snapshot_id,
+                source_revision_id=snapshot.source_revision_ids[0],
+                document_revision_id=snapshot.document_revision_ids[0],
+                chunk_id=f"chunk-{snapshot.snapshot_id}-{edge_id}",
+                anchor={"kind": "text", "start": 0, "end": 4},
+                content_digest="sha256:" + ("d" * 64),
+            )
+        )
+        graph_edges.append(
+            GraphEdge(
+                edge_id=edge_id,
+                snapshot_id=snapshot.snapshot_id,
+                source_node_id=source,
+                target_node_id=target,
+                relation_type=relation_type,
+                origin=RelationOrigin.EXTRACTED,
+                confidence=confidence,
+                evidence_ids=(evidence_id,),
+                relation_label=relation_label,
+            )
+        )
+    return GraphSnapshotDraft(snapshot, tuple(graph_nodes), tuple(graph_edges), tuple(evidence), ())
+
+
+async def _seed_fragment(
+    sessions,
+    *,
+    revision_id: str,
+    nodes: list[tuple[str, str, str, str]],
+    edges: list[tuple[str, str, str, str, float, str]] | None = None,
+    digest: str = _PROFILE_DIGEST,
+) -> GraphJobRequest:
+    """Seed one READY fragment snapshot using `MysqlGraphStore.publish` for the
+    graph facts, and `MysqlGraphJobStore.request` for the matching job row the
+    merge worker's `MysqlMergeInputs` join needs."""
+
+    request = _request(revision_id, digest=digest)
+    draft = _draft(request, nodes, edges)
+    await MysqlGraphJobStore(sessions).request(VALIDATION_SCOPE, request, now=NOW)
+    await MysqlGraphStore(sessions).publish(VALIDATION_SCOPE, draft)
+    return request
+
+
+@pytest.mark.asyncio
+async def test_full_replay_merges_cross_fragment_entities(sessions) -> None:
+    rev1 = await _seed_fragment(
+        sessions, revision_id="rev-1", nodes=[("a1", "健康告知", "ENTITY", "健康告知")]
+    )
+    rev2 = await _seed_fragment(
+        sessions,
+        revision_id="rev-2",
+        nodes=[("b1", "健康告知", "ENTITY", "健康告知"), ("b2", "理赔", "PROCESS", "理赔")],
+        edges=[("be1", "b1", "b2", "REQUIRES", 0.9, "需要")],
+    )
+    queue = MysqlProjectMergeQueue(sessions)
+    inputs = MysqlMergeInputs(sessions, FakeCurrentRevisions({rev1.revision_id, rev2.revision_id}))
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    claim = await queue.claim(
+        VALIDATION_SCOPE, worker_id="worker-1", now=NOW, lease_duration=timedelta(seconds=300)
+    )
+    assert claim is not None
+    fragments = await inputs.load_fragments(VALIDATION_SCOPE)
+    assert {record.revision_id for record in fragments} == {"rev-1", "rev-2"}
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, fragments)
+
+    version = await queue.complete(VALIDATION_SCOPE, claim, draft, now=NOW)
+
+    assert version is not None and version.version == 1 and version.status == "READY"
+    async with sessions() as session:
+        node_rows = (
+            (
+                await session.execute(
+                    select(graph_project_node).where(graph_project_node.c.version == 1)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(node_rows) == 2
+        disclosure = next(row for row in node_rows if row["canonical_key"] == "健康告知")
+        source_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_node_source)
+            .where(
+                graph_project_node_source.c.version == 1,
+                graph_project_node_source.c.node_id == disclosure["node_id"],
+            )
+        )
+        assert source_count == 2
+        merge_log_row = (
+            (
+                await session.execute(
+                    select(graph_merge_log).where(
+                        graph_merge_log.c.version == 1,
+                        graph_merge_log.c.node_id == disclosure["node_id"],
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert merge_log_row["rule"] == "EXACT"
+
+
+@pytest.mark.asyncio
+async def test_replay_after_source_delete_drops_orphan_nodes(sessions) -> None:
+    rev1 = await _seed_fragment(
+        sessions,
+        revision_id="rev-1",
+        nodes=[("a1", "A", "ENTITY", "A"), ("a2", "共享实体", "ENTITY", "共享实体")],
+        edges=[("ae1", "a1", "a2", "RELATED_TO", 0.8, "关联")],
+    )
+    rev2 = await _seed_fragment(
+        sessions,
+        revision_id="rev-2",
+        nodes=[("b1", "共享实体", "ENTITY", "共享实体"), ("b2", "Y", "ENTITY", "Y")],
+        edges=[("be1", "b1", "b2", "RELATED_TO", 0.8, "关联")],
+    )
+    queue = MysqlProjectMergeQueue(sessions)
+    current_revisions = FakeCurrentRevisions({rev1.revision_id, rev2.revision_id})
+    inputs = MysqlMergeInputs(sessions, current_revisions)
+    merger = ProjectGraphMerger()
+
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    claim = await queue.claim(
+        VALIDATION_SCOPE, worker_id="worker-1", now=NOW, lease_duration=timedelta(seconds=300)
+    )
+    assert claim is not None
+    fragments = await inputs.load_fragments(VALIDATION_SCOPE)
+    draft = merger.merge(VALIDATION_SCOPE, fragments)
+    version1 = await queue.complete(VALIDATION_SCOPE, claim, draft, now=NOW)
+    assert version1 is not None and version1.version == 1
+
+    node_id_a = project_node_id("ENTITY", alignment_key("A"))
+    node_id_shared = project_node_id("ENTITY", alignment_key("共享实体"))
+    node_id_y = project_node_id("ENTITY", alignment_key("Y"))
+
+    # Simulate a source delete dropping rev-1 from the currently-published set.
+    current_revisions.revision_ids.discard(rev1.revision_id)
+    await queue.request(VALIDATION_SCOPE, reason="source-deleted", now=NOW + timedelta(seconds=1))
+    claim2 = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="worker-1",
+        now=NOW + timedelta(seconds=1),
+        lease_duration=timedelta(seconds=300),
+    )
+    assert claim2 is not None
+    fragments2 = await inputs.load_fragments(VALIDATION_SCOPE)
+    assert {record.revision_id for record in fragments2} == {"rev-2"}
+    draft2 = merger.merge(VALIDATION_SCOPE, fragments2)
+    version2 = await queue.complete(
+        VALIDATION_SCOPE, claim2, draft2, now=NOW + timedelta(seconds=2)
+    )
+
+    assert version2 is not None and version2.version == 2
+
+    async with sessions() as session:
+        v2_node_ids = {
+            row["node_id"]
+            for row in (
+                (
+                    await session.execute(
+                        select(graph_project_node.c.node_id).where(
+                            graph_project_node.c.version == 2
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        }
+        assert v2_node_ids == {node_id_shared, node_id_y}
+        v2_alias_node_ids = {
+            row["node_id"]
+            for row in (
+                (
+                    await session.execute(
+                        select(graph_project_alias.c.node_id).where(
+                            graph_project_alias.c.version == 2
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        }
+        assert node_id_a not in v2_alias_node_ids
+        v2_edge_endpoints = (
+            (
+                await session.execute(
+                    select(
+                        graph_project_edge.c.source_node_id, graph_project_edge.c.target_node_id
+                    ).where(graph_project_edge.c.version == 2)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        for row in v2_edge_endpoints:
+            assert node_id_a not in (row["source_node_id"], row["target_node_id"])
+
+        v1_node_ids = {
+            row["node_id"]
+            for row in (
+                (
+                    await session.execute(
+                        select(graph_project_node.c.node_id).where(
+                            graph_project_node.c.version == 1
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        }
+        assert v1_node_ids == {node_id_a, node_id_shared, node_id_y}
+        for shared_node_id in (node_id_shared, node_id_y):
+            assert shared_node_id in v1_node_ids and shared_node_id in v2_node_ids
+
+        version0_exists = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_version)
+            .where(graph_project_version.c.version == 0)
+        )
+        assert version0_exists == 0
+
+
+@pytest.mark.asyncio
+async def test_lost_lease_cannot_publish_duplicate_version(sessions) -> None:
+    rev1 = await _seed_fragment(
+        sessions, revision_id="rev-1", nodes=[("a1", "健康告知", "ENTITY", "健康告知")]
+    )
+    queue = MysqlProjectMergeQueue(sessions)
+    inputs = MysqlMergeInputs(sessions, FakeCurrentRevisions({rev1.revision_id}))
+    merger = ProjectGraphMerger()
+
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    claim1 = await queue.claim(
+        VALIDATION_SCOPE, worker_id="worker-1", now=NOW, lease_duration=timedelta(seconds=300)
+    )
+    assert claim1 is not None
+
+    # worker-1's lease has already expired by the time it tries to complete.
+    async with sessions() as session, session.begin():
+        await session.execute(
+            update(graph_project_merge_job)
+            .where(*scope_predicates(graph_project_merge_job, VALIDATION_SCOPE))
+            .values(lease_expires_at=NOW - timedelta(seconds=1))
+        )
+
+    claim2 = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="worker-2",
+        now=NOW + timedelta(seconds=1),
+        lease_duration=timedelta(seconds=300),
+    )
+    assert claim2 is not None
+    fragments = await inputs.load_fragments(VALIDATION_SCOPE)
+    draft = merger.merge(VALIDATION_SCOPE, fragments)
+
+    version = await queue.complete(VALIDATION_SCOPE, claim2, draft, now=NOW + timedelta(seconds=2))
+    assert version is not None and version.version == 1
+
+    with pytest.raises(ProjectMergeLeaseLost):
+        await queue.complete(VALIDATION_SCOPE, claim1, draft, now=NOW + timedelta(seconds=3))
+
+    async with sessions() as session:
+        ready_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_version)
+            .where(
+                graph_project_version.c.status == "READY",
+                graph_project_version.c.fragment_digest == draft.fragment_digest,
+            )
+        )
+    assert ready_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fragment_completion_enqueues_merge_in_the_same_transaction(sessions) -> None:
+    queue = MysqlProjectMergeQueue(sessions)
+    jobs = MysqlGraphJobStore(sessions, merge_queue=queue)
+    request = _request("rev-1")
+    await jobs.request(VALIDATION_SCOPE, request, now=NOW)
+    claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=NOW,
+            lease_duration=timedelta(seconds=60),
+            limit=1,
+        )
+    )[0]
+    draft = _draft(request, [("a1", "健康告知", "ENTITY", "健康告知")])
+
+    await jobs.complete(VALIDATION_SCOPE, claim, draft, now=NOW)
+
+    async with sessions() as session:
+        row = (
+            (
+                await session.execute(
+                    select(graph_project_merge_job).where(
+                        *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert row["due_at"] is not None
+    assert row["last_reason"] == "fragment-ready"
+
+
+@pytest.mark.asyncio
+async def test_reset_for_profile_clears_fragment_and_requeues_job(sessions) -> None:
+    jobs = MysqlGraphJobStore(sessions)
+    request = _request("rev-1")
+    await jobs.request(VALIDATION_SCOPE, request, now=NOW)
+    claim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=NOW,
+            lease_duration=timedelta(seconds=60),
+            limit=1,
+        )
+    )[0]
+    draft0 = _draft(request, [("n0", "Entity 0", "CONCEPT", "entity-0")])
+    draft1 = _draft(request, [("n1", "Entity 1", "CONCEPT", "entity-1")])
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        claim,
+        GraphFragmentBatch(
+            claim.snapshot.snapshot_id, 0, ("chunk-0",), GraphBatchStatus.READY, draft=draft0
+        ),
+        now=NOW,
+    )
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        claim,
+        GraphFragmentBatch(
+            claim.snapshot.snapshot_id, 1, ("chunk-1",), GraphBatchStatus.READY, draft=draft1
+        ),
+        now=NOW,
+    )
+    merged = assemble_fragment(claim.snapshot, [draft0, draft1])
+    completed = await jobs.complete(VALIDATION_SCOPE, claim, merged, now=NOW)
+    assert completed.status == GraphJobStatus.READY
+    assert completed.snapshot.status == "READY"
+
+    new_digest = "sha256:" + "b" * 64
+    job = await jobs.reset_for_profile(
+        VALIDATION_SCOPE,
+        request.revision_id,
+        extraction_profile_digest=new_digest,
+        model_alias="qwen-max",
+        now=NOW + timedelta(seconds=10),
+    )
+
+    assert job.status == GraphJobStatus.PENDING
+    assert job.request_digest != request.request_digest
+    assert job.extraction_profile_digest == new_digest
+    assert job.model_alias == "qwen-max"
+
+    async with sessions() as session:
+        node_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_node)
+            .where(graph_node.c.snapshot_id == claim.snapshot.snapshot_id)
+        )
+        batch_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_fragment_batch)
+            .where(graph_fragment_batch.c.snapshot_id == claim.snapshot.snapshot_id)
+        )
+        snapshot_status = await session.scalar(
+            select(graph_snapshot_table.c.status).where(
+                graph_snapshot_table.c.snapshot_id == claim.snapshot.snapshot_id
+            )
+        )
+    assert node_count == 0
+    assert batch_count == 0
+    assert snapshot_status == "CANDIDATE"
+
+    # The worker must be able to run this job back to READY after the reset:
+    # if `graph_snapshot_document_revision` wasn't cleared alongside the other
+    # fact tables, re-publishing the same snapshot_id/document_revision_id pair
+    # collides on its primary key instead of reaching READY.
+    reclaim = (
+        await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-2",
+            now=NOW + timedelta(seconds=11),
+            lease_duration=timedelta(seconds=60),
+            limit=1,
+        )
+    )[0]
+    draft2 = _draft(request, [("n2", "Entity 2", "CONCEPT", "entity-2")])
+    await jobs.record_batch(
+        VALIDATION_SCOPE,
+        reclaim,
+        GraphFragmentBatch(
+            reclaim.snapshot.snapshot_id, 0, ("chunk-0",), GraphBatchStatus.READY, draft=draft2
+        ),
+        now=NOW + timedelta(seconds=12),
+    )
+    remerged = assemble_fragment(reclaim.snapshot, [draft2])
+    recompleted = await jobs.complete(
+        VALIDATION_SCOPE, reclaim, remerged, now=NOW + timedelta(seconds=13)
+    )
+    assert recompleted.status == GraphJobStatus.READY
+    assert recompleted.snapshot.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_rebuild_cli_does_not_request_an_immediate_merge(owned_project_mysql, sessions):
+    """`graph rebuild` must not request a merge itself: requesting one right
+    after resetting every fragment to CANDIDATE would publish a near-empty
+    graph before any fragment re-extracts. Fragments already request their
+    own merge when they republish, so the queue must stay un-due here."""
+    document_id = "doc_rebuild_cli"
+    revision_id = "rev_rebuild_cli"
+    async with sessions() as session, session.begin():
+        await session.execute(
+            insert(knowledge_source).values(
+                **scope_values(VALIDATION_SCOPE),
+                source_id="src_" + "9" * 32,
+                name="rebuild-cli-source",
+                created_at=NOW,
+                updated_at=NOW,
+                deleted_at=None,
+            )
+        )
+        await session.execute(
+            insert(knowledge_document).values(
+                **scope_values(VALIDATION_SCOPE),
+                document_id=document_id,
+                source_id="src_" + "9" * 32,
+                filename="rebuild-cli.md",
+                media_type="text/markdown",
+                current_revision_id=None,
+                source_content_hash="sha256:" + "1" * 64,
+                dedupe_key="sha256:" + "2" * 64,
+                staging_blob_locator=None,
+                promoted_blob_locator=None,
+                reservation_owner_token=None,
+                reservation_expires_at=None,
+                reservation_parser_version="tapper-parser-v1",
+                reservation_chunker_version="tapper-chunker-v1",
+                reservation_pipeline_version="tapper-ingestion-v1",
+                status="ready",
+                stage="ready",
+                chunk_count=1,
+                error_code=None,
+                error_summary=None,
+                activated_at=NOW,
+                created_at=NOW,
+                updated_at=NOW,
+                deleted_at=None,
+            )
+        )
+        await session.execute(
+            insert(knowledge_document_revision).values(
+                **scope_values(VALIDATION_SCOPE),
+                revision_id=revision_id,
+                source_id="src_" + "9" * 32,
+                document_id=document_id,
+                source_content_hash="sha256:" + "1" * 64,
+                original_blob_locator="tapper-originals/rebuild-cli.md",
+                normalized_blob_locator="tapper-artifacts/rebuild-cli.normalized",
+                chunks_blob_locator="tapper-artifacts/rebuild-cli.chunks",
+                embeddings_blob_locator=None,
+                parser_version="tapper-parser-v1",
+                chunker_version="tapper-chunker-v1",
+                pipeline_version="tapper-ingestion-v1",
+                parse_inventory_attempt=1,
+                parser_config_digest="sha256:" + "3" * 64,
+                parse_inventory_digest="sha256:" + "4" * 64,
+                chunk_manifest_digest="sha256:" + "5" * 64,
+                projection_digest="sha256:" + "6" * 64,
+                created_at=NOW,
+            )
+        )
+        await session.execute(
+            update(knowledge_document)
+            .where(
+                *scope_predicates(knowledge_document, VALIDATION_SCOPE),
+                knowledge_document.c.document_id == document_id,
+            )
+            .values(current_revision_id=revision_id)
+        )
+    jobs = MysqlGraphJobStore(sessions)
+    await jobs.request(VALIDATION_SCOPE, _request(revision_id), now=NOW)
+
+    url = owned_project_database_url(owned_project_mysql)
+    settings = replace(tapper_runtime.TapperSettings.from_mapping(S3_SETTINGS), database_url=url)
+    operation = graph_operator.GraphOperation(
+        command="rebuild",
+        project_id=VALIDATION_SCOPE.project_id,
+        limit=100,
+        interval_seconds=0.01,
+    )
+
+    result = await graph_operator.run(settings=settings, operation=operation)
+    assert result["requeuedCount"] == 1
+
+    async with sessions() as session:
+        row = (
+            (
+                await session.execute(
+                    select(graph_project_merge_job).where(
+                        *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_model_mode_merge_ignores_fragments_from_deterministic_extraction(sessions) -> None:
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+
+    await _seed_fragment(
+        sessions,
+        revision_id="rev-fake",
+        nodes=[("f1", "Section 1", "ENTITY", "section-1")],
+        digest=extraction_profile_digest("fake"),
+    )
+    await _seed_fragment(
+        sessions,
+        revision_id="rev-model",
+        nodes=[("m1", "健康告知", "ENTITY", "健康告知")],
+        digest=extraction_profile_digest("model"),
+    )
+    current = FakeCurrentRevisions({"rev-fake", "rev-model"})
+
+    model_inputs = MysqlMergeInputs(
+        sessions, current, extraction_profile_digest=extraction_profile_digest("model")
+    )
+    fake_inputs = MysqlMergeInputs(
+        sessions, current, extraction_profile_digest=extraction_profile_digest("fake")
+    )
+
+    model_fragments = await model_inputs.load_fragments(VALIDATION_SCOPE)
+    fake_fragments = await fake_inputs.load_fragments(VALIDATION_SCOPE)
+    assert {record.revision_id for record in model_fragments} == {"rev-model"}
+    assert {record.revision_id for record in fake_fragments} == {"rev-fake"}
+
+
+@pytest.mark.asyncio
+async def test_startup_backfill_against_mysql(sessions) -> None:
+    from tap.modules.graph.adapters.extraction_profiles import extraction_profile_digest
+    from tap.modules.graph.application.backfill import backfill_graph_jobs
+
+    model_digest = extraction_profile_digest("model")
+    fake_digest = extraction_profile_digest("fake")
+    jobs = MysqlGraphJobStore(sessions)
+    queue = MysqlProjectMergeQueue(sessions)
+    # A stale job another worker is running right now under a live lease.
+    await jobs.request(VALIDATION_SCOPE, _request("rev-running", digest=fake_digest), now=NOW)
+    claims = await jobs.claim(
+        VALIDATION_SCOPE,
+        worker_id="other-worker",
+        now=NOW,
+        lease_duration=timedelta(seconds=300),
+        limit=10,
+    )
+    assert [claim.revision_id for claim in claims] == ["rev-running"]
+    # A fragment extracted under the other mode (stale for model mode).
+    await _seed_fragment(
+        sessions,
+        revision_id="rev-stale",
+        nodes=[("s1", "Section 1", "ENTITY", "section-1")],
+        digest=fake_digest,
+    )
+
+    result = await backfill_graph_jobs(
+        scope=VALIDATION_SCOPE,
+        published={
+            "rev-missing": "art-rev-missing.chunks",
+            "rev-stale": "art-rev-stale.chunks",
+            "rev-running": "art-rev-running.chunks",
+        },
+        jobs=jobs,
+        merge_queue=queue,
+        extraction_profile_digest=model_digest,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=1),
+    )
+
+    assert (result.requested, result.requeued, result.skipped) == (1, 1, 1)
+    assert result.merge_requested is False
+    states = {
+        state.revision_id: state for state in await jobs.revision_job_states(VALIDATION_SCOPE)
+    }
+    assert states["rev-missing"].status is GraphJobStatus.PENDING
+    assert states["rev-missing"].extraction_profile_digest == model_digest
+    assert states["rev-stale"].status is GraphJobStatus.PENDING
+    assert states["rev-stale"].extraction_profile_digest == model_digest
+    assert states["rev-running"].status is GraphJobStatus.RUNNING
+    assert states["rev-running"].extraction_profile_digest == fake_digest
+    async with sessions() as session:
+        stale_nodes = await session.scalar(
+            select(func.count())
+            .select_from(graph_node)
+            .where(graph_node.c.snapshot_id == _request("rev-stale").snapshot.snapshot_id)
+        )
+    assert stale_nodes == 0
+
+    # Idempotent: a second start finds nothing new to do.
+    again = await backfill_graph_jobs(
+        scope=VALIDATION_SCOPE,
+        published={"rev-missing": "art-rev-missing.chunks", "rev-stale": "art-rev-stale.chunks"},
+        jobs=jobs,
+        merge_queue=queue,
+        extraction_profile_digest=model_digest,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=2),
+    )
+    assert (again.requested, again.requeued) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_reset_only_if_stale_leaves_a_current_fragment_alone(sessions) -> None:
+    jobs = MysqlGraphJobStore(sessions)
+    request = await _seed_fragment(
+        sessions, revision_id="rev-current", nodes=[("c1", "健康告知", "ENTITY", "健康告知")]
+    )
+    before = {s.revision_id: s for s in await jobs.revision_job_states(VALIDATION_SCOPE)}
+
+    job = await jobs.reset_for_profile(
+        VALIDATION_SCOPE,
+        request.revision_id,
+        extraction_profile_digest=_PROFILE_DIGEST,
+        model_alias="qwen-plus",
+        now=NOW + timedelta(seconds=5),
+        only_if_stale=True,
+    )
+
+    assert job.request_digest == request.request_digest
+    assert job.status == before["rev-current"].status
+    async with sessions() as session:
+        node_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_node)
+            .where(graph_node.c.snapshot_id == request.snapshot.snapshot_id)
+        )
+    assert node_count == 1
+
+
+async def _seed_repeated_batch(sessions, *, revision_id: str) -> GraphJobRequest:
+    """One fragment whose batch repeated an entity under two ids and one edge
+    three times, every copy grounded in the same chunk: aligned, they share the
+    merged provenance primary keys that used to raise IntegrityError."""
+
+    request = _request(revision_id)
+    snapshot = request.snapshot
+    snapshot_id = snapshot.snapshot_id
+    evidence = tuple(
+        Evidence(
+            evidence_id=f"ev-{snapshot_id}-{name}",
+            snapshot_id=snapshot_id,
+            source_revision_id=snapshot.source_revision_ids[0],
+            document_revision_id=snapshot.document_revision_ids[0],
+            chunk_id=f"chunk-{snapshot_id}-shared",
+            anchor={"kind": "text", "start": start, "end": start + 4},
+            content_digest="sha256:" + ("e" * 64),
+        )
+        for start, name in enumerate(("n1", "n2", "n3", "e1", "e2", "e3"))
+    )
+    nodes = (
+        GraphNode("n1", snapshot_id, "效力中止", "ENTITY", "效力中止", (f"ev-{snapshot_id}-n1",)),
+        GraphNode("n2", snapshot_id, "效力中止", "ENTITY", "效力中止。", (f"ev-{snapshot_id}-n2",)),
+        GraphNode("n3", snapshot_id, "保单", "ENTITY", "保单", (f"ev-{snapshot_id}-n3",)),
+    )
+    edges = tuple(
+        GraphEdge(
+            edge_id=edge_id,
+            snapshot_id=snapshot_id,
+            source_node_id="n3",
+            target_node_id=target,
+            relation_type="RELATED_TO",
+            origin=RelationOrigin.EXTRACTED,
+            confidence=0.8,
+            evidence_ids=(f"ev-{snapshot_id}-{edge_id}",),
+            relation_label="适用",
+        )
+        for edge_id, target in (("e1", "n1"), ("e2", "n2"), ("e3", "n1"))
+    )
+    await MysqlGraphJobStore(sessions).request(VALIDATION_SCOPE, request, now=NOW)
+    await MysqlGraphStore(sessions).publish(
+        VALIDATION_SCOPE, GraphSnapshotDraft(snapshot, nodes, edges, evidence, ())
+    )
+    return request
+
+
+@pytest.mark.asyncio
+async def test_repeated_batch_output_merges_and_publishes_idempotently(sessions) -> None:
+    rev = await _seed_repeated_batch(sessions, revision_id="rev-dup")
+    queue = MysqlProjectMergeQueue(sessions)
+    inputs = MysqlMergeInputs(sessions, FakeCurrentRevisions({rev.revision_id}))
+    lease = timedelta(seconds=300)
+
+    versions = []
+    for attempt in range(2):
+        now = NOW + timedelta(seconds=attempt * 10)
+        await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=now)
+        claim = await queue.claim(
+            VALIDATION_SCOPE, worker_id="worker-1", now=now, lease_duration=lease
+        )
+        assert claim is not None
+        draft = ProjectGraphMerger().merge(
+            VALIDATION_SCOPE, await inputs.load_fragments(VALIDATION_SCOPE)
+        )
+        if attempt == 0:
+            # The publication path dedupes on its own too: a draft carrying
+            # repeated provenance rows (as the merger used to emit) still lands.
+            draft = replace(
+                draft,
+                node_sources=draft.node_sources * 2,
+                edge_evidence=draft.edge_evidence * 2,
+            )
+        versions.append(await queue.complete(VALIDATION_SCOPE, claim, draft, now=now))
+
+    assert versions[0] is not None and versions[0].version == 1
+    assert versions[0].node_count == 2 and versions[0].edge_count == 1
+    # Re-running the same merge over the same fragments changes nothing.
+    assert versions[1] is None
+    async with sessions() as session:
+        version_count = await session.scalar(
+            select(func.count()).select_from(graph_project_version)
+        )
+        evidence_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_edge_evidence)
+            .where(graph_project_edge_evidence.c.version == 1)
+        )
+        source_count = await session.scalar(
+            select(func.count())
+            .select_from(graph_project_node_source)
+            .where(graph_project_node_source.c.version == 1)
+        )
+        failure_code = await session.scalar(select(graph_project_merge_job.c.failure_code))
+    assert version_count == 1
+    assert evidence_count == 1
+    assert source_count == 2
+    assert failure_code is None
+
+
+@pytest.mark.asyncio
+async def test_merge_requests_inside_the_debounce_window_coalesce(sessions) -> None:
+    queue = MysqlProjectMergeQueue(sessions, debounce=timedelta(seconds=5))
+    lease = timedelta(seconds=300)
+
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW + timedelta(seconds=2))
+
+    # A burst of fragment completions waits for the window opened by the first.
+    assert (
+        await queue.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=NOW + timedelta(seconds=4),
+            lease_duration=lease,
+        )
+        is None
+    )
+    claim = await queue.claim(
+        VALIDATION_SCOPE, worker_id="worker-1", now=NOW + timedelta(seconds=5), lease_duration=lease
+    )
+    assert claim is not None and claim.claimed_due_at == NOW + timedelta(seconds=5)
+
+    # A request while that merge runs is kept for the next one, not cleared.
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW + timedelta(seconds=6))
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, ())
+    await queue.complete(VALIDATION_SCOPE, claim, draft, now=NOW + timedelta(seconds=7))
+    async with sessions() as session:
+        due_at = await session.scalar(select(graph_project_merge_job.c.due_at))
+    assert due_at == NOW + timedelta(seconds=11)
+
+
+@pytest.mark.asyncio
+async def test_released_merge_lease_is_claimable_at_once_and_stays_due(sessions) -> None:
+    queue = MysqlProjectMergeQueue(sessions)
+    lease = timedelta(seconds=300)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    first = await queue.claim(VALIDATION_SCOPE, worker_id="worker-1", now=NOW, lease_duration=lease)
+    assert first is not None
+
+    assert await queue.release(VALIDATION_SCOPE, first, now=NOW + timedelta(seconds=1))
+    # The stale holder can neither release again nor publish.
+    assert not await queue.release(VALIDATION_SCOPE, first, now=NOW + timedelta(seconds=2))
+    draft = ProjectGraphMerger().merge(VALIDATION_SCOPE, ())
+    with pytest.raises(ProjectMergeLeaseLost):
+        await queue.complete(VALIDATION_SCOPE, first, draft, now=NOW + timedelta(seconds=2))
+    assert await queue.merge_state(VALIDATION_SCOPE, now=NOW + timedelta(seconds=2)) == "PENDING"
+    second = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="worker-2",
+        now=NOW + timedelta(seconds=3),
+        lease_duration=lease,
+    )
+    assert second is not None and second.claimed_due_at == NOW

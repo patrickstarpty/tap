@@ -11,13 +11,19 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from tap.contracts.http import SkillProblem
 from tap.contracts.problems import ProblemDetails, build_problem
-from tap.interfaces.http.dependencies import GraphUnavailable, KnowledgeRuntimeUnavailable
+from tap.interfaces.http.dependencies import (
+    GraphUnavailable,
+    GraphVersionMismatch,
+    KnowledgeRuntimeUnavailable,
+)
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+from tap.modules.agent_team.application.service import AgentTeamRejected
 from tap.modules.ai.application.agent_authoring import AgentAuthoringRejected
-from tap.modules.ai.application.skill_import import SkillImportRejected
+from tap.modules.ai.application.skill_package import SkillPackageRejected
 from tap.modules.ai.domain.assets import AssetRevisionRejected
-from tap.modules.ai.domain.mcp import McpRejected
+from tap.modules.ai.domain.assets import RevisionConflict as SkillRevisionConflict
 from tap.modules.ai.domain.models import (
     ModelGatewayRejected,
     ModelGatewayUnavailable,
@@ -28,6 +34,12 @@ from tap.modules.chat.application.conversations import (
     ConversationIntegrityError,
     ConversationNotFound,
     InvalidConversationCursor,
+)
+from tap.modules.chat.application.feedback import FeedbackNotAllowed
+from tap.modules.chat.application.skill_selection import SkillBudgetExceeded
+from tap.modules.graph.domain.jobs import GraphJobBusy
+from tap.modules.graph.ports.project_store import (
+    ProjectGraphVersionMismatch as StoreProjectGraphVersionMismatch,
 )
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.modules.knowledge.application.answers import (
@@ -63,6 +75,7 @@ from tap.modules.knowledge.ports.errors import (
     SearchBoundsExceeded,
     SearchUnavailable,
 )
+from tap.modules.skill_hub.application.service import SkillHubRejected
 from tap.modules.test_management.domain.validation import RevisionConflict, RevisionImmutable
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -89,8 +102,8 @@ def document_parse_problem(error: DocumentParseRejected) -> str:
     return "unsupported-document"
 
 
-def problem_response(code: str, request: Request) -> JSONResponse:
-    problem = build_problem(code, correlation_id=request.state.correlation_id)
+def problem_response(code: str, request: Request, *, detail: str | None = None) -> JSONResponse:
+    problem = build_problem(code, correlation_id=request.state.correlation_id, detail=detail)
     return JSONResponse(
         status_code=problem.status,
         content=problem.model_dump(by_alias=True, exclude_none=True),
@@ -105,6 +118,58 @@ def problem_response_metadata(description: str) -> dict[str, object]:
         "content": {
             PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/ProblemDetails"}},
         },
+    }
+
+
+# Skill authoring errors use a deliberately simpler `{"code", "detail"}` body
+# (Global Constraints), distinct from the registered RFC 9457 ProblemDetails
+# shape above -- these codes are the service's own closed vocabulary, not
+# entries in the shared problem registry.
+_SKILL_PROBLEM_STATUS: dict[str, int] = {
+    "skill_package_too_large": 413,
+    "skill_path_rejected": 400,
+    "skill_frontmatter_invalid": 400,
+    "skill_not_found_in_package": 400,
+    "skill_name_conflict": 409,
+    "revision_conflict": 409,
+    "import_expired": 410,
+    "skill_budget_exceeded": 400,
+    "agent_name_conflict": 409,
+    "agent_system_instruction_too_large": 400,
+    "agent_tool_allowlist_invalid": 400,
+    "agent_skill_unavailable": 400,
+    "agent_skill_conflict": 400,
+    "agent_skill_limit_exceeded": 400,
+    "agent_model_not_selectable": 400,
+    "agent_built_in_immutable": 403,
+    "agent_frontmatter_invalid": 400,
+    "skill_built_in_immutable": 403,
+    # Agent team view (controller rulings extend the spec's error list).
+    "period_invalid": 400,
+    "actor_not_found": 400,
+    "cursor_invalid": 400,
+    "job_title_too_long": 400,
+    "sort_invalid": 400,
+    "filter_invalid": 400,
+    "note_too_long": 400,
+    "agent_read_only": 403,
+    "agent_not_found": 404,
+    "feedback_not_found": 404,
+    # Skill Hub (spec 2026-11-01 section 5; the 400 codes above are shared).
+    "skill_read_only": 403,
+    "skill_not_found": 404,
+}
+
+
+def skill_problem_response(code: str, detail: str) -> JSONResponse:
+    status_code = _SKILL_PROBLEM_STATUS.get(code, 400)
+    return JSONResponse(status_code=status_code, content={"code": code, "detail": detail})
+
+
+def skill_problem_response_metadata(description: str) -> dict[str, object]:
+    return {
+        "description": description,
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SkillProblem"}}},
     }
 
 
@@ -142,6 +207,11 @@ def register_problem_handlers(app: FastAPI) -> None:
         )
         components.update(problem_schema.pop("$defs", {}))
         components["ProblemDetails"] = problem_schema
+        skill_problem_schema = SkillProblem.model_json_schema(
+            by_alias=True, ref_template="#/components/schemas/{model}"
+        )
+        components.update(skill_problem_schema.pop("$defs", {}))
+        components["SkillProblem"] = skill_problem_schema
         return schema
 
     app.openapi = openapi_with_problems  # type: ignore[method-assign]
@@ -156,6 +226,42 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, _error: GraphFactNotFound
     ) -> JSONResponse:
         return problem_response("graph-fact-not-found", request)
+
+    @app.exception_handler(GraphVersionMismatch)
+    async def graph_version_mismatch_problem(
+        request: Request, error: GraphVersionMismatch
+    ) -> JSONResponse:
+        current = error.current if error.current is not None else "none"
+        return problem_response(
+            "graph-version-mismatch",
+            request,
+            detail=(
+                "The requested graph version does not match the current version; "
+                f"current version is {current}."
+            ),
+        )
+
+    @app.exception_handler(GraphJobBusy)
+    async def graph_job_busy_problem(request: Request, _error: GraphJobBusy) -> JSONResponse:
+        return problem_response("graph-job-busy", request)
+
+    @app.exception_handler(StoreProjectGraphVersionMismatch)
+    async def store_graph_version_mismatch_problem(
+        request: Request, error: StoreProjectGraphVersionMismatch
+    ) -> JSONResponse:
+        # A pinned version fell outside the adjacency cache's retention
+        # window between the route's own exact-match check and the store
+        # call it guards (e.g. a concurrent merge published a newer version
+        # and evicted the one just checked) -- same public problem as the
+        # route-level `GraphVersionMismatch`.
+        return problem_response(
+            "graph-version-mismatch",
+            request,
+            detail=(
+                "The requested graph version does not match the current version; "
+                f"current version is {error.current}."
+            ),
+        )
 
     @app.exception_handler(RevisionConflict)
     @app.exception_handler(RevisionImmutable)
@@ -238,6 +344,12 @@ def register_problem_handlers(app: FastAPI) -> None:
         request: Request, error: InvalidConversationCursor
     ) -> JSONResponse:
         return problem_response("request-validation", request)
+
+    @app.exception_handler(FeedbackNotAllowed)
+    async def feedback_not_allowed_problem(
+        request: Request, _error: FeedbackNotAllowed
+    ) -> JSONResponse:
+        return problem_response("feedback-not-allowed", request)
 
     @app.exception_handler(SourceCommandPending)
     async def source_pending(request: Request, error: SourceCommandPending) -> JSONResponse:
@@ -338,21 +450,44 @@ def register_problem_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return problem_response("asset-revision-unavailable", request)
 
+    @app.exception_handler(SkillPackageRejected)
+    async def skill_package_rejected_problem(
+        _request: Request, error: SkillPackageRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(SkillBudgetExceeded)
+    async def skill_budget_exceeded_problem(
+        _request: Request, error: SkillBudgetExceeded
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
     @app.exception_handler(AgentAuthoringRejected)
     async def agent_authoring_rejected_problem(
-        request: Request, error: AgentAuthoringRejected
+        _request: Request, error: AgentAuthoringRejected
     ) -> JSONResponse:
-        return problem_response(error.code, request)
+        return skill_problem_response(error.code, error.detail)
 
-    @app.exception_handler(McpRejected)
-    async def mcp_rejected_problem(request: Request, error: McpRejected) -> JSONResponse:
-        return problem_response(error.code, request)
-
-    @app.exception_handler(SkillImportRejected)
-    async def skill_import_rejected_problem(
-        request: Request, error: SkillImportRejected
+    @app.exception_handler(AgentTeamRejected)
+    async def agent_team_rejected_problem(
+        _request: Request, error: AgentTeamRejected
     ) -> JSONResponse:
-        return problem_response(error.code, request)
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(SkillHubRejected)
+    async def skill_hub_rejected_problem(
+        _request: Request, error: SkillHubRejected
+    ) -> JSONResponse:
+        return skill_problem_response(error.code, error.detail)
+
+    @app.exception_handler(SkillRevisionConflict)
+    async def skill_revision_conflict_problem(
+        _request: Request, _error: SkillRevisionConflict
+    ) -> JSONResponse:
+        return skill_problem_response(
+            "revision_conflict",
+            "the requested skill revision conflicts with the current revision",
+        )
 
     @app.exception_handler(ModelUnavailable)
     async def embedding_unavailable_problem(

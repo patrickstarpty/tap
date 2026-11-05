@@ -19,9 +19,8 @@ async function openWithFaults(
   faults: readonly string[],
 ) {
   await page.addInitScript((injectedFaults) => {
-    (
-      window as unknown as { __TAP_PROTOTYPE_FAULTS__?: readonly string[] }
-    ).__TAP_PROTOTYPE_FAULTS__ = injectedFaults;
+    (window as unknown as { __TAP_PROTOTYPE_FAULTS__?: readonly string[] }).__TAP_PROTOTYPE_FAULTS__ =
+      injectedFaults;
     localStorage.clear();
   }, faults);
   await page.goto(target);
@@ -40,7 +39,9 @@ test.describe("prototype states: before/after", () => {
 
   test("tapper-new-chat", async ({ page }) => {
     await openFresh(page, "/prototype");
-    await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "New chat" }),
+    ).toBeVisible();
     await capture(page, "tapper-new-chat");
   });
 
@@ -64,10 +65,9 @@ test.describe("prototype states: before/after", () => {
   test("library-list", async ({ page }) => {
     await openFresh(page, "/prototype?module=library");
     await page.getByRole("tab", { name: "Documents" }).click();
-    await expect(page.getByRole("tab", { name: "Documents" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await expect(
+      page.getByRole("tab", { name: "Documents" }),
+    ).toHaveAttribute("aria-selected", "true");
     await capture(page, "library-list");
   });
 
@@ -285,7 +285,9 @@ test.describe("prototype states: A-D interaction states", () => {
   });
 
   test("a5-citation-verification-failed", async ({ page }) => {
-    await openWithFaults(page, "/prototype", ["citation-verification-failed"]);
+    await openWithFaults(page, "/prototype", [
+      "citation-verification-failed",
+    ]);
     await selectSource(page, "Life underwriting guide · v1.2.md");
     await ask(page, "Summarize the health disclosure rules");
     const citation = page.getByRole("button", {
@@ -461,9 +463,7 @@ test.describe("prototype states: A-D interaction states", () => {
     );
     await page.goto("/prototype");
     await expect(
-      page.getByText(
-        "Sources are processing. They can be selected when ready.",
-      ),
+      page.getByText("Sources are processing. They can be selected when ready."),
     ).toBeVisible();
     await capture(page, "b10-sources-processing");
   });
@@ -490,18 +490,22 @@ test.describe("prototype states: A-D interaction states", () => {
     await openWithFaults(page, "/prototype?module=library", [
       "library-load-failed",
     ]);
-    await expect(page.getByText("Library could not be loaded.")).toBeVisible();
+    await expect(
+      page.getByText("Library could not be loaded."),
+    ).toBeVisible();
     await capture(page, "b11-library-load-failed");
   });
 
   test("b12-uploading", async ({ page }) => {
     await openFresh(page, "/prototype?module=library");
     await page.getByRole("button", { name: "Add source" }).click();
-    await page.getByLabel("Source file").setInputFiles({
-      name: "sample-policy.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Sample policy text for the prototype gallery."),
-    });
+    await page
+      .getByLabel("Source file")
+      .setInputFiles({
+        name: "sample-policy.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Sample policy text for the prototype gallery."),
+      });
     await page.getByRole("button", { name: "Next" }).click();
     await page
       .getByRole("button", { name: "Add source", exact: true })
@@ -514,13 +518,17 @@ test.describe("prototype states: A-D interaction states", () => {
   });
 
   test("b12-upload-failed", async ({ page }) => {
-    await openWithFaults(page, "/prototype?module=library", ["upload-failed"]);
+    await openWithFaults(page, "/prototype?module=library", [
+      "upload-failed",
+    ]);
     await page.getByRole("button", { name: "Add source" }).click();
-    await page.getByLabel("Source file").setInputFiles({
-      name: "sample-policy.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Sample policy text for the prototype gallery."),
-    });
+    await page
+      .getByLabel("Source file")
+      .setInputFiles({
+        name: "sample-policy.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Sample policy text for the prototype gallery."),
+      });
     await page.getByRole("button", { name: "Next" }).click();
     await page
       .getByRole("button", { name: "Add source", exact: true })
@@ -550,11 +558,13 @@ test.describe("prototype states: A-D interaction states", () => {
   test("c1-upload-chunk-preview", async ({ page }) => {
     await openFresh(page, "/prototype?module=library");
     await page.getByRole("button", { name: "Add source" }).click();
-    await page.getByLabel("Source file").setInputFiles({
-      name: "sample-policy.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("Sample policy text for the prototype gallery."),
-    });
+    await page
+      .getByLabel("Source file")
+      .setInputFiles({
+        name: "sample-policy.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Sample policy text for the prototype gallery."),
+      });
     await page.getByRole("button", { name: "Next" }).click();
     await page.getByRole("button", { name: "Preview chunks" }).click();
     await expect(page.getByRole("list")).toBeVisible();
@@ -647,7 +657,9 @@ test.describe("prototype states: A-D interaction states", () => {
   test("e03-suggestions-zh", async ({ page }) => {
     await openFresh(page, "/prototype");
     await page.getByRole("button", { name: "中文" }).click();
-    await expect(page.getByRole("group", { name: "推荐问题" })).toBeVisible();
+    await expect(
+      page.getByRole("group", { name: "推荐问题" }),
+    ).toBeVisible();
     await capture(page, "e03-suggestions-zh");
   });
 
@@ -662,7 +674,9 @@ test.describe("prototype states: A-D interaction states", () => {
     ).toHaveCount(0);
     await page.getByRole("button", { name: "Add to message" }).click();
     await page.getByRole("menuitem", { name: "Add from Library" }).click();
-    await expect(page.getByRole("listbox")).toContainText("No matching items");
+    await expect(page.getByRole("listbox")).toContainText(
+      "No matching items",
+    );
     await expect(page.getByRole("option")).toHaveCount(0);
     await capture(page, "e04-suggestions-empty");
   });
@@ -677,7 +691,9 @@ test.describe("prototype states: A-D interaction states", () => {
 
   test("e06-suggestions-load-failed", async ({ page }) => {
     await openWithFaults(page, "/prototype", ["suggestions-load-failed"]);
-    await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "New chat" }),
+    ).toBeVisible();
     await expect(
       page.getByRole("group", { name: "Suggested questions" }),
     ).toHaveCount(0);
@@ -798,29 +814,4 @@ test.describe("prototype states: cross-module journeys", () => {
       page.locator(".tap-test-plan-detail-header .tap-asset-id"),
     ).toHaveText(testPlanId ?? "");
   });
-});
-
-// Historical relation links retain the immutable path and provide an exit to current data.
-test("prototype relation citation returns to the current graph", async ({
-  page,
-}) => {
-  await openFresh(
-    page,
-    "/prototype?module=library&snapshot=prototype-health-disclosure&highlight=application-health&graphSource=underwriting-v12",
-  );
-  await expect(
-    page.locator('.tap-graph-edge[data-highlighted="true"]'),
-  ).toHaveCount(1);
-  await expect(
-    page.locator('.tap-graph-node[data-highlighted="true"]'),
-  ).toHaveCount(2);
-  await expect(
-    page.getByRole("button", { name: "Back to current graph" }),
-  ).toBeVisible();
-  await capture(page, "relation-citation-path");
-  await page.getByRole("button", { name: "Back to current graph" }).click();
-  await expect(page).not.toHaveURL(/snapshot=/);
-  await expect(
-    page.locator('.tap-graph-edge[data-highlighted="true"]'),
-  ).toHaveCount(0);
 });

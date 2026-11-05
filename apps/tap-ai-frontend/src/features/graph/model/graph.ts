@@ -1,47 +1,20 @@
-export type GraphOrigin = "EXTRACTED" | "INFERRED";
+import type { components } from "../../../shared/api/generated/schema";
 
-export interface GraphNode {
-  nodeId: string;
-  label: string;
-  nodeType: string;
-  canonicalKey: string;
-  community?: string;
-  evidenceIds?: string[];
-}
-
-export interface GraphEdge {
-  edgeId: string;
-  sourceNodeId: string;
-  targetNodeId: string;
-  relationType: string;
-  origin: GraphOrigin;
-  confidence: number;
-  evidenceIds?: string[];
-}
-
-export interface GraphEvidence {
-  evidenceId: string;
-  sourceRevisionId: string;
-  documentRevisionId: string;
-  chunkId: string;
-  anchor: Record<string, unknown>;
-  contentDigest: string;
-}
-
-export interface GraphSubgraph {
-  snapshotId: string;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  evidence?: GraphEvidence[];
-}
-
-export interface GraphEvidenceLink {
-  evidenceId: string;
-  label: string;
-  href: string;
-}
+export type GraphProject = components["schemas"]["ProjectGraphView"];
+export type GraphCommunity = components["schemas"]["ProjectGraphCommunityView"];
+export type GraphFragmentStatus = "EXTRACTING" | "PARTIAL" | "FAILED";
+export type GraphNode = components["schemas"]["ProjectGraphNodeView"];
+export type GraphEdge = components["schemas"]["ProjectGraphEdgeView"];
+export type GraphSubgraph = components["schemas"]["ProjectGraphSubgraphView"];
+export type GraphNodeDetail =
+  components["schemas"]["ProjectGraphNodeDetailView"];
+export type GraphNodeSource =
+  components["schemas"]["ProjectGraphSourceGroupView"];
+export type GraphNodeRelation =
+  components["schemas"]["ProjectGraphRelationGroupView"];
 
 export const MAX_GRAPH_NODES = 500;
+export const OVERVIEW_PAGE = 150;
 
 export function boundedGraph(graph: GraphSubgraph): GraphSubgraph {
   const nodes = graph.nodes.slice(0, MAX_GRAPH_NODES);

@@ -12,7 +12,11 @@ from tap.contracts.http import (
     ChatTurnRequest,
     CodeAnchor,
     DocumentAnchor,
+    EdgeCitationView,
     FailureAnchor,
+    GraphContextSummaryView,
+    GraphEndpointView,
+    InsightsFactView,
     OpenApiAnchor,
     ResourceRef,
     RetrievalAnswerRequest,
@@ -25,6 +29,8 @@ from tap.contracts.http import (
     RetrievalSearchResponse,
     RetrievalSourceRevision,
     StructuralAnchor,
+    ToolDescriptor,
+    ToolPage,
 )
 
 SOURCE_HASH = "sha256:" + "a" * 64
@@ -178,9 +184,31 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "publicationId",
             "approvalDigest",
             "approvedItemId",
+            "kind",
+            "edge",
         },
     ),
     (RetrievalClaim, {"claimId", "text", "answerStart", "answerEnd", "citationIds"}),
+    (
+        EdgeCitationView,
+        {
+            "edgeId",
+            "graphVersion",
+            "subject",
+            "object",
+            "relationType",
+            "relationLabel",
+        },
+    ),
+    (GraphEndpointView, {"nodeId", "label"}),
+    (
+        GraphContextSummaryView,
+        {"status", "graphVersion", "seedCount", "querySeedCount", "paths", "relationCount"},
+    ),
+    (
+        InsightsFactView,
+        {"label", "queryId", "metricId", "value", "asOf"},
+    ),
     (
         RetrievalSearchResponse,
         {
@@ -195,6 +223,11 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
         },
     ),
     (
+        ToolDescriptor,
+        {"toolId", "name", "description", "required", "defaultEnabled"},
+    ),
+    (ToolPage, {"items"}),
+    (
         RetrievalAnswerResponse,
         {
             "traceId",
@@ -207,11 +240,13 @@ PUBLIC_FIELDS: tuple[tuple[type[Any], set[str]], ...] = (
             "answer",
             "abstained",
             "abstentionReason",
+            "answerKind",
             "claims",
             "citations",
             "graphContextStatus",
             "graphSnapshotId",
-            "relationCitations",
+            "graphContext",
+            "insightsFacts",
         },
     ),
 )
@@ -246,6 +281,31 @@ def test_public_models_have_an_exact_literal_field_set(
     """Field-by-field allowlists catch public policy/provider leakage and accidental widening."""
     schema = model.model_json_schema(by_alias=True)
     assert set(schema["properties"]) == expected
+
+
+def test_retrieval_answer_response_answer_kind_defaults_to_answer() -> None:
+    """`answerKind` (Task 5) must default to `"answer"` for every payload that
+    predates the field, and still accept the explicit `"clarification"` value."""
+    payload: dict[str, object] = {
+        "traceId": "trace-1",
+        "queryPlanId": "plan-1",
+        "contextSnapshotId": "snapshot-1",
+        "corpusVersion": "tapper-demo-v1",
+        "retrievalProfileId": "quick-hybrid-v1",
+        "degradedMode": False,
+        "answer": "答案",
+        "abstained": False,
+        "claims": [],
+        "citations": [],
+    }
+
+    defaulted = RetrievalAnswerResponse.model_validate(payload)
+    assert defaulted.answer_kind == "answer"
+
+    clarification = RetrievalAnswerResponse.model_validate(
+        {**payload, "answerKind": "clarification"}
+    )
+    assert clarification.answer_kind == "clarification"
 
 
 def test_every_public_object_schema_is_recursively_closed() -> None:

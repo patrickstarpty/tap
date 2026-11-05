@@ -1,5 +1,7 @@
 import {
+  BarChartOutlined,
   BookOutlined,
+  CodeOutlined,
   DesktopOutlined,
   FileTextOutlined,
   FormOutlined,
@@ -84,6 +86,16 @@ export function WorkspaceSidebar({
       key: "test-management",
       label: copy.navigation["test-management"],
       icon: <FileTextOutlined aria-hidden="true" />,
+    },
+    {
+      key: "low-code",
+      label: copy.navigation["low-code"],
+      icon: <CodeOutlined aria-hidden="true" />,
+    },
+    {
+      key: "test-insights",
+      label: copy.navigation["test-insights"],
+      icon: <BarChartOutlined aria-hidden="true" />,
     },
   ];
   const tapperModules: typeof productModules = [
@@ -173,8 +185,8 @@ export function WorkspaceSidebar({
         className="tap-product-rail"
         aria-label={copy.navigation.product}
       >
-        <div className="tap-brand" role="img" aria-label="TAP AI">
-          <span aria-hidden="true">TAP AI</span>
+        <div className="tap-brand" role="img" aria-label="TAP platform">
+          <span aria-hidden="true">TAP</span>
         </div>
 
         <nav

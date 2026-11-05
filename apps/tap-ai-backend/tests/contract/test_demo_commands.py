@@ -386,6 +386,15 @@ def _make_dry_run(target: str, *assignments: str) -> subprocess.CompletedProcess
     )
 
 
+def test_e2e_script_pins_langfuse_environment_to_e2e():
+    source = (ROOT / "scripts/run-tapper-e2e.sh").read_text(encoding="utf-8")
+    assert "\nexport TAP_LANGFUSE_ENVIRONMENT=e2e\n" in source
+    assert (
+        "TAP_LANGFUSE_ENVIRONMENT"
+        in source.split("readonly TAP_AGENT_TEAM_RUNTIME_METRICS", 1)[1].splitlines()[0]
+    )
+
+
 def test_e2e_manifest_registers_durable_conversation_journey():
     manifest = json.loads((ROOT / "scripts/tapper-e2e-specs.json").read_text(encoding="utf-8"))
     assert "tests/e2e/knowledge-conversation.spec.ts" in manifest["journey"]
@@ -524,6 +533,7 @@ case " $* " in
   *" tap.entrypoints.tapper_ingestion_worker "*) exec tapper-child worker ;;
   *" tap.entrypoints.tapper_graph_worker "*) exec tapper-child graph ;;
   *" tap.entrypoints.tapper_suggestion_worker "*) exec tapper-child suggestion ;;
+  *" tap.entrypoints.tapper_langfuse_sync_worker "*) exec tapper-child langfuse ;;
   *" tap.entrypoints.tapper_test_design_worker "*) exec tapper-child test-design ;;
   *" tap.entrypoints.tapper_generation_worker "*) exec tapper-child generation ;;
 esac
@@ -686,6 +696,10 @@ LITELLM_MASTER_KEY=provider-secret
 MILVUS_READER_PASSWORD=provider-secret
 MILVUS_WRITER_PASSWORD=provider-secret
 MILVUS_PROVISIONER_PASSWORD=provider-secret
+LANGFUSE_HOST=https://provider-secret.invalid:3000
+LANGFUSE_PUBLIC_KEY=provider-secret
+LANGFUSE_SECRET_KEY=provider-secret
+TAP_TRACE_REDACTION_RULES=/provider-secret/invalid-rules.json
 preflight_only=0
 e2e_project=tap-tapper-demo
 repo_root=/provider-secret/invalid
@@ -728,7 +742,7 @@ case " $* " in
 import json, os
 names=['persistence.spec.ts']
 if os.environ['TAPPER_E2E_PHASE']=='journey':
-    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-review.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts']
+    names=['tapper.spec.ts','knowledge-upload-security.spec.ts','knowledge-conversation.spec.ts','knowledge-review.spec.ts','knowledge-graph.spec.ts','tapper-test-plan.spec.ts','skills-agents.spec.ts','skill-hub.spec.ts','agent-team.spec.ts']
 print(json.dumps({
     'stats':{'expected':len(names),'unexpected':0,'flaky':0,'skipped':0},
     'suites':[{'specs':[{'file':name,'title':'fixed '+name,'tests':[{
@@ -764,6 +778,8 @@ case " $* " in
     [ "$DASHSCOPE_API_BASE" = http://127.0.0.1:14000 ] || exit 76
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 77
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 78
+    [ -z "${LANGFUSE_HOST+x}${LANGFUSE_PUBLIC_KEY+x}${LANGFUSE_SECRET_KEY+x}" ] || exit 65
+    [ -z "${TAP_TRACE_REDACTION_RULES+x}" ] || exit 66
     ;;
   *" python - "*)
     printf 'uv|probe\n' >> "$TAPPER_E2E_STUB_LOG"
@@ -824,6 +840,8 @@ case " $* " in
     [ "$MILVUS_URI" = 'http://127.0.0.1:29530' ] || exit 87
     [ -z "${OPENAI_API_KEY+x}${BAILIAN_API_KEY+x}${BAILIAN_API_BASE+x}" ] || exit 89
     [ -z "${LITELLM_EMBEDDING_API_KEY+x}" ] || exit 90
+    [ -z "${LANGFUSE_HOST+x}${LANGFUSE_PUBLIC_KEY+x}${LANGFUSE_SECRET_KEY+x}" ] || exit 64
+    [ -z "${TAP_TRACE_REDACTION_RULES+x}" ] || exit 63
     [ -z "${LITELLM_EMBEDDING_API_BASE+x}" ] || exit 94
     printf 'docker|%s\n' "$*" >> "$TAPPER_E2E_STUB_LOG"
     case " $* " in
@@ -962,6 +980,8 @@ def test_demo_down_executes_only_exact_project_scoped_non_volume_argv(
             "tap-tapper-demo",
             "--profile",
             "milvus",
+            "--profile",
+            "langfuse",
             "down",
             "--remove-orphans",
         ]
@@ -1044,6 +1064,8 @@ def test_valid_reset_targets_only_exact_default_project_volumes(tmp_path: Path) 
             "tap-tapper-demo",
             "--profile",
             "milvus",
+            "--profile",
+            "langfuse",
             "down",
             "--volumes",
             "--remove-orphans",
@@ -1135,6 +1157,10 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
         encoding="utf-8",
     )
     helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
+    (isolated / "deploy/local/langfuse").mkdir(parents=True)
+    bootstrap = isolated / "deploy/local/langfuse/bootstrap.sh"
+    bootstrap.write_text("#!/bin/sh\nset -eu\n:\n", encoding="utf-8")
+    bootstrap.chmod(bootstrap.stat().st_mode | stat.S_IXUSR)
     stubs = isolated / "bin"
     stubs.mkdir()
     marker = isolated / "projects.log"
@@ -1164,7 +1190,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert marker.read_text(encoding="utf-8").splitlines() == ["tap-tapper-demo"] * 5
+    assert marker.read_text(encoding="utf-8").splitlines() == ["tap-tapper-demo"] * 7
     assert "provider-secret" not in completed.stdout + completed.stderr
 
 
@@ -1209,6 +1235,46 @@ def test_demo_up_executes_compose_migration_bootstrap_and_exact_ensure_in_order(
         "bash",
         str(ROOT / "scripts/build-tapper-object-store.sh"),
         "verify-container",
+    ]
+    assert calls[4:7] == [
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
+            "-p",
+            "tap-insights-local",
+            "--profile",
+            "insights",
+            "up",
+            "-d",
+            "--wait",
+            "--wait-timeout",
+            "180",
+            "clickhouse",
+        ],
+        [
+            "bash",
+            str(ROOT / "deploy/local/langfuse/bootstrap.sh"),
+        ],
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
+            "-p",
+            "tap-tapper-demo",
+            "--profile",
+            "langfuse",
+            "up",
+            "-d",
+            "--wait",
+            "--wait-timeout",
+            "180",
+            "langfuse-postgres",
+            "langfuse-web",
+            "langfuse-worker",
+        ],
     ]
     assert calls[-3:] == [
         [
@@ -1259,6 +1325,72 @@ def test_demo_up_scopes_provider_secrets_to_the_gateway_process(
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_langfuse_bootstrap_scopes_provider_secrets_from_its_own_subprocesses(
+    tmp_path: Path,
+) -> None:
+    """`demo-up` and `langfuse-up` both run this script directly (not through the
+    generic `_run_make_with_stubs` harness, which stubs `bash` itself and so never
+    actually executes it). It must never leak gateway provider secrets to the
+    `docker`/`uv` subprocesses it owns, even though those secrets are present in
+    its caller's environment (as they are at the point `demo-up` calls it)."""
+
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    log = tmp_path / "calls.log"
+    secret_names = (
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_API_BASE",
+        "OPENAI_API_KEY",
+        "BAILIAN_API_KEY",
+        "BAILIAN_API_BASE",
+        "LITELLM_EMBEDDING_API_KEY",
+        "LITELLM_EMBEDDING_API_BASE",
+    )
+    assertion = "\n".join(f'[ -z "${{{name}:-}}" ] || exit 71' for name in secret_names)
+    for command in ("docker", "uv"):
+        script = stubs / command
+        extra = (
+            '\ncase " $* " in\n  *" ps -q tap-minio "*) printf "%s\\n" "deadbeefcafe";;\nesac\n'
+            if command == "docker"
+            else ""
+        )
+        script.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            f"{assertion}\n"
+            f'printf "{command} %s\\n" "$*" >> "{log}"\n'
+            "cat >/dev/null\n"
+            f"{extra}"
+            "exit 0\n"
+        )
+        script.chmod(0o755)
+
+    completed = subprocess.run(
+        ["bash", str(ROOT / "deploy/local/langfuse/bootstrap.sh")],
+        cwd=ROOT,
+        env=os.environ
+        | {
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "DASHSCOPE_API_KEY": "current-provider-secret",
+            "DASHSCOPE_API_BASE": "https://provider-secret.invalid/v1",
+            "OPENAI_API_KEY": "legacy-openai-secret",
+            "BAILIAN_API_KEY": "legacy-bailian-secret",
+            "BAILIAN_API_BASE": "https://legacy-provider-secret.invalid/v1",
+            "LITELLM_EMBEDDING_API_KEY": "direct-research-secret",
+            "LITELLM_EMBEDDING_API_BASE": "https://research-secret.invalid/v1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert any("clickhouse-client" in line for line in calls)
+    assert any("python -" in line for line in calls)
+    assert "provider-secret" not in completed.stdout + completed.stderr
 
 
 def test_demo_check_keeps_only_the_current_gateway_provider_secret(
@@ -1952,7 +2084,7 @@ def test_safe_check_milvus_reader_uses_configured_schema() -> None:
     assert target.schema_sha256 == doc_schema_sha256("doc-schema-v2")
 
 
-def test_safe_check_runs_all_five_probes_independently(
+def test_safe_check_runs_all_six_probes_independently(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
     from tap.entrypoints.tapper_runtime import TapperSettings
@@ -1970,19 +2102,214 @@ def test_safe_check_runs_all_five_probes_independently(
 
         return run
 
-    for name in ("mysql", "redis", "blob", "milvus", "models"):
+    for name in ("mysql", "redis", "blob", "milvus", "models", "langfuse"):
         monkeypatch.setattr(safe_check, f"_check_{name}", probe(name))
 
     states = asyncio.run(safe_check.checks(settings, {}))
 
-    assert set(events) == {"mysql", "redis", "blob", "milvus", "models"}
+    assert set(events) == {"mysql", "redis", "blob", "milvus", "models", "langfuse"}
     assert states == {
         "mysql": True,
         "redis": False,
         "blob": True,
         "milvus": True,
         "models": True,
+        "langfuse": True,
     }
+
+
+def test_order_has_six_checks() -> None:
+    safe_check = _load_safe_check_module()
+
+    assert safe_check._ORDER == ("mysql", "redis", "blob", "milvus", "models", "langfuse")
+    assert set(safe_check._REMEDIATION) == set(safe_check._ORDER)
+
+
+def test_langfuse_check_ok(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+        }
+    )
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url: str, *, auth):  # type: ignore[no-untyped-def]
+            assert url == "http://127.0.0.1:23000/api/public/projects"
+            assert auth == ("pk-lf-local", "sk-lf-local")
+            return Response()
+
+    monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is True
+
+
+def test_langfuse_check_strips_trailing_slash_from_host(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000/",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-local",
+            "LANGFUSE_SECRET_KEY": "sk-lf-local",
+        }
+    )
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url: str, *, auth):  # type: ignore[no-untyped-def]
+            assert url == "http://127.0.0.1:23000/api/public/projects"
+            assert auth == ("pk-lf-local", "sk-lf-local")
+            return Response()
+
+    monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is True
+
+
+def test_langfuse_check_fails_when_keys_are_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(
+        S3_SETTINGS
+        | {
+            "LANGFUSE_HOST": "http://127.0.0.1:23000",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-wrong",
+            "LANGFUSE_SECRET_KEY": "sk-lf-wrong",
+        }
+    )
+
+    class Response:
+        status_code = 401
+
+    class Client:
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc_info) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        async def get(self, url: str, *, auth):  # type: ignore[no-untyped-def]
+            return Response()
+
+    monkeypatch.setattr(safe_check.httpx, "AsyncClient", Client)
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is False
+
+
+def test_langfuse_check_failed_has_remediation() -> None:
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    safe_check = _load_safe_check_module()
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.langfuse_host is None
+
+    assert asyncio.run(safe_check._check_langfuse(settings, {})) is False
+    assert safe_check._REMEDIATION["langfuse"] == "start-langfuse"
+
+
+def test_disk_headroom_hint_fires_below_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+
+    class Completed:
+        stdout = (
+            "Filesystem           1K-blocks      Used Available Use% Mounted on\n"
+            "overlay               20000000  19000000    900000  96% /\n"
+        )
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return Completed()
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    hint = safe_check._docker_disk_headroom_hint({})
+
+    assert hint is not None
+    assert "disk headroom low" in hint
+
+
+def test_disk_headroom_hint_silent_above_threshold(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+
+    class Completed:
+        stdout = (
+            "Filesystem           1K-blocks      Used Available Use% Mounted on\n"
+            "overlay              100000000   1000000  99000000   1% /\n"
+        )
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return Completed()
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    assert safe_check._docker_disk_headroom_hint({}) is None
+
+
+def test_disk_headroom_hint_silent_on_query_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise safe_check.subprocess.CalledProcessError(1, ["docker"])
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    assert safe_check._docker_disk_headroom_hint({}) is None
+
+
+def test_disk_headroom_hint_uses_configured_insights_project(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    safe_check = _load_safe_check_module()
+    seen: dict[str, list[str]] = {}
+
+    class Completed:
+        stdout = (
+            "Filesystem           1K-blocks      Used Available Use% Mounted on\n"
+            "overlay              100000000   1000000  99000000   1% /\n"
+        )
+
+    def fake_run(args, **_kwargs):  # type: ignore[no-untyped-def]
+        seen["args"] = args
+        return Completed()
+
+    monkeypatch.setattr(safe_check.subprocess, "run", fake_run)
+
+    safe_check._docker_disk_headroom_hint({"TAP_INSIGHTS_COMPOSE_PROJECT": "tap-insights-custom"})
+
+    assert "tap-insights-custom" in seen["args"]
+    assert safe_check._REMEDIATION["langfuse"] == "start-langfuse"
 
 
 def test_safe_check_cli_suppresses_worker_thread_rpc_details(
@@ -2011,6 +2338,7 @@ def test_safe_check_cli_suppresses_worker_thread_rpc_details(
         "blob failed start-blob",
         "milvus failed start-milvus",
         "models failed configure-models",
+        "langfuse failed start-langfuse",
     ]
     assert "provider-secret-rpc-detail" not in provider_output.getvalue()
 
@@ -2223,11 +2551,14 @@ def test_litellm_config_is_the_single_model_source() -> None:
         "qwen3-vl-plus",
         "text-embedding-v4",
     ]
+    # Only models LiteLLM cannot price carry an explicit per-token price.
+    prices = {"text-embedding-v4": {"input_cost_per_token": 0.00000007, "output_cost_per_token": 0}}
     for item in config["model_list"]:
         assert item["litellm_params"] == {
             "model": "dashscope/" + item["model_name"],
             "api_key": "os.environ/DASHSCOPE_API_KEY",
             "api_base": "os.environ/DASHSCOPE_API_BASE",
+            **prices.get(item["model_name"], {}),
         }
     info = {item["model_name"]: item["model_info"] for item in config["model_list"]}
     assert info["qwen-plus"] == {
@@ -2254,7 +2585,7 @@ def test_compose_declares_loopback_ports_and_project_scoped_named_volumes() -> N
         "milvus-minio-data",
         "mysql-data",
         "redis-data",
-        "phoenix-data",
+        "langfuse-postgres-data",
     }
     assert all(value is None for value in config["volumes"].values())
 
@@ -2612,6 +2943,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2622,6 +2954,7 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2668,7 +3001,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-hostile
     )
 
     assert completed.returncode == 17, completed.stderr
-    assert len(_started_child_pids(log)) == 9
+    assert len(_started_child_pids(log)) == 10
     _assert_processes_are_gone(_started_child_pids(log))
     assert "provider-secret" not in completed.stdout + completed.stderr
 
@@ -2689,14 +3022,14 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
     while time.monotonic() < deadline:
         if log.exists():
             current_events = log.read_text(encoding="utf-8").splitlines()
-            if len([line for line in current_events if line.startswith("start ")]) == 9 and any(
+            if len([line for line in current_events if line.startswith("start ")]) == 10 and any(
                 line.startswith("curl-argv ") for line in current_events
             ):
                 break
         time.sleep(0.05)
     else:
         process.kill()
-        raise AssertionError("supervisor did not start all nine children")
+        raise AssertionError("supervisor did not start all ten children")
 
     process.terminate()
     time.sleep(0.1)
@@ -2720,6 +3053,7 @@ def test_dev_supervisor_sigterm_returns_143_and_allows_bounded_child_settlement(
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2777,6 +3111,7 @@ DASHSCOPE_API_BASE=https://provider-secret.invalid/dashscope-api
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -2876,10 +3211,9 @@ def test_dev_supervisor_does_not_accept_http_200_with_unready_body(
         encoding="utf-8",
     )
     # Start the shortened readiness window only after the stubs can record TERM.
-    # Keep stub scheduling separate from the two-second readiness assertion.
-    # Docker/browser validation may compete for CPU on local and CI hosts.
-    stub_barrier = """stub_deadline=$(( SECONDS + 15 ))
-while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 8 ]; do
+    # This barrier is bounded separately and remains inside the 10-second cap.
+    stub_barrier = """stub_deadline=$(( SECONDS + 5 ))
+while [ "$(grep -c '^trap-ready ' "$TAPPER_CHILD_LOG" || true)" -ne 9 ]; do
   [ "$SECONDS" -lt "$stub_deadline" ] || exit 1
   sleep 0.05
 done
@@ -2899,7 +3233,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
         env=environment,
         text=True,
         capture_output=True,
-        timeout=30,
+        timeout=10,
         check=False,
     )
 
@@ -2915,6 +3249,7 @@ ready_deadline=$(( SECONDS + 2 ))"""
         "worker",
         "graph",
         "suggestion",
+        "langfuse",
         "test-design",
         "generation",
         "web",
@@ -3332,6 +3667,10 @@ def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: 
     log = root / "order.log"
     image = "sha256:" + "a" * 64
     container = "b" * 64
+    (root / "deploy/local/langfuse").mkdir(parents=True)
+    bootstrap = root / "deploy/local/langfuse/bootstrap.sh"
+    bootstrap.write_text(f'#!/bin/sh\nset -eu\nprintf "bootstrap-langfuse\\n" >> "{log}"\n')
+    bootstrap.chmod(0o755)
     helper = root / "scripts/build-tapper-object-store.sh"
     helper.write_text(
         "#!/bin/bash\nset -eu\n"
@@ -3368,7 +3707,10 @@ def test_minio_demo_up_checks_receipt_and_container_before_migrations(tmp_path: 
     assert "--profile milvus up" in calls[1]
     assert calls[2].endswith("ps -q tap-minio")
     assert calls[3] == "helper verify-container " + container
-    assert "alembic" in calls[4]
+    assert "--profile insights up" in calls[4]
+    assert calls[5] == "bootstrap-langfuse"
+    assert "--profile langfuse up" in calls[6]
+    assert "alembic" in calls[7]
 
 
 def test_minio_dev_missing_receipt_stops_before_children(tmp_path: Path) -> None:
@@ -3645,7 +3987,7 @@ def test_task14_acceptance_runner_rejects_artifacts_outside_owned_roots(
     )
 
     assert completed.returncode == 2
-    assert "refusing unsafe Task 14 artifact path" in completed.stderr
+    assert "refusing unsafe joint acceptance artifact path" in completed.stderr
     assert not calls.exists()
 
 
@@ -3665,7 +4007,7 @@ def test_task14_acceptance_runner_never_cleans_preexisting_matrix_resources(
     )
 
     assert completed.returncode != 0
-    assert "refusing to reuse existing Task 14 Insights resources" in completed.stdout
+    assert "refusing to reuse existing joint acceptance Insights resources" in completed.stdout
     assert " down " not in calls.read_text()
 
 

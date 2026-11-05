@@ -25,6 +25,7 @@ from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader, filters
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 
+from tap.modules.knowledge.adapters.pdf_layout import layout_pdf_pages
 from tap.modules.knowledge.domain.documents import (
     MAX_UPLOAD_BYTES,
     BlockKind,
@@ -258,7 +259,8 @@ class PdfParser:
         decoded_total = 0
         builder = _BlockBuilder()
         inventory: list[ParseInventoryItem] = []
-        heading_path: tuple[str, ...] = ()
+        page_texts: list[str] = []
+        page_items: list[str] = []
         for page_number, page in enumerate(reader.pages, start=1):
             contents = page.get_contents()
             page_bytes = b""
@@ -303,29 +305,25 @@ class PdfParser:
                         reason="image-not-text-extracted",
                     )
                 )
-            if not text:
-                continue
-            lines = [line.strip() for line in text.split("\n") if line.strip()]
-            if not lines:
-                continue
-            if not heading_path:
-                heading_path = (lines[0],)
-                builder.add(
-                    BlockKind.HEADING,
-                    lines[0],
-                    heading_path,
-                    page=page_number,
-                    inventory_item_id=page_item.item_id,
-                )
-                lines = lines[1:]
-            for line in lines:
-                builder.add(
-                    BlockKind.PARAGRAPH,
-                    line,
-                    heading_path,
-                    page=page_number,
-                    inventory_item_id=page_item.item_id,
-                )
+            page_texts.append(text)
+            page_items.append(page_item.item_id)
+        layout = layout_pdf_pages(page_texts)
+        if layout.title is not None and layout.title_page is not None:
+            builder.add(
+                BlockKind.HEADING,
+                layout.title,
+                (layout.title,),
+                page=layout.title_page,
+                inventory_item_id=page_items[layout.title_page - 1],
+            )
+        for block in layout.blocks:
+            builder.add(
+                BlockKind.HEADING if block.heading_only else BlockKind.PARAGRAPH,
+                block.text,
+                block.heading_path,
+                page=block.page,
+                inventory_item_id=page_items[block.page - 1],
+            )
         if not inventory:
             inventory.extend(
                 failed_document_inventory(

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
 from typing import Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -15,24 +13,6 @@ from tap.modules.knowledge.ports.models import (
     SearchExecution,
     SearchHit,
 )
-
-AnswerDeltaCallback = Callable[[str], Awaitable[None]]
-"""Receives newly generated answer text while a structured answer streams."""
-
-SearchEvidence = Callable[[str, int], Awaitable[tuple[Evidence, ...]]]
-"""Search one Turn's already-authorized selection for `(query, limit)` evidence."""
-
-
-@dataclass(frozen=True, slots=True)
-class ToolPhaseResult:
-    """What an Agent tool loop adds to the answer: evidence and labelled, untrusted data."""
-
-    evidence: tuple[Evidence, ...] = ()
-    tool_results: tuple[Mapping[str, object], ...] = ()
-
-
-ToolPhase = Callable[[str, tuple[Evidence, ...], SearchEvidence | None], Awaitable[ToolPhaseResult]]
-"""Run an Agent's tools after retrieval: `(query, initial evidence, search) -> result`."""
 
 
 class SearchPort(Protocol):
@@ -69,8 +49,6 @@ class AnswerGenerationPort(Protocol):
         query: str,
         evidence: tuple[Evidence, ...],
         profile_id: str,
-        *,
-        on_delta: AnswerDeltaCallback | None = None,
     ) -> AnswerGeneration:
         raise NotImplementedError
 

@@ -729,7 +729,7 @@ def test_repeated_item_decisions_are_append_only_and_publication_remains_traceab
             target=ReviewStatus.REVIEWING,
             actor_id="synthetic-editor-01",
             expected_version=5,
-            now=NOW + timedelta(minutes=1),
+            now=NOW,
         )
         approved = await application.approve_review(
             "krv_001",

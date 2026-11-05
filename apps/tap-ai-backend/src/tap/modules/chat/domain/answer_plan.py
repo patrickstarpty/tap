@@ -14,18 +14,45 @@ INTENTS = frozenset(
         "general_chat",
         "transform_text",
         "factual_lookup",
-        "fact",
-        "relation",
         "explanation",
         "comparison",
         "procedural",
         "clarification",
+        "relation",
+        "out_of_scope",
     }
 )
-ROUTES = frozenset({"direct", "retrieve", "clarify", "insights", "file_analysis"})
+ROUTES = frozenset({"direct", "retrieve", "clarify", "insights", "file_analysis", "graph"})
 MISSING_FIELDS = frozenset(
     {"sources", "object-or-version", "object", "version", "time-range", "comparison-conditions"}
 )
+AGENT_INTENTS = frozenset(
+    {
+        "knowledge_qa",
+        "multi_step_qa",
+        "document_analysis",
+        "insights_analysis",
+        "clarify",
+        "out_of_scope",
+    }
+)
+
+
+def derive_agent_intent(intent: str, route: str, query_count: int) -> str:
+    """Observability-only classification of the turn, independent of the
+    legacy `intent` that still drives answer templates. Never limits which
+    tools a turn may use."""
+    if intent == "out_of_scope":
+        return "out_of_scope"
+    if route == "clarify":
+        return "clarify"
+    if route == "insights":
+        return "insights_analysis"
+    if route == "file_analysis":
+        return "document_analysis"
+    if intent == "comparison" or query_count > 1:
+        return "multi_step_qa"
+    return "knowledge_qa"
 
 
 def protected_constraints(text: str) -> tuple[str, ...]:
@@ -113,6 +140,8 @@ class AnswerPlan:
     previous_plan_id: str | None = None
     degradation_reason: str | None = None
     context_digests: tuple[str, ...] = ()
+    agent_intent: str = "knowledge_qa"
+    intent_reason: str = ""
 
     def __post_init__(self) -> None:
         for name in (
@@ -135,6 +164,12 @@ class AnswerPlan:
                 raise TypeError("plan collections must be immutable")
         if self.intent not in INTENTS or self.route not in ROUTES:
             raise ValueError("unknown answer intent or route")
+        if self.agent_intent not in AGENT_INTENTS:
+            raise ValueError("unknown agent intent")
+        if not isinstance(self.intent_reason, str) or len(self.intent_reason) > 300:
+            raise ValueError("intent reason must be a bounded string")
+        if (self.agent_intent == "out_of_scope") != (self.intent == "out_of_scope"):
+            raise ValueError("agent intent and legacy intent must agree on out of scope")
         if not set(self.missing) <= MISSING_FIELDS:
             raise ValueError("unknown missing information field")
         if self.route == "clarify" and (self.intent != "clarification" or not self.missing):
@@ -147,9 +182,13 @@ class AnswerPlan:
             raise ValueError("invalid shared retrieval budget")
         if self.evidence_limit > self.candidate_limit or not 0 < self.remaining_seconds <= 300:
             raise ValueError("invalid answer budget")
-        if len(self.queries) > 3 or (self.route == "retrieve") != bool(self.queries):
+        if len(self.queries) > 3 or (self.route in {"retrieve", "graph"}) != bool(self.queries):
             raise ValueError("only retrieval plans have one to three queries")
-        if self.route == "direct" and self.intent not in {"general_chat", "transform_text"}:
+        if self.route == "direct" and self.intent not in {
+            "general_chat",
+            "transform_text",
+            "out_of_scope",
+        }:
             raise ValueError("enterprise facts require evidence")
         if self.constraints != protected_constraints(self.original_question):
             raise ValueError("plan constraints differ from original question")
@@ -207,10 +246,6 @@ class AnswerPlan:
     def from_dict(cls, raw: dict[str, Any]) -> AnswerPlan:
         value = dict(raw)
         digest = value.pop("digest")
-        if content_digest(value) != digest:
-            raise ValueError("answer plan checkpoint digest changed")
-        legacy_intent = "intent" not in value
-        value.setdefault("intent", "fact")
         value["queries"] = tuple(
             PlannedQuery(
                 **{
@@ -224,6 +259,6 @@ class AnswerPlan:
         for name in ("constraints", "missing", "source_ids", "context_digests"):
             value[name] = tuple(value[name])
         result = cls(**value)
-        if not legacy_intent and result.digest != digest:
+        if result.digest != digest:
             raise ValueError("answer plan checkpoint digest changed")
         return result

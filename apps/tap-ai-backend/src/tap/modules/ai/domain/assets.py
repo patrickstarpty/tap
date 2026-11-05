@@ -5,21 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
+from typing import Literal, Mapping, get_args
 
 from tap.modules.access.domain.context import ProjectScopeContext, require_identifier
-from tap.modules.ai.domain.tools import ToolRejected, validate_allowlist
+from tap.modules.ai.domain.skill_metadata import SKILL_CATEGORIES, OriginKind, SkillCategory
+from tap.modules.ai.domain.tools import known_tool_ids
 
 _TASKS = frozenset({"knowledge.answer", "test-plan.generate", "automation.generate"})
-SKILL_ORIGINS = frozenset({"seed", "import", "editor"})
-MAX_SKILL_SOURCE_BYTES = 64 * 1024
-MAX_SKILL_DESCRIPTION_LENGTH = 1024
-MAX_REQUESTED_TOOLS = 64
-AGENT_ORIGINS = frozenset({"seed", "editor"})
-MAX_AGENT_DESCRIPTION_LENGTH = 1024
-MAX_AGENT_SYSTEM_INSTRUCTION_LENGTH = 16_000
-MAX_AGENT_SKILLS = 16
-MAX_MODEL_ALIAS_LENGTH = 128
+
+AssetSourceKind = Literal["imported", "authored", "built_in"]
+SkillFileCategory = Literal["skill", "reference", "script", "asset", "other"]
+
+_SOURCE_KINDS = frozenset({"imported", "authored", "built_in"})
+_FILE_CATEGORIES = frozenset({"skill", "reference", "script", "asset", "other"})
+_MAX_DESCRIPTION_LENGTH = 1024
+_MAX_SYSTEM_INSTRUCTION_BYTES = 32 * 1024
+_ORIGIN_KINDS = frozenset(get_args(OriginKind))
 
 
 class AssetRevisionStatus(StrEnum):
@@ -32,6 +35,13 @@ class AssetRevisionRejected(ValueError):
 
     def __init__(self) -> None:
         super().__init__("asset-revision-rejected")
+
+
+class RevisionConflict(Exception):
+    """A stale ``base_revision_id`` was supplied for an asset revision insert."""
+
+    def __init__(self) -> None:
+        super().__init__("revision-conflict")
 
 
 def text_digest(value: str) -> str:
@@ -54,6 +64,30 @@ def _identity(value: str, name: str) -> None:
         raise AssetRevisionRejected() from error
 
 
+def _description(value: str | None) -> None:
+    if value is not None and (
+        not isinstance(value, str) or not value.strip() or len(value) > _MAX_DESCRIPTION_LENGTH
+    ):
+        raise AssetRevisionRejected()
+
+
+def _source_kind(value: object) -> None:
+    if value not in _SOURCE_KINDS:
+        raise AssetRevisionRejected()
+
+
+def _identities(values: object, name: str) -> None:
+    if type(values) is not tuple:
+        raise AssetRevisionRejected()
+    for value in values:
+        _identity(value, name)
+
+
+def _optional_text(value: object, max_length: int) -> None:
+    if value is not None and (not isinstance(value, str) or not value or len(value) > max_length):
+        raise AssetRevisionRejected()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AiAgentRevision:
     revision_id: str
@@ -68,10 +102,16 @@ class AiAgentRevision:
     adopted_from_revision_id: str | None = None
     system_instruction: str | None = None
     output_schema_json: str | None = None
-    model_alias: str | None = None
     description: str | None = None
+    source_kind: AssetSourceKind = "built_in"
+    # Deprecated, read-only since Skill Hub (spec 4): superseded by
+    # `pinned_skill_ids`.
     skill_revision_ids: tuple[str, ...] = ()
-    origin: str = "seed"
+    default_model_alias: str | None = None
+    # Skill Hub (spec 1.2): Skill ids (not revisions) always loaded with this
+    # Agent, and Skill ids kept out of its auto-activation catalog.
+    pinned_skill_ids: tuple[str, ...] = ()
+    excluded_skill_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -92,23 +132,20 @@ class AiAgentRevision:
             self.output_schema_digest,
         ):
             _digest(value)
-        if type(self.tool_allowlist) is not frozenset:
+        if (
+            type(self.tool_allowlist) is not frozenset
+            or not self.tool_allowlist <= known_tool_ids()
+        ):
             raise AssetRevisionRejected()
-        try:
-            validate_allowlist(self.tool_allowlist)
-        except ToolRejected as error:
-            raise AssetRevisionRejected() from error
         if self.adopted_from_revision_id == self.revision_id:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
         if self.system_instruction is not None:
-            if (
-                len(self.system_instruction) > MAX_AGENT_SYSTEM_INSTRUCTION_LENGTH
-                or text_digest(self.system_instruction) != self.system_instruction_digest
-            ):
+            if len(self.system_instruction.encode("utf-8")) > _MAX_SYSTEM_INSTRUCTION_BYTES:
                 raise AssetRevisionRejected()
-        self._check_composition()
+            if text_digest(self.system_instruction) != self.system_instruction_digest:
+                raise AssetRevisionRejected()
         if self.output_schema_json is not None:
             from tap.modules.ai.domain.models import schema_digest
 
@@ -118,29 +155,54 @@ class AiAgentRevision:
                 raise AssetRevisionRejected() from error
             if not isinstance(schema, dict) or schema_digest(schema) != self.output_schema_digest:
                 raise AssetRevisionRejected()
-
-    def _check_composition(self) -> None:
-        if self.origin not in AGENT_ORIGINS:
-            raise AssetRevisionRejected()
-        if self.model_alias is not None and (
-            not isinstance(self.model_alias, str)
-            or not self.model_alias.strip()
-            or len(self.model_alias) > MAX_MODEL_ALIAS_LENGTH
+        _description(self.description)
+        _source_kind(self.source_kind)
+        _identities(self.skill_revision_ids, "skill_revision_ids[]")
+        _identities(self.pinned_skill_ids, "pinned_skill_ids[]")
+        _identities(self.excluded_skill_ids, "excluded_skill_ids[]")
+        if self.default_model_alias is not None and (
+            not isinstance(self.default_model_alias, str)
+            or not self.default_model_alias.strip()
+            or len(self.default_model_alias) > 128
         ):
             raise AssetRevisionRejected()
-        if self.description is not None and (
-            not isinstance(self.description, str)
-            or len(self.description) > MAX_AGENT_DESCRIPTION_LENGTH
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SkillFile:
+    relative_path: str
+    size_bytes: int
+    sha256: str
+    category: SkillFileCategory
+    attached: bool
+
+    def __post_init__(self) -> None:
+        segments = self.relative_path.split("/") if isinstance(self.relative_path, str) else []
+        if (
+            not isinstance(self.relative_path, str)
+            or not self.relative_path
+            or len(self.relative_path) > 512
+            or self.relative_path.startswith("/")
+            or ".." in segments
+            or "" in segments
         ):
             raise AssetRevisionRejected()
         if (
-            type(self.skill_revision_ids) is not tuple
-            or len(self.skill_revision_ids) > MAX_AGENT_SKILLS
-            or len(set(self.skill_revision_ids)) != len(self.skill_revision_ids)
+            type(self.size_bytes) is not int
+            or isinstance(self.size_bytes, bool)
+            or self.size_bytes < 0
         ):
             raise AssetRevisionRejected()
-        for item in self.skill_revision_ids:
-            _identity(item, "skill_revision_id")
+        if (
+            not isinstance(self.sha256, str)
+            or len(self.sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.sha256)
+        ):
+            raise AssetRevisionRejected()
+        if self.category not in _FILE_CATEGORIES:
+            raise AssetRevisionRejected()
+        if type(self.attached) is not bool:
+            raise AssetRevisionRejected()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -155,11 +217,22 @@ class SkillRevision:
     status: AssetRevisionStatus = AssetRevisionStatus.ENABLED
     adopted_from_revision_id: str | None = None
     instruction_template: str | None = None
-    origin: str = "seed"
     description: str | None = None
-    requested_tools: tuple[str, ...] = ()
-    front_matter_json: str | None = None
-    source_markdown: str | None = None
+    source_kind: AssetSourceKind = "built_in"
+    attached_references: str | None = None
+    frontmatter: Mapping[str, object] | None = None
+    package_digest: str | None = None
+    files: tuple[SkillFile, ...] = ()
+    # Skill Hub (spec 1.1). `category` is the Skill's (not the revision's):
+    # read back from `skill.category`; on a first insert it seeds that column.
+    # `None` on an in-memory revision means "not chosen": the catalog then
+    # falls back to frontmatter, else `other`.
+    category: SkillCategory | None = None
+    version_label: str | None = None
+    # `None` means "derive from `source_kind`" (imports read as `unknown`).
+    origin_kind: OriginKind | None = None
+    origin_ref: str | None = None
+    origin_imported_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _identity(self.revision_id, "revision_id")
@@ -186,40 +259,27 @@ class SkillRevision:
             raise AssetRevisionRejected()
         if self.adopted_from_revision_id is not None:
             _identity(self.adopted_from_revision_id, "adopted_from_revision_id")
-        if (
-            self.instruction_template is not None
-            and text_digest(self.instruction_template) != self.instruction_template_digest
-        ):
-            raise AssetRevisionRejected()
-        self._check_import_content()
-
-    def _check_import_content(self) -> None:
-        if self.origin not in SKILL_ORIGINS:
-            raise AssetRevisionRejected()
-        if self.description is not None and (
-            not isinstance(self.description, str)
-            or len(self.description) > MAX_SKILL_DESCRIPTION_LENGTH
-        ):
-            raise AssetRevisionRejected()
-        if (
-            type(self.requested_tools) is not tuple
-            or len(self.requested_tools) > MAX_REQUESTED_TOOLS
-            or any(
-                not isinstance(item, str) or not item.strip() or len(item) > 128
-                for item in self.requested_tools
-            )
-        ):
-            raise AssetRevisionRejected()
-        if self.front_matter_json is not None:
-            try:
-                front_matter = json.loads(self.front_matter_json)
-            except (TypeError, json.JSONDecodeError) as error:
-                raise AssetRevisionRejected() from error
-            if not isinstance(front_matter, dict):
+        if self.instruction_template is not None:
+            combined = self.instruction_template + (self.attached_references or "")
+            if text_digest(combined) != self.instruction_template_digest:
                 raise AssetRevisionRejected()
-        if self.source_markdown is not None and (
-            not isinstance(self.source_markdown, str)
-            or len(self.source_markdown.encode("utf-8")) > MAX_SKILL_SOURCE_BYTES
-            or text_digest(self.source_markdown) != self.content_digest
+        _description(self.description)
+        _source_kind(self.source_kind)
+        if self.attached_references is not None and not isinstance(self.attached_references, str):
+            raise AssetRevisionRejected()
+        if self.frontmatter is not None and not isinstance(self.frontmatter, Mapping):
+            raise AssetRevisionRejected()
+        if self.package_digest is not None:
+            _digest(self.package_digest)
+        if type(self.files) is not tuple or any(type(file) is not SkillFile for file in self.files):
+            raise AssetRevisionRejected()
+        if self.category is not None and self.category not in SKILL_CATEGORIES:
+            raise AssetRevisionRejected()
+        _optional_text(self.version_label, 32)
+        if self.origin_kind is not None and self.origin_kind not in _ORIGIN_KINDS:
+            raise AssetRevisionRejected()
+        _optional_text(self.origin_ref, 512)
+        if self.origin_imported_at is not None and not isinstance(
+            self.origin_imported_at, datetime
         ):
             raise AssetRevisionRejected()

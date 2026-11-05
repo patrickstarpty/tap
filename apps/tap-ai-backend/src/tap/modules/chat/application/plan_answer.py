@@ -1,6 +1,7 @@
 """One graph-local planning call followed by deterministic authority admission."""
 
 import asyncio
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -11,6 +12,7 @@ from tap.modules.chat.domain.answer_plan import (
     AnswerPlan,
     PlannedQuery,
     PlanningInput,
+    derive_agent_intent,
     protected_constraints,
 )
 from tap.modules.chat.domain.conversations import TurnInputSnapshot
@@ -21,21 +23,108 @@ from tap.modules.knowledge.api import latest_template_version as _latest_templat
 from tap.platform.telemetry import span
 
 PlannerCall = Callable[[PlanningInput, float], Awaitable[dict[str, Any]]]
+# Measured against qwen-plus through LiteLLM (2026-10-22): decoding runs at
+# roughly 38 output tokens per second with negligible time to first token, and
+# even a minimal one-query plan is ~100-130 tokens (~2.6-3.3 s); a
+# three-query comparison plan peaked at ~4.6 s. 6 s covers that with margin
+# while bounding how long a slow planner can delay the answer's first token
+# (on timeout the turn still proceeds on the heuristic plan).
+DEFAULT_PLANNER_TIMEOUT_SECONDS = 6.0
+# Relation-question cues, kept as a small set of independently-reasoned
+# checks -- a literal phrase, a keyword paired with a question-form signal,
+# or a lookaround exclusion for a specific kind-of-relationship compound --
+# rather than one monolithic alternation, so each one's false-positive risk
+# can be reasoned about on its own. Only `_WHAT_FOLLOWS_QUESTION` and
+# `_ENGLISH_QUESTION_LEAD` are anchored to the start of the question and
+# `_LINK_QUESTION` to its end; the others are plain co-occurrence or
+# exclusion checks over the whole text.
+_RELATION_WORD = re.compile(r"(?<!没)关系(?!型|户|证明|管理|人)")
+_DEPENDENCY_KEYWORD = re.compile(r"影响|依赖|前置条件|上游|下游|触发")
+_CHINESE_INTERROGATIVE = re.compile(r"什么|吗|哪些|哪个")
+# 联系/关联 only count as a relation cue in an entity-pair link question
+# (`A和B有什么联系`, `核保和理赔怎么关联`), never on their own, so
+# `怎么联系客服`/`联系人怎么填写`/`怎么关联银行卡` stay off the graph route.
+# Accepted recall losses (no test forces them): `A和B的联系是什么` (no link
+# verb phrase after the pair) and `怎么影响保费` (`怎么` is no longer an
+# interrogative signal, so `上游接口怎么调用` stays negative).
+_LINK_QUESTION = re.compile(
+    r"(?:和|与|跟|同)[^，。,；;？?]{1,20}?(?:之间)?"
+    r"(?:有什么|有啥|有何|有没有|是否有|有|怎么|如何)(?:联系|关联)(?:吗|呢)?\s*[？?]?\s*$"
+)
+_SEQUENCE_QUESTION = re.compile(r"之后是什么|下一步是什么|下一步做什么|接下来是什么")
+_WHAT_FOLLOWS_QUESTION = re.compile(
+    r"^\s*(?:what|which)\s+(?:follows|comes after|happens after)\b(?!\s+(?:is|are)\b)", re.I
+)
+_ENGLISH_RELATION_KEYWORD = re.compile(
+    r"\b(?:relat(?:e|es|ed|ionship)|depend(?:s|ent|ency|encies)?|affect(?:s|ed)?|"
+    r"trigger(?:s|ed)?|impact(?:s|ed)?|next step after)\b",
+    re.I,
+)
+_ENGLISH_QUESTION_LEAD = re.compile(r"^\s*(?:what|which|how|does|do|is|are)\b", re.I)
+
+
+def is_relation_question(original: str) -> bool:
+    """A question asks how two things relate, what depends on or follows
+    something, or which rules affect an entity. Each cue below pairs a
+    relation/dependency keyword with a positive question-form signal (a
+    Chinese interrogative, an English leading question word or trailing
+    `?`), matches a literal question phrase, or excludes a specific
+    kind-of-relationship compound (`关系型`/`关系户`/`关系证明`/`关系管理`/
+    `关系人`/`没关系`) -- instead of matching a bare keyword -- so a
+    declarative sentence that merely contains a relation word (`What
+    follows is a list of rules`) does not qualify as a question about one.
+
+    Public (not `_`-prefixed): the deterministic fake `ModelGateway`
+    (`tap.testing.deterministic_model_gateway`) reuses this heuristic for
+    its `AnswerPlan`-schema stub instead of duplicating it, so a relation
+    question's `graph` route is not silently overridden to `retrieve`
+    purely because the planner now consults the model every turn."""
+    if _RELATION_WORD.search(original):
+        return True
+    if _DEPENDENCY_KEYWORD.search(original) and _CHINESE_INTERROGATIVE.search(original):
+        return True
+    if _LINK_QUESTION.search(original):
+        return True
+    if _SEQUENCE_QUESTION.search(original):
+        return True
+    if _WHAT_FOLLOWS_QUESTION.search(original):
+        return True
+    if _ENGLISH_RELATION_KEYWORD.search(original) and (
+        _ENGLISH_QUESTION_LEAD.search(original) or original.rstrip().endswith("?")
+    ):
+        return True
+    return False
+
+
+_COMPARISON_KEYWORD = re.compile(r"比较|不同|对比|跨章节|compare|difference", re.I)
+
+
+def is_comparison_question(original: str) -> bool:
+    """A question compares two or more things, chapters or versions.
+
+    Public (not `_`-prefixed) for the same reason as `is_relation_question`:
+    the deterministic fake `ModelGateway`'s `AnswerPlan` stub reuses this
+    instead of duplicating it, so a comparison question still gets the
+    `comparison` intent (and `multi_step_qa` agent intent) under the fake
+    gateway, not just under a real model."""
+    return bool(_COMPARISON_KEYWORD.search(original))
+
+
 _TEMPLATE = {
     "general_chat": "general",
     "transform_text": "general",
     "factual_lookup": "factual",
-    "fact": "factual",
-    "relation": "explanation",
     "explanation": "explanation",
     "comparison": "comparison",
     "procedural": "procedural",
     "clarification": "clarification",
+    "relation": "explanation",
+    "out_of_scope": "general",
 }
 
 
 def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
-    if plan.route != "retrieve":
+    if plan.route not in {"retrieve", "graph"}:
         raise ValueError("only admitted retrieval plans may reach Knowledge")
     remaining = plan.deadline_at - time.time()
     if remaining <= 0:
@@ -60,7 +149,7 @@ def authorized_execution(plan: AnswerPlan) -> _AuthorizedAnswerExecution:
         plan.evidence_limit,
         remaining,
         plan.output_requirements,
-        plan.intent,
+        intent=plan.intent,
     )
 
 
@@ -106,8 +195,20 @@ def planning_input(
 
 
 class AnswerPlanner:
-    def __init__(self, model: PlannerCall | None = None):
+    def __init__(
+        self,
+        model: PlannerCall | None = None,
+        *,
+        timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
+    ):
+        if (
+            type(timeout_seconds) not in {int, float}
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("planner budget must be a positive finite duration")
         self._model = model
+        self._timeout_seconds = float(timeout_seconds)
 
     async def plan(
         self, value: PlanningInput, *, previous_plan_id: str | None = None
@@ -128,9 +229,7 @@ class AnswerPlanner:
                     r"\b(?:version|v\d+|differ\w*|compare\w*|change\w*)\b", original, re.I
                 )
             )
-            complex_query = bool(
-                re.search(r"比较|不同|对比|跨章节|compare|difference", original, re.I)
-            )
+            complex_query = is_comparison_question(original)
             direct = bool(
                 re.fullmatch(r"\s*(?:你好|您好|hi|hello|谢谢|thanks)[！!。.\s]*", original, re.I)
             )
@@ -152,12 +251,8 @@ class AnswerPlanner:
             else:
                 if ambiguous:
                     standalone = value.authorized_referents[0] + "：" + original
-                if re.search(
-                    r"关系|依赖|影响|路径|\b(?:relationship|relation|depend\w*|impact|path)\b",
-                    original,
-                    re.I,
-                ):
-                    intent = "relation"
+                if is_relation_question(original):
+                    intent, route = "relation", "graph"
                 elif complex_query:
                     intent = "comparison"
                 elif re.search(r"如何|步骤|how to", original, re.I):
@@ -165,10 +260,24 @@ class AnswerPlanner:
                 elif re.search(r"为什么|解释|why|explain", original, re.I):
                     intent = "explanation"
 
-            def build(queries=None):
+            def build(queries=None, agent_intent=None, intent_reason=""):
                 template_id = _TEMPLATE[intent]
                 template = _get_template(template_id, _latest_template_version(template_id))
                 current_span.set_attribute("tap.plan.kind", route)
+                resolved_queries = (
+                    tuple(queries)
+                    if queries is not None
+                    else (
+                        (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
+                        if route in {"retrieve", "graph"}
+                        else ()
+                    )
+                )
+                resolved_agent_intent = (
+                    agent_intent
+                    if agent_intent is not None
+                    else derive_agent_intent(intent, route, len(resolved_queries))
+                )
                 return AnswerPlan(
                     plan_id=uuid4().hex,
                     project_id=value.project_id,
@@ -184,13 +293,7 @@ class AnswerPlanner:
                     standalone_query=standalone,
                     constraints=protected_constraints(original),
                     missing=tuple(missing),
-                    queries=tuple(queries)
-                    if queries is not None
-                    else (
-                        (PlannedQuery("q1", standalone, (), standalone, value.source_ids),)
-                        if route == "retrieve"
-                        else ()
-                    ),
+                    queries=resolved_queries,
                     source_ids=value.source_ids,
                     template_id=template.id,
                     template_version=template.version,
@@ -203,13 +306,21 @@ class AnswerPlanner:
                     previous_plan_id=previous_plan_id,
                     degradation_reason=reason,
                     context_digests=value.context_digests,
+                    agent_intent=resolved_agent_intent,
+                    intent_reason=intent_reason,
                 )
 
-            if route != "retrieve" or not complex_query or self._model is None or ambiguous:
+            if route not in {"retrieve", "graph"} or self._model is None or ambiguous:
                 return build()
-            timeout = min(3.0, value.remaining_seconds)
+            timeout = min(self._timeout_seconds, value.remaining_seconds)
             if timeout <= 0:
                 raise TimeoutError("answer budget exhausted")
+            # Final review I-1: a planner-model failure degrades to the plan the
+            # deterministic heuristic above already computed (a relation
+            # question keeps its `graph` route, a simple one its own intent),
+            # restored here because the admission block below reassigns these
+            # before `build()` -- which can itself still reject the plan.
+            heuristic = (route, intent, standalone, confidence, missing)
             try:
                 async with asyncio.timeout(timeout):
                     raw = await self._model(value, timeout)
@@ -220,10 +331,18 @@ class AnswerPlanner:
                     "standalone_query",
                     "missing",
                     "queries",
+                    "agent_intent",
+                    "intent_reason",
                 }:
                     raise ValueError("invalid planning schema")
-                if raw["route"] not in {"retrieve", "clarify"}:
+                if raw["route"] not in {"retrieve", "graph", "clarify", "direct"}:
                     raise ValueError("model cannot authorize direct or capability routes")
+                if raw["route"] == "direct" and raw["intent"] != "out_of_scope":
+                    raise ValueError("model cannot authorize direct route for this intent")
+                if raw["intent"] == "out_of_scope" and (raw["route"] != "direct" or raw["queries"]):
+                    raise ValueError("out of scope intent requires direct route without queries")
+                if (raw["intent"] == "relation") != (raw["route"] == "graph"):
+                    raise ValueError("relation intent and graph route must pair")
                 if (
                     type(raw["confidence"]) not in {int, float}
                     or not isinstance(raw["missing"], list)
@@ -232,6 +351,33 @@ class AnswerPlanner:
                     or not isinstance(raw["standalone_query"], str)
                 ):
                     raise ValueError("invalid planning field types")
+                if protected_constraints(original) and raw["route"] in {"retrieve", "graph"}:
+                    # N3: copying a long constrained question verbatim into
+                    # every restatement took the planner past its budget, so
+                    # the model leaves them empty and the original question
+                    # fills them here. A non-empty value must still be
+                    # verbatim (checked below).
+                    raw = {
+                        **raw,
+                        "standalone_query": raw["standalone_query"] or original,
+                        "queries": [
+                            {
+                                **query,
+                                "text": query.get("text") or original,
+                                "evidence_goal": query.get("evidence_goal") or original,
+                            }
+                            if isinstance(query, dict)
+                            else query
+                            for query in raw["queries"]
+                        ],
+                    }
+                if not raw["standalone_query"].strip() and raw["route"] not in {
+                    "retrieve",
+                    "graph",
+                }:
+                    # Nothing is searched on a direct/clarify plan; a model that
+                    # leaves the restatement blank still produced a valid plan.
+                    raw = {**raw, "standalone_query": original}
                 for query in raw["queries"]:
                     for field in ("depends_on", "source_ids"):
                         if not isinstance(query[field], list) or not all(
@@ -253,36 +399,33 @@ class AnswerPlanner:
                     )
                 ):
                     raise ValueError("model changed constraint associations")
-                if (
-                    set(protected_constraints(" ".join(query["text"] for query in raw["queries"])))
-                    != set(protected_constraints(original))
-                    and raw["route"] == "retrieve"
-                ):
+                if set(
+                    protected_constraints(" ".join(query["text"] for query in raw["queries"]))
+                ) != set(protected_constraints(original)) and raw["route"] in {"retrieve", "graph"}:
                     raise ValueError("model queries changed exact constraints")
                 queries = tuple(
                     PlannedQuery(
                         **{
                             **query,
                             "depends_on": tuple(query["depends_on"]),
-                            "source_ids": tuple(query["source_ids"]),
+                            # Empty means every authorized source (the planner
+                            # prompt asks for it so output size does not grow
+                            # with the number of attached documents).
+                            "source_ids": tuple(query["source_ids"]) or value.source_ids,
                         }
                     )
                     for query in raw["queries"]
                 )
+                if not isinstance(raw["intent_reason"], str):
+                    raise ValueError("invalid intent reason type")
                 intent, route, confidence = raw["intent"], raw["route"], raw["confidence"]
                 standalone, missing = raw["standalone_query"], tuple(raw["missing"])
-                return build(queries)
+                return build(queries, raw["agent_intent"], raw["intent_reason"])
             except TimeoutError:
                 reason = "planner-timeout"
             except (ValueError, TypeError, KeyError):
                 reason = "invalid-plan"
             except Exception:
                 reason = "planner-unavailable"
-            route, intent, standalone, confidence, missing = (
-                "retrieve",
-                "comparison",
-                original,
-                1.0,
-                (),
-            )
+            route, intent, standalone, confidence, missing = heuristic
             return build()

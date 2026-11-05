@@ -1,10 +1,5 @@
-import {
-  relationGraphUrl,
-  relationGraphSelection,
-  type RelationCitation,
-} from "../../features/graph/model/relationCitation";
-import { Button } from "antd";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Button } from "antd";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -18,26 +13,45 @@ import {
 import { useRuntimeModeQuery } from "../../features/runtime/api/queries";
 import { ValidationModeBanner } from "../../features/runtime/components/ValidationModeBanner";
 import { TapperChat, type ChatAttachment } from "./workspace/TapperChat";
-import { CatalogWorkspace } from "./workspace/CatalogWorkspace";
+import { AgentsWorkspace } from "./workspace/agents/AgentsWorkspace";
+import { AgentsPage } from "./workspace/agents/team/AgentsPage";
+import { LocalDraftMigrationBanner } from "./workspace/agents/LocalDraftMigrationBanner";
+import { SkillsWorkspace } from "./workspace/skills/SkillsWorkspace";
 import { WORKSPACE_COPY, type WorkspaceCopy } from "./workspace/copy";
 import { KnowledgeSourcesPanel } from "./workspace/KnowledgeSourcesPanel";
-import { LibraryWorkspace } from "./workspace/LibraryWorkspace";
+import {
+  LibraryWorkspace,
+  type PublishedSourceRevision,
+} from "./workspace/LibraryWorkspace";
+import {
+  pushGraphHighlight,
+  readGraphHighlight,
+  useGraphHighlightState,
+} from "../../features/graph/model/highlight";
 import { AccessibleDialog } from "./workspace/AccessibleDialog";
 import { KnowledgeClientError } from "../../features/knowledge/api/client";
 import { useOptionalKnowledgeClient } from "../../features/knowledge/api/queries";
 import type { PromptSuggestionItem } from "../../features/knowledge/api/types";
 import {
+  aiAssetKeys,
   aiAssetPresentation,
+  fetchSkillRevisionDetail,
   useAiAssetCatalog,
+  type SkillRevisionDetail,
 } from "../../features/knowledge/api/aiAssets";
 import {
+  buildSkillMarkdown,
+  SKILL_TURN_BUDGET_BYTES,
+  utf8ByteLength,
+} from "./workspace/skills/skillMarkdown";
+import {
   useAppendConversation,
-  conversationKeys,
   useCancelTurn,
   useConversationSearch,
   useDeleteConversation,
   useRenameConversation,
   useConversationCitation,
+  useConversationCitations,
   useConversationDetail,
   useConversationEvents,
   useConversationList,
@@ -48,6 +62,7 @@ import {
 } from "../../features/conversations/api/queries";
 import { TracePanel } from "../../features/conversations/trace/TracePanel";
 import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
+import { AnswerFeedback } from "../../features/conversations/feedback/AnswerFeedback";
 import {
   parseInsightsHandoff,
   type InsightsHandoff,
@@ -58,11 +73,18 @@ import {
   createStreamState,
   isTargetTurnActive,
   latestTurnState,
+  mergedDraftFacts,
   reduceStreamEvent,
+  type GraphContextSummary,
+  type TaskStepView,
 } from "../../features/conversations/model/stream";
+import { DraftAnswer } from "../../features/conversations/components/DraftAnswer";
 import { GroundedAnswer } from "../../features/knowledge/components/GroundedAnswer";
+import type { RetrievalAnswerResponse } from "../../features/knowledge/api/types";
 import { useModelCatalog } from "../../features/knowledge/api/modelCatalog";
 import { CitationViewer } from "../../features/knowledge/components/CitationViewer";
+import { EvidencePanel } from "../../features/knowledge/components/EvidencePanel";
+import { isEdgeCitation } from "../../features/knowledge/model/edgeCitation";
 import { DocumentChunks } from "../../features/knowledge/components/DocumentChunks";
 import { KnowledgeReview } from "../../features/knowledge/components/KnowledgeReview";
 import {
@@ -99,13 +121,18 @@ function durableTestPlanPath(): { planId: string; revisionId: string } | null {
 function TurnContext({
   copy,
   turn,
+  onOpenAgentRevision,
+  onOpenSkillRevision,
 }: {
   copy: WorkspaceCopy;
   turn: AssistantTurn;
+  onOpenAgentRevision?: (revisionId: string) => void;
+  onOpenSkillRevision?: (revisionId: string) => void;
 }) {
   const labels =
     turn.contextLabels ?? turn.sourceReferences.map((item) => item.name);
-  if (labels.length === 0) {
+  const skillsUsed = turn.skillsUsed ?? [];
+  if (labels.length === 0 && skillsUsed.length === 0) {
     return <p className="tap-context-notice">{copy.chat.noContextNotice}</p>;
   }
 
@@ -137,12 +164,69 @@ function TurnContext({
         ) : null}
         {agentLabel ? (
           <p>
-            <strong>Agent:</strong> {agentLabel}
+            <strong>Agent:</strong>{" "}
+            {onOpenAgentRevision !== undefined &&
+            turn.agentRevisionId != null ? (
+              <button
+                type="button"
+                className="tap-turn-context-revision-link"
+                onClick={() => onOpenAgentRevision(turn.agentRevisionId!)}
+              >
+                {agentLabel}
+              </button>
+            ) : (
+              agentLabel
+            )}
           </p>
         ) : null}
-        {skillLabels.length > 0 ? (
+        {skillsUsed.length > 0 ? (
+          <div>
+            <strong>{copy.chat.skillsUsed}</strong>
+            <ul aria-label={copy.chat.skillsUsed}>
+              {skillsUsed.map((skill) => (
+                <li key={`${skill.mode}-${skill.revisionId}`}>
+                  {onOpenSkillRevision !== undefined ? (
+                    <button
+                      type="button"
+                      className="tap-turn-context-revision-link"
+                      onClick={() => onOpenSkillRevision(skill.revisionId)}
+                    >
+                      {skill.label}
+                    </button>
+                  ) : (
+                    skill.label
+                  )}{" "}
+                  <span className="tap-turn-context-skill-mode">
+                    {copy.chat.skillModes[skill.mode]}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : skillLabels.length > 0 ? (
+          // A Turn recorded before Skill usage was tracked: its frozen labels.
           <p>
-            <strong>Skills:</strong> {skillLabels.join(", ")}
+            <strong>Skills:</strong>{" "}
+            {skillLabels.map((label, index) => {
+              const skillRevisionId = turn.skillRevisionIds?.[index];
+              return (
+                <span key={`${label}-${index}`}>
+                  {index > 0 ? ", " : ""}
+                  {onOpenSkillRevision !== undefined &&
+                  skillRevisionId !== undefined ? (
+                    <button
+                      type="button"
+                      className="tap-turn-context-revision-link"
+                      onClick={() => onOpenSkillRevision(skillRevisionId)}
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    label
+                  )}
+                </span>
+              );
+            })}
           </p>
         ) : null}
       </details>
@@ -171,16 +255,213 @@ type ActivityEvent = {
   payload: { [key: string]: unknown };
 };
 
+/**
+ * The server emits skill selection notices as closed codes
+ * (`skill_disabled:<revisionId>`, `skill_inapplicable:<revisionId>`) rather
+ * than prose (I-2) -- map each to localized copy naming the Skill. The raw
+ * code is never shown (N-2): `skillById` only ever carries each Skill's
+ * *latest* revision (C-1), so a notice naming an older bound revision
+ * (e.g. an Agent pinned to a Skill revision superseded since) can't be
+ * resolved to a name there -- a generic (nameless) sentence is used
+ * instead for that case, and for any code whose kind isn't recognized at
+ * all.
+ */
+function formatSkillNotice(
+  code: string,
+  skillById: ReadonlyMap<string, { displayName: string }>,
+  copy: WorkspaceCopy,
+): string {
+  const [kind, revisionId] = code.split(":", 2);
+  const skillName =
+    revisionId !== undefined
+      ? skillById.get(revisionId)?.displayName
+      : undefined;
+  if (kind === "skill_disabled") {
+    return skillName !== undefined
+      ? copy.composer.skillDisabledNotice(skillName)
+      : copy.composer.skillDisabledNoticeGeneric;
+  }
+  if (kind === "skill_inapplicable") {
+    return skillName !== undefined
+      ? copy.composer.skillInapplicableNotice(skillName)
+      : copy.composer.skillInapplicableNoticeGeneric;
+  }
+  return copy.composer.skillDisabledNoticeGeneric;
+}
+
+/**
+ * Shared by `AnswerActivity` (no trace yet) and `AnswerGraphSummary` (trace
+ * panel already covers the event log) so the answer summary line and the
+ * graph seeds/paths rows render identically regardless of which of the two
+ * is shown — the summary must not disappear just because a turn has a
+ * `traceId`.
+ */
+function buildAnswerGraphSummary({
+  locale,
+  sourceCount,
+  chunkCitationCount,
+  edgeCitationCount,
+  graphContext,
+}: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+}): { summaryText: string; rows: string[] } {
+  const copy = WORKSPACE_COPY[locale].chat;
+  const relationCount = graphContext?.relationCount ?? edgeCitationCount;
+  const summaryText = copy.answerSummary(
+    sourceCount,
+    chunkCitationCount,
+    relationCount,
+  );
+  const hasGraphRows =
+    graphContext !== null &&
+    (graphContext.seedCount > 0 || graphContext.paths.length > 0);
+  const rows = !hasGraphRows
+    ? []
+    : [
+        copy.seedEntities(graphContext.seedCount),
+        ...graphContext.paths.map(
+          (path) => `${copy.relationPaths}: ${path.join(" → ")}`,
+        ),
+      ];
+  return { summaryText, rows };
+}
+
+/**
+ * Renders the answer summary line and expandable seeds/paths rows above the
+ * trace panel for a terminal turn with a `traceId` — `AnswerActivity` is not
+ * rendered in that case, so without this the graph summary never reaches
+ * users for the (common) case of a completed, traced turn.
+ *
+ * Returns `null` under the same "nothing happened" condition `AnswerActivity`
+ * does (its `allRows.length === 0` gate): when there is no row to expand
+ * *and* every count the summary line would otherwise report is zero, so the
+ * line would read as pure noise ("Searched 0 sources · 0 passages · 0
+ * relations"). A turn that assembled at least one source, citation or
+ * relation still always shows the summary line, matching the I1 fix above.
+ */
+function AnswerGraphSummary(props: {
+  locale: "en" | "zh";
+  sourceCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+}) {
+  const { summaryText, rows } = buildAnswerGraphSummary(props);
+  const relationCount =
+    props.graphContext?.relationCount ?? props.edgeCitationCount;
+  const hasNothingToShow =
+    rows.length === 0 &&
+    props.sourceCount === 0 &&
+    props.chunkCitationCount === 0 &&
+    relationCount === 0;
+  if (hasNothingToShow) return null;
+  if (rows.length === 0) {
+    return <p className="tap-answer-summary">{summaryText}</p>;
+  }
+  return (
+    <details className="tap-answer-activity">
+      <summary>{summaryText}</summary>
+      <ol>
+        {rows.map((row, index) => (
+          <li key={`${index}-${row}`}>{row}</li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+/**
+ * The rating control only makes sense once a Turn's answer is durably
+ * final (not merely terminal — an abstained/canceled/failed Turn has
+ * nothing to rate) and persisted under a real conversation (not the local
+ * "draft" placeholder used before the backend accepts the first message,
+ * which has no feedback endpoint to call). `traceId` is deliberately not
+ * part of this gate: it is nullable and the backend accepts feedback on a
+ * completed Turn with no trace.
+ */
+export function shouldShowAnswerFeedback(
+  turn: { status?: AssistantTurn["status"] },
+  conversationId: string | undefined,
+): boolean {
+  return turn.status === "completed" && conversationId !== undefined;
+}
+
+/**
+ * Formats one `task.step` row per the Task 10 contract, shared by
+ * `AnswerActivity` (folded into its collapsible activity panel) and
+ * `TaskStepList` (rendered directly, with no panel to expand, while a
+ * turn is still running or in the terminal-with-trace branch) so the two
+ * call sites never drift (review fix round 1, Important 1).
+ */
+function formatTaskStepRows(
+  steps: readonly TaskStepView[],
+  locale: "en" | "zh",
+): string[] {
+  const chatCopy = WORKSPACE_COPY[locale].chat;
+  return steps.map((step) =>
+    chatCopy.toolStepRow(
+      step.toolRound,
+      chatCopy.toolName(step.tool),
+      // Folded minor (review fix round 1): an empty summary (e.g. a
+      // `running` step that has no summary yet) must not leave a
+      // dangling " · " separator in the row.
+      step.summary.length === 0
+        ? chatCopy.stepStatus[step.status]
+        : `${chatCopy.stepStatus[step.status]} · ${step.summary}`,
+      step.durationMs,
+    ),
+  );
+}
+
+/**
+ * A turn's `task.step` rows, rendered directly (no collapsible panel to
+ * expand first) — used in the queued/running branch (no other activity
+ * summary exists yet to attach a toggle to) and in the terminal-with-trace
+ * branch (`DurableTracePanel` already covers the full event log; the step
+ * rows still need to surface here directly, review fix round 1, Important
+ * 1). `AnswerActivity` folds the same rows (via `formatTaskStepRows`) into
+ * its own collapsible panel instead, for the terminal-without-trace case.
+ */
+function TaskStepList({
+  steps,
+  locale,
+}: {
+  steps: readonly TaskStepView[];
+  locale: "en" | "zh";
+}) {
+  if (steps.length === 0) return null;
+  const rows = formatTaskStepRows(steps, locale);
+  return (
+    <ol className="tap-task-steps">
+      {rows.map((row, index) => (
+        <li key={`${index}-${row}`}>{row}</li>
+      ))}
+    </ol>
+  );
+}
+
 export function AnswerActivity({
   events,
   locale,
   sourceCount,
   shownCitationCount,
+  chunkCitationCount,
+  edgeCitationCount,
+  graphContext,
+  steps = [],
 }: {
   events: readonly ActivityEvent[];
   locale: "en" | "zh";
   sourceCount: number;
   shownCitationCount: number;
+  chunkCitationCount: number;
+  edgeCitationCount: number;
+  graphContext: GraphContextSummary | null;
+  steps?: readonly TaskStepView[];
 }) {
   const context = events.find(
     (event) => event.eventType === "context.assembled",
@@ -197,9 +478,6 @@ export function AnswerActivity({
     (event) => event.eventType === "citation.resolved",
   ).length;
   const assembledCount = sourceCount;
-  const answerRecorded = events.some(
-    (event) => event.eventType === "answer.delta",
-  );
   const rows = [
     assembledCount > 0
       ? context
@@ -214,11 +492,7 @@ export function AnswerActivity({
       ? locale === "zh"
         ? "Knowledge answer 调用完成"
         : "Knowledge answer call completed"
-      : answerRecorded
-        ? locale === "zh"
-          ? "回答正文已记录"
-          : "Answer text recorded"
-        : null,
+      : null,
     hits && typeof hits.payload.authorizedHitCount === "number"
       ? locale === "zh"
         ? `检索结果：${hits.payload.authorizedHitCount} 处授权证据`
@@ -230,37 +504,22 @@ export function AnswerActivity({
         : `${citations} citation records resolved; ${shownCitationCount} used by displayed claims`
       : null,
   ].filter((row): row is string => row !== null);
-  if (rows.length === 0) return null;
-  const compact = [
-    assembledCount > 0
-      ? locale === "zh"
-        ? `${assembledCount} 份来源`
-        : `${assembledCount} source${assembledCount === 1 ? "" : "s"}`
-      : null,
-    stage
-      ? locale === "zh"
-        ? "Knowledge answer"
-        : "Knowledge answer"
-      : answerRecorded
-        ? locale === "zh"
-          ? "回答已记录"
-          : "Answer recorded"
-        : null,
-    shownCitationCount > 0
-      ? locale === "zh"
-        ? `${shownCitationCount} 处引用`
-        : `${shownCitationCount} citation${shownCitationCount === 1 ? "" : "s"}`
-      : null,
-  ].filter((item): item is string => item !== null);
+  const { summaryText, rows: graphRows } = buildAnswerGraphSummary({
+    locale,
+    sourceCount,
+    chunkCitationCount,
+    edgeCitationCount,
+    graphContext,
+  });
+  const stepRows = formatTaskStepRows(steps, locale);
+  const allRows = [...rows, ...stepRows, ...graphRows];
+  if (allRows.length === 0) return null;
   return (
     <details className="tap-answer-activity">
-      <summary>
-        {locale === "zh" ? "执行记录" : "Activity"}
-        {compact.length > 0 ? ` · ${compact.join(" · ")}` : ""}
-      </summary>
+      <summary>{summaryText}</summary>
       <ol>
-        {rows.map((row) => (
-          <li key={row}>{row}</li>
+        {allRows.map((row, index) => (
+          <li key={`${index}-${row}`}>{row}</li>
         ))}
       </ol>
     </details>
@@ -298,18 +557,87 @@ export function AnswerProgress({
   );
 }
 
-function StreamingAnswer({ locale, text }: { locale: Locale; text: string }) {
+/**
+ * A `CLARIFY:`-prefixed answer (`answerKind === "clarification"`, LangGraph
+ * PR 5 Task 5/10): plain body text with a "needs more information" label,
+ * never routed through `GroundedAnswer` -- a clarification's `claims`/
+ * `citations` are always empty by contract, which `GroundedAnswer`'s
+ * `validateAnswerGraph` would otherwise reject as a format error.
+ */
+function ClarificationAnswer({
+  answer,
+  locale,
+}: {
+  answer: string;
+  locale: "en" | "zh";
+}) {
+  const copy = WORKSPACE_COPY[locale].chat;
   return (
-    <div
-      className="tap-streaming-answer"
-      aria-busy="true"
-      aria-label={locale === "zh" ? "正在生成回答" : "Generating answer"}
-      role="region"
-    >
-      <p className="tap-streaming-text">
-        {text}
-        <span className="tap-streaming-cursor" aria-hidden="true" />
-      </p>
+    <div className="tapper-clarification-answer">
+      <p className="tapper-clarification-label">{copy.clarificationLabel}</p>
+      <p>{answer}</p>
+    </div>
+  );
+}
+
+/**
+ * An insights-only answer (final review C-1, Decision C): non-abstained, no
+ * knowledge claims, and at least one cited Insights (`I<n>`) record. Its
+ * facts live in `insightsFacts` (rendered by `InsightsFactsList` below), so
+ * it is never routed through `GroundedAnswer`, whose `validateAnswerGraph`
+ * requires knowledge claims and citations. Every other claim-less shape still
+ * goes to `GroundedAnswer` and its format warning.
+ */
+function isInsightsOnlyAnswer(response: RetrievalAnswerResponse): boolean {
+  return (
+    !response.abstained &&
+    response.answerKind !== "clarification" &&
+    typeof response.answer === "string" &&
+    response.answer.length > 0 &&
+    Array.isArray(response.claims) &&
+    response.claims.length === 0 &&
+    (response.insightsFacts?.length ?? 0) > 0
+  );
+}
+
+function InsightsOnlyAnswer({ answer }: { answer: string }) {
+  return (
+    <div className="tapper-insights-only-answer">
+      <p>{answer}</p>
+    </div>
+  );
+}
+
+/**
+ * The Insights metric records (`I<n>`-labeled) a claim actually cited
+ * (LangGraph PR 5 Task 8/10, Decision C) -- shown below the answer
+ * regardless of `answerKind`, since no knowledge citation is ever
+ * generated for an Insights label.
+ */
+function InsightsFactsList({
+  facts,
+  locale,
+}: {
+  facts: NonNullable<RetrievalAnswerResponse["insightsFacts"]>;
+  locale: "en" | "zh";
+}) {
+  if (facts.length === 0) return null;
+  const copy = WORKSPACE_COPY[locale].chat;
+  return (
+    <div className="tapper-insights-facts">
+      <h3>{copy.insightsMetricsHeading}</h3>
+      <ul>
+        {facts.map((fact) => (
+          <li key={fact.label}>
+            {copy.insightsFactRow(
+              fact.label,
+              fact.metricId,
+              fact.value ?? null,
+              fact.asOf,
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -540,7 +868,7 @@ function DurableTracePanel({
   );
 }
 
-function AssistantResponse({
+export function AssistantResponse({
   contentCopy,
   turn,
   insightsClient,
@@ -553,11 +881,11 @@ function AssistantResponse({
   onResend,
   onGenerateTestPlan,
   activityEvents = [],
-  onOpenRelation,
+  onOpenAgentRevision,
+  onOpenSkillRevision,
 }: {
   contentCopy: WorkspaceCopy;
   turn: AssistantTurn;
-  onOpenRelation?: (citation: RelationCitation) => void;
   insightsClient?: ConversationClient | null;
   conversationId?: string;
   projectId?: string | null;
@@ -569,7 +897,46 @@ function AssistantResponse({
   onResend?: () => void;
   onGenerateTestPlan?: () => void;
   activityEvents?: readonly ActivityEvent[];
+  onOpenAgentRevision?: (revisionId: string) => void;
+  onOpenSkillRevision?: (revisionId: string) => void;
 }) {
+  // Hooks run before any of this component's early returns below, so the
+  // edge citations' supporting-passage queries are always resolved in the
+  // same order regardless of `turn.intent`/`turn.status` — an empty
+  // `edgeCitationIds` array for turns with no response (or no edge
+  // citations) is simply a no-op `useQueries` call.
+  const edgeCitationIds = useMemo(
+    () =>
+      turn.response?.citations
+        .filter(isEdgeCitation)
+        .map((citation) => citation.citationId) ?? [],
+    [turn.response],
+  );
+  // An answer can cite several edges, so none of their snippets are
+  // fetched just because the turn rendered — only once a citation's chip
+  // is actually hovered or focused (`EdgeCitationChip`'s `onPreview`,
+  // wired through `GroundedAnswer`) does its id join this set and its
+  // query (in `useConversationCitations` below) become enabled.
+  const [previewedCitationIds, setPreviewedCitationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const onPreviewCitation = useCallback((citationId: string) => {
+    setPreviewedCitationIds((current) =>
+      current.has(citationId) ? current : new Set(current).add(citationId),
+    );
+  }, []);
+  const edgeCitationQueries = useConversationCitations(
+    projectId,
+    conversationId ?? null,
+    turn.id,
+    edgeCitationIds,
+    previewedCitationIds,
+  );
+  const historicalCitationQueryFor = useCallback(
+    (citationId: string) => edgeCitationQueries.get(citationId),
+    [edgeCitationQueries],
+  );
+
   if (turn.intent === "answer") {
     if (
       turn.insightsQueryId !== undefined &&
@@ -595,8 +962,15 @@ function AssistantResponse({
     }
     if (turn.status === "canceled") {
       return (
-        <div role="status">
-          <p>{turn.locale === "zh" ? "已停止生成。" : "Generation stopped."}</p>
+        <div>
+          <DraftAnswer
+            draft={null}
+            citationLabels={turn.citationLabels ?? {}}
+            stage={null}
+            partialAnswer={turn.partialAnswer ?? null}
+            canceled
+            locale={turn.locale}
+          />
           {onResend === undefined ? null : (
             <Button size="small" onClick={onResend}>
               {contentCopy.chat.retry}
@@ -616,39 +990,113 @@ function AssistantResponse({
       );
     }
     if (turn.response !== undefined && turn.response !== null) {
+      const shownCitationIds = new Set(
+        turn.response.claims.flatMap((claim) => claim.citationIds),
+      );
+      const citationsById = new Map(
+        turn.response.citations.map((citation) => [
+          citation.citationId,
+          citation,
+        ]),
+      );
+      let edgeCitationCount = 0;
+      for (const citationId of shownCitationIds) {
+        const citation = citationsById.get(citationId);
+        if (citation !== undefined && isEdgeCitation(citation)) {
+          edgeCitationCount += 1;
+        }
+      }
+      // M in "Searched N sources · M passages" is the number of retrieved
+      // passages: every chunk citation in the response, cited by a claim or
+      // not -- not the cited count. An abstained Turn has no claims yet did
+      // retrieve passages (capability-4 validation round 3 showed
+      // "0 passages" for 10 retrieved).
+      const chunkCitationCount = [...citationsById.values()].filter(
+        (citation) => !isEdgeCitation(citation),
+      ).length;
+      const graphContext = turn.graphContext ?? null;
+      const isTerminalTurn =
+        turn.status !== undefined &&
+        (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status);
       return (
         <>
-          {turn.status !== undefined &&
-          (TERMINAL_TURN_STATUSES as readonly string[]).includes(turn.status) &&
+          {shouldShowAnswerFeedback(turn, conversationId) ? (
+            <AnswerFeedback
+              projectId={projectId}
+              conversationId={conversationId!}
+              turnId={turn.id}
+              locale={turn.locale}
+              initialValue={turn.myFeedback ?? null}
+            />
+          ) : null}
+          {isTerminalTurn &&
           turn.traceId != null &&
           conversationId !== undefined ? (
-            <DurableTracePanel
-              projectId={projectId}
-              conversationId={conversationId}
-              turn={turn}
-              onOpenDocument={onOpenDocument ?? (() => undefined)}
-              documentName={documentName}
-            />
+            <>
+              <AnswerGraphSummary
+                locale={turn.locale}
+                sourceCount={turn.sourceReferences.length}
+                chunkCitationCount={chunkCitationCount}
+                edgeCitationCount={edgeCitationCount}
+                graphContext={graphContext}
+              />
+              <TaskStepList steps={turn.steps ?? []} locale={turn.locale} />
+              <DurableTracePanel
+                projectId={projectId}
+                conversationId={conversationId}
+                turn={turn}
+                onOpenDocument={onOpenDocument ?? (() => undefined)}
+                documentName={documentName}
+              />
+            </>
           ) : (
             <AnswerActivity
               events={activityEvents}
               locale={turn.locale}
               sourceCount={turn.sourceReferences.length}
-              shownCitationCount={
-                new Set(
-                  turn.response.claims.flatMap((claim) => claim.citationIds),
-                ).size
-              }
+              shownCitationCount={shownCitationIds.size}
+              chunkCitationCount={chunkCitationCount}
+              edgeCitationCount={edgeCitationCount}
+              graphContext={graphContext}
+              steps={turn.steps ?? []}
             />
           )}
-          <GroundedAnswer
-            response={turn.response}
+          {graphContext !== null &&
+          graphContext.status === "EMPTY" &&
+          graphContext.querySeedCount >= 2 ? (
+            <Alert
+              type="info"
+              role={isTerminalTurn ? undefined : "status"}
+              title={contentCopy.chat.noRelationEvidence}
+            />
+          ) : null}
+          {turn.response.answerKind === "clarification" ? (
+            <ClarificationAnswer
+              answer={turn.response.answer}
+              locale={turn.locale}
+            />
+          ) : isInsightsOnlyAnswer(turn.response) ? (
+            <InsightsOnlyAnswer answer={turn.response.answer} />
+          ) : (
+            <GroundedAnswer
+              response={turn.response}
+              locale={turn.locale}
+              citationNumbering="shown-order"
+              onOpenCitation={onOpenCitation}
+              historicalCitationQueryFor={historicalCitationQueryFor}
+              onPreviewCitation={onPreviewCitation}
+            />
+          )}
+          <InsightsFactsList
+            facts={turn.response.insightsFacts ?? []}
             locale={turn.locale}
-            onOpenRelation={onOpenRelation}
-            citationNumbering="shown-order"
-            onOpenCitation={onOpenCitation}
           />
-          <TurnContext copy={contentCopy} turn={turn} />
+          <TurnContext
+            copy={contentCopy}
+            turn={turn}
+            onOpenAgentRevision={onOpenAgentRevision}
+            onOpenSkillRevision={onOpenSkillRevision}
+          />
           {onResend === undefined ||
           turn.status === "queued" ||
           turn.status === "running" ? null : (
@@ -680,20 +1128,28 @@ function AssistantResponse({
         </div>
       );
     }
-    if (
-      (turn.status === "queued" || turn.status === "running") &&
-      turn.streamingText != null &&
-      turn.streamingText.length > 0
-    ) {
-      return <StreamingAnswer locale={turn.locale} text={turn.streamingText} />;
-    }
     if (turn.status === "queued" || turn.status === "running") {
+      const draft = turn.draft ?? null;
+      const stage = turn.stage ?? null;
       return (
-        <AnswerProgress
-          locale={turn.locale}
-          sourceCount={turn.sourceReferences.length}
-          status={turn.status}
-        />
+        <>
+          <AnswerProgress
+            locale={turn.locale}
+            sourceCount={turn.sourceReferences.length}
+            status={turn.status}
+          />
+          <TaskStepList steps={turn.steps ?? []} locale={turn.locale} />
+          {(draft !== null && draft.text.length > 0) || stage === "verify" ? (
+            <DraftAnswer
+              draft={draft}
+              citationLabels={turn.citationLabels ?? {}}
+              stage={stage}
+              partialAnswer={null}
+              canceled={false}
+              locale={turn.locale}
+            />
+          ) : null}
+        </>
       );
     }
     if (turn.response === null) {
@@ -724,9 +1180,9 @@ function toggleSelection(values: readonly string[], id: string): string[] {
 }
 
 const TAPPER_MODULE_FOCUS_TARGETS: Partial<Record<ProductModule, string>> = {
-  agents: "#agent-heading",
+  agents: "#agents-heading",
   library: "#library-heading",
-  skills: "#skill-heading",
+  skills: "#skills-heading",
 };
 
 type PendingFocusTarget = { kind: "selector"; selector: string };
@@ -739,6 +1195,11 @@ function ProjectLibraryWorkspace({
   sources,
   loadState,
   onReload,
+  publishedSources = [],
+  publishedSourcesLoading = false,
+  onAskAboutNode,
+  graphHighlight = null,
+  onClearGraphHighlight,
 }: {
   projectId: string;
   graphProjectId?: string;
@@ -747,6 +1208,11 @@ function ProjectLibraryWorkspace({
   sources: readonly LibrarySource[];
   loadState: "loading" | "loaded" | "error";
   onReload: () => void;
+  publishedSources?: readonly PublishedSourceRevision[];
+  publishedSourcesLoading?: boolean;
+  onAskAboutNode?: (label: string, sourceIds: string[]) => void;
+  graphHighlight?: ReturnType<typeof useGraphHighlightState>[0];
+  onClearGraphHighlight?: () => void;
 }) {
   const upload = useUploadSourceMutation(projectId);
   const uploadIntents = useRef(new WeakMap<File, string>());
@@ -783,6 +1249,21 @@ function ProjectLibraryWorkspace({
         sources={sources}
         loadState={loadState}
         onReload={onReload}
+        publishedSources={publishedSources}
+        publishedSourcesLoading={publishedSourcesLoading}
+        onAskAboutNode={onAskAboutNode}
+        graphHighlight={graphHighlight}
+        onClearGraphHighlight={onClearGraphHighlight}
+        onOpenSource={(sourceId, trigger) => {
+          // The graph node detail panel's "Open original" button passes
+          // its own trigger element explicitly (rather than relying on
+          // `document.activeElement`, which Safari does not set on a
+          // button click), so this reuses the same `onInspectSource` path
+          // the Library list rows use — focus returns to that button when
+          // the dialog closes in every browser, not just Chromium.
+          opener.current = trigger;
+          setInspected(sourceId);
+        }}
         onInspectSource={(sourceId, trigger) => {
           opener.current = trigger;
           setInspected(sourceId);
@@ -959,32 +1440,58 @@ export function TapperWorkspace() {
   const sourcesQuery = useSourceListQuery(projectId);
   const publishedSourcesQuery = usePublishedSourcesQuery(projectId);
   const [locale, setLocale] = useState<Locale>("en");
-  const [activeModule, setActiveModule] = useState<ProductModule>(() =>
-    relationGraphSelection() !== null
-      ? "library"
-      : durableTestPlanPath() !== null
-        ? "test-management"
-        : "tapper",
-  );
-  const [, setNavigationVersion] = useState(0);
+  // Whether the very first render guessed "library" from *any* valid
+  // highlight in history state, before `projectId` (below) was known. A
+  // lazy-init ref (not `useRef(readGraphHighlight() !== null)`, which
+  // would re-parse `window.history.state` as a throwaway argument on
+  // *every* render, not just the first): the sentinel `null` means "not
+  // computed yet", so the read only ever happens once.
+  const optimisticLibraryGuessRef = useRef<boolean | null>(null);
+  if (optimisticLibraryGuessRef.current === null) {
+    optimisticLibraryGuessRef.current = readGraphHighlight() !== null;
+  }
+  const [activeModule, setActiveModule] = useState<ProductModule>(() => {
+    // `projectId` isn't resolved yet on this very first render (it comes
+    // from an async runtime-mode query), so this can't filter by it the
+    // way `useGraphHighlightState(projectId)` below does — it's an
+    // optimistic read of *any* valid highlight, just to land on the right
+    // tab a frame early. If that guess turns out wrong (the highlight was
+    // for a different project, so `graphHighlight` below resolves to
+    // `null`), the effect below undoes it.
+    if (optimisticLibraryGuessRef.current) return "library";
+    return durableTestPlanPath() !== null ? "test-management" : "tapper";
+  });
+  const [graphHighlight, clearGraphHighlight] =
+    useGraphHighlightState(projectId);
+  // A highlight that arrives after mount (a same-tab push or a
+  // popstate/forward-back navigation) switches to the Library module too —
+  // mirrors `LibraryWorkspace`'s own effect that switches its internal tab.
+  // Keyed on the highlight alone: `useGraphHighlightState` filters by
+  // `projectId` during render and keeps a matching highlight's identity, so
+  // `projectId` resolving never re-fires this and never overrides a module
+  // the user picked while it was pending.
   useEffect(() => {
-    const restoreModule = () => {
-      setNavigationVersion((version) => version + 1);
-      const module = new URLSearchParams(window.location.search).get("module");
-      setActiveModule(
-        module &&
-          ["tapper", "agents", "skills", "library", "test-management"].includes(
-            module,
-          )
-          ? (module as ProductModule)
-          : durableTestPlanPath() !== null
-            ? "test-management"
-            : "tapper",
-      );
-    };
-    window.addEventListener("popstate", restoreModule);
-    return () => window.removeEventListener("popstate", restoreModule);
-  }, []);
+    if (graphHighlight !== null) setActiveModule("library");
+  }, [graphHighlight]);
+  // Settles the optimistic guess above exactly once, as soon as `projectId`
+  // is known. Because the hook's filter is synchronous, `graphHighlight`
+  // already reflects the resolved project in that render: `null` means the
+  // highlight was for another project (undo the guess, unless the user has
+  // since left Library), non-null means it matched (keep Library). Either
+  // way the ref is cleared, so a later `clearGraphHighlight()` or
+  // back/forward past the highlight is never misread as a wrong guess.
+  useEffect(() => {
+    if (projectId === null || !optimisticLibraryGuessRef.current) return;
+    optimisticLibraryGuessRef.current = false;
+    if (graphHighlight !== null) return;
+    setActiveModule((current) =>
+      current === "library"
+        ? durableTestPlanPath() !== null
+          ? "test-management"
+          : "tapper"
+        : current,
+    );
+  }, [graphHighlight, projectId]);
   const [isNarrowViewport, setIsNarrowViewport] = useState(
     () => window.matchMedia("(max-width: 640px)").matches,
   );
@@ -1024,7 +1531,17 @@ export function TapperWorkspace() {
       return changed ? next : current;
     });
   }, [projectId, publishedSourcesQuery.data, publishedSourcesQuery.isSuccess]);
-  const [activeConversationId, setActiveConversationId] = useState("draft");
+  const [activeConversationId, setActiveConversationIdState] =
+    useState("draft");
+  // The most recent selection, readable by a `setConversations` updater that
+  // an effect queued from an older render: history auto-selection and a New
+  // chat click can land in the same instant, and that stale updater must not
+  // drop the draft the user just switched to.
+  const latestActiveConversationId = useRef("draft");
+  const setActiveConversationId = useCallback((id: string) => {
+    latestActiveConversationId.current = id;
+    setActiveConversationIdState(id);
+  }, []);
   const insightsClient = useConversationClient(projectId);
   const queryClient = useQueryClient();
   const conversationList = useConversationList(projectId);
@@ -1107,19 +1624,6 @@ export function TapperWorkspace() {
     streamTargetTurnId,
     recoveredStreamState.lastSequence,
     shouldStartConversationStream,
-    {
-      onTurnTerminal: () => {
-        const conversationId =
-          activeConversationId !== "draft" ? activeConversationId : null;
-        void queryClient.invalidateQueries({
-          queryKey: conversationKeys.detail(projectId, conversationId),
-          exact: true,
-        });
-        void queryClient.invalidateQueries({
-          queryKey: conversationKeys.events(projectId, conversationId),
-        });
-      },
-    },
   );
   const streamState = conversationStream.state;
   const hasActiveConversationTurn = isTargetTurnActive({
@@ -1146,6 +1650,38 @@ export function TapperWorkspace() {
   );
   const resetCancelTurn = cancelTurnMutation.reset;
   const aiAssets = useAiAssetCatalog(projectId);
+  // Keyed by the composer's `agents` CatalogItem ids (= each agent's
+  // approved revisionId), so a composer selection can look up the agent's
+  // own `defaultModelAlias`/`skillRevisionIds` — fields the presentation
+  // layer below strips off `agents` (the CatalogItem[] `aiAssetPresentation`
+  // builds for the chip UI) to just name/description/instructions.
+  const agentById = useMemo(
+    () =>
+      new Map(
+        (aiAssets.agents.data ?? []).map((item) => [item.revisionId, item]),
+      ),
+    [aiAssets.agents.data],
+  );
+  // Keyed the same way, but kept unfiltered (unlike the composer's
+  // selectable `skills` list above) so a `skill_disabled:<id>`/
+  // `skill_inapplicable:<id>` notice (I-2) can still name a Skill that is
+  // no longer selectable.
+  const skillById = useMemo(
+    () =>
+      new Map(
+        (aiAssets.skills.data ?? []).map((item) => [item.revisionId, item]),
+      ),
+    [aiAssets.skills.data],
+  );
+  const latestSkillRevisionBySkillId = useMemo(
+    () =>
+      new Map(
+        (aiAssets.skills.data ?? [])
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => [item.skillId, item.revisionId]),
+      ),
+    [aiAssets.skills.data],
+  );
   const initialDurableSelection = useRef(false);
   const [selectedDurablePlan, setSelectedDurablePlan] = useState<{
     planId: string;
@@ -1186,10 +1722,34 @@ export function TapperWorkspace() {
     activeCitation?.conversationId ?? null,
     activeCitation?.turnId ?? null,
     activeCitation?.id ?? null,
-    activeCitation?.generation ?? 0,
+    // Fixed at 0 (never incremented) for an edge citation, rather than
+    // `activeCitation.generation`: an edge citation is an immutable
+    // historical snapshot (see `useConversationCitations`'s `staleTime:
+    // Infinity`), so opening the same one again should hit cache, not
+    // force a new query key — and a fixed generation of 0 is exactly the
+    // key `EdgeCitationChip`'s hover-triggered preview query already uses
+    // for the same citation id, so the two share one cache entry instead
+    // of each fetching it separately.
+    activeCitation !== null && isEdgeCitation(activeCitation.citation)
+      ? 0
+      : (activeCitation?.generation ?? 0),
   );
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState("");
+  // One-time composer notice: an Agent's default model fell back to the
+  // global default, or the last turn's `skillNotices`. Replaced/cleared by
+  // whichever fires next; dismissible by the person in the meantime.
+  const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  const shownSkillNoticeTurnId = useRef<string | null>(null);
+  // Set when a turn's "Sources and settings" names an Agent/Skill revision
+  // to open; AgentsWorkspace/SkillsWorkspace open that revision's detail
+  // drawer once, on the render after the module switch below lands.
+  const [pendingAgentRevisionId, setPendingAgentRevisionId] = useState<
+    string | null
+  >(null);
+  const [pendingSkillRevisionId, setPendingSkillRevisionId] = useState<
+    string | null
+  >(null);
   const [insightsHandoff, setInsightsHandoff] =
     useState<InsightsHandoff | null>(null);
   const [insightsError, setInsightsError] = useState("");
@@ -1228,40 +1788,55 @@ export function TapperWorkspace() {
     if (aiAssets.skills.isError) setSkills([]);
     if (aiAssets.agents.data !== undefined) {
       setAgents(
-        aiAssets.agents.data.map((item) => {
-          const presentation = aiAssetPresentation(
-            "agent",
-            locale,
-            item.toolAllowlist,
-          );
-          return {
-            id: item.revisionId,
-            kind: "agent",
-            origin: "built-in",
-            name: item.displayName,
-            description: presentation.description,
-            instructions: presentation.instructions,
-          };
-        }),
+        aiAssets.agents.data
+          // `GET /ai/agents` returns one row per asset (its latest
+          // revision) regardless of enabled/disabled status (C-1/C-2), so
+          // the Skills/Agents workspace pages can show a "Disabled"
+          // filter. The composer must only ever offer selectable (latest
+          // + enabled) Agents.
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => {
+            const presentation = aiAssetPresentation(
+              "agent",
+              locale,
+              item.toolAllowlist,
+            );
+            return {
+              id: item.revisionId,
+              kind: "agent",
+              origin: "built-in",
+              name: item.displayName,
+              description: presentation.description,
+              instructions: presentation.instructions,
+            };
+          }),
       );
     }
     if (aiAssets.skills.data !== undefined) {
       setSkills(
-        aiAssets.skills.data.map((item) => {
-          const presentation = aiAssetPresentation(
-            "skill",
-            locale,
-            item.applicableTasks,
-          );
-          return {
-            id: item.revisionId,
-            kind: "skill",
-            origin: "built-in",
-            name: item.displayName,
-            description: presentation.description,
-            instructions: presentation.instructions,
-          };
-        }),
+        aiAssets.skills.data
+          // See the Agents filter above (C-1/C-2).
+          .filter((item) => item.isLatest && item.status === "enabled")
+          .map((item) => {
+            const presentation = aiAssetPresentation(
+              "skill",
+              locale,
+              item.applicableTasks,
+            );
+            return {
+              id: item.revisionId,
+              kind: "skill",
+              origin: "built-in",
+              name: item.displayName,
+              description: presentation.description,
+              instructions: presentation.instructions,
+              // I-2 / spec §4.4: a Skill not scoped to knowledge.answer
+              // can't do anything on a knowledge-answer turn -- grey it
+              // out in the composer picker instead of letting it be
+              // picked and silently ignored.
+              notApplicable: !item.applicableTasks.includes("knowledge.answer"),
+            };
+          }),
       );
     }
     if (
@@ -1298,11 +1873,10 @@ export function TapperWorkspace() {
     if (conversationList.data === undefined) return;
     const summaries = conversationList.data.pages.flatMap((page) => page.items);
     setConversations((current) => {
+      const activeId = latestActiveConversationId.current;
       if (
         summaries.length === 0 &&
-        current.some(
-          (item) => item.id === activeConversationId && item.id !== "draft",
-        )
+        current.some((item) => item.id === activeId && item.id !== "draft")
       )
         return current;
       const restored = summaries.map((summary) => {
@@ -1314,7 +1888,7 @@ export function TapperWorkspace() {
           : { ...existing, title: summary.title };
       });
       const draft = current.find((item) => item.id === "draft");
-      return (activeConversationId === "draft" || summaries.length === 0) &&
+      return (activeId === "draft" || summaries.length === 0) &&
         draft !== undefined
         ? [draft, ...restored]
         : restored;
@@ -1337,6 +1911,17 @@ export function TapperWorkspace() {
         recoveredStreamState,
         streamState,
       );
+      // `draft`/`citationLabels` are taken independently of the
+      // `latestTurnState` whole-record pick above: `answer.draft` is never
+      // persisted, so a reconnect/page-reload mid-generation would
+      // otherwise lose the replayed draft and its labels to a recovered
+      // record with a higher `lastSequence` but no draft at all (review
+      // fix round 1, finding I).
+      const draftFacts = mergedDraftFacts(
+        turn.turnId,
+        recoveredStreamState,
+        streamState,
+      );
       return {
         id: turn.turnId,
         intent: "answer",
@@ -1350,8 +1935,20 @@ export function TapperWorkspace() {
           origin: "knowledge-base" as const,
         })),
         response: streamed?.response ?? null,
-        streamingText: streamed?.streamingText ?? null,
+        graphContext: streamed?.graphContext ?? null,
+        draft: draftFacts.draft,
+        citationLabels: draftFacts.citationLabels,
+        stage: streamed?.stage ?? null,
+        partialAnswer: streamed?.partialAnswer ?? null,
+        steps: streamed?.steps ?? [],
         traceId: turn.traceId ?? null,
+        myFeedback:
+          turn.myFeedback == null
+            ? null
+            : {
+                rating: turn.myFeedback.rating,
+                comment: turn.myFeedback.comment ?? null,
+              },
         attempt: turn.attempt,
         status: ["completed", "abstained", "canceled", "failed"].includes(
           turn.state,
@@ -1380,14 +1977,62 @@ export function TapperWorkspace() {
         answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
         agentRevisionId: turn.input.agentRevisionId,
         skillRevisionIds: turn.input.skillRevisionIds,
+        skillsUsed: turn.input.skillsUsed,
+        skillNotices: turn.input.skillNotices,
       };
     });
+    // The detail refetch after a send can land after the accepted turn is
+    // shown; keep that turn last so Stop and status follow the turn that is
+    // actually generating instead of the previous one.
+    const acceptedTurnId =
+      requestedStreamTarget?.conversationId ===
+        conversationDetail.data.conversationId &&
+      !turns.some((turn) => turn.id === requestedStreamTarget.turnId)
+        ? requestedStreamTarget.turnId
+        : null;
+    const withAcceptedTurn = (previous: readonly AssistantTurn[]) => {
+      const accepted =
+        acceptedTurnId === null
+          ? undefined
+          : previous.find((turn) => turn.id === acceptedTurnId);
+      if (accepted === undefined) return turns;
+      const streamed = latestTurnState(
+        accepted.id,
+        recoveredStreamState,
+        streamState,
+      );
+      const draftFacts = mergedDraftFacts(
+        accepted.id,
+        recoveredStreamState,
+        streamState,
+      );
+      return [
+        ...turns,
+        {
+          ...accepted,
+          status: streamed?.status ?? accepted.status,
+          response: streamed?.response ?? accepted.response ?? null,
+          draft: draftFacts.draft ?? accepted.draft ?? null,
+          citationLabels:
+            Object.keys(draftFacts.citationLabels).length > 0
+              ? draftFacts.citationLabels
+              : (accepted.citationLabels ?? {}),
+          stage: streamed?.stage ?? accepted.stage ?? null,
+          partialAnswer:
+            streamed?.partialAnswer ?? accepted.partialAnswer ?? null,
+        },
+      ];
+    };
+    const restoredAgentIds =
+      conversationDetail.data.turns.at(-1)?.input.agentRevisionId == null
+        ? []
+        : [conversationDetail.data.turns.at(-1)!.input.agentRevisionId!];
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.data.conversationId
           ? {
               ...conversation,
-              turns,
+              turns: withAcceptedTurn(conversation.turns),
               ...(conversationDetail.data.turns.at(-1) === undefined
                 ? {}
                 : {
@@ -1409,17 +2054,14 @@ export function TapperWorkspace() {
                         .input.resolvedResources?.map(
                           (item) => item.sourceId,
                         ) ?? [],
-                    selectedAgentIds:
-                      conversationDetail.data.turns.at(-1)!.input
-                        .agentRevisionId === null
-                        ? []
-                        : [
-                            conversationDetail.data.turns.at(-1)!.input
-                              .agentRevisionId!,
-                          ],
-                    selectedSkillIds:
-                      conversationDetail.data.turns.at(-1)!.input
-                        .skillRevisionIds,
+                    selectedAgentIds: restoredAgentIds,
+                    // Only the manual picks go back into `selectedSkillIds`;
+                    // the restored Agent's pinned Skills reappear as locked
+                    // chips via `bundledSkillIdsFor` (minor finding).
+                    selectedSkillIds: manualSkillRevisionIdsOf(
+                      conversationDetail.data.turns.at(-1)!.input,
+                      restoredAgentIds,
+                    ),
                   }),
             }
           : conversation,
@@ -1435,6 +2077,7 @@ export function TapperWorkspace() {
         : current,
     );
   }, [
+    agentById,
     conversationDetail.data,
     conversationEvents.data,
     conversationEvents.isError,
@@ -1442,6 +2085,7 @@ export function TapperWorkspace() {
     conversationEvents.isLoading,
     conversationStream.error,
     recoveredStreamState,
+    requestedStreamTarget,
     selectableModelAliases,
     streamState,
   ]);
@@ -1608,6 +2252,14 @@ export function TapperWorkspace() {
     }
     return [...grouped.values()];
   }, [publishedSourcesQuery.data?.items]);
+  const publishedSourceRevisions = useMemo(
+    () =>
+      (publishedSourcesQuery.data?.items ?? []).map((item) => ({
+        sourceId: item.sourceId,
+        revisionId: item.revisionId,
+      })),
+    [publishedSourcesQuery.data?.items],
+  );
   const [pendingAttachments, setPendingAttachments] = useState<
     readonly {
       id: string;
@@ -1698,20 +2350,29 @@ export function TapperWorkspace() {
         ),
       );
   };
-  const resendContextOf = (turn: AssistantTurn): ResendContext => ({
-    sourceIds: turn.sourceReferences.map((source) => source.id),
-    agentIds:
+  const resendContextOf = (turn: AssistantTurn): ResendContext => {
+    const agentIds =
       turn.agentRevisionId != null
         ? [turn.agentRevisionId]
         : (turn.catalogReferences ?? [])
             .filter((item) => item.kind === "agent")
-            .map((item) => item.id),
-    skillIds:
-      turn.skillRevisionIds ??
-      (turn.catalogReferences ?? [])
-        .filter((item) => item.kind === "skill")
-        .map((item) => item.id),
-  });
+            .map((item) => item.id);
+    return {
+      sourceIds: turn.sourceReferences.map((source) => source.id),
+      agentIds,
+      skillIds: manualSkillRevisionIdsOf(
+        {
+          skillRevisionIds:
+            turn.skillRevisionIds ??
+            (turn.catalogReferences ?? [])
+              .filter((item) => item.kind === "skill")
+              .map((item) => item.id),
+          skillsUsed: turn.skillsUsed,
+        },
+        agentIds,
+      ),
+    };
+  };
   const activeConversation =
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -1724,6 +2385,22 @@ export function TapperWorkspace() {
           ...activeConversation,
           turns: [...activeConversation.turns, localInsightsTurn.turn],
         };
+  useEffect(() => {
+    const lastTurn = activeConversation.turns.at(-1);
+    if (
+      lastTurn === undefined ||
+      lastTurn.skillNotices === undefined ||
+      lastTurn.skillNotices.length === 0 ||
+      shownSkillNoticeTurnId.current === lastTurn.id
+    )
+      return;
+    shownSkillNoticeTurnId.current = lastTurn.id;
+    setComposerNotice(
+      lastTurn.skillNotices
+        .map((code) => formatSkillNotice(code, skillById, copy))
+        .join(" "),
+    );
+  }, [activeConversation.turns, skillById, copy]);
   const generateTestPlan = (
     conversation: Conversation,
     turn: AssistantTurn,
@@ -1778,6 +2455,181 @@ export function TapperWorkspace() {
           : conversation,
       ),
     );
+  };
+
+  // A selected Agent's pinned Skills are never written into
+  // `selectedSkillIds` — they're derived from `selectedAgentIds` here (each
+  // pinned Skill's latest enabled revision, the one the server freezes) and
+  // only drive the locked chips and the budget: the server loads them from
+  // the Agent, so the request's `skillRevisionIds` carries manual picks only.
+  const bundledSkillIdsFor = (agentIds: readonly string[]): string[] => {
+    const ids = new Set<string>();
+    for (const agentId of agentIds) {
+      for (const skillId of agentById.get(agentId)?.pinnedSkillIds ?? []) {
+        const revisionId = latestSkillRevisionBySkillId.get(skillId);
+        if (revisionId !== undefined) ids.add(revisionId);
+      }
+    }
+    return [...ids];
+  };
+  // The Skills a Turn's person picked by hand, to restore or resend as the
+  // request's manual `skillRevisionIds`. A Turn that tracks Skill usage
+  // says so per Skill. An older one only froze the merged applied set, so
+  // drop what the Agent brings itself: any revision of a Skill it pins now
+  // (by Skill, not revision) and the revisions it bundled before pinning.
+  // An older revision neither resolves is not in the enabled catalog, so
+  // the send-time catalog filter drops it anyway.
+  const manualSkillRevisionIdsOf = (
+    input: {
+      skillRevisionIds: readonly string[];
+      skillsUsed?: readonly { revisionId: string; mode: string }[];
+    },
+    agentIds: readonly string[],
+  ): string[] => {
+    if (input.skillsUsed !== undefined && input.skillsUsed.length > 0)
+      return input.skillsUsed
+        .filter((skill) => skill.mode === "manual")
+        .map((skill) => skill.revisionId);
+    const pinnedSkillIds = new Set<string>();
+    const boundRevisionIds = new Set<string>();
+    for (const agentId of agentIds) {
+      const agent = agentById.get(agentId);
+      for (const id of agent?.pinnedSkillIds ?? []) pinnedSkillIds.add(id);
+      for (const id of agent?.skillRevisionIds ?? []) boundRevisionIds.add(id);
+    }
+    return input.skillRevisionIds.filter((id) => {
+      const skillId = skillById.get(id)?.skillId;
+      return (
+        !boundRevisionIds.has(id) &&
+        (skillId === undefined || !pinnedSkillIds.has(skillId))
+      );
+    });
+  };
+  const activeLockedSkillIds = bundledSkillIdsFor(
+    activeConversation.selectedAgentIds,
+  );
+  // A durable conversation's `selectedSkillIds` is prefilled from its last
+  // turn's frozen `input.skillRevisionIds` (see the restore effect above) so
+  // the composer defaults to "same Skill as last time" -- before the
+  // enabled-catalog filter effect (also above) has had a chance to drop a
+  // since-disabled id. Querying detail for a now-disabled revision 404s
+  // (the detail endpoint only resolves enabled revisions); gate on `skills`
+  // (the same enabled-catalog set `allowedSkillIds` below uses at send time)
+  // so that unavoidable one-render race never reaches the network, instead
+  // of just reacting to the error.
+  const allowedSkillRevisionIds = useMemo(
+    () => new Set(skills.map((item) => item.id)),
+    [skills],
+  );
+  const activeTurnSkillIds = useMemo(
+    () =>
+      [
+        ...new Set([
+          ...activeConversation.selectedSkillIds,
+          ...activeLockedSkillIds,
+        ]),
+      ].filter((id) => allowedSkillRevisionIds.has(id)),
+    [
+      activeConversation.selectedSkillIds,
+      activeLockedSkillIds,
+      allowedSkillRevisionIds,
+    ],
+  );
+  // Per-turn Skill text budget (global-constraints.md: 96 KB), summed
+  // across every Skill the turn would bring in — bundled from an Agent or
+  // manually added alike — so the composer can warn/block the same way
+  // `AgentForm` does for an Agent's own Skill set.
+  const turnSkillDetailQueries = useQueries({
+    queries:
+      projectId === null
+        ? []
+        : activeTurnSkillIds.map((revisionId) => ({
+            queryKey: aiAssetKeys.skill(projectId, revisionId),
+            queryFn: () => fetchSkillRevisionDetail(projectId, revisionId),
+            staleTime: 30_000,
+          })),
+  });
+  const composerSkillBudget = useMemo(() => {
+    if (activeTurnSkillIds.length === 0) return undefined;
+    const sized = turnSkillDetailQueries
+      .map((query) => query.data)
+      .filter((detail): detail is SkillRevisionDetail => detail !== undefined)
+      .map((detail) => ({
+        displayName: detail.displayName,
+        bytes: utf8ByteLength(
+          buildSkillMarkdown({
+            name: detail.displayName,
+            description: detail.description ?? "",
+            instructions: detail.instructions ?? "",
+          }),
+        ),
+      }));
+    // Until every selected Skill's size has resolved, the real total isn't
+    // known yet — omit the budget rather than reporting an understated
+    // "0 bytes used" that would never block Send.
+    if (sized.length !== activeTurnSkillIds.length) return undefined;
+    return {
+      usedBytes: sized.reduce((sum, item) => sum + item.bytes, 0),
+      limitBytes: SKILL_TURN_BUDGET_BYTES,
+      largest: [...sized]
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, 3)
+        .map((item) => item.displayName),
+    };
+  }, [activeTurnSkillIds, turnSkillDetailQueries]);
+
+  // Selecting an Agent prefills the composer with its own default model
+  // (falling back to the global default when that alias is no longer in
+  // the model catalog, and surfacing a one-time notice when it does) and
+  // brings its bundled Skills along as locked chips (see
+  // `bundledSkillIdsFor` above), without overriding a model the person
+  // already picked for this turn on a later toggle. Returns `conversation`
+  // unchanged when the Agent was already selected — only the first
+  // selection prefills.
+  const selectComposerAgent = (
+    conversation: Conversation,
+    agentId: string,
+  ): Conversation => {
+    if (conversation.selectedAgentIds.includes(agentId)) return conversation;
+    const agent = agentById.get(agentId);
+    const defaultAlias = agent?.defaultModelAlias ?? null;
+    const fellBack =
+      defaultAlias !== null &&
+      selectableModelAliases !== null &&
+      !selectableModelAliases.has(defaultAlias);
+    const resolvedAlias =
+      defaultAlias === null
+        ? conversation.modelId
+        : fellBack
+          ? (modelCatalog.data?.defaultAlias ?? conversation.modelId)
+          : defaultAlias;
+    if (fellBack) {
+      setComposerNotice(
+        copy.composer.agentModelFallback(agent?.displayName ?? ""),
+      );
+    }
+    return {
+      ...conversation,
+      selectedAgentIds: [...conversation.selectedAgentIds, agentId],
+      modelId: resolvedAlias,
+    };
+  };
+
+  // `GraphOverview` already resolves published-source revision ids to real
+  // source ids (via the `publishedSources` it is given), so `sourceIds`
+  // here are real source ids — no reverse mapping needed.
+  const askAboutGraphNode = (label: string, sourceIds: string[]) => {
+    if (sourceIds.length > 0) {
+      updateActiveConversation((conversation) => ({
+        ...conversation,
+        selectedSourceIds: [
+          ...new Set([...conversation.selectedSourceIds, ...sourceIds]),
+        ],
+      }));
+    }
+    setMessageDraft(label);
+    setActiveModule("tapper");
+    setSourcesCollapsed(false);
   };
 
   const pickSuggestion = (item: PromptSuggestionItem) => {
@@ -1905,9 +2757,15 @@ export function TapperWorkspace() {
 
   const selectModule = (module: ProductModule) => {
     if (
-      !["tapper", "test-management", "agents", "skills", "library"].includes(
-        module,
-      )
+      ![
+        "tapper",
+        "test-management",
+        "low-code",
+        "test-insights",
+        "agents",
+        "skills",
+        "library",
+      ].includes(module)
     )
       return;
     if (module === "tapper") {
@@ -1940,6 +2798,9 @@ export function TapperWorkspace() {
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
       context?.agentIds ?? activeConversation.selectedAgentIds;
+    // Manual picks only: the selected Agent's pinned Skills are loaded
+    // server-side from the Agent (see `bundledSkillIdsFor`), and a resend's
+    // `context.skillIds` is the original turn's manual picks.
     const selectedSkillIds =
       context?.skillIds ?? activeConversation.selectedSkillIds;
     if (
@@ -2138,14 +2999,20 @@ export function TapperWorkspace() {
       kind: "selector",
       selector: ".tap-composer textarea",
     };
-    updateActiveConversation((conversation) => {
-      const selectedKey =
-        kind === "agent" ? "selectedAgentIds" : "selectedSkillIds";
-      const selectedIds = conversation[selectedKey];
-      return selectedIds.includes(itemId)
-        ? conversation
-        : { ...conversation, [selectedKey]: [...selectedIds, itemId] };
-    });
+    if (kind === "agent") {
+      updateActiveConversation((conversation) =>
+        selectComposerAgent(conversation, itemId),
+      );
+    } else {
+      updateActiveConversation((conversation) =>
+        conversation.selectedSkillIds.includes(itemId)
+          ? conversation
+          : {
+              ...conversation,
+              selectedSkillIds: [...conversation.selectedSkillIds, itemId],
+            },
+      );
+    }
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };
@@ -2231,6 +3098,16 @@ export function TapperWorkspace() {
               copy={copy}
               isInert={compactSourcesDrawerOpen}
               locale={locale}
+              lockedSkillIds={activeLockedSkillIds}
+              skillBudget={composerSkillBudget}
+              composerNotice={
+                composerNotice === null
+                  ? undefined
+                  : {
+                      text: composerNotice,
+                      onDismiss: () => setComposerNotice(null),
+                    }
+              }
               message={messageDraft}
               onMessageChange={(value) => {
                 setMessageDraft(value);
@@ -2274,13 +3151,17 @@ export function TapperWorkspace() {
                   cancelTurnMutation.mutate(turnId);
               }}
               onToggleAgent={(agentId) =>
-                updateActiveConversation((conversation) => ({
-                  ...conversation,
-                  selectedAgentIds: toggleSelection(
-                    conversation.selectedAgentIds,
-                    agentId,
-                  ),
-                }))
+                updateActiveConversation((conversation) =>
+                  conversation.selectedAgentIds.includes(agentId)
+                    ? {
+                        ...conversation,
+                        selectedAgentIds: toggleSelection(
+                          conversation.selectedAgentIds,
+                          agentId,
+                        ),
+                      }
+                    : selectComposerAgent(conversation, agentId),
+                )
               }
               onToggleSkill={(skillId) =>
                 updateActiveConversation((conversation) => ({
@@ -2318,13 +3199,13 @@ export function TapperWorkspace() {
                   activityEvents={(conversationEvents.data?.items ?? []).filter(
                     (event) => event.turnId === turn.id,
                   )}
-                  onOpenRelation={(citation) => {
-                    window.history.pushState(
-                      null,
-                      "",
-                      relationGraphUrl(citation),
-                    );
-                    setActiveModule("library");
+                  onOpenAgentRevision={(revisionId) => {
+                    setPendingAgentRevisionId(revisionId);
+                    setActiveModule("agents");
+                  }}
+                  onOpenSkillRevision={(revisionId) => {
+                    setPendingSkillRevisionId(revisionId);
+                    setActiveModule("skills");
                   }}
                   onOpenCitation={(citationId, trigger) => {
                     const citation = turn.response?.citations.find(
@@ -2385,7 +3266,35 @@ export function TapperWorkspace() {
               data-collapsed={sourcesCollapsed}
               inert={sourcesCollapsed ? true : undefined}
             >
-              {activeCitation !== null ? (
+              {activeCitation !== null &&
+              isEdgeCitation(activeCitation.citation) ? (
+                <EvidencePanel
+                  active={{
+                    citation: activeCitation.citation,
+                    id: activeCitation.id,
+                  }}
+                  turnEdgeCitations={
+                    activeConversation.turns
+                      .find((turn) => turn.id === activeCitation.turnId)
+                      ?.response?.citations.filter(isEdgeCitation) ?? []
+                  }
+                  locale={locale}
+                  historicalQuery={historicalCitationQuery}
+                  returnFocusTo={citationTrigger.current}
+                  onClose={() => setActiveCitation(null)}
+                  onViewInLibrary={(edgeIds, graphVersion) => {
+                    if (projectId === null) return;
+                    setActiveCitation(null);
+                    pushGraphHighlight({
+                      edgeIds,
+                      graphVersion,
+                      turnId: activeCitation.turnId,
+                      projectId,
+                    });
+                    selectModule("library");
+                  }}
+                />
+              ) : activeCitation !== null ? (
                 <CitationViewer
                   active={activeCitation}
                   locale={locale}
@@ -2440,39 +3349,67 @@ export function TapperWorkspace() {
           </div>
         </div>
         {activeModule === "agents" ? (
-          <CatalogWorkspace
-            kind="agent"
-            copy={copy}
-            items={agents}
-            onUse={(itemId) => useCatalogItem("agent", itemId)}
-            projectId={projectId ?? undefined}
-            onChanged={async () => {
-              await Promise.all([
-                aiAssets.agents.refetch(),
-                aiAssets.skills.refetch(),
-              ]);
-            }}
-          />
+          projectId !== null ? (
+            <>
+              <LocalDraftMigrationBanner
+                key={`agent-drafts-${projectId}`}
+                projectId={projectId}
+                kind="agent"
+                copy={copy}
+              />
+              <AgentsPage
+                key={projectId}
+                projectId={projectId}
+                copy={copy}
+                initialTab={
+                  pendingAgentRevisionId !== null ? "config" : undefined
+                }
+                configTab={(request) => (
+                  <AgentsWorkspace
+                    projectId={projectId}
+                    copy={copy}
+                    onUse={(revisionId) => useCatalogItem("agent", revisionId)}
+                    initialDetailRevisionId={
+                      request.initialDetailRevisionId ?? pendingAgentRevisionId
+                    }
+                    onInitialDetailConsumed={() => {
+                      request.onInitialDetailConsumed();
+                      setPendingAgentRevisionId(null);
+                    }}
+                  />
+                )}
+              />
+            </>
+          ) : (
+            <p role="status">{copy.agentsWorkspace.unavailable}</p>
+          )
         ) : null}
         {activeModule === "skills" ? (
-          <CatalogWorkspace
-            kind="skill"
-            copy={copy}
-            items={skills}
-            onUse={(itemId) => useCatalogItem("skill", itemId)}
-            projectId={projectId ?? undefined}
-            onChanged={async () => {
-              await Promise.all([
-                aiAssets.agents.refetch(),
-                aiAssets.skills.refetch(),
-              ]);
-            }}
-          />
+          projectId !== null ? (
+            <>
+              <LocalDraftMigrationBanner
+                key={`skill-drafts-${projectId}`}
+                projectId={projectId}
+                kind="skill"
+                copy={copy}
+              />
+              <SkillsWorkspace
+                key={projectId}
+                projectId={projectId}
+                copy={copy}
+                onUse={(revisionId) => useCatalogItem("skill", revisionId)}
+                initialDetailRevisionId={pendingSkillRevisionId}
+                onInitialDetailConsumed={() => setPendingSkillRevisionId(null)}
+              />
+            </>
+          ) : (
+            <p role="status">{copy.skillsWorkspace.unavailable}</p>
+          )
         ) : null}
         {activeModule === "library" ? (
           projectId !== null ? (
             <ProjectLibraryWorkspace
-              key={`${projectId}:${window.location.search}`}
+              key={projectId}
               projectId={projectId}
               graphProjectId={projectId}
               locale={locale}
@@ -2488,6 +3425,11 @@ export function TapperWorkspace() {
               onReload={() => {
                 void sourcesQuery.refetch();
               }}
+              publishedSources={publishedSourceRevisions}
+              publishedSourcesLoading={publishedSourcesQuery.isPending}
+              onAskAboutNode={askAboutGraphNode}
+              graphHighlight={graphHighlight}
+              onClearGraphHighlight={clearGraphHighlight}
             />
           ) : (
             <LibraryWorkspace copy={copy} sources={sourceItems} />
@@ -2557,6 +3499,13 @@ export function TapperWorkspace() {
         ) : activeModule === "test-management" ? (
           <p role="status">
             Test plans are available when the TAP AI API is ready.
+          </p>
+        ) : activeModule === "low-code" || activeModule === "test-insights" ? (
+          <p role="status">
+            {copy.navigation.moduleOpensInTap.replace(
+              "{module}",
+              copy.navigation[activeModule],
+            )}
           </p>
         ) : null}
       </main>

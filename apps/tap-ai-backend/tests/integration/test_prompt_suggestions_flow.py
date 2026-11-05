@@ -1,7 +1,7 @@
 """End-to-end prompt suggestion flow against real MySQL: publish/read/refresh
-wired together the way the runtime composes them (Task 2-6 pieces), minus the
+wired together the way the runtime composes them, minus the
 real Milvus-backed AnswerService — grounding is faked to always ground, since
-exercising abstention itself is Task 5's job, not this wiring test's."""
+exercising abstention itself is the grounding tests' job, not this wiring test's."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=timezone.utc)
 
 
 class _AlwaysGrounded:
-    """Grounding via a real AnswerService is Task 5's own coverage; this test
+    """Grounding via a real AnswerService has its own coverage; this test
     wires the refresh/read loop end-to-end and fakes the grounding boundary."""
 
     async def is_grounded(self, actor_id, question, source_ids):
@@ -105,7 +105,11 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
         knowledge = KnowledgeSuggestionSources(sessions, scope=VALIDATION_SCOPE)
         usage = MysqlSuggestionUsage(sessions, scope=VALIDATION_SCOPE)
         generator = ModelGatewaySuggestionGenerator(
-            _gateway(), scope=VALIDATION_SCOPE, alias="qwen-plus", timeout_seconds=5.0
+            _gateway(),
+            scope=VALIDATION_SCOPE,
+            alias="qwen-plus",
+            timeout_seconds=5.0,
+            redact=_redact,
         )
         service = PromptSuggestionService(
             store=store,
@@ -117,7 +121,11 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
             clock=lambda: NOW,
         )
         worker = SuggestionRefreshWorker(
-            store=store, service=service, worker_id="flow-worker", clock=lambda: NOW
+            store=store,
+            service=service,
+            worker_id="flow-worker",
+            clock=lambda: NOW,
+            scope=VALIDATION_SCOPE,
         )
         key = SuggestionKey(actor_id=VALIDATION_SCOPE.actor_id, locale="en")
 

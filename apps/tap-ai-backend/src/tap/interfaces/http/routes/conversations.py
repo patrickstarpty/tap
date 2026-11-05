@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from dataclasses import asdict
-from typing import cast
+import json
+from dataclasses import replace
+from datetime import datetime, timezone
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
@@ -13,6 +15,8 @@ from fastapi.responses import StreamingResponse
 
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import (
+    AnswerFeedbackRequest,
+    AnswerFeedbackView,
     CitationPreview,
     ConversationAccepted,
     ConversationCreateRequest,
@@ -24,20 +28,22 @@ from tap.contracts.http import (
     ConversationResolvedResourceView,
     ConversationSummary,
     ConversationTurnInputView,
+    ConversationTurnSkillView,
     ConversationTurnSummary,
     TurnTrace,
 )
 from tap.interfaces.http.conversation_selection import freeze_conversation_selection
 from tap.interfaces.http.dependencies import (
     conversation_service,
+    feedback_service,
     knowledge_service,
-    tool_registry_service,
     trace_service,
 )
 from tap.interfaces.http.problems import problem_response_metadata
 from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.sse import encode_sse
-from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA, resolve_skill_selection
+from tap.modules.access.domain.policy import AuthorizationDenied
+from tap.modules.ai.application.assets import VALIDATION_OUTPUT_SCHEMA
 from tap.modules.ai.domain.assets import AssetRevisionRejected
 from tap.modules.ai.domain.models import (
     ModelCapability,
@@ -46,19 +52,31 @@ from tap.modules.ai.domain.models import (
     ModelNotSelectable,
     schema_digest,
 )
-from tap.modules.ai.domain.tools import ToolRejected
+from tap.modules.ai.domain.persona import CURRENT_PERSONA
+from tap.modules.ai.domain.skill_activation import build_skill_catalog
 from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
     ConversationService,
 )
+from tap.modules.chat.application.feedback import FeedbackService
+from tap.modules.chat.application.ports import (
+    DraftStream,
+    DraftStreamUnavailable,
+    TurnSkillUse,
+    draft_stream_key,
+    wake_stream_key,
+)
+from tap.modules.chat.application.skill_selection import (
+    SkillBudgetExceeded,
+    merge_skill_selection,
+    pinned_revisions,
+)
 from tap.modules.chat.domain.conversations import TurnInput
+from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.platform.telemetry import bind_trace, span, trace_id_of
-
-_STREAM_WAIT_SECONDS = 15.0
-_STREAM_MAX_SECONDS = 600.0
 
 router = APIRouter(
     prefix="/conversations",
@@ -68,50 +86,49 @@ router = APIRouter(
 )
 
 
-def _agent_selection(agent, body: ConversationCreateRequest) -> tuple[str, tuple[str, ...]]:
-    """An Agent's model overrides the request; its Skills precede extra Skills, deduplicated."""
-    if agent is None:
-        return body.model_alias, tuple(body.skill_revision_ids)
-    model_alias = getattr(agent, "model_alias", None) or body.model_alias
-    skills = tuple(
-        dict.fromkeys((*getattr(agent, "skill_revision_ids", ()), *body.skill_revision_ids))
-    )
-    return model_alias, skills
+def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
+    """A cheap pre-check for the obvious-mismatch case, so an unmistakably different
+    replay body fails fast without the asset/knowledge lookups `_input` would do.
+    The frozen Turn's `skill_revision_ids` is `merge_skill_selection`'s *applied*
+    set (manual then pinned, deduped, with disabled/inapplicable ids skipped),
+    not `body.skill_revision_ids` verbatim, so it is compared against
+    `requested_skill_revision_ids` (the caller's raw request, frozen alongside it
+    for exactly this check) instead -- fix round 1, I-2. `_validate_replay`'s full
+    recomputation below still catches a genuine non-Skill mismatch this quick
+    check would miss.
+    """
 
-
-async def _replay_selection(
-    body: ConversationCreateRequest, request: Request
-) -> tuple[str, tuple[str, ...]]:
-    if body.agent_revision_id is None:
-        return _agent_selection(None, body)
-    catalog = getattr(request.app.state.http_services, "asset_catalog", None)
-    resolve = getattr(catalog, "resolve_historical_agent", None)
-    if resolve is None:
-        return _agent_selection(None, body)
-    try:
-        agent = await resolve(request.state.project_scope, body.agent_revision_id)
-    except AssetRevisionRejected:
-        return _agent_selection(None, body)
-    return _agent_selection(agent, body)
-
-
-def _matches_replay(
-    turn, body: ConversationCreateRequest, selection: tuple[str, tuple[str, ...]]
-) -> bool:
     value = turn.input_snapshot.value
-    model_alias, skill_revision_ids = selection
     return (
         value.message == body.message
-        and value.model_alias == model_alias
+        and value.model_alias == body.model_alias
         and value.source_revision_ids == tuple(body.source_revision_ids)
         and value.document_revision_ids == tuple(body.document_revision_ids)
         and value.agent_revision_id == body.agent_revision_id
-        and value.skill_revision_ids == skill_revision_ids
+        and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
+        and value.insights_report_refs == tuple(body.insights_report_refs)
+    )
+
+
+def _replay_comparable(value: TurnInput) -> TurnInput:
+    """`value` without what the Skill library decides at freeze time (applied
+    Skills, their content and notices, the candidate catalog): a pinned Skill's
+    new revision or a newly imported Skill mid-retry is not a different
+    request. The manual request itself is checked by `_matches_replay`."""
+    return replace(
+        value,
+        skill_revision_ids=(),
+        skill_revision_digests=(),
+        skill_labels=(),
+        skill_instruction_templates=(),
+        skill_instruction_template_digests=(),
+        skill_notices=(),
+        skill_catalog=(),
     )
 
 
 async def _validate_replay(turn, body: ConversationCreateRequest, request: Request) -> None:
-    if not _matches_replay(turn, body, await _replay_selection(body, request)):
+    if not _matches_replay(turn, body):
         raise ConversationConflict("idempotency-conflict")
     try:
         current = await _input(body, request)
@@ -122,16 +139,16 @@ async def _validate_replay(turn, body: ConversationCreateRequest, request: Reque
         ModelGatewayRejected,
         ModelGatewayUnavailable,
         ModelNotSelectable,
+        SkillBudgetExceeded,
     ):
         return
-    if current != turn.input_snapshot.value:
+    if _replay_comparable(current) != _replay_comparable(turn.input_snapshot.value):
         raise ConversationConflict("idempotency-conflict")
 
 
 async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput:
     scope = request.state.project_scope
     services = request.app.state.http_services
-    selectable: set[str] | None = None
     if services.model_catalog is not None:
         # Grounded and Agent answers use structured output, so only those models are selectable.
         selectable = {
@@ -143,8 +160,8 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             raise ModelNotSelectable
     elif body.model_alias:
         raise KnowledgeRuntimeUnavailable
+    agent: Any = None
     agent_digest = None
-    agent = None
     if body.agent_revision_id is not None:
         if services.asset_catalog is None:
             raise KnowledgeRuntimeUnavailable
@@ -154,30 +171,36 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             tools=frozenset({"knowledge.answer"}),
             output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
         )
-        try:
-            await tool_registry_service(request).require_allowlist(scope, agent.tool_allowlist)
-        except ToolRejected as error:
-            raise AssetRevisionRejected() from error
         agent_digest = agent.content_digest
-    model_alias, skill_revision_ids = _agent_selection(agent, body)
-    if model_alias != body.model_alias and (selectable is None or model_alias not in selectable):
-        raise ModelNotSelectable
-    skills = (
-        []
-        if services.asset_catalog is None
-        else [
-            resolve_skill_selection(
-                await services.asset_catalog.get_skill(scope, revision_id),
-                task="knowledge.answer",
-            )
-            for revision_id in skill_revision_ids
-        ]
-    )
-    if skill_revision_ids and services.asset_catalog is None:
+    if body.skill_revision_ids and services.asset_catalog is None:
         raise KnowledgeRuntimeUnavailable
+    # Each Skill's latest revision, whatever its status: pinned Skills and the
+    # auto-activation catalog both come from this one read.
+    library = (
+        () if services.asset_catalog is None else await services.asset_catalog.list_skills(scope)
+    )
+    manual_skills = [
+        # Tolerant of a disabled Skill (unlike `get_skill`): `merge_skill_selection`
+        # decides whether to skip it with a notice rather than failing the turn.
+        await services.asset_catalog.resolve_historical_skill(scope, revision_id)
+        for revision_id in dict.fromkeys(body.skill_revision_ids)
+    ]
+    pinned_skills, unavailable_notices = pinned_revisions(
+        tuple(getattr(agent, "pinned_skill_ids", ()) or ()), library
+    )
+    selection = merge_skill_selection(manual_skills, pinned_skills, task="knowledge.answer")
+    skills = selection.applied
+    catalog = build_skill_catalog(
+        library,
+        task="knowledge.answer",
+        excluded_skill_ids=frozenset(getattr(agent, "excluded_skill_ids", ()) or ()),
+        loaded_skill_ids=frozenset(item.asset_id for item in skills),
+    )
     if services.knowledge is None:
         raise KnowledgeRuntimeUnavailable
-    selection = await freeze_conversation_selection(
+    if body.insights_report_refs and services.insights_explanation is None:
+        raise KnowledgeRuntimeUnavailable
+    selection_facts = await freeze_conversation_selection(
         services.knowledge,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
@@ -186,36 +209,59 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         message=body.message,
         actor_id=scope.actor_id,
         identity_mode=scope.identity_mode.value,
-        model_alias=model_alias,
+        model_alias=body.model_alias,
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
-        resolved_resources=selection.resolved_resources,
+        resolved_resources=selection_facts.resolved_resources,
         agent_revision_id=body.agent_revision_id,
         agent_revision_digest=agent_digest,
         agent_label=(
-            None if agent is None else getattr(agent, "display_name", body.agent_revision_id)
+            None
+            if body.agent_revision_id is None
+            else getattr(agent, "display_name", body.agent_revision_id)
         ),
-        skill_revision_ids=skill_revision_ids,
+        skill_revision_ids=tuple(item.revision_id for item in skills),
         skill_revision_digests=tuple(item.content_digest for item in skills),
-        skill_labels=tuple(
-            getattr(item, "display_name", revision_id)
-            for item, revision_id in zip(skills, skill_revision_ids, strict=True)
+        skill_labels=tuple(getattr(item, "display_name", item.revision_id) for item in skills),
+        skill_notices=(*selection.notices, *unavailable_notices),
+        requested_skill_revision_ids=tuple(body.skill_revision_ids),
+        skill_catalog=catalog.entries,
+        agent_system_instruction=(
+            None if body.agent_revision_id is None else agent.system_instruction
         ),
-        agent_system_instruction=(None if agent is None else agent.system_instruction),
-        agent_system_instruction_digest=None if agent is None else agent.system_instruction_digest,
-        agent_tool_allowlist=() if agent is None else tuple(sorted(agent.tool_allowlist)),
-        agent_output_schema_json=None if agent is None else agent.output_schema_json,
-        agent_output_schema_digest=None if agent is None else agent.output_schema_digest,
-        skill_instruction_templates=tuple(cast(str, item.instruction_template) for item in skills),
+        agent_system_instruction_digest=None
+        if body.agent_revision_id is None
+        else agent.system_instruction_digest,
+        agent_tool_allowlist=()
+        if body.agent_revision_id is None
+        else tuple(sorted(agent.tool_allowlist)),
+        agent_output_schema_json=None
+        if body.agent_revision_id is None
+        else agent.output_schema_json,
+        agent_output_schema_digest=None
+        if body.agent_revision_id is None
+        else agent.output_schema_digest,
+        skill_instruction_templates=tuple(
+            cast(str, item.instruction_template)
+            + (getattr(item, "attached_references", None) or "")
+            for item in skills
+        ),
         skill_instruction_template_digests=tuple(
             item.instruction_template_digest for item in skills
         ),
-        acl_digest=selection.acl_digest,
-        retrieval_policy_digest=selection.retrieval_policy_digest,
+        acl_digest=selection_facts.acl_digest,
+        retrieval_policy_digest=selection_facts.retrieval_policy_digest,
+        persona_version=CURRENT_PERSONA.version,
+        insights_report_refs=tuple(body.insights_report_refs),
     )
 
 
-def _turn(value):
+def _turn(
+    value,
+    *,
+    feedback: AnswerFeedback | None = None,
+    skills_used: tuple[TurnSkillUse, ...] = (),
+):
     frozen = value.input_snapshot.value
     return ConversationTurnSummary(
         turn_id=value.turn_id,
@@ -240,12 +286,6 @@ def _turn(value):
         graph_snapshot_id=None
         if value.answer_snapshot is None
         else value.answer_snapshot.value.graph_snapshot_id,
-        relation_citations=[]
-        if value.answer_snapshot is None
-        else [
-            {key: item for key, item in asdict(citation).items() if key != "original_citation_ids"}
-            for citation in value.answer_snapshot.value.relation_citations
-        ],
         input=ConversationTurnInputView(
             message=frozen.message,
             model_alias=frozen.model_alias,
@@ -265,9 +305,24 @@ def _turn(value):
             agent_label=frozen.agent_label or frozen.agent_revision_id,
             skill_revision_ids=list(frozen.skill_revision_ids),
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
+            skill_notices=list(frozen.skill_notices),
+            skills_used=[
+                ConversationTurnSkillView(
+                    skill_id=item.skill_id,
+                    revision_id=item.skill_revision_id,
+                    label=item.label,
+                    mode=item.mode,
+                )
+                for item in skills_used
+            ],
             insights_query_id=frozen.insights_query_id,
         ),
         trace_id=trace_id_of(value.traceparent),
+        my_feedback=(
+            None
+            if feedback is None or feedback.rating is None
+            else AnswerFeedbackView(rating=feedback.rating, comment=feedback.comment)
+        ),
     )
 
 
@@ -280,13 +335,26 @@ def _summary(value):
     )
 
 
-def _detail(value):
+def _detail(
+    value,
+    feedback_by_turn: dict[str, AnswerFeedback] | None = None,
+    skills_by_turn: dict[str, tuple[TurnSkillUse, ...]] | None = None,
+):
+    feedback_by_turn = feedback_by_turn or {}
+    skills_by_turn = skills_by_turn or {}
     return ConversationDetail(
         conversation_id=value.conversation_id,
         title=value.title,
         created_at=value.created_at.isoformat(),
         updated_at=value.updated_at.isoformat(),
-        turns=[_turn(turn) for turn in value.turns],
+        turns=[
+            _turn(
+                turn,
+                feedback=feedback_by_turn.get(turn.turn_id),
+                skills_used=skills_by_turn.get(turn.turn_id, ()),
+            )
+            for turn in value.turns
+        ],
     )
 
 
@@ -362,8 +430,21 @@ async def list_conversations(
     operation_id="conversation_get",
     responses={404: problem_response_metadata("Conversation not found")},
 )
-async def get(conversation_id: str, service: ConversationService = Depends(conversation_service)):
-    return _detail(await service.load(conversation_id))
+async def get(
+    conversation_id: str,
+    request: Request,
+    service: ConversationService = Depends(conversation_service),
+):
+    conversation = await service.load(conversation_id)
+    feedback_by_turn: dict[str, AnswerFeedback] = {}
+    skills_by_turn: dict[str, tuple[TurnSkillUse, ...]] = {}
+    services = request.app.state.http_services
+    turn_ids = tuple(turn.turn_id for turn in conversation.turns)
+    if services.feedback is not None:
+        feedback_by_turn = await services.feedback.mine(turn_ids)
+    if services.skill_activations is not None:
+        skills_by_turn = await services.skill_activations.for_turns(turn_ids)
+    return _detail(conversation, feedback_by_turn, skills_by_turn)
 
 
 @router.patch(
@@ -503,8 +584,56 @@ async def events(
                 occurred_at=e.occurred_at.isoformat(),
             )
             for e in value.events
+            # C-1: a kept demo volume may still hold legacy `answer.delta`
+            # rows from before PR 3; the public contract no longer knows
+            # that event type, so it must never be surfaced here.
+            if e.event_type != "answer.delta"
         ]
     )
+
+
+_TERMINAL_TURN_STATES = frozenset({"completed", "abstained", "failed", "canceled"})
+_DRAFT_BLOCK_MS = 15_000
+_DEGRADED_POLL_SECONDS = 1.0
+# I-4: the live loop's wake-key cursor starts from the beginning of that
+# bounded (`MAXLEN ~ 1024`), TTL'd stream rather than from `"$"` -- "$" is
+# resolved by Redis only when `read` is actually called, so starting there
+# would lose any wake-up that lands between the MySQL catch-up and the first
+# blocking read. Replaying a few stale wake hints is harmless (they just
+# trigger one extra, idempotent MySQL reload); losing one is not.
+_WAKE_CURSOR_START = "0"
+
+
+def _encode_draft_frame(
+    *,
+    conversation_id: str,
+    turn_id: str,
+    sequence: int,
+    attempt: int,
+    seq: int,
+    text: str,
+    reset: bool = False,
+) -> str:
+    """An `answer.draft` SSE frame: still a `ChatEventEnvelope`, but never
+    carries an `id:` line -- drafts are not persisted MySQL events, and the
+    client orders/dedupes them by `attempt`/`seq`, never by `sequence`."""
+
+    envelope = ChatEventEnvelope.model_validate(
+        {
+            "eventId": uuid4().hex,
+            "sequence": sequence,
+            "chatId": conversation_id,
+            "turnId": turn_id,
+            "occurredAt": datetime.now(timezone.utc).isoformat(),
+            "schemaVersion": 1,
+            "event": {
+                "type": "answer.draft",
+                "payload": {"attempt": attempt, "seq": seq, "text": text, "reset": reset},
+            },
+        }
+    ).model_dump(mode="json", by_alias=True)
+    data = json.dumps(envelope, separators=(",", ":"))
+    return f"event: answer.draft\ndata: {data}\n\n"
 
 
 @router.get(
@@ -525,58 +654,163 @@ async def events(
 )
 async def stream(
     conversation_id: str,
+    request: Request,
     last_event_id: str | None = Header(None, alias="Last-Event-ID", pattern=r"^(0|[1-9][0-9]*)$"),
     service: ConversationService = Depends(conversation_service),
 ):
     resume = 0 if last_event_id is None else int(last_event_id)
     await service.load(conversation_id)
+    services = request.app.state.http_services
+    draft_stream: DraftStream | None = getattr(services, "draft_stream", None)
 
     async def generate():
         nonlocal resume
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _STREAM_MAX_SECONDS
-        while True:
-            # Subscribe before reading so a commit between the read and the wait still wakes us.
-            waiter = asyncio.ensure_future(
-                service.wait_for_events(
-                    conversation_id,
-                    timeout=max(0.0, min(_STREAM_WAIT_SECONDS, deadline - loop.time())),
-                )
-            )
-            try:
-                await asyncio.sleep(0)
+        degraded = draft_stream is None
+        replayed_for: tuple[str, int] | None = None
+        last_draft_id = "0-0"
+        last_wake_id = _WAKE_CURSOR_START
+        current_turn = None
+        # I-3: only re-read MySQL when there is a concrete reason to --
+        # right away, after a wake-up hint, or after a block timeout. A
+        # batch of draft-only entries loops straight back into `read()`
+        # instead, so a fast-streaming generation does not cost a MySQL
+        # read per draft chunk.
+        need_reload = True
+
+        with span("conversation.stream", {"tap.conversation_id": conversation_id}) as current_span:
+            if degraded:
+                current_span.set_attribute("tap.stream.degraded", True)
+            while True:
+                if need_reload:
+                    try:
+                        value = await service.load(conversation_id)
+                    except ConversationNotFound:
+                        # Deleted while streaming: close instead of failing mid-body.
+                        return
+                    fresh = [event for event in value.events if event.sequence > resume]
+                    for event in fresh:
+                        turn_id = event.turn_id or str(event.payload.get("turnId") or "")
+                        if not turn_id:
+                            raise ValueError("persisted event is missing its Turn binding")
+                        # C-1: a kept demo volume may still hold legacy
+                        # `answer.delta` rows (PR 3 moved the answer to Redis
+                        # drafts); accepted when loading, never re-surfaced.
+                        if event.event_type != "answer.delta":
+                            envelope = ChatEventEnvelope.model_validate(
+                                {
+                                    "eventId": event.event_id,
+                                    "sequence": event.sequence,
+                                    "chatId": conversation_id,
+                                    "turnId": turn_id,
+                                    "occurredAt": event.occurred_at.isoformat(),
+                                    "schemaVersion": 1,
+                                    "event": {
+                                        "type": event.event_type,
+                                        "payload": dict(event.payload),
+                                    },
+                                }
+                            ).model_dump(mode="json", by_alias=True)
+                            yield encode_sse((envelope,), last_event_id=str(resume))
+                        resume = event.sequence
+
+                    current_turn = next(
+                        (
+                            turn
+                            for turn in reversed(value.turns)
+                            if turn.state not in _TERMINAL_TURN_STATES
+                        ),
+                        None,
+                    )
+                    if current_turn is None:
+                        # Every Turn is terminal and every authoritative event
+                        # has been sent: close the stream (the client's
+                        # reconnect semantics are unaffected -- there is
+                        # nothing left to resume into).
+                        return
+                    need_reload = False
+
+                assert current_turn is not None  # set whenever need_reload just ran
+                if not degraded:
+                    assert draft_stream is not None  # degraded is False only when set
+                    replay_key = (current_turn.turn_id, current_turn.attempt)
+                    if replayed_for != replay_key:
+                        try:
+                            chunks, draft_cursor = await draft_stream.replay(
+                                current_turn.turn_id, attempt=current_turn.attempt
+                            )
+                        except DraftStreamUnavailable:
+                            degraded = True
+                            current_span.set_attribute("tap.stream.degraded", True)
+                        else:
+                            for chunk in chunks:
+                                yield _encode_draft_frame(
+                                    conversation_id=conversation_id,
+                                    turn_id=current_turn.turn_id,
+                                    sequence=resume,
+                                    attempt=chunk.attempt,
+                                    seq=chunk.seq,
+                                    text=chunk.text,
+                                    reset=chunk.reset,
+                                )
+                            replayed_for = replay_key
+                            # I-4: continue the draft cursor from `replay`'s
+                            # own last-seen id -- never `"$"`, which Redis
+                            # only resolves once `read` actually runs and so
+                            # could skip an entry written in between.
+                            last_draft_id = draft_cursor
+
+                if degraded:
+                    await asyncio.sleep(_DEGRADED_POLL_SECONDS)
+                    need_reload = True
+                    continue
+
+                draft_key = draft_stream_key(current_turn.turn_id)
+                wake_key = wake_stream_key(conversation_id)
                 try:
-                    # Check activity first: events read afterwards include any terminal ones.
-                    active = await service.has_active_turns(conversation_id)
-                    fresh = await service.events_after(conversation_id, resume)
-                except ConversationNotFound:
-                    # Deleted while streaming: close the stream instead of failing mid-body.
-                    return
-                for event in fresh:
-                    turn_id = event.turn_id or str(event.payload.get("turnId") or "")
-                    if not turn_id:
-                        raise ValueError("persisted event is missing its Turn binding")
-                    envelope = ChatEventEnvelope.model_validate(
-                        {
-                            "eventId": event.event_id,
-                            "sequence": event.sequence,
-                            "chatId": conversation_id,
-                            "turnId": turn_id,
-                            "occurredAt": event.occurred_at.isoformat(),
-                            "schemaVersion": 1,
-                            "event": {"type": event.event_type, "payload": dict(event.payload)},
-                        }
-                    ).model_dump(mode="json", by_alias=True)
-                    yield encode_sse((envelope,), last_event_id=str(resume))
-                    resume = event.sequence
-                if not active or loop.time() >= deadline:
-                    return
-                if not await waiter:
-                    yield b": keepalive\n\n"
-            finally:
-                if not waiter.done():
-                    waiter.cancel()
-                    await asyncio.gather(waiter, return_exceptions=True)
+                    entries = await draft_stream.read(
+                        {draft_key: last_draft_id, wake_key: last_wake_id},
+                        block_ms=_DRAFT_BLOCK_MS,
+                    )
+                except DraftStreamUnavailable:
+                    degraded = True
+                    current_span.set_attribute("tap.stream.degraded", True)
+                    continue
+                if not entries:
+                    # Block timed out with nothing new: keep the connection
+                    # alive and let the top of the loop re-check MySQL once,
+                    # without busy-polling Redis or MySQL in between.
+                    yield ": keepalive\n\n"
+                    need_reload = True
+                    continue
+                wake_seen = False
+                for entry in entries:
+                    if entry.key == draft_key:
+                        last_draft_id = entry.id
+                        attempt = entry.fields.get("attempt")
+                        seq = entry.fields.get("seq")
+                        text = entry.fields.get("text")
+                        if attempt is None or seq is None or text is None:
+                            continue
+                        try:
+                            yield _encode_draft_frame(
+                                conversation_id=conversation_id,
+                                turn_id=current_turn.turn_id,
+                                sequence=resume,
+                                attempt=int(attempt),
+                                seq=int(seq),
+                                text=text,
+                                reset=entry.fields.get("reset") == "1",
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                    elif entry.key == wake_key:
+                        last_wake_id = entry.id
+                        wake_seen = True
+                # I-3: a wake hint means a new authoritative event (possibly
+                # the terminal one) committed, so MySQL is worth re-reading;
+                # a batch of draft-only entries is not a reason to.
+                if wake_seen:
+                    need_reload = True
 
     return StreamingResponse(
         generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
@@ -596,3 +830,47 @@ async def turn_trace(conversation_id: str, turn_id: str, request: Request) -> Tu
     if trace is None:
         raise ConversationNotFound
     return trace
+
+
+@router.put(
+    "/{conversation_id}/turns/{turn_id}/feedback",
+    response_model=AnswerFeedbackView,
+    operation_id="conversation_put_turn_feedback",
+    responses={
+        404: problem_response_metadata("Conversation or Turn not found"),
+        409: problem_response_metadata("Turn is not completed"),
+        422: problem_response_metadata("Request validation failed"),
+    },
+)
+async def put_turn_feedback(
+    conversation_id: str,
+    turn_id: str,
+    body: AnswerFeedbackRequest,
+    service: FeedbackService = Depends(feedback_service),
+) -> AnswerFeedbackView:
+    try:
+        feedback = await service.submit(conversation_id, turn_id, body.rating, body.comment)
+    except AuthorizationDenied:
+        # Do not reveal that the Conversation exists but belongs to another actor.
+        raise ConversationNotFound from None
+    assert feedback.rating is not None  # submit() always stores a non-null rating
+    return AnswerFeedbackView(rating=feedback.rating, comment=feedback.comment)
+
+
+@router.delete(
+    "/{conversation_id}/turns/{turn_id}/feedback",
+    status_code=204,
+    response_class=Response,
+    operation_id="conversation_delete_turn_feedback",
+    responses={404: problem_response_metadata("Conversation or Turn not found")},
+)
+async def delete_turn_feedback(
+    conversation_id: str,
+    turn_id: str,
+    service: FeedbackService = Depends(feedback_service),
+) -> Response:
+    try:
+        await service.retract(conversation_id, turn_id)
+    except AuthorizationDenied:
+        raise ConversationNotFound from None
+    return Response(status_code=204)

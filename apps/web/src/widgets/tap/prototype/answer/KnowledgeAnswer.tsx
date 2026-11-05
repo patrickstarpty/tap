@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Button } from "antd";
 import type { AssistantTurn } from "../model";
 import { AnswerEvidence } from "./AnswerEvidence";
 import type { OpenCitation } from "./CitationPanel";
+import { AnswerFeedback, type FeedbackValue } from "./AnswerFeedback";
 import { AnswerTrace } from "../AnswerTrace";
 import { createSampleTrace } from "../sampleTrace";
 
@@ -34,19 +36,14 @@ export function KnowledgeAnswer({
   onRetry,
   onStop,
   onOpenCitation,
-  onOpenRelation,
 }: {
-  onOpenRelation?: (selection: {
-    snapshotId: string;
-    edgeIds: string[];
-    sourceId: string;
-  }) => void;
   turn: AssistantTurn;
   onRetry: () => void;
   onStop: () => void;
   onOpenCitation: (citation: OpenCitation) => void;
 }) {
   const t = (en: string, zh: string) => (turn.locale === "zh" ? zh : en);
+  const [feedback, setFeedback] = useState<FeedbackValue | null>(null);
   if (turn.answerState === "queued")
     return (
       <div className="tap-answer-state" data-state="queued" role="status">
@@ -151,24 +148,11 @@ export function KnowledgeAnswer({
         )}
       </p>
       <CitationButtons turn={turn} onOpenCitation={onOpenCitation} />
-      {turn.sourceReferences[0] && onOpenRelation ? (
-        <Button
-          size="small"
-          className="tap-relation-citation"
-          onClick={() =>
-            onOpenRelation({
-              snapshotId: "prototype-health-disclosure",
-              edgeIds: ["application-health"],
-              sourceId: turn.sourceReferences[0]!.id,
-            })
-          }
-        >
-          {t(
-            "Application —requires→ Health disclosure",
-            "投保申请 —要求→ 健康告知",
-          )}
-        </Button>
-      ) : null}
+      <AnswerFeedback
+        locale={turn.locale}
+        value={feedback}
+        onChange={setFeedback}
+      />
       <AnswerTrace trace={createSampleTrace(turn.locale)} />
     </div>
   );
