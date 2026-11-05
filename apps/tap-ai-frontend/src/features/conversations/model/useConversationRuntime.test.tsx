@@ -464,3 +464,68 @@ it("explicitly resetting an already selected draft invalidates its pending send"
   expect(result.current.conversationId).toBe("draft");
   expect(result.current.turns).toEqual([]);
 });
+
+it("starts a fresh chat intent after resetting a draft with an unconfirmed send", async () => {
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  const writes: { request: Request; finish: (response: Response) => void }[] =
+    [];
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if ((request as Request).method === "POST") {
+      return new Promise<Response>((finish) => {
+        writes.push({ request: request as Request, finish });
+      });
+    }
+    return original(request, init);
+  });
+  const { result } = setup();
+  let first!: ReturnType<typeof result.current.send>;
+  let second!: ReturnType<typeof result.current.send>;
+  act(() => {
+    first = result.current.send(input);
+  });
+  await waitFor(() => expect(writes).toHaveLength(1));
+  act(() => result.current.reset());
+  act(() => {
+    second = result.current.send(input);
+  });
+  await waitFor(() => expect(writes).toHaveLength(2));
+  const firstKey = writes[0]!.request.headers.get("Idempotency-Key");
+  const secondKey = writes[1]!.request.headers.get("Idempotency-Key");
+  expect(firstKey).toBeTruthy();
+  expect(secondKey).toBeTruthy();
+  expect(secondKey).not.toBe(firstKey);
+  await act(async () => {
+    writes[0]!.finish(
+      json(
+        {
+          conversationId: "conversation-old",
+          turnId: "turn-old",
+          state: "queued",
+        },
+        202,
+      ),
+    );
+    expect(await first).toBeNull();
+  });
+  expect(result.current.conversationId).toBe("draft");
+  expect(result.current.sending).toBe(true);
+  await act(async () => {
+    writes[1]!.finish(
+      json(
+        {
+          conversationId: "conversation-new",
+          turnId: "turn-new",
+          state: "queued",
+        },
+        202,
+      ),
+    );
+    expect(await second).toMatchObject({
+      conversationId: "conversation-new",
+      turnId: "turn-new",
+    });
+  });
+  expect(result.current.conversationId).toBe("conversation-new");
+  expect(result.current.sending).toBe(false);
+});

@@ -285,7 +285,12 @@ export function useConversationRuntime(
   return {
     conversationId,
     selectConversation,
-    reset: () => changeSelection("draft"),
+    reset: () => {
+      // New chat starts a new intent even if the previous POST is unconfirmed.
+      // Insights keeps its separate recovery key until acceptance.
+      pendingChat.current = null;
+      changeSelection("draft");
+    },
     detail: detail.data,
     events: events.data?.items,
     turns,
