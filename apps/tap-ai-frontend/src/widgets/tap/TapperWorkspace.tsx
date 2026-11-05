@@ -2546,7 +2546,8 @@ export function TapperWorkspace() {
       createConversation(id),
       ...current.filter((item) => item.id !== id),
     ]);
-    setActiveConversationId(id);
+    latestActiveConversationId.current = id;
+    conversationRuntime.reset();
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
   };

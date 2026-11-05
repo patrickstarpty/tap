@@ -369,3 +369,98 @@ it("releases a completed accepted target so a later durable turn can become acti
   );
   await waitFor(() => expect(result.current.hasActiveTurn).toBe(true));
 });
+
+it("preserves a pending send when the current conversation is selected again", async () => {
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  let finish!: (response: Response) => void;
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if ((request as Request).method === "POST")
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    return original(request, init);
+  });
+  const { result } = setup("conversation-1");
+  let sending!: ReturnType<typeof result.current.send>;
+  act(() => {
+    sending = result.current.send(input);
+  });
+  await waitFor(() => expect(finish).toBeDefined());
+  act(() => result.current.selectConversation("conversation-1"));
+  expect(result.current.sending).toBe(true);
+  await act(async () => {
+    finish(
+      json(
+        { conversationId: "conversation-1", turnId: "turn-2", state: "queued" },
+        202,
+      ),
+    );
+    expect(await sending).toMatchObject({ turnId: "turn-2" });
+  });
+  expect(result.current.turns.some((item) => item.turnId === "turn-2")).toBe(
+    true,
+  );
+});
+
+it("preserves an accepted target and streamed updates on same-conversation selection before detail catches up", async () => {
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if ((request as Request).method === "POST")
+      return json(
+        { conversationId: "conversation-1", turnId: "turn-1", state: "queued" },
+        202,
+      );
+    if ((request as Request).url.endsWith("/conversation-1"))
+      return json({ ...detail(), turns: [] });
+    return original(request, init);
+  });
+  const { result } = setup("conversation-1");
+  await waitFor(() => expect(result.current.detail?.turns).toEqual([]));
+  await act(async () => {
+    await result.current.send(input);
+  });
+  await waitFor(() => expect(wire.ready()).toBe(true));
+  act(() => result.current.selectConversation("conversation-1"));
+  expect(result.current.hasActiveTurn).toBe(true);
+  act(() =>
+    wire.emit(1, "answer.draft", {
+      attempt: 1,
+      seq: 1,
+      text: "Still generating",
+    }),
+  );
+  await waitFor(() =>
+    expect(result.current.turns[0]?.draft?.text).toBe("Still generating"),
+  );
+});
+
+it("explicitly resetting an already selected draft invalidates its pending send", async () => {
+  let finish!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const { result } = setup();
+  let sending!: ReturnType<typeof result.current.send>;
+  act(() => {
+    sending = result.current.send(input);
+  });
+  await waitFor(() => expect(finish).toBeDefined());
+  act(() => result.current.reset());
+  expect(result.current.sending).toBe(false);
+  await act(async () => {
+    finish(
+      json(
+        { conversationId: "conversation-1", turnId: "turn-1", state: "queued" },
+        202,
+      ),
+    );
+    expect(await sending).toBeNull();
+  });
+  expect(result.current.conversationId).toBe("draft");
+  expect(result.current.turns).toEqual([]);
+});

@@ -52,7 +52,7 @@ export function useConversationRuntime(
   const pendingChat = useRef<PendingIntent | null>(null);
   const pendingInsights = useRef<PendingIntent | null>(null);
   const selectionRef = useRef(selection);
-  const selectConversation = useCallback(
+  const changeSelection = useCallback(
     (conversationId: string) => {
       generation.current += 1;
       inFlight.current = null;
@@ -62,6 +62,17 @@ export function useConversationRuntime(
       setSelection(selectionRef.current);
     },
     [projectId],
+  );
+  const selectConversation = useCallback(
+    (conversationId: string) => {
+      if (
+        selectionRef.current.projectId === projectId &&
+        selectionRef.current.conversationId === conversationId
+      )
+        return;
+      changeSelection(conversationId);
+    },
+    [changeSelection, projectId],
   );
   if (selection.projectId !== projectId) {
     generation.current += 1;
@@ -274,7 +285,7 @@ export function useConversationRuntime(
   return {
     conversationId,
     selectConversation,
-    reset: () => selectConversation("draft"),
+    reset: () => changeSelection("draft"),
     detail: detail.data,
     events: events.data?.items,
     turns,
