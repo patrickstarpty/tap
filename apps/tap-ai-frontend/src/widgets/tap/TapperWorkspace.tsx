@@ -45,21 +45,16 @@ import {
   utf8ByteLength,
 } from "./workspace/skills/skillMarkdown";
 import {
-  useAppendConversation,
-  useCancelTurn,
   useConversationSearch,
   useDeleteConversation,
   useRenameConversation,
   useConversationCitation,
   useConversationCitations,
-  useConversationDetail,
-  useConversationEvents,
   useConversationList,
-  useConversationStream,
-  useCreateConversation,
   useConversationClient,
   useTurnTrace,
 } from "../../features/conversations/api/queries";
+import { useConversationRuntime } from "../../features/conversations/model/useConversationRuntime";
 import { TracePanel } from "../../features/conversations/trace/TracePanel";
 import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
 import { AnswerFeedback } from "../../features/conversations/feedback/AnswerFeedback";
@@ -70,11 +65,6 @@ import {
   type ConversationClient,
 } from "../../features/conversations/api/client";
 import {
-  createStreamState,
-  isTargetTurnActive,
-  latestTurnState,
-  mergedDraftFacts,
-  reduceStreamEvent,
   type GraphContextSummary,
   type TaskStepView,
 } from "../../features/conversations/model/stream";
@@ -1531,24 +1521,26 @@ export function TapperWorkspace() {
       return changed ? next : current;
     });
   }, [projectId, publishedSourcesQuery.data, publishedSourcesQuery.isSuccess]);
-  const [activeConversationId, setActiveConversationIdState] =
-    useState("draft");
+  const conversationRuntime = useConversationRuntime(projectId);
+  const activeConversationId = conversationRuntime.conversationId;
+  const selectRuntimeConversation = conversationRuntime.selectConversation;
   // The most recent selection, readable by a `setConversations` updater that
   // an effect queued from an older render: history auto-selection and a New
   // chat click can land in the same instant, and that stale updater must not
   // drop the draft the user just switched to.
   const latestActiveConversationId = useRef("draft");
-  const setActiveConversationId = useCallback((id: string) => {
-    latestActiveConversationId.current = id;
-    setActiveConversationIdState(id);
-  }, []);
+  const setActiveConversationId = useCallback(
+    (id: string) => {
+      latestActiveConversationId.current = id;
+      selectRuntimeConversation(id);
+    },
+    [selectRuntimeConversation],
+  );
+  latestActiveConversationId.current = activeConversationId;
   const insightsClient = useConversationClient(projectId);
   const queryClient = useQueryClient();
   const conversationList = useConversationList(projectId);
-  const conversationDetail = useConversationDetail(
-    projectId,
-    activeConversationId !== "draft" ? activeConversationId : null,
-  );
+  const conversationDetail = conversationRuntime.detail;
   const modelCatalog = useModelCatalog(projectId);
   // Mirrors the composer's picker: only chat models with structured output are selectable.
   const selectableModelAliases = useMemo(
@@ -1566,89 +1558,6 @@ export function TapperWorkspace() {
           ),
     [modelCatalog.data, modelCatalog.isError],
   );
-  const [requestedStreamTarget, setRequestedStreamTarget] = useState<{
-    conversationId: string;
-    turnId: string;
-  } | null>(null);
-  const [pollConversationEvents, setPollConversationEvents] = useState(true);
-  const conversationEvents = useConversationEvents(
-    projectId,
-    activeConversationId !== "draft" ? activeConversationId : null,
-    pollConversationEvents,
-  );
-  const recoveredStreamState = useMemo(() => {
-    let recovered = createStreamState();
-    for (const event of conversationEvents.data?.items ?? []) {
-      recovered = reduceStreamEvent(recovered, {
-        eventId: event.eventId,
-        sequence: event.sequence,
-        chatId: activeConversationId,
-        turnId: event.turnId,
-        occurredAt: event.occurredAt,
-        schemaVersion: 1,
-        event: { type: event.eventType, payload: event.payload },
-      });
-    }
-    return recovered;
-  }, [activeConversationId, conversationEvents.data?.items]);
-  const requestedTarget =
-    requestedStreamTarget?.conversationId === activeConversationId
-      ? requestedStreamTarget.turnId
-      : null;
-  const latestDetailTurn = conversationDetail.data?.turns.at(-1) ?? null;
-  const streamTargetTurnId =
-    requestedTarget ?? latestDetailTurn?.turnId ?? null;
-  const detailTargetStatus =
-    conversationDetail.data?.turns.find(
-      (turn) => turn.turnId === streamTargetTurnId,
-    )?.state ?? null;
-  const detailTargetIsInsights =
-    conversationDetail.data?.turns.some(
-      (turn) =>
-        turn.turnId === streamTargetTurnId &&
-        (turn.input as { insightsQueryId?: string | null }).insightsQueryId !=
-          null,
-    ) ?? false;
-  const shouldStartConversationStream =
-    !detailTargetIsInsights &&
-    (requestedTarget !== null ||
-      isTargetTurnActive({
-        detailStatus: detailTargetStatus,
-        recoveredState: recoveredStreamState,
-        streamState: createStreamState(),
-        targetTurnId: streamTargetTurnId,
-      }));
-  const conversationStream = useConversationStream(
-    projectId,
-    activeConversationId !== "draft" ? activeConversationId : null,
-    streamTargetTurnId,
-    recoveredStreamState.lastSequence,
-    shouldStartConversationStream,
-  );
-  const streamState = conversationStream.state;
-  const hasActiveConversationTurn = isTargetTurnActive({
-    detailStatus: detailTargetStatus,
-    recoveredState: recoveredStreamState,
-    streamState,
-    targetTurnId: streamTargetTurnId,
-  });
-  useEffect(() => {
-    setPollConversationEvents(hasActiveConversationTurn);
-  }, [hasActiveConversationTurn]);
-  useEffect(() => {
-    if (requestedTarget !== null && !hasActiveConversationTurn)
-      setRequestedStreamTarget(null);
-  }, [hasActiveConversationTurn, requestedTarget]);
-  const createConversationMutation = useCreateConversation(projectId);
-  const appendConversationMutation = useAppendConversation(
-    projectId,
-    activeConversationId !== "draft" ? activeConversationId : null,
-  );
-  const cancelTurnMutation = useCancelTurn(
-    projectId,
-    activeConversationId !== "draft" ? activeConversationId : null,
-  );
-  const resetCancelTurn = cancelTurnMutation.reset;
   const aiAssets = useAiAssetCatalog(projectId);
   // Keyed by the composer's `agents` CatalogItem ids (= each agent's
   // approved revisionId), so a composer selection can look up the agent's
@@ -1704,11 +1613,6 @@ export function TapperWorkspace() {
   }, [generationJobId, projectId]);
   const [agents, setAgents] = useState<readonly CatalogItem[]>([]);
   const [skills, setSkills] = useState<readonly CatalogItem[]>([]);
-  const sendInFlight = useRef(false);
-  const pendingSendKey = useRef<{ signature: string; key: string } | null>(
-    null,
-  );
-  const [sendPending, setSendPending] = useState(false);
   const citationTrigger = useRef<HTMLElement | null>(null);
   const [activeCitation, setActiveCitation] = useState<{
     citation: NonNullable<AssistantTurn["response"]>["citations"][number];
@@ -1753,9 +1657,6 @@ export function TapperWorkspace() {
   const [insightsHandoff, setInsightsHandoff] =
     useState<InsightsHandoff | null>(null);
   const [insightsError, setInsightsError] = useState("");
-  const pendingInsightsKey = useRef<{ signature: string; key: string } | null>(
-    null,
-  );
   const [localInsightsTurn, setLocalInsightsTurn] = useState<{
     conversationId: string;
     turn: AssistantTurn;
@@ -1778,10 +1679,6 @@ export function TapperWorkspace() {
   const pendingFocusTarget = useRef<PendingFocusTarget | null>(null);
 
   const copy = WORKSPACE_COPY[locale];
-
-  useEffect(() => {
-    resetCancelTurn();
-  }, [activeConversationId, resetCancelTurn]);
 
   useEffect(() => {
     if (aiAssets.agents.isError) setAgents([]);
@@ -1900,156 +1797,94 @@ export function TapperWorkspace() {
   }, [activeConversationId, conversationList.data]);
 
   useEffect(() => {
-    if (conversationDetail.data === undefined) return;
-    const turns: AssistantTurn[] = conversationDetail.data.turns.map((turn) => {
-      const resolvedResources = turn.input.resolvedResources ?? [];
-      const insightsQueryId = (
-        turn.input as { insightsQueryId?: string | null }
-      ).insightsQueryId;
-      const streamed = latestTurnState(
-        turn.turnId,
-        recoveredStreamState,
-        streamState,
-      );
-      // `draft`/`citationLabels` are taken independently of the
-      // `latestTurnState` whole-record pick above: `answer.draft` is never
-      // persisted, so a reconnect/page-reload mid-generation would
-      // otherwise lose the replayed draft and its labels to a recovered
-      // record with a higher `lastSequence` but no draft at all (review
-      // fix round 1, finding I).
-      const draftFacts = mergedDraftFacts(
-        turn.turnId,
-        recoveredStreamState,
-        streamState,
-      );
-      return {
-        id: turn.turnId,
-        intent: "answer",
-        locale,
-        modelId: turn.input.modelAlias,
-        prompt: turn.input.message,
-        ...(insightsQueryId == null ? {} : { insightsQueryId }),
-        sourceReferences: resolvedResources.map((item) => ({
-          id: item.sourceId,
-          name: item.label,
-          origin: "knowledge-base" as const,
-        })),
-        response: streamed?.response ?? null,
-        graphContext: streamed?.graphContext ?? null,
-        draft: draftFacts.draft,
-        citationLabels: draftFacts.citationLabels,
-        stage: streamed?.stage ?? null,
-        partialAnswer: streamed?.partialAnswer ?? null,
-        steps: streamed?.steps ?? [],
-        traceId: turn.traceId ?? null,
-        myFeedback:
-          turn.myFeedback == null
-            ? null
-            : {
-                rating: turn.myFeedback.rating,
-                comment: turn.myFeedback.comment ?? null,
-              },
-        attempt: turn.attempt,
-        status: ["completed", "abstained", "canceled", "failed"].includes(
-          turn.state,
-        )
-          ? turn.state
-          : (streamed?.status ?? turn.state),
-        error:
-          streamed?.error ??
-          (conversationEvents.isError || conversationStream.error !== null
-            ? "Conversation updates stopped. Your message is saved. Check access or connection, then retry."
-            : null),
-        evidenceStatus:
-          conversationEvents.isLoading || conversationEvents.isFetching
-            ? "loading"
-            : conversationEvents.isError
-              ? "error"
-              : streamed?.response === undefined
-                ? "missing"
-                : "ready",
-        contextLabels: [
-          ...resolvedResources.map((item) => item.label),
-          ...(turn.input.agentLabel == null ? [] : [turn.input.agentLabel]),
-          ...(turn.input.skillLabels ?? []),
-        ].filter((label): label is string => typeof label === "string"),
-        inputSnapshotDigest: turn.inputSnapshotDigest,
-        answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
-        agentRevisionId: turn.input.agentRevisionId,
-        skillRevisionIds: turn.input.skillRevisionIds,
-        skillsUsed: turn.input.skillsUsed,
-        skillNotices: turn.input.skillNotices,
-      };
-    });
-    // The detail refetch after a send can land after the accepted turn is
-    // shown; keep that turn last so Stop and status follow the turn that is
-    // actually generating instead of the previous one.
-    const acceptedTurnId =
-      requestedStreamTarget?.conversationId ===
-        conversationDetail.data.conversationId &&
-      !turns.some((turn) => turn.id === requestedStreamTarget.turnId)
-        ? requestedStreamTarget.turnId
-        : null;
-    const withAcceptedTurn = (previous: readonly AssistantTurn[]) => {
-      const accepted =
-        acceptedTurnId === null
-          ? undefined
-          : previous.find((turn) => turn.id === acceptedTurnId);
-      if (accepted === undefined) return turns;
-      const streamed = latestTurnState(
-        accepted.id,
-        recoveredStreamState,
-        streamState,
-      );
-      const draftFacts = mergedDraftFacts(
-        accepted.id,
-        recoveredStreamState,
-        streamState,
-      );
-      return [
-        ...turns,
-        {
-          ...accepted,
-          status: streamed?.status ?? accepted.status,
-          response: streamed?.response ?? accepted.response ?? null,
-          draft: draftFacts.draft ?? accepted.draft ?? null,
-          citationLabels:
-            Object.keys(draftFacts.citationLabels).length > 0
-              ? draftFacts.citationLabels
-              : (accepted.citationLabels ?? {}),
-          stage: streamed?.stage ?? accepted.stage ?? null,
-          partialAnswer:
-            streamed?.partialAnswer ?? accepted.partialAnswer ?? null,
-        },
-      ];
-    };
+    if (conversationDetail === undefined) return;
+    const turns: AssistantTurn[] = conversationRuntime.turns.flatMap(
+      (facts) => {
+        const turn = facts.detail;
+        if (turn === undefined) return [];
+        const resolvedResources = turn.input.resolvedResources ?? [];
+        const insightsQueryId = (
+          turn.input as { insightsQueryId?: string | null }
+        ).insightsQueryId;
+        return {
+          id: turn.turnId,
+          intent: "answer",
+          locale,
+          modelId: turn.input.modelAlias,
+          prompt: turn.input.message,
+          ...(insightsQueryId == null ? {} : { insightsQueryId }),
+          sourceReferences: resolvedResources.map((item) => ({
+            id: item.sourceId,
+            name: item.label,
+            origin: "knowledge-base" as const,
+          })),
+          response: facts.response,
+          graphContext: facts.graphContext,
+          draft: facts.draft,
+          citationLabels: facts.citationLabels,
+          stage: facts.stage,
+          partialAnswer: facts.partialAnswer,
+          steps: facts.steps,
+          traceId: turn.traceId ?? null,
+          myFeedback:
+            turn.myFeedback == null
+              ? null
+              : {
+                  rating: turn.myFeedback.rating,
+                  comment: turn.myFeedback.comment ?? null,
+                },
+          attempt: turn.attempt,
+          status: facts.status,
+          error: facts.error,
+          evidenceStatus: facts.evidenceStatus,
+          contextLabels: [
+            ...resolvedResources.map((item) => item.label),
+            ...(turn.input.agentLabel == null ? [] : [turn.input.agentLabel]),
+            ...(turn.input.skillLabels ?? []),
+          ].filter((label): label is string => typeof label === "string"),
+          inputSnapshotDigest: turn.inputSnapshotDigest,
+          answerEvidenceSnapshotDigest: turn.answerEvidenceSnapshotDigest,
+          agentRevisionId: turn.input.agentRevisionId,
+          skillRevisionIds: turn.input.skillRevisionIds,
+          skillsUsed: turn.input.skillsUsed,
+          skillNotices: turn.input.skillNotices,
+        };
+      },
+    );
+    const withAcceptedTurn = (previous: readonly AssistantTurn[]) => [
+      ...turns,
+      ...conversationRuntime.turns.flatMap((facts) => {
+        if (facts.detail !== undefined) return [];
+        const accepted = previous.find((turn) => turn.id === facts.turnId);
+        return accepted === undefined ? [] : [{ ...accepted, ...facts }];
+      }),
+    ];
     const restoredAgentIds =
-      conversationDetail.data.turns.at(-1)?.input.agentRevisionId == null
+      conversationDetail.turns.at(-1)?.input.agentRevisionId == null
         ? []
-        : [conversationDetail.data.turns.at(-1)!.input.agentRevisionId!];
+        : [conversationDetail.turns.at(-1)!.input.agentRevisionId!];
     setConversations((current) =>
       current.map((conversation) =>
-        conversation.id === conversationDetail.data.conversationId
+        conversation.id === conversationDetail.conversationId
           ? {
               ...conversation,
               turns: withAcceptedTurn(conversation.turns),
-              ...(conversationDetail.data.turns.at(-1) === undefined
+              ...(conversationDetail.turns.at(-1) === undefined
                 ? {}
                 : {
                     // A model that left the catalog keeps the catalog default instead of
                     // bouncing back on every refetch.
                     ...(selectableModelAliases !== null &&
                     !selectableModelAliases.has(
-                      conversationDetail.data.turns.at(-1)!.input.modelAlias,
+                      conversationDetail.turns.at(-1)!.input.modelAlias,
                     )
                       ? {}
                       : {
                           modelId:
-                            conversationDetail.data.turns.at(-1)!.input
-                              .modelAlias,
+                            conversationDetail.turns.at(-1)!.input.modelAlias,
                         }),
                     selectedSourceIds:
-                      conversationDetail.data.turns
+                      conversationDetail.turns
                         .at(-1)!
                         .input.resolvedResources?.map(
                           (item) => item.sourceId,
@@ -2059,7 +1894,7 @@ export function TapperWorkspace() {
                     // the restored Agent's pinned Skills reappear as locked
                     // chips via `bundledSkillIdsFor` (minor finding).
                     selectedSkillIds: manualSkillRevisionIdsOf(
-                      conversationDetail.data.turns.at(-1)!.input,
+                      conversationDetail.turns.at(-1)!.input,
                       restoredAgentIds,
                     ),
                   }),
@@ -2069,25 +1904,16 @@ export function TapperWorkspace() {
     );
     setLocalInsightsTurn((current) =>
       current !== null &&
-      current.conversationId === conversationDetail.data.conversationId &&
-      conversationDetail.data.turns.some(
-        (turn) => turn.turnId === current.turn.id,
-      )
+      current.conversationId === conversationDetail.conversationId &&
+      conversationDetail.turns.some((turn) => turn.turnId === current.turn.id)
         ? null
         : current,
     );
   }, [
     agentById,
-    conversationDetail.data,
-    conversationEvents.data,
-    conversationEvents.isError,
-    conversationEvents.isFetching,
-    conversationEvents.isLoading,
-    conversationStream.error,
-    recoveredStreamState,
-    requestedStreamTarget,
+    conversationDetail,
+    conversationRuntime.turns,
     selectableModelAliases,
-    streamState,
   ]);
   const tapperWorkspaceActive = [
     "tapper",
@@ -2803,56 +2629,36 @@ export function TapperWorkspace() {
     // `context.skillIds` is the original turn's manual picks.
     const selectedSkillIds =
       context?.skillIds ?? activeConversation.selectedSkillIds;
-    if (
-      createConversationMutation.isPending ||
-      appendConversationMutation.isPending ||
-      sendInFlight.current
-    )
-      return false;
     if (insightsHandoff !== null) {
-      if (insightsClient === null) return false;
-      sendInFlight.current = true;
-      setSendPending(true);
       setInsightsError("");
       try {
-        if (knowledgeClient === null) return false;
-        const published = await knowledgeClient.listPublishedSources();
-        const selected = published.items.filter((item) =>
-          activeConversation.selectedSourceIds.includes(item.sourceId),
-        );
-        const request = {
-          queryId: insightsHandoff.queryId,
-          resourceRefs: insightsHandoff.resourceRefs,
-          question: prompt,
-          ...(activeConversation.id === "draft"
-            ? {}
-            : { conversationId: activeConversation.id }),
-          sourceRevisionIds: selected.map((item) => item.revisionId),
-          documentRevisionIds: [],
-        };
-        const signature = JSON.stringify(request);
-        const storageKey = `tap:insights-pending:${projectId}`;
-        let pending = pendingInsightsKey.current;
-        if (pending === null) {
-          try {
-            pending = JSON.parse(
-              window.sessionStorage.getItem(storageKey) ?? "null",
-            ) as typeof pending;
-          } catch {
-            pending = null;
-          }
-        }
-        if (pending?.signature !== signature) {
-          pending = { signature, key: crypto.randomUUID() };
-          window.sessionStorage.setItem(storageKey, JSON.stringify(pending));
-        }
-        pendingInsightsKey.current = pending;
-        const accepted = await insightsClient.explainInsights(
-          request,
-          pending.key,
-        );
-        window.sessionStorage.removeItem(storageKey);
-        pendingInsightsKey.current = null;
+        let selected: Awaited<
+          ReturnType<
+            NonNullable<typeof knowledgeClient>["listPublishedSources"]
+          >
+        >["items"] = [];
+        const accepted = await conversationRuntime.send(async () => {
+          if (knowledgeClient === null)
+            throw new Error("Knowledge service is unavailable.");
+          const published = await knowledgeClient.listPublishedSources();
+          selected = published.items.filter((item) =>
+            activeConversation.selectedSourceIds.includes(item.sourceId),
+          );
+          return {
+            kind: "insights",
+            input: {
+              queryId: insightsHandoff.queryId,
+              resourceRefs: insightsHandoff.resourceRefs,
+              question: prompt,
+              ...(activeConversation.id === "draft"
+                ? {}
+                : { conversationId: activeConversation.id }),
+              sourceRevisionIds: selected.map((item) => item.revisionId),
+              documentRevisionIds: [],
+            },
+          };
+        });
+        if (accepted === null) return false;
         setLocalInsightsTurn({
           conversationId: accepted.conversationId,
           turn: {
@@ -2877,10 +2683,7 @@ export function TapperWorkspace() {
               item.id !== "draft" && item.id !== accepted.conversationId,
           ),
         ]);
-        setActiveConversationId(accepted.conversationId);
-        void queryClient.invalidateQueries({
-          queryKey: ["conversations", projectId],
-        });
+        latestActiveConversationId.current = accepted.conversationId;
         const handoffUrl = new URL(window.location.href);
         for (const key of ["queryId", "resourceRef", "draft"])
           handoffUrl.searchParams.delete(key);
@@ -2895,68 +2698,46 @@ export function TapperWorkspace() {
             : "The report explanation is unavailable. Please try again.",
         );
         return false;
-      } finally {
-        sendInFlight.current = false;
-        setSendPending(false);
       }
     }
-    sendInFlight.current = true;
-    setSendPending(true);
     try {
-      if (knowledgeClient === null) return false;
-      const api = knowledgeClient;
-      const currentPublished = await api.listPublishedSources();
-      const readySourceIds = new Set(
-        currentPublished.items.map((item) => item.sourceId),
-      );
-      const allowedAgentIds = new Set(agents.map((item) => item.id));
-      const allowedSkillIds = new Set(skills.map((item) => item.id));
-      const futureSourceIds = selectedSourceIds.filter((id) =>
-        readySourceIds.has(id),
-      );
-      const currentSourceReferences = currentPublished.items
-        .filter((item) => futureSourceIds.includes(item.sourceId))
-        .map((item) => ({
-          id: item.sourceId,
-          name: item.sourceName,
-          origin: "knowledge-base" as const,
-        }));
-      const input = {
-        message: prompt,
-        modelAlias: activeConversation.modelId,
-        sourceRevisionIds: currentPublished.items
+      let currentSourceReferences: AssistantTurn["sourceReferences"] = [];
+      const accepted = await conversationRuntime.send(async () => {
+        if (knowledgeClient === null)
+          throw new Error("Knowledge service is unavailable.");
+        const api = knowledgeClient;
+        const currentPublished = await api.listPublishedSources();
+        const readySourceIds = new Set(
+          currentPublished.items.map((item) => item.sourceId),
+        );
+        const allowedAgentIds = new Set(agents.map((item) => item.id));
+        const allowedSkillIds = new Set(skills.map((item) => item.id));
+        const futureSourceIds = selectedSourceIds.filter((id) =>
+          readySourceIds.has(id),
+        );
+        currentSourceReferences = currentPublished.items
           .filter((item) => futureSourceIds.includes(item.sourceId))
-          .map((item) => item.revisionId),
-        documentRevisionIds: [],
-        agentRevisionId:
-          selectedAgentIds.find((id) => allowedAgentIds.has(id)) ?? null,
-        skillRevisionIds: selectedSkillIds.filter((id) =>
-          allowedSkillIds.has(id),
-        ),
-      };
-      // Reuse the key while the same send is unconfirmed so a retry after an
-      // ambiguous failure replays instead of creating a duplicate turn.
-      const signature = JSON.stringify([activeConversation.id, input]);
-      if (pendingSendKey.current?.signature !== signature) {
-        pendingSendKey.current = { signature, key: crypto.randomUUID() };
-      }
-      const key = pendingSendKey.current.key;
-      const accepted =
-        activeConversation.id === "draft"
-          ? await createConversationMutation.mutateAsync({
-              input,
-              idempotencyKey: key,
-            })
-          : await appendConversationMutation.mutateAsync({
-              input,
-              idempotencyKey: key,
-            });
-      pendingSendKey.current = null;
-      setRequestedStreamTarget({
-        conversationId: accepted.conversationId,
-        turnId: accepted.turnId,
+          .map((item) => ({
+            id: item.sourceId,
+            name: item.sourceName,
+            origin: "knowledge-base" as const,
+          }));
+        const input = {
+          message: prompt,
+          modelAlias: activeConversation.modelId,
+          sourceRevisionIds: currentPublished.items
+            .filter((item) => futureSourceIds.includes(item.sourceId))
+            .map((item) => item.revisionId),
+          documentRevisionIds: [],
+          agentRevisionId:
+            selectedAgentIds.find((id) => allowedAgentIds.has(id)) ?? null,
+          skillRevisionIds: selectedSkillIds.filter((id) =>
+            allowedSkillIds.has(id),
+          ),
+        };
+        return { kind: "chat", input };
       });
-      setPollConversationEvents(true);
+      if (accepted === null) return false;
       const optimistic = appendTurn(
         { ...activeConversation, id: accepted.conversationId },
         {
@@ -2984,13 +2765,10 @@ export function TapperWorkspace() {
           (item) => item.id !== "draft" && item.id !== accepted.conversationId,
         ),
       ]);
-      setActiveConversationId(accepted.conversationId);
+      latestActiveConversationId.current = accepted.conversationId;
       return true;
     } catch {
       return false;
-    } finally {
-      sendInFlight.current = false;
-      setSendPending(false);
     }
   };
 
@@ -3140,15 +2918,10 @@ export function TapperWorkspace() {
               }
               onReviewAttachment={() => setActiveModule("library")}
               sendError={insightsError}
-              sending={
-                sendPending ||
-                createConversationMutation.isPending ||
-                appendConversationMutation.isPending
-              }
-              cancelError={cancelTurnMutation.isError}
+              sending={conversationRuntime.sending}
+              cancelError={conversationRuntime.cancelError}
               onCancel={(turnId) => {
-                if (!cancelTurnMutation.isPending)
-                  cancelTurnMutation.mutate(turnId);
+                void conversationRuntime.cancel(turnId).catch(() => undefined);
               }}
               onToggleAgent={(agentId) =>
                 updateActiveConversation((conversation) =>
@@ -3196,7 +2969,7 @@ export function TapperWorkspace() {
                   documentName={(documentId) =>
                     publishedDocumentNames.get(documentId)
                   }
-                  activityEvents={(conversationEvents.data?.items ?? []).filter(
+                  activityEvents={(conversationRuntime.events ?? []).filter(
                     (event) => event.turnId === turn.id,
                   )}
                   onOpenAgentRevision={(revisionId) => {
@@ -3224,11 +2997,7 @@ export function TapperWorkspace() {
                       }));
                     }
                   }}
-                  onRetryConversation={() => {
-                    conversationStream.retry();
-                    void conversationEvents.refetch();
-                    void conversationDetail.refetch();
-                  }}
+                  onRetryConversation={conversationRuntime.retry}
                   onResend={
                     turn.insightsQueryId === undefined
                       ? () =>

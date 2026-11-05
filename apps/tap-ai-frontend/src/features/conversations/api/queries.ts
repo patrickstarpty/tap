@@ -429,10 +429,12 @@ export function useConversationStream(
   const client = useConversationClient(projectId);
   const queryClient = useQueryClient();
   const [state, setState] = useState(createStreamState);
+  const emptyState = useMemo(createStreamState, []);
   const resume = useRef(0);
   const initialCursorRef = useRef(initialCursor);
   const streamIdentity = useRef<string | null>(null);
   const streamConversation = useRef<string | null>(null);
+  const streamProject = useRef<string | null>(null);
   const [error, setError] = useState<ConversationClientError | null>(null);
   const [generation, setGeneration] = useState(0);
   initialCursorRef.current = initialCursor;
@@ -444,14 +446,17 @@ export function useConversationStream(
       !active
     )
       return;
-    const identity = `${conversationId}:${targetTurnId}`;
+    const identity = `${projectId}:${conversationId}:${targetTurnId}`;
     if (streamIdentity.current !== identity) {
       streamIdentity.current = identity;
-      const sameConversation = streamConversation.current === conversationId;
+      const sameConversation =
+        streamProject.current === projectId &&
+        streamConversation.current === conversationId;
       resume.current = sameConversation
         ? Math.max(resume.current, initialCursorRef.current)
         : initialCursorRef.current;
       streamConversation.current = conversationId;
+      streamProject.current = projectId;
       // A new turn in the same conversation resumes the same event log, so the
       // outcomes already streamed for earlier turns stay known; dropping them
       // would let a stale detail payload revive a finished turn as running.
@@ -475,6 +480,7 @@ export function useConversationStream(
             resume.current,
             controller.signal,
           )) {
+            if (stopped) return;
             attempts = 0;
             resume.current = Math.max(resume.current, event.sequence);
             setState((current) => reduceStreamEvent(current, event));
@@ -529,10 +535,13 @@ export function useConversationStream(
     queryClient,
     targetTurnId,
   ]);
+  const matchesConversation =
+    streamProject.current === projectId &&
+    streamConversation.current === conversationId;
   return {
-    error,
+    error: matchesConversation ? error : null,
     retry: () => setGeneration((current) => current + 1),
-    state,
+    state: matchesConversation ? state : emptyState,
   };
 }
 
