@@ -60,6 +60,14 @@
 
 - [x] Review each task against spec and behavioral compatibility; fix actionable findings before accepting it.
 - [x] Update architecture and product roadmap with actual implemented ownership and status, preserving concurrent documentation work during integration.
-- [ ] Run `git diff --check`, contract drift checks, `make check`, `make test`, and `make demo-e2e` against isolated owned services. Record external blockers precisely and fix failures introduced by this change.
-- [ ] Perform whole-change review; address correctness, architecture and compatibility findings.
+- [x] Run `git diff --check`, contract drift checks, `make check`, `make test`, and `make demo-e2e` against isolated owned services. Record external blockers precisely and fix failures introduced by this change.
+- [x] Perform whole-change review; address correctness, architecture and compatibility findings.
 - [ ] Integrate verified commits into develop without staging unrelated user edits; report completed scope, validation and remaining blockers accurately.
+
+## 验证记录（2026-11-06）
+
+- `make check` 通过：代码规范、类型、应用边界、生成契约、构建与确定性质量门禁。
+- `make test` 通过：TAP AI 后端 5411 passed / 492 skipped，TAP AI 前端 1078 passed，TAP 后端 147 passed / 35 skipped，TAP Web 240 passed；合计 6876 passed / 527 skipped。10 条 Alembic 警告与原版基线一致。
+- 独立 MySQL/Redis 验证：checkpoint 模型失败恢复 1 项，发布授权复检与取消 5 项，资产修订/反馈/owner 与维护记录原子性 4 项通过；两张维护事件表及三个索引的 MySQL DDL 与迁移前一致。
+- `make demo-e2e` 通过：业务流程 13 项、应用重启 1 项、整套服务重启 1 项、持久化校验 32 项通过；隔离资源清理完成。该门禁使用确定性模型，不代表真实模型效果验收。
+- 三个实施任务和最终 71 文件评审通过。评审发现的同会话重复选择、显式重置幂等键问题均有先失败后通过的行为测试；恢复测试的历史时钟漂移在原版亦可复现，修正仅限测试时钟。
