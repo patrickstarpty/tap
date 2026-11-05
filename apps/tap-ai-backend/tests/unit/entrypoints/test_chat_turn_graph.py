@@ -14,7 +14,6 @@ import pytest
 import sqlalchemy.exc
 from langgraph.checkpoint.memory import InMemorySaver
 
-from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.policy import AuthorizationDenied
@@ -24,12 +23,17 @@ from tap.modules.ai.domain.graph_runs import GraphCheckpointRetryable
 from tap.modules.ai.domain.skill_activation import PromptSkill, SkillCatalogEntry
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged
 from tap.modules.chat.application.conversations import ClaimBatch
+from tap.modules.chat.application.turn_execution import ChatTurnNodes
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, TurnInputSnapshot
-from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
+from tap.modules.knowledge.api import DirectAnswer
+from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge, encode_bundle
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable
+from tap.modules.knowledge.ports.models import AnswerGeneration
 from tap.modules.knowledge.ports.redaction import RedactionUnavailable
 from tap.platform.budget import TurnBudget, TurnBudgetExhausted, current_meter
+from tests.conversation_execution_fixtures import _bundle
+from tests.unit.knowledge.test_answer_service import answer_response
 
 
 def _turn(*, turn_id: str = "turn-1", lease_token: str = "lease-1", attempt: int = 1):
@@ -73,13 +77,15 @@ class _Conversations:
         return SimpleNamespace(sequence=len(self.emitted))
 
 
-def _answer(*, answer: str = "grounded") -> SimpleNamespace:
-    return SimpleNamespace(
-        answer=answer,
-        citations=(),
-        abstained=False,
+def _answer(*, answer: str = "grounded") -> DirectAnswer:
+    return DirectAnswer(
         trace_id="trace-1",
-        model_dump=lambda **_: {"answer": answer, "citations": []},
+        query_plan_id="plan-1",
+        context_snapshot_id="snapshot-1",
+        corpus_version="tapper-demo-v1",
+        retrieval_profile_id="direct-chat-v1",
+        answer=answer,
+        abstained=False,
     )
 
 
@@ -92,21 +98,17 @@ class _StepsKnowledge:
         self._generate_failed_once = not fail_generate_once
         self._prepare_error: Exception | None = None
 
-    async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
-    ):
+    async def prepare_conversation_answer(self, request, context, *, include_relations=True):
         self.prepare_calls += 1
         if self._prepare_error is not None:
             raise self._prepare_error
-        return {"kind": "prepared", "bundle": {}}
+        return {"kind": "prepared", "bundle": _bundle(query="question")}
 
     async def generate_conversation_answer(
         self,
         step,
-        frozen_input,
+        context,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools=(),
         activated_skills=(),
@@ -115,31 +117,37 @@ class _StepsKnowledge:
         if not self._generate_failed_once:
             self._generate_failed_once = True
             raise GraphCheckpointRetryable("connection lost after durable task write")
-        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+        return {
+            "kind": "generated",
+            "bundle": step["bundle"],
+            "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+        }
 
     async def verify_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
+        self,
+        step,
+        context,
     ):
-        return {"kind": "verified", "response": {}}
+        return {"kind": "verified", "response": answer_response()}
 
     async def finalize_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
+        self,
+        step,
+        context,
     ):
         return _answer()
 
     async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
         self.refuse_calls = getattr(self, "refuse_calls", 0) + 1
-        return SimpleNamespace(
-            answer="",
-            citations=(),
-            abstained=True,
+        from dataclasses import replace
+
+        from tap.modules.knowledge.domain.models import AbstentionReason
+
+        return replace(
+            _answer(answer=""),
             trace_id=answer_plan.plan_id,
-            model_dump=lambda **_: {
-                "answer": "",
-                "citations": [],
-                "abstained": True,
-                "abstentionReason": "out_of_scope",
-            },
+            abstained=True,
+            abstention_reason=AbstentionReason.OUT_OF_SCOPE,
         )
 
 
@@ -236,7 +244,9 @@ async def test_output_redaction_failure_fails_turn() -> None:
 
     class _FinalizeRedactionFailsKnowledge(_StepsKnowledge):
         async def finalize_conversation_answer(
-            self, step, frozen_input, *, answer_plan=None, authorize=None
+            self,
+            step,
+            context,
         ):
             raise RedactionUnavailable("output redaction rejected the final answer")
 
@@ -512,7 +522,9 @@ async def test_transient_finalize_failure_defers_and_resumes_without_terminal_ev
             self.finalize_calls = 0
 
         async def finalize_conversation_answer(
-            self, step, frozen_input, *, answer_plan=None, authorize=None
+            self,
+            step,
+            context,
         ):
             self.finalize_calls += 1
             if self.finalize_calls == 1:
@@ -609,16 +621,12 @@ class _BudgetSpendingKnowledge(_StepsKnowledge):
     following `model` node must then hit the exhausted model-call budget before its
     own body runs."""
 
-    async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
-    ):
+    async def prepare_conversation_answer(self, request, context, *, include_relations=True):
         meter = current_meter()
         assert meter is not None
         meter.before_call()
         meter.after_call(0)
-        return await super().prepare_conversation_answer(
-            request, frozen_input, answer_plan=answer_plan, authorize=authorize
-        )
+        return await super().prepare_conversation_answer(request, context)
 
 
 @pytest.mark.asyncio
@@ -652,15 +660,13 @@ class _PlanDeadlineExpiredKnowledge(_StepsKnowledge):
     async def generate_conversation_answer(
         self,
         step,
-        frozen_input,
+        context,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools=(),
         activated_skills=(),
     ):
-        from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
+        from tap.modules.knowledge.api import AnswerBudgetExhausted
 
         raise AnswerBudgetExhausted("persisted answer budget exhausted")
 
@@ -886,13 +892,11 @@ class _HitsReadyKnowledge(_StepsKnowledge):
         self._conversations = conversations
         self.hits_ready_committed_before_generate = False
 
-    async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
-    ):
+    async def prepare_conversation_answer(self, request, context, *, include_relations=True):
         self.prepare_calls += 1
         return {
             "kind": "prepared",
-            "bundle": {},
+            "bundle": _bundle(query="question"),
             "retrieval_hits": {
                 "traceId": "trace-1",
                 "authorizedHitCount": 2,
@@ -903,10 +907,8 @@ class _HitsReadyKnowledge(_StepsKnowledge):
     async def generate_conversation_answer(
         self,
         step,
-        frozen_input,
+        context,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools=(),
         activated_skills=(),
@@ -918,7 +920,11 @@ class _HitsReadyKnowledge(_StepsKnowledge):
         )
         if on_text is not None:
             await on_text("grounded answer")
-        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+        return {
+            "kind": "generated",
+            "bundle": step["bundle"],
+            "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+        }
 
 
 @pytest.mark.asyncio
@@ -956,13 +962,11 @@ async def test_retrieval_hits_ready_labels_are_redacted_before_emit() -> None:
     is emitted -- the same as every other model-bound/egress text."""
 
     class _LabeledKnowledge(_StepsKnowledge):
-        async def prepare_conversation_answer(
-            self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
-        ):
+        async def prepare_conversation_answer(self, request, context, *, include_relations=True):
             self.prepare_calls += 1
             return {
                 "kind": "prepared",
-                "bundle": {},
+                "bundle": _bundle(query="question"),
                 "retrieval_hits": {
                     "traceId": "trace-1",
                     "authorizedHitCount": 1,
@@ -1007,13 +1011,11 @@ async def test_retrieval_hits_ready_drops_a_label_whose_title_redaction_is_unava
     (but not `title`) fails keeps its title and gets a `None` location."""
 
     class _LabeledKnowledge(_StepsKnowledge):
-        async def prepare_conversation_answer(
-            self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
-        ):
+        async def prepare_conversation_answer(self, request, context, *, include_relations=True):
             self.prepare_calls += 1
             return {
                 "kind": "prepared",
-                "bundle": {},
+                "bundle": _bundle(query="question"),
                 "retrieval_hits": {
                     "traceId": "trace-1",
                     "authorizedHitCount": 2,
@@ -1063,15 +1065,15 @@ async def test_verify_stage_started_is_committed_before_verify_runs() -> None:
 
     class _VerifyOrderKnowledge(_StepsKnowledge):
         async def verify_conversation_answer(
-            self, step, frozen_input, *, answer_plan=None, authorize=None
+            self,
+            step,
+            context,
         ):
             assert any(
                 event_type == "stage.started" and payload == {"stage": "verify"}
                 for _c, _t, event_type, payload, _lease in conversations.emitted
             )
-            return await super().verify_conversation_answer(
-                step, frozen_input, answer_plan=answer_plan, authorize=authorize
-            )
+            return await super().verify_conversation_answer(step, context)
 
     worker = GenerationWorker(conversations, _VerifyOrderKnowledge(), checkpointer=InMemorySaver())
 
@@ -1130,10 +1132,8 @@ async def test_model_node_streams_through_draft_batcher() -> None:
         async def generate_conversation_answer(
             self,
             step,
-            frozen_input,
+            context,
             *,
-            answer_plan=None,
-            authorize=None,
             on_text=None,
             tools=(),
             activated_skills=(),
@@ -1142,7 +1142,11 @@ async def test_model_node_streams_through_draft_batcher() -> None:
             assert on_text is not None
             for chunk in ("hello ", "world"):
                 await on_text(chunk)
-            return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+            return {
+                "kind": "generated",
+                "bundle": step["bundle"],
+                "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+            }
 
     redacted_calls: list[str] = []
 
@@ -1215,25 +1219,19 @@ class _ToolLoopSteps(_StepsKnowledge):
         self.tools_seen: tuple[str, ...] = ()
         self.include_relations_seen: bool | None = None
 
-    async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
-    ):
+    async def prepare_conversation_answer(self, request, context, *, include_relations=True):
         self.include_relations_seen = include_relations
         return await super().prepare_conversation_answer(
             request,
-            frozen_input,
-            answer_plan=answer_plan,
-            authorize=authorize,
+            context,
             include_relations=include_relations,
         )
 
     async def generate_conversation_answer(
         self,
         step,
-        frozen_input,
+        context,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools=(),
         activated_skills=(),
@@ -1241,15 +1239,16 @@ class _ToolLoopSteps(_StepsKnowledge):
         self.tools_seen = tools
         return await super().generate_conversation_answer(
             step,
-            frozen_input,
-            answer_plan=answer_plan,
-            authorize=authorize,
+            context,
             on_text=on_text,
             tools=tools,
         )
 
     async def run_conversation_tool(
-        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+        self,
+        step,
+        context,
+        call,
     ):
         self.run_tool_calls.append(call)
         if self.run_tool_result is not None:
@@ -1366,7 +1365,7 @@ async def test_tools_node_emits_running_and_completed_task_steps() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {"callId": "call-1", "name": "knowledge_search", "argumentsJson": '{"query": "x"}'}
@@ -1413,7 +1412,7 @@ async def test_disallowed_tool_call_is_rejected_without_execution() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -1459,7 +1458,7 @@ async def test_each_admitted_tool_call_gets_a_tool_span(span_recorder) -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {"callId": "call-1", "name": "knowledge_search", "argumentsJson": '{"query": "x"}'}
@@ -1491,7 +1490,7 @@ async def test_rejected_tool_call_has_no_tool_span(span_recorder) -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -1519,7 +1518,11 @@ async def test_final_round_offers_no_tools_after_max_rounds() -> None:
         "tools": ["knowledge.search"],
         "budget": {"maxToolRounds": 1},
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
-        "step": {"kind": "prepared", "bundle": {}, "transcript": []},
+        "step": {
+            "kind": "prepared",
+            "bundle": encode_bundle(_bundle(query="question")),
+            "transcript": [],
+        },
     }
 
     await nodes.model(state)
@@ -1542,10 +1545,8 @@ async def test_final_round_tool_calls_fallback_does_not_fail_turn() -> None:
         async def generate_conversation_answer(
             self,
             step,
-            frozen_input,
+            context,
             *,
-            answer_plan=None,
-            authorize=None,
             on_text=None,
             tools=(),
             activated_skills=(),
@@ -1583,7 +1584,11 @@ async def test_final_round_tool_calls_fallback_does_not_fail_turn() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
         "answer_plan": plan.to_dict(),
         "plan_attempt": turn.attempt,
-        "step": {"kind": "prepared", "bundle": {}, "transcript": []},
+        "step": {
+            "kind": "prepared",
+            "bundle": encode_bundle(_bundle(query="question")),
+            "transcript": [],
+        },
     }
 
     result = await nodes.model(state)
@@ -1607,7 +1612,7 @@ async def test_tools_round_exceeding_budget_fails_the_round() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [],
         },
@@ -1636,10 +1641,8 @@ class _ScriptedToolCallKnowledge(_StepsKnowledge):
     async def generate_conversation_answer(
         self,
         step,
-        frozen_input,
+        context,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools=(),
         activated_skills=(),
@@ -1658,10 +1661,17 @@ class _ScriptedToolCallKnowledge(_StepsKnowledge):
                 "transcript": [*step.get("transcript", []), {"role": "assistant"}],
                 "pending_tool_calls": pending,
             }
-        return {"kind": "generated", "bundle": step.get("bundle", {}), "generation": {}}
+        return {
+            "kind": "generated",
+            "bundle": step.get("bundle", {}),
+            "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+        }
 
     async def run_conversation_tool(
-        self, step, frozen_input, call, *, answer_plan=None, authorize=None
+        self,
+        step,
+        context,
+        call,
     ):
         self.run_tool_calls.append(call)
         return {
@@ -1705,10 +1715,8 @@ async def test_resume_after_tools_node_does_not_repeat_tool_calls_or_steps() -> 
 
     async def _flaky_generate(
         step,
-        frozen_input,
+        context,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools=(),
         activated_skills=(),
@@ -1718,9 +1726,7 @@ async def test_resume_after_tools_node_does_not_repeat_tool_calls_or_steps() -> 
             raise GraphCheckpointRetryable("connection lost after durable task write")
         return await real_generate(
             step,
-            frozen_input,
-            answer_plan=answer_plan,
-            authorize=authorize,
+            context,
             on_text=on_text,
             tools=tools,
         )
@@ -1881,7 +1887,7 @@ async def test_built_in_agent_turn_can_call_graph_relations() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -1968,7 +1974,7 @@ async def test_insights_tool_failure_is_soft() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -2076,7 +2082,7 @@ async def test_executed_insights_query_gets_a_tool_span(span_recorder) -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -2136,7 +2142,7 @@ async def test_running_task_step_summary_redacts_before_truncating() -> None:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -2166,7 +2172,7 @@ def _tools_state(pending: list[dict[str, str]]) -> dict[str, object]:
         "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 0},
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": pending,
         },
@@ -2327,7 +2333,7 @@ def _activate_state(*names: str, activated=()) -> dict[str, object]:
         "activated_skills": list(activated),
         "step": {
             "kind": "tool_calls",
-            "bundle": {},
+            "bundle": encode_bundle(_bundle(query="question")),
             "transcript": [],
             "pending_tool_calls": [
                 {
@@ -2567,16 +2573,18 @@ async def test_model_node_passes_activated_skills() -> None:
         async def generate_conversation_answer(
             self,
             step,
-            frozen_input,
+            context,
             *,
-            answer_plan=None,
-            authorize=None,
             on_text=None,
             tools=(),
             activated_skills=(),
         ):
             self.seen = activated_skills
-            return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+            return {
+                "kind": "generated",
+                "bundle": step["bundle"],
+                "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+            }
 
     turn = _frozen_turn_for_planning(turn_id="turn-model-skills")
     steps = _CapturingSteps()
@@ -2588,7 +2596,7 @@ async def test_model_node_passes_activated_skills() -> None:
             "budget": {"maxToolRounds": 6},
             "budget_used": {"modelCalls": 0, "costMicros": 0, "toolRounds": 1},
             "activated_skills": [_activated("checklist", size=3)],
-            "step": {"kind": "prepared", "bundle": {}},
+            "step": {"kind": "prepared", "bundle": encode_bundle(_bundle(query="question"))},
         }
     )
 
@@ -2649,3 +2657,25 @@ async def test_resume_after_skill_activate_does_not_repeat_steps() -> None:
     # The resumed `model` call still renders the Skill activated before the crash.
     resumed_skills = knowledge.activated_skills_per_call[-1]
     assert [(item.skill_id, item.mode) for item in resumed_skills] == [("checklist", "auto")]
+
+
+@pytest.mark.asyncio
+async def test_single_shot_application_answer_survives_checkpoint_roundtrip():
+    from tap.modules.chat.application.turn_execution import answer_steps
+    from tap.modules.knowledge.api import (
+        ConversationExecutionContext,
+        decode_conversation_step,
+        encode_conversation_step,
+    )
+
+    class CompleteAnswers:
+        async def answer_conversation(self, request, context):
+            return answer_response()
+
+    context = ConversationExecutionContext(_turn().input_snapshot.value)
+    steps = answer_steps(CompleteAnswers())
+    phase = await steps.prepare_conversation_answer(context.request(), context)
+    resumed = decode_conversation_step(json.loads(json.dumps(encode_conversation_step(phase))))
+    result = await steps.finalize_conversation_answer(resumed, context)
+    assert result.answer == "The rule is grounded."
+    assert len(result.citations) == 1

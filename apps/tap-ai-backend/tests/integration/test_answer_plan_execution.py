@@ -366,10 +366,10 @@ async def test_cancelled_execution_stops_before_search():
 )
 async def test_worker_routes_in_graph_persists_plan_and_binds_completion(question, expected, calls):
     from tap.entrypoints.tapper_generation_worker import GenerationWorker
-    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.domain.conversations import TurnInput, TurnInputSnapshot, content_digest
     from tap.modules.knowledge.ports.models import AnswerGeneration
+    from tests.conversation_execution_compat import KnowledgeHttpService
 
     frozen = TurnInput(
         question,
@@ -569,10 +569,10 @@ async def test_worker_records_preplanning_publication_denial_as_failed_turn(leas
 @pytest.mark.asyncio
 async def test_http_selected_plan_returns_citations_from_existing_answer_boundary():
     from tap.contracts.http import RetrievalAnswerRequest
-    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.domain.conversations import FrozenResource, TurnInput, content_digest
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+    from tests.conversation_execution_compat import KnowledgeHttpService
     from tests.unit.knowledge.test_answer_service import answer_response, ready
 
     revision = ready()
@@ -752,10 +752,10 @@ async def test_direct_answer_respects_persisted_deadline_before_any_model_call()
     import time
 
     from tap.contracts.http import RetrievalAnswerRequest
-    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.chat.domain.conversations import TurnInput, content_digest
     from tap.modules.knowledge.ports.models import AnswerGeneration
+    from tests.conversation_execution_compat import KnowledgeHttpService
 
     frozen = TurnInput(
         "你好",
@@ -821,8 +821,8 @@ async def model_only_plan(question):
 
 
 def nonretrieval_service(models):
-    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tests.conversation_execution_compat import KnowledgeHttpService
 
     class Scoped:
         scope = VALIDATION_SCOPE

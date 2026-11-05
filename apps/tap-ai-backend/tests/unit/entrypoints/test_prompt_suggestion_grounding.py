@@ -9,12 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from tap.contracts.http import ResourceMode, SourceFamily
 from tap.entrypoints.prompt_suggestion_knowledge import (
     CompositeReadyProjection,
     ConversationGroundingCheck,
 )
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.knowledge.domain.models import ResourceMode, SourceFamily
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
 
 _HASH = "sha256:" + "a" * 64
@@ -67,7 +67,8 @@ class _Knowledge:
     async def authorize_planning(self, snapshot) -> None:
         self.authorized.append(snapshot)
 
-    async def answer_conversation(self, request, frozen_input, *, answer_plan=None, authorize=None):
+    async def answer_conversation(self, request, context):
+        frozen_input, answer_plan = context.frozen_input, context.answer_plan
         self.calls.append((request, frozen_input, answer_plan))
         if self.error is not None:
             raise self.error

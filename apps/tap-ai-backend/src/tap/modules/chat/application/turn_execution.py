@@ -23,13 +23,9 @@ from opentelemetry.trace import get_current_span
 
 from tap.contracts.http import (
     InsightsExplanationResult,
-    ResourceMode,
-    ResourceRef,
     RetrievalAnswerRequest,
-    SourceFamily,
 )
 from tap.contracts.problems import build_problem
-from tap.entrypoints.tapper_draft_batcher import DraftBatcher
 from tap.modules.ai.application.chat_graph import ChatGraphNodes, ChatGraphState
 from tap.modules.ai.domain.assets import AssetRevisionStatus
 from tap.modules.ai.domain.persona import persona_for
@@ -50,6 +46,7 @@ from tap.modules.ai.domain.tool_calls import (
 from tap.modules.ai.domain.tool_calls import step_id as _tool_step_id
 from tap.modules.ai.domain.tools import tool_for_wire_name, visible_tool_ids
 from tap.modules.ai.ports.insights import InsightsAuthorizationChanged, InsightsQueryUnavailable
+from tap.modules.chat.application.draft_batcher import DraftBatcher
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.ports import (
     ConversationAnswerStep,
@@ -64,7 +61,15 @@ from tap.modules.chat.domain.conversations import (
     GraphContextStatus,
     RetrievalSummary,
 )
-from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+from tap.modules.knowledge.api import AbstentionReason as _AbstentionReason
+from tap.modules.knowledge.api import AnswerResponse as _AnswerResponse
+from tap.modules.knowledge.api import ConversationExecutionContext as _ConversationExecutionContext
+from tap.modules.knowledge.api import DirectAnswer as _DirectAnswer
+from tap.modules.knowledge.api import RedactionUnavailable as _RedactionUnavailable
+from tap.modules.knowledge.api import conversation_answer_to_http as _answer_to_http
+from tap.modules.knowledge.api import decode_conversation_step as _decode_step
+from tap.modules.knowledge.api import decode_direct_answer as _decode_direct_answer
+from tap.modules.knowledge.api import encode_conversation_step as _encode_step
 from tap.platform.budget import TurnBudgetExhausted
 from tap.platform.telemetry import current_binding, span
 
@@ -139,19 +144,13 @@ def _evidence_checkpoint(
     return result
 
 
-_STEP_KINDS = frozenset({"prepared", "generated", "verified", "final", "tool_calls"})
-
-
 def _require_step(state: ChatGraphState) -> ConversationAnswerStep:
     """Narrows `state["step"]` (checkpoint-typed `dict[str, object] | None`)
     to the `ConversationAnswerStep` TypedDict a resumed `model`/`verify`/
     `finalize` node expects -- `seed_search` is the only node that produces
     it, so its absence or malformed `kind` means the checkpoint was resumed
     out of order."""
-    step = state.get("step")
-    if not isinstance(step, dict) or step.get("kind") not in _STEP_KINDS:
-        raise ValueError("chat graph state is missing a valid answer step")
-    return cast(ConversationAnswerStep, step)
+    return _decode_step(state.get("step"))
 
 
 def _evidence_from_checkpoint(raw: object) -> AnswerEvidence:
@@ -279,7 +278,7 @@ class SingleShotAnswerSteps:
         self._knowledge = knowledge
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
+        self, request, context: _ConversationExecutionContext, *, include_relations=True
     ) -> ConversationAnswerStep:
         # `include_relations` is accepted and ignored: a single-shot
         # `answer()`/`answer_conversation()` double always produces its
@@ -288,27 +287,42 @@ class SingleShotAnswerSteps:
         # phase to skip here.
         answer_boundary = getattr(self._knowledge, "answer_conversation", None)
         answer = (
-            await answer_boundary(
-                request,
-                frozen_input,
-                **(
-                    {"answer_plan": answer_plan, "authorize": authorize}
-                    if answer_plan is not None
-                    else {}
-                ),
-            )
+            await answer_boundary(request, context)
             if answer_boundary is not None
-            else await self._knowledge.answer(request)
+            else await self._knowledge.answer(
+                RetrievalAnswerRequest.model_validate(
+                    {
+                        "query": request.query,
+                        "sources": [family.value for family in request.source_families],
+                        "resourceRefs": [
+                            {
+                                "family": item.family.value,
+                                "sourceId": item.source_id,
+                                "mode": item.mode.value,
+                            }
+                            for item in request.resource_refs
+                        ],
+                    }
+                )
+            )
         )
-        return cast(ConversationAnswerStep, {"kind": "final", "response": answer})
+        if isinstance(answer, _AnswerResponse):
+            return {"kind": "verified", "response": answer}
+        return cast(
+            ConversationAnswerStep,
+            {
+                "kind": "final",
+                "response": answer
+                if isinstance(answer, _DirectAnswer)
+                else _decode_direct_answer(answer.model_dump(mode="json", by_alias=True)),
+            },
+        )
 
     async def generate_conversation_answer(
         self,
         step,
-        frozen_input,
+        context: _ConversationExecutionContext,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text=None,
         tools: tuple[str, ...] = (),
         activated_skills: tuple[PromptSkill, ...] = (),
@@ -321,19 +335,15 @@ class SingleShotAnswerSteps:
         return step
 
     async def verify_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
+        self, step, context: _ConversationExecutionContext
     ) -> ConversationAnswerStep:
         return step
 
-    async def finalize_conversation_answer(
-        self, step, frozen_input, *, answer_plan=None, authorize=None
-    ):
+    async def finalize_conversation_answer(self, step, context: _ConversationExecutionContext):
         return step["response"]
 
     async def refuse_out_of_scope(self, frozen_input, *, answer_plan):
-        from tap.contracts.http import AbstentionReason, RetrievalAnswerResponse
-
-        return RetrievalAnswerResponse(
+        return _DirectAnswer(
             trace_id=answer_plan.plan_id,
             query_plan_id=answer_plan.plan_id,
             context_snapshot_id=answer_plan.plan_id,
@@ -342,15 +352,13 @@ class SingleShotAnswerSteps:
             degraded_mode=False,
             answer="",
             abstained=True,
-            abstention_reason=AbstentionReason.OUT_OF_SCOPE,
-            claims=[],
-            citations=[],
+            abstention_reason=_AbstentionReason.OUT_OF_SCOPE,
+            claims=(),
+            citations=(),
             graph_context_status="NOT_SELECTED",
         )
 
-    async def run_conversation_tool(
-        self, step, frozen_input, call, *, answer_plan=None, authorize=None
-    ):
+    async def run_conversation_tool(self, step, context: _ConversationExecutionContext, call):
         # `prepare` already produced the complete answer in one call (no
         # `EvidenceBundle` is ever checkpointed here), so this single-shot
         # adapter never reaches the bounded tool-calling loop that admits a
@@ -577,16 +585,8 @@ class ChatTurnNodes:
         if active_plan is not None:
             active_plan.validate_binding(planning_input(self._turn.input_snapshot))
         value = self._turn.input_snapshot.value
-        request = RetrievalAnswerRequest(
-            query=value.message,
-            sources=[SourceFamily.DOC],
-            resource_refs=[
-                ResourceRef(
-                    family=SourceFamily.DOC, source_id=item.source_id, mode=ResourceMode.SCOPE
-                )
-                for item in value.resolved_resources
-            ],
-        )
+        context = _ConversationExecutionContext(value, active_plan, self._require_authorized)
+        request = context.request()
         # Wall-clock epoch milliseconds, not `time.monotonic()`: this value is
         # checkpointed and `finalize` may resume it on a different worker
         # process or host, where a monotonic clock's origin is not
@@ -597,13 +597,11 @@ class ChatTurnNodes:
         started_at_ms = int(time.time() * 1000)
         step = await self._steps.prepare_conversation_answer(
             request,
-            value,
-            answer_plan=active_plan,
-            authorize=self._require_authorized,
+            context,
             include_relations=False,
         )
-        result: dict[str, object] = {"step": step, "started_at_ms": started_at_ms}
-        retrieval_hits = step.get("retrieval_hits") if isinstance(step, dict) else None
+        result: dict[str, object] = {"step": _encode_step(step), "started_at_ms": started_at_ms}
+        retrieval_hits = step.get("retrieval_hits") if step["kind"] == "prepared" else None
         committed = await self._emit_committed(
             state, "retrieval.hits_ready", await self._redact_labels(retrieval_hits)
         )
@@ -655,7 +653,7 @@ class ChatTurnNodes:
             return True, None
         try:
             return True, await self._redact(str(value))
-        except RedactionUnavailable:
+        except _RedactionUnavailable:
             return False, None
 
     async def _redact_summary(self, text: str) -> str:
@@ -670,7 +668,7 @@ class ChatTurnNodes:
         summary -- it degrades to a safe, content-free placeholder."""
         try:
             redacted = await self._redact(text)
-        except RedactionUnavailable:
+        except _RedactionUnavailable:
             return "内容已隐去（无法安全脱敏）"
         return redacted[:200]
 
@@ -738,9 +736,9 @@ class ChatTurnNodes:
         )
         step = await self._steps.generate_conversation_answer(
             _require_step(state),
-            self._turn.input_snapshot.value,
-            answer_plan=active_plan,
-            authorize=self._require_authorized,
+            _ConversationExecutionContext(
+                self._turn.input_snapshot.value, active_plan, self._require_authorized
+            ),
             on_text=batcher.push,
             tools=offered,
             activated_skills=activated_skills,
@@ -761,14 +759,14 @@ class ChatTurnNodes:
                 )
                 step = {
                     "kind": "final",
-                    "response": response.model_dump(mode="json", by_alias=True),
+                    "response": response,
                 }
         else:
             await batcher.close()
         if not offered and visible_tools:
             audit_span = self._turn_span if self._turn_span is not None else get_current_span()
             audit_span.set_attribute("tap.agent.tool_rounds_exhausted", True)
-        return {"step": step, "draft_seq": batcher.current_seq}
+        return {"step": _encode_step(step), "draft_seq": batcher.current_seq}
 
     async def tools(self, state: ChatGraphState) -> dict[str, object]:
         """Execute one bounded tool-calling round (PR 5 Task 9): admits the
@@ -1051,10 +1049,8 @@ class ChatTurnNodes:
             with span(f"tool.{call.tool_id}", {"tap.tool.step_id": this_step_id}):
                 tool_result = await self._steps.run_conversation_tool(
                     cast(ConversationAnswerStep, current_step),
-                    value,
+                    _ConversationExecutionContext(value, active_plan, self._require_authorized),
                     call,
-                    answer_plan=active_plan,
-                    authorize=self._require_authorized,
                 )
             current_step = dict(tool_result["step"])
             duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -1094,7 +1090,10 @@ class ChatTurnNodes:
         current_step["kind"] = "prepared"
         current_step["transcript"] = transcript
         current_step.pop("pending_tool_calls", None)
-        result: dict[str, object] = {"step": current_step, "tool_rounds_delta": 1}
+        result: dict[str, object] = {
+            "step": _encode_step(cast(ConversationAnswerStep, current_step)),
+            "tool_rounds_delta": 1,
+        }
         if committed != list(state.get("committed_stream_events") or ()):
             result["committed_stream_events"] = committed
         if activated != list(state.get("activated_skills") or ()):
@@ -1166,11 +1165,11 @@ class ChatTurnNodes:
             result["committed_stream_events"] = committed
         step = await self._steps.verify_conversation_answer(
             _require_step(state),
-            self._turn.input_snapshot.value,
-            answer_plan=active_plan,
-            authorize=self._require_authorized,
+            _ConversationExecutionContext(
+                self._turn.input_snapshot.value, active_plan, self._require_authorized
+            ),
         )
-        result["step"] = step
+        result["step"] = _encode_step(step)
         return result
 
     async def insights_explain(self, _state: ChatGraphState) -> dict[str, object]:
@@ -1320,18 +1319,20 @@ class ChatTurnNodes:
         answered: list[Any] = []
 
         async def provider(_snapshot: object) -> ProviderResult:
+            response: _AnswerResponse | _DirectAnswer
             if out_of_scope:
-                answer = await self._steps.refuse_out_of_scope(
+                response = await self._steps.refuse_out_of_scope(
                     self._turn.input_snapshot.value, answer_plan=active_plan
                 )
             else:
                 assert step is not None
-                answer = await self._steps.finalize_conversation_answer(
+                response = await self._steps.finalize_conversation_answer(
                     step,
-                    self._turn.input_snapshot.value,
-                    answer_plan=active_plan,
-                    authorize=self._require_authorized,
+                    _ConversationExecutionContext(
+                        self._turn.input_snapshot.value, active_plan, self._require_authorized
+                    ),
                 )
+            answer = _answer_to_http(response)
             answered.append(answer)
             citations = (
                 await self._conversations.repository.resolve_citations(

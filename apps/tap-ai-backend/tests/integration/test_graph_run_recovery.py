@@ -11,7 +11,6 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
-from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql_checkpointer import (
     MysqlGraphCheckpointer,
@@ -47,6 +46,8 @@ from tap.modules.knowledge.application.citations import CitationResolver
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.application.review import KnowledgeReviewApplication
 from tap.platform.db.schema import outbox
+from tests.conversation_execution_compat import KnowledgeHttpService
+from tests.conversation_execution_fixtures import direct_answer
 from tests.integration.test_conversation_persistence import _input
 from tests.integration.test_knowledge_publication import (
     NOW,
@@ -733,7 +734,7 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
                 self.calls += 1
                 return {
                     "kind": "final",
-                    "response": SimpleNamespace(
+                    "response": direct_answer(
                         answer="grounded secret",
                         citations=(),
                         abstained=False,

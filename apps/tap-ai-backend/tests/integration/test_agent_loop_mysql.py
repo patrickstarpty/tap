@@ -15,7 +15,6 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
-from tap.interfaces.http.knowledge_service import KnowledgeHttpService
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.litellm import LiteLLMModelGatewayConfig
 from tap.modules.ai.adapters.litellm_catalog import ModelRoles
@@ -55,6 +54,7 @@ from tap.modules.knowledge.domain.models import (
 from tap.modules.knowledge.ports.models import SearchHit
 from tap.testing.deterministic_model_gateway import DeterministicModelGateway
 from tests.contract.test_knowledge_api import CurrentPolicyVerifier, PassthroughRedactor
+from tests.conversation_execution_compat import KnowledgeHttpService
 from tests.integration.test_knowledge_publication import (
     ITEM,
     NOW,

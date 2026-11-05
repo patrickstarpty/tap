@@ -56,6 +56,7 @@ from tap.modules.graph.application.jobs import GraphJobStore
 from tap.modules.graph.application.node_enrichment import GraphNodeEnrichmentPort
 from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.graph.ports.store import GraphStorePort
+from tap.modules.knowledge.api import ConversationAnswerExecutor
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.modules.skill_hub.application.service import SkillHubService
@@ -257,6 +258,7 @@ class HttpServices:
     knowledge_reviews: KnowledgeReviewHttpService | None = None
     chunk_manager: object | None = None
     insights_explanation: object | None = None
+    conversation_answers: ConversationAnswerExecutor | None = None
     insights_knowledge_search: object | None = None
     insights_publication_authority: object | None = None
     skill_authoring: SkillAuthoringService | None = None

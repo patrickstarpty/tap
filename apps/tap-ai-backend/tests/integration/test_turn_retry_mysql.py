@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select, text, update
@@ -11,8 +10,11 @@ from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 from tap.modules.ai.domain.models import ModelGatewayUnavailable
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository, chat_turn
 from tap.modules.chat.application.conversations import ConversationConflict, ConversationService
+from tap.modules.knowledge.ports.models import AnswerGeneration
+from tests.conversation_execution_fixtures import _bundle, direct_answer
 from tests.integration.test_conversation_persistence import _input
 from tests.integration.test_graph_run_recovery import _completed_graph
+from tests.unit.knowledge.test_answer_service import answer_response
 
 
 class _CountingKnowledge:
@@ -29,19 +31,23 @@ class _CountingKnowledge:
 
     async def prepare_conversation_answer(self, _request, _frozen_input, **_kwargs):
         self.prepare_calls += 1
-        return {"kind": "prepared", "bundle": "stub-bundle"}
+        return {"kind": "prepared", "bundle": _bundle(query="question")}
 
     async def generate_conversation_answer(self, step, _frozen_input, **_kwargs):
         self.generate_calls += 1
         if self.generate_calls <= self._fail_times:
             raise ModelGatewayUnavailable()
-        return {"kind": "generated", "bundle": step["bundle"]}
+        return {
+            "kind": "generated",
+            "bundle": step["bundle"],
+            "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+        }
 
     async def verify_conversation_answer(self, step, _frozen_input, **_kwargs):
-        return {"kind": "verified", "bundle": step["bundle"]}
+        return {"kind": "verified", "response": answer_response()}
 
     async def finalize_conversation_answer(self, _step, _frozen_input, **_kwargs):
-        return SimpleNamespace(
+        return direct_answer(
             answer="grounded",
             citations=(),
             abstained=False,

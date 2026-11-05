@@ -12,7 +12,6 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.exc import TimeoutError as SATimeoutError
 
 from tap.entrypoints.tapper_turn_failures import classify_turn_failure, retry_delay
-from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted, KnowledgeHttpService
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.ai.domain.graph_runs import (
     GraphCheckpointRetryable,
@@ -30,6 +29,7 @@ from tap.modules.ai.ports.insights import (
     InsightsQueryUnavailable,
 )
 from tap.modules.chat.application.conversations import ConversationConflict, ConversationNotFound
+from tap.modules.knowledge.api import AnswerBudgetExhausted, ConversationAnswerExecutor
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable, DocumentStateChanged
 from tap.modules.knowledge.ports.errors import (
@@ -202,7 +202,7 @@ async def test_expired_plan_deadline_raises_answer_budget_exhausted() -> None:
     expired_plan = replace(plan, deadline_at=time.time() - 1)
     entered = False
     with pytest.raises(AnswerBudgetExhausted) as excinfo:
-        async with KnowledgeHttpService._plan_deadline(expired_plan):
+        async with ConversationAnswerExecutor._plan_deadline(expired_plan):
             entered = True
     assert not entered
     assert isinstance(excinfo.value, TimeoutError)

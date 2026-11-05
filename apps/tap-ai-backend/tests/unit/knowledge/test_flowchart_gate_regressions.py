@@ -248,6 +248,6 @@ async def test_completed_answer_rechecks_each_citation() -> None:
     )
 
     with pytest.raises(AuthorizationDenied, match="checkpoint citation authorization changed"):
-        await service.authorize_completed_answer(snapshot, evidence)
+        await service.conversation_answers.authorize_completed_answer(snapshot, evidence)
 
     assert citations.calls == ["cs_1", "cs_2"]

@@ -23,6 +23,7 @@ from tap.modules.chat.application.process_turn import ProviderResult, TurnProces
 from tap.modules.chat.domain.conversations import CitationEvidence, GraphContextStatus
 from tap.modules.chat.domain.suggestions import RefreshReason
 from tap.modules.knowledge.ports.errors import AnswerRejected
+from tests.conversation_execution_fixtures import direct_answer
 
 
 @pytest.mark.asyncio
@@ -159,7 +160,7 @@ async def test_generation_worker_emits_recoverable_delta_then_closes_the_turn():
 
         async def answer(self, request):
             self.requests.append(request)
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=[],
                 abstained=False,
@@ -265,7 +266,7 @@ async def test_generation_worker_fences_delta_with_the_claimed_lease():
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="delta",
                 citations=(),
                 abstained=False,
@@ -340,7 +341,7 @@ def _completed_turn_fixtures(*, abstained: bool):  # type: ignore[no-untyped-def
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="",
                 citations=(),
                 abstained=abstained,
@@ -495,7 +496,7 @@ async def test_generation_worker_continues_after_cancel_wins_completion_race():
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -542,7 +543,7 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -558,10 +559,11 @@ async def test_generation_worker_commits_terminal_stream_event_with_evidence_ato
         "retrieval.hits_ready",
         "graph.context_ready",
     ]
-    assert conversations.terminal_event == (
-        "turn.completed",
-        {"answer": {"answer": "grounded", "citations": []}},
-    )
+    event_type, payload = conversations.terminal_event
+    assert event_type == "turn.completed"
+    assert payload["answer"]["answer"] == "grounded"
+    assert payload["answer"]["citations"] == []
+    assert payload["answer"]["traceId"] == "trace"
 
 
 @pytest.mark.asyncio
@@ -612,7 +614,7 @@ async def test_generation_worker_renews_turn_lease_while_provider_is_running():
     class Knowledge:
         async def answer(self, _request):
             await asyncio.wait_for(renewed.wait(), timeout=1)
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -693,7 +695,7 @@ async def test_hanging_cancel_poll_does_not_delay_lease_renewal():
     class Knowledge:
         async def answer(self, _request):
             await asyncio.wait_for(renewed.wait(), timeout=2)
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -769,7 +771,7 @@ async def test_generation_worker_uses_turn_scoped_persistent_checkpointer_factor
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -837,7 +839,7 @@ async def test_generation_worker_recovers_after_one_transient_checkpoint_failure
 
         async def answer(self, _request):
             self.calls += 1
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -915,7 +917,7 @@ async def test_generation_worker_terminalizes_permanent_checkpoint_error_and_con
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -1111,7 +1113,7 @@ async def test_generation_worker_treats_checkpoint_settlement_conflict_as_owners
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -1155,7 +1157,7 @@ async def test_generation_worker_cannot_fail_a_checkpoint_conflict_after_losing_
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -1238,7 +1240,6 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
         _assemble_http_services,
         _create_embeddings,
     )
-    from tap.interfaces.http.knowledge_service import KnowledgeHttpService
     from tap.modules.access.adapters.validation import VALIDATION_SCOPE
     from tap.modules.ai.application.assets import validation_asset_seed
     from tap.modules.chat.domain.conversations import (
@@ -1248,6 +1249,7 @@ async def test_runtime_corpus_reaches_worker_frozen_answer_policy(settings_value
         content_digest,
     )
     from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+    from tests.conversation_execution_compat import KnowledgeHttpService
     from tests.object_settings import S3_SETTINGS
     from tests.unit.knowledge import test_answer_service as fixtures
 
@@ -1401,7 +1403,7 @@ async def test_generation_worker_skips_a_turn_whose_conversation_was_deleted():
 
     class Knowledge:
         async def answer(self, request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=[],
                 abstained=False,
@@ -1608,7 +1610,7 @@ async def test_transient_failure_after_graph_is_deferred():
 
     class Knowledge:
         async def answer(self, _request):
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -1669,7 +1671,7 @@ async def test_one_turn_crash_does_not_skip_the_rest_of_the_batch():
             self.calls += 1
             if self.calls == 1:
                 raise AnswerRejected("model-rejected")
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,
@@ -1901,7 +1903,7 @@ async def test_cancel_without_redis_stops_at_next_node_boundary():
     class Knowledge:
         async def answer(self, _request):
             node_calls.append("answer")
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=(),
                 abstained=False,

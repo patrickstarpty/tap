@@ -14,6 +14,17 @@ KNOWLEDGE = BACKEND_SOURCE / "modules" / "knowledge"
 ACCESS = BACKEND_SOURCE / "modules" / "access"
 TEST_MANAGEMENT = BACKEND_SOURCE / "modules" / "test_management"
 CHAT_API_SYMBOLS = {
+    "AbstentionReason",
+    "DirectAnswer",
+    "decode_direct_answer",
+    "conversation_answer_to_http",
+    "ConversationExecutionContext",
+    "ConversationAnswerStep",
+    "ConversationToolResult",
+    "encode_conversation_step",
+    "decode_conversation_step",
+    "without_abstention_sentinel",
+    "RedactionUnavailable",
     "AuthorizedAnswerExecution",
     "AuthorizedAnswerQuery",
     "get_template",
@@ -957,3 +968,52 @@ def test_task6_ledger_and_search_audit_use_governance_public_boundary():
             ):
                 forbidden.append(str(path.relative_to(BACKEND_SOURCE)))
     assert forbidden == []
+
+
+def execution_import_is_forbidden(reference: ImportReference) -> bool:
+    return reference.module.startswith(("tap.interfaces.", "tap.entrypoints."))
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        "from tap.interfaces.http.knowledge_service import KnowledgeHttpService\n",
+        "from tap.entrypoints.tapper_chat_turn import ChatTurnNodes\n",
+        "import tap.interfaces.http.knowledge_service as runtime\n",
+    ],
+)
+def test_execution_dependency_guard_rejects_delivery_and_process_imports(tmp_path, source_text):
+    assert any(execution_import_is_forbidden(ref) for ref in _parsed_source(tmp_path, source_text))
+
+
+def test_answer_execution_is_owned_by_applications():
+    paths = (
+        BACKEND_SOURCE / "modules/knowledge/application/conversation_execution.py",
+        BACKEND_SOURCE / "modules/chat/application/turn_execution.py",
+        BACKEND_SOURCE / "modules/chat/application/draft_batcher.py",
+    )
+    for path in paths:
+        assert path.exists(), f"missing application-owned execution: {path}"
+        assert not any(execution_import_is_forbidden(ref) for ref in _imports(path)), path
+    failures = BACKEND_SOURCE / "entrypoints/tapper_turn_failures.py"
+    assert not any(ref.module.startswith("tap.interfaces.") for ref in _imports(failures))
+
+
+def uses_http_answer_runtime(source: str) -> bool:
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "knowledge"
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "http_services"
+        for node in ast.walk(ast.parse(source))
+    )
+
+
+def test_worker_uses_application_answer_runtime():
+    worker = BACKEND_SOURCE / "entrypoints/tapper_generation_worker.py"
+    assert not uses_http_answer_runtime(worker.read_text())
+
+
+def test_worker_answer_runtime_guard_rejects_http_service_lookup():
+    assert uses_http_answer_runtime("executor = runtime.http_services.knowledge")
+    assert not uses_http_answer_runtime("executor = runtime.conversation_answers")

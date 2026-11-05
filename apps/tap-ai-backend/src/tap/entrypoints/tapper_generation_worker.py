@@ -18,11 +18,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from opentelemetry.trace import Span, Status, StatusCode
 
 from tap.contracts.problems import build_problem
-from tap.entrypoints.tapper_chat_turn import (
-    ChatTurnNodes,
-    _evidence_from_checkpoint,
-    answer_steps,
-)
 from tap.entrypoints.tapper_turn_failures import classify_turn_failure, retry_delay
 from tap.modules.ai.application.chat_graph import (
     CHAT_GRAPH_VERSION,
@@ -36,6 +31,11 @@ from tap.modules.chat.application.conversations import (
     ConversationNotFound,
 )
 from tap.modules.chat.application.ports import DraftStreamUnavailable
+from tap.modules.chat.application.turn_execution import (
+    ChatTurnNodes,
+    _evidence_from_checkpoint,
+    answer_steps,
+)
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     GraphContextStatus,
@@ -420,7 +420,7 @@ async def main() -> None:
     start_tracing("tap-ai-worker-generation", settings)
     runtime = await create_api_runtime(settings)
     conversations = runtime.http_services.conversations
-    knowledge = runtime.http_services.knowledge
+    knowledge = runtime.conversation_answers
     if conversations is None or knowledge is None:
         await runtime.aclose()
         raise RuntimeError("generation worker composition is unavailable")

@@ -43,6 +43,7 @@ from tap.modules.knowledge.adapters.mysql_documents import (
 )
 from tap.modules.knowledge.adapters.mysql_managed_chunks import managed_documents
 from tap.modules.knowledge.adapters.mysql_ready_sources import MysqlReadySources
+from tap.modules.knowledge.api import ConversationExecutionContext, answer_request_from_http
 from tap.modules.knowledge.ports.errors import AnswerUnavailable
 from tap.platform.db.project_scope import require_project_scope, scope_predicates
 
@@ -409,9 +410,8 @@ class ConversationGroundingCheck:
         )
         try:
             answer = await self._knowledge.answer_conversation(
-                request,
-                value,
-                **({"answer_plan": plan, "authorize": _always_authorized} if plan else {}),
+                answer_request_from_http(request),
+                ConversationExecutionContext(value, plan, _always_authorized if plan else None),
             )
         except AnswerUnavailable as error:
             # An invalid answer means the question cannot be answered reliably,

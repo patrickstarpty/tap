@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
 from tap.modules.ai.domain.assets import SkillRevision, text_digest
@@ -26,6 +25,7 @@ from tap.modules.chat.adapters.mysql_skill_activations import (
 )
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.ports import TurnSkillUse
+from tap.modules.chat.application.turn_execution import ChatTurnNodes
 from tap.modules.chat.domain.conversations import TurnInput
 from tests.owned_mysql import owned_project_database_url
 

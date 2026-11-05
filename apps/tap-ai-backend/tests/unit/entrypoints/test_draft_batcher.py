@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from tap.entrypoints.tapper_draft_batcher import DraftBatcher
+from tap.modules.chat.application.draft_batcher import DraftBatcher
 from tap.modules.chat.application.ports import DraftStreamUnavailable
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 

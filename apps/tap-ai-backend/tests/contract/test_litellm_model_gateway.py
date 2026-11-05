@@ -621,7 +621,7 @@ async def test_deterministic_gateway_cancel_marker_flushes_a_draft_before_the_de
     `completed`). Each case stalls one pacing sleep by an extra 0.06s."""
 
     from tap.entrypoints import tapper_draft_batcher
-    from tap.entrypoints.tapper_draft_batcher import DraftBatcher
+    from tap.modules.chat.application.draft_batcher import DraftBatcher
     from tap.testing import deterministic_model_gateway
     from tap.testing.deterministic_model_gateway import DeterministicModelGateway
 

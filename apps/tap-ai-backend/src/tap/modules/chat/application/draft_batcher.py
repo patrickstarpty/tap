@@ -32,7 +32,7 @@ raises into the `model` node either: a non-final flush simply sends nothing
 and keeps waiting for more context; a final flush (`close()`) instead
 degrades the batcher permanently (nothing more is ever redacted or sent --
 the authoritative, fail-closed redaction decision for the complete answer
-stays with `KnowledgeHttpService.finalize_conversation_answer`).
+stays with `ConversationAnswerExecutor.finalize_conversation_answer`).
 """
 
 from __future__ import annotations
@@ -44,14 +44,14 @@ from collections.abc import Awaitable, Callable
 from opentelemetry.trace import get_current_span
 
 from tap.modules.chat.application.ports import DraftStream, DraftStreamUnavailable
-from tap.modules.knowledge.domain.abstention import without_abstention_sentinel
-from tap.modules.knowledge.ports.redaction import RedactionUnavailable
+from tap.modules.knowledge.api import RedactionUnavailable as _RedactionUnavailable
+from tap.modules.knowledge.api import without_abstention_sentinel as _without_abstention_sentinel
 from tap.platform.redaction_patterns import email_local_trailing_run_start
 
 _CLARIFY_PREFIX = "CLARIFY:"
 
 # Mirrors `PatternEgressRedactor`'s placeholder markers -> the hit-count key
-# `KnowledgeHttpService._redact_answer_response` records on
+# `ConversationAnswerExecutor._redact_answer_response` records on
 # `tap.guard.redaction.output_hits` for the final answer. The batcher never
 # sees the redactor's own `redact_with_report` counts (its `redact` callable
 # only returns text), so hit counts here are approximated by counting the
@@ -155,7 +155,7 @@ class DraftBatcher:
             # at best a partial redaction of an earlier, shorter raw text --
             # and must never be returned as if it were this attempt's
             # answer, nor counted into its redaction-hit stats.
-            # `KnowledgeHttpService.finalize_conversation_answer` remains the
+            # `ConversationAnswerExecutor.finalize_conversation_answer` remains the
             # sole authoritative, fail-closed redaction decision either way.
             return ""
         self._record_redaction_hits()
@@ -170,13 +170,13 @@ class DraftBatcher:
         # keeps it from ever reaching Redis or the caller, at any flush --
         # whether it is the whole answer or stray noise inside one -- the same
         # way the final answer drops it (bracketed form included, so no `[]`).
-        visible_raw = without_abstention_sentinel(self._raw)
+        visible_raw = _without_abstention_sentinel(self._raw)
         lstripped = visible_raw.lstrip()
         if lstripped.startswith(_CLARIFY_PREFIX):
             visible_raw = lstripped[len(_CLARIFY_PREFIX) :].lstrip()
         try:
             redacted = await self._redact(visible_raw)
-        except RedactionUnavailable:
+        except _RedactionUnavailable:
             self._last_flush_at = time.monotonic()
             self._unflushed_chars = 0
             if final:
@@ -229,7 +229,7 @@ class DraftBatcher:
             self._sent_text += new_text
 
     def _record_redaction_hits(self) -> None:
-        # Matches `KnowledgeHttpService._redact_answer_response`'s
+        # Matches `ConversationAnswerExecutor._redact_answer_response`'s
         # `tap.guard.redaction.output_hits` style (spec SS4.5): only set when
         # there is something to report. Named distinctly (`draft_hits`) since
         # this counts placeholders in the batcher's own last redacted draft,

@@ -10,6 +10,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.entrypoints.tapper_generation_worker import GenerationWorker
 from tap.modules.chat.application.conversations import ClaimBatch
+from tap.modules.knowledge.ports.models import AnswerGeneration
+from tests.conversation_execution_fixtures import _bundle, direct_answer
+from tests.unit.knowledge.test_answer_service import answer_response
 
 
 def _envelope(*, sequence: int, event_type: str, payload: dict[str, object]) -> dict[str, object]:
@@ -66,7 +69,7 @@ class _KnowledgeConversations:
 
 class _Knowledge:
     async def answer(self, request):
-        return SimpleNamespace(
+        return direct_answer(
             answer="grounded",
             citations=[],
             abstained=False,
@@ -230,7 +233,7 @@ class _EarlyHitsKnowledge:
     async def prepare_conversation_answer(self, request, frozen_input, **_kwargs):
         return {
             "kind": "prepared",
-            "bundle": {},
+            "bundle": _bundle(query="question"),
             "retrieval_hits": {
                 "traceId": "trace-1",
                 "authorizedHitCount": 1,
@@ -239,13 +242,17 @@ class _EarlyHitsKnowledge:
         }
 
     async def generate_conversation_answer(self, step, frozen_input, *, on_text=None, **_kwargs):
-        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+        return {
+            "kind": "generated",
+            "bundle": step["bundle"],
+            "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+        }
 
     async def verify_conversation_answer(self, step, frozen_input, **_kwargs):
-        return {"kind": "verified", "response": {}}
+        return {"kind": "verified", "response": answer_response()}
 
     async def finalize_conversation_answer(self, step, frozen_input, **_kwargs):
-        return SimpleNamespace(
+        return direct_answer(
             answer="grounded",
             citations=(),
             abstained=False,
@@ -271,7 +278,11 @@ async def test_retrieval_hits_ready_with_labels_is_committed_before_generation()
         knowledge.hits_ready_committed_before_generate = any(
             event_type == "retrieval.hits_ready" for event_type, _payload in conversations.emitted
         )
-        return {"kind": "generated", "bundle": step["bundle"], "generation": {}}
+        return {
+            "kind": "generated",
+            "bundle": step["bundle"],
+            "generation": AnswerGeneration("grounded", (), "model", "profile", "request"),
+        }
 
     knowledge.generate_conversation_answer = generate_conversation_answer
     worker = GenerationWorker(conversations, knowledge, checkpointer=InMemorySaver())
@@ -454,36 +465,29 @@ async def test_insights_knowledge_search_events_validate_against_contract(span_r
     ]
 
 
-@pytest.mark.asyncio
-async def test_hits_ready_omitted_without_trace_id() -> None:
-    class Knowledge:
-        async def answer(self, request):
-            return SimpleNamespace(
-                answer="grounded",
-                citations=[],
-                abstained=False,
-                trace_id=None,
-                model_dump=lambda **_: {
-                    "traceId": "trace-1",
-                    "queryPlanId": "plan-1",
-                    "contextSnapshotId": "context-1",
-                    "corpusVersion": "v1",
-                    "retrievalProfileId": "quick",
-                    "degradedMode": False,
-                    "answer": "grounded",
-                    "abstained": False,
-                    "abstentionReason": None,
-                    "claims": [],
-                    "citations": [],
-                },
-            )
+def test_hits_ready_omitted_without_trace_id() -> None:
+    from tap.modules.chat.application.turn_execution import stream_events
+    from tap.modules.chat.domain.conversations import (
+        AnswerEvidence,
+        GraphContextStatus,
+        RetrievalSummary,
+    )
 
-    conversations = _KnowledgeConversations()
-    worker = GenerationWorker(conversations, Knowledge(), checkpointer=InMemorySaver())
-    assert await worker.run_once(limit=1) == 1
-
+    evidence = AnswerEvidence(
+        "grounded",
+        "completed",
+        RetrievalSummary("completed", None, 0),
+        GraphContextStatus.NOT_SELECTED,
+    )
+    events = stream_events(
+        evidence,
+        1,
+        turn=SimpleNamespace(input_snapshot=SimpleNamespace(snapshot_id="snapshot-1")),
+        answer_response=SimpleNamespace(trace_id=None, citations=()),
+        graph_context_payload=None,
+    )
     assert not any(
-        event_type == "retrieval.hits_ready" for event_type, _payload in conversations.events
+        event_type == "retrieval.hits_ready" for event_type in [event["type"] for event in events]
     )
 
 
@@ -541,7 +545,7 @@ async def test_graph_context_ready_event_precedes_answer_and_citation_kind_is_em
             graph_context = SimpleNamespace(
                 model_dump=lambda **_: dict(_GRAPH_CONTEXT_PAYLOAD),
             )
-            return SimpleNamespace(
+            return direct_answer(
                 answer="grounded",
                 citations=[edge_citation],
                 abstained=False,

@@ -46,6 +46,7 @@ from tap.modules.knowledge.adapters.milvus.audit import (
 )
 from tap.modules.knowledge.adapters.mysql_audit import MysqlSearchAuditSink
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
+from tap.modules.knowledge.api import ConversationAnswerExecutor
 from tap.modules.knowledge.ports.documents import (
     DocumentEmbeddingPort,
 )
@@ -968,6 +969,7 @@ class TapperApiRuntime:
     http_services: HttpServices
     quality_models: KnowledgeModelGateway
     _resources: OwnedResources
+    conversation_answers: ConversationAnswerExecutor | None = None
     failure_controller: TapperFailureController | None = None
     skill_authoring: SkillAuthoringService | None = None
     # Skill Hub: what the generation worker (which reuses this runtime) runs
@@ -1140,6 +1142,7 @@ async def create_api_runtime(
             )
         return TapperApiRuntime(
             http_services=services,
+            conversation_answers=services.conversation_answers,
             quality_models=embeddings,
             _resources=resources,
             failure_controller=failure_controller,
@@ -2472,12 +2475,9 @@ def _assemble_http_services(
                 None if test_plans is None else test_plans.mark_knowledge_sources_changed
             ),
         )
-    knowledge_http = KnowledgeHttpService(
-        documents=documents,
+    conversation_answers = ConversationAnswerExecutor(
         answers=answer_service,
         citations=citations,
-        searches=search_service,
-        sources=SourceService(cast(SourceRepository, repository), documents),
         corpus_version=corpus_version,
         models=embeddings,
         answer_planner=_answer_planner(embeddings, timeout_seconds=planner_timeout_seconds),
@@ -2489,6 +2489,15 @@ def _assemble_http_services(
         # are chat egress, so phone/ID rules apply here too.
         redactor=PatternEgressRedactor(max_chars=262144, personal_data=True),
         relations_available=relation_analysis is not None,
+    )
+    knowledge_http = KnowledgeHttpService(
+        documents=documents,
+        searches=search_service,
+        sources=SourceService(cast(SourceRepository, repository), documents),
+        answers=answer_service,
+        citations=citations,
+        corpus_version=corpus_version,
+        conversation_answers=conversation_answers,
     )
     prompt_suggestions = None
     prompt_suggestion_store = None
@@ -2534,7 +2543,7 @@ def _assemble_http_services(
             # Grounding replays the chat planner and answer pipeline, so a shown
             # suggestion is one that a click would answer with citations.
             grounding=ConversationGroundingCheck(
-                knowledge_http,
+                conversation_answers,
                 ready_sources=SuggestionReadySources(
                     conversation_sessions,  # type: ignore[arg-type]
                     repository.scope,
@@ -2553,6 +2562,7 @@ def _assemble_http_services(
             default_alias=embeddings.chat_alias,
         ),
         knowledge=knowledge_http,
+        conversation_answers=conversation_answers,
         readiness=readiness,
         scope_provider=scope_provider,
         authorization_policy=authorization_policy,

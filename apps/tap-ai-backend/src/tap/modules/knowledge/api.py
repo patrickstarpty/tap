@@ -72,6 +72,19 @@ from tap.modules.knowledge.application.answer_templates import (
     get_template,
     latest_template_version,
 )
+from tap.modules.knowledge.application.conversation_execution import (
+    AnswerBudgetExhausted,
+    ConversationAnswerExecutor,
+)
+from tap.modules.knowledge.application.conversation_phases import (
+    ConversationAnswerStep,
+    ConversationExecutionContext,
+    ConversationToolResult,
+    DirectAnswer,
+    decode_conversation_step,
+    decode_direct_answer,
+    encode_conversation_step,
+)
 from tap.modules.knowledge.application.planned_answer import (
     AuthorizedAnswerExecution,
     AuthorizedAnswerQuery,
@@ -81,7 +94,9 @@ from tap.modules.knowledge.application.publication import (
     PublishedKnowledgeAuthority,
 )
 from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval, RelationAnalysis
+from tap.modules.knowledge.domain.abstention import without_abstention_sentinel
 from tap.modules.knowledge.domain.models import (
+    AbstentionReason,
     AnswerMode,
     AnswerRequest,
     AnswerResponse,
@@ -100,7 +115,7 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
     StructuralAnchor,
 )
-from tap.modules.knowledge.ports.redaction import EgressRedactionPort
+from tap.modules.knowledge.ports.redaction import EgressRedactionPort, RedactionUnavailable
 from tap.modules.knowledge.ports.search import (
     AnswerGenerationPort,
     GovernedKnowledgeModels,
@@ -109,6 +124,19 @@ from tap.modules.knowledge.ports.search import (
 )
 
 __all__ = [
+    "AbstentionReason",
+    "DirectAnswer",
+    "decode_direct_answer",
+    "conversation_answer_to_http",
+    "AnswerBudgetExhausted",
+    "ConversationAnswerExecutor",
+    "ConversationExecutionContext",
+    "ConversationAnswerStep",
+    "ConversationToolResult",
+    "encode_conversation_step",
+    "decode_conversation_step",
+    "without_abstention_sentinel",
+    "RedactionUnavailable",
     "AuthorizedAnswerExecution",
     "AuthorizedAnswerQuery",
     "get_template",
@@ -605,4 +633,43 @@ def _citation_to_http(citation: Citation) -> HttpCitation:
             ),
         },
         context={"source_family": HttpSourceFamily(citation.family.value)},
+    )
+
+
+def conversation_answer_to_http(response: AnswerResponse | DirectAnswer) -> HttpAnswerResponse:
+    """Delivery conversion shared by HTTP and the committed chat-event adapter."""
+    if isinstance(response, AnswerResponse):
+        return answer_response_to_http(response)
+    return HttpAnswerResponse(
+        trace_id=response.trace_id,
+        query_plan_id=response.query_plan_id,
+        context_snapshot_id=response.context_snapshot_id,
+        corpus_version=response.corpus_version,
+        retrieval_profile_id=response.retrieval_profile_id,
+        degraded_mode=response.degraded_mode,
+        degradation_reasons=list(response.degradation_reasons) or None,
+        answer=response.answer,
+        abstained=response.abstained,
+        abstention_reason=None
+        if response.abstention_reason is None
+        else HttpAbstentionReason(response.abstention_reason.value),
+        answer_kind=response.answer_kind,
+        claims=[
+            HttpClaim(
+                claim_id=c.claim_id,
+                text=c.text,
+                answer_start=c.answer_start,
+                answer_end=c.answer_end,
+                citation_ids=list(c.citation_ids),
+            )
+            for c in response.claims
+        ],
+        citations=[HttpCitation.model_validate(c) for c in response.citations],
+        graph_context_status=cast(Any, response.graph_context_status),
+        graph_snapshot_id=response.graph_snapshot_id,
+        graph_context=None
+        if response.graph_context is None
+        else HttpGraphContextSummaryView.model_validate(response.graph_context),
+        insights_facts=[HttpInsightsFactView.model_validate(f) for f in response.insights_facts]
+        or None,
     )

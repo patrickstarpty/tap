@@ -26,7 +26,6 @@ from typing import Literal
 from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.exc import TimeoutError as SATimeoutError
 
-from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
 from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
 from tap.modules.ai.domain.graph_runs import (
     GraphCheckpointRetryable,
@@ -44,6 +43,7 @@ from tap.modules.ai.ports.insights import (
     InsightsQueryUnavailable,
 )
 from tap.modules.chat.application.conversations import ConversationConflict, ConversationNotFound
+from tap.modules.knowledge.api import AnswerBudgetExhausted
 from tap.modules.knowledge.application.evidence_bundle import EvidenceBundleTooLarge
 from tap.modules.knowledge.ports.answers import AnswerSnapshotUnavailable, DocumentStateChanged
 from tap.modules.knowledge.ports.errors import (

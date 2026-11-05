@@ -5,16 +5,20 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, Protocol, TypedDict
+from typing import Protocol
 
 from tap.contracts.chat_stream import ChatEventEnvelope
-from tap.contracts.http import RetrievalAnswerResponse
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.assets import SkillRevision
 from tap.modules.ai.domain.skill_activation import PromptSkill
 from tap.modules.ai.domain.skill_metadata import ActivationMode
 from tap.modules.ai.domain.tool_calls import AdmittedToolCall
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
+from tap.modules.knowledge.api import AnswerResponse as _AnswerResponse
+from tap.modules.knowledge.api import ConversationAnswerStep as _ConversationAnswerStep
+from tap.modules.knowledge.api import ConversationExecutionContext as _ConversationExecutionContext
+from tap.modules.knowledge.api import ConversationToolResult as _ConversationToolResult
+from tap.modules.knowledge.api import DirectAnswer as _DirectAnswer
 
 
 class SequenceConflict(Exception):
@@ -222,53 +226,8 @@ class Clock(Protocol):
     def now(self) -> datetime: ...
 
 
-class ConversationAnswerStep(TypedDict, total=False):
-    """A resumable, JSON-serializable snapshot of one phase of
-    `KnowledgeHttpService.answer_conversation`, checkpointed between
-    `prepare`/`generate`/`verify`/`finalize` so a LangGraph node can call each
-    phase on its own.
-
-    `kind` names the phase the step last completed: `"prepared"` (retrieval
-    ran, ready for generation), `"generated"` (a model answer was produced,
-    ready for verification), `"verified"` (a verified answer is ready to
-    persist and map to HTTP -- either from the verify phase, or directly from
-    an abstaining prepare), or `"final"` (a complete HTTP response for a
-    route that never reaches retrieval; `generate`/`verify` pass it through
-    unchanged).
-    """
-
-    kind: Literal["prepared", "generated", "verified", "final", "tool_calls"]
-    bundle: dict[str, object]
-    generation: dict[str, object]
-    response: dict[str, object]
-    # PR 3: present only on a `"prepared"` step, built from the evidence/
-    # relation context `prepare_conversation_answer` just retrieved (before
-    # it is encoded into `bundle`) -- the `retrieval.hits_ready` payload the
-    # `seed_search` graph node emits immediately, without itself needing to
-    # decode the opaque `bundle`.
-    retrieval_hits: dict[str, object]
-    # PR 5 (Task 6/9): present on a `"tool_calls"` step -- the model's own
-    # prose/tool-call history for the bounded tool-calling loop, kept
-    # alongside `bundle` so a resumed `tools`/`model` node can rebuild the
-    # next model call's conversation without re-deriving it. A `"prepared"`
-    # step produced outside the loop (e.g. `seed_search`) carries `[]`.
-    transcript: list[dict[str, object]]
-    # PR 5 (Task 9): the model's requested tool calls this round, admitted or
-    # not yet executed -- `{"callId", "name", "argumentsJson"}` per call.
-    pending_tool_calls: list[dict[str, str]]
-
-
-class ConversationToolResult(TypedDict):
-    """`KnowledgeHttpService.run_conversation_tool`'s result: the updated
-    (or, on failure, unchanged) `"prepared"` `ConversationAnswerStep`, plus
-    what changed, for the `tools` graph node to turn into a `task.step` event
-    and a tool result message fed back to the model."""
-
-    step: ConversationAnswerStep
-    status: Literal["completed", "failed"]
-    summary: str
-    added_labels: list[str]
-    retrieval_hits: dict[str, object] | None
+ConversationAnswerStep = _ConversationAnswerStep
+ConversationToolResult = _ConversationToolResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,21 +267,19 @@ class SkillActivationRuntime(Protocol):
 
 
 class ConversationAnswerSteps(Protocol):
-    """The resumable phases of `KnowledgeHttpService.answer_conversation`;
+    """The resumable phases of `ConversationAnswerExecutor.answer_conversation`;
     `answer_conversation` is one persisted-deadline-bounded composition of
     these four, and a LangGraph node may instead call each on its own."""
 
     async def prepare_conversation_answer(
-        self, request, frozen_input, *, answer_plan=None, authorize=None, include_relations=True
+        self, request, context: _ConversationExecutionContext, *, include_relations=True
     ) -> ConversationAnswerStep: ...
 
     async def generate_conversation_answer(
         self,
         step: ConversationAnswerStep,
-        frozen_input,
+        context: _ConversationExecutionContext,
         *,
-        answer_plan=None,
-        authorize=None,
         on_text: Callable[[str], Awaitable[None]] | None = None,
         tools: tuple[str, ...] = (),
         activated_skills: tuple[PromptSkill, ...] = (),
@@ -331,33 +288,22 @@ class ConversationAnswerSteps(Protocol):
     async def verify_conversation_answer(
         self,
         step: ConversationAnswerStep,
-        frozen_input,
-        *,
-        answer_plan=None,
-        authorize=None,
+        context: _ConversationExecutionContext,
     ) -> ConversationAnswerStep: ...
 
     async def finalize_conversation_answer(
         self,
         step: ConversationAnswerStep,
-        frozen_input,
-        *,
-        answer_plan=None,
-        authorize=None,
-    ) -> RetrievalAnswerResponse: ...
+        context: _ConversationExecutionContext,
+    ) -> _AnswerResponse | _DirectAnswer: ...
 
-    async def refuse_out_of_scope(
-        self, frozen_input, *, answer_plan
-    ) -> RetrievalAnswerResponse: ...
+    async def refuse_out_of_scope(self, frozen_input, *, answer_plan) -> _DirectAnswer: ...
 
     async def run_conversation_tool(
         self,
         step: ConversationAnswerStep,
-        frozen_input,
+        context: _ConversationExecutionContext,
         call: AdmittedToolCall,
-        *,
-        answer_plan=None,
-        authorize=None,
     ) -> ConversationToolResult: ...
 
     async def add_insights_records(

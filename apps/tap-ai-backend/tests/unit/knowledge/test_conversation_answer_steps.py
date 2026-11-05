@@ -17,8 +17,6 @@ import pytest
 from test_answer_service import MemoryAnswerRepository, answer_response, ready
 
 from tap.contracts.http import AbstentionReason, RetrievalAnswerRequest
-from tap.entrypoints.tapper_chat_turn import ChatTurnNodes
-from tap.interfaces.http.knowledge_service import KnowledgeHttpService, turn_skill_context
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.ai.domain.models import (
     ModelCallAudit,
@@ -34,6 +32,7 @@ from tap.modules.ai.domain.skill_activation import (
     TurnSkillContext,
 )
 from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInput, planning_input
+from tap.modules.chat.application.turn_execution import ChatTurnNodes
 from tap.modules.chat.domain.answer_plan import AnswerPlan
 from tap.modules.chat.domain.conversations import (
     FrozenResource,
@@ -44,23 +43,15 @@ from tap.modules.chat.domain.conversations import (
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.api import KnowledgeAPI
 from tap.modules.knowledge.application.answers import AnswerService
+from tap.modules.knowledge.application.conversation_execution import turn_skill_context
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
-from tap.modules.knowledge.application.evidence_bundle import EvidenceBundle
 from tap.modules.knowledge.domain.models import (
-    AnswerMode,
     AnswerRequest,
     Claim,
     ContentRole,
-    ContextLayer,
-    ContextLayerKind,
-    ContextSnapshot,
     DocumentAnchor,
     IndexRevision,
-    ModelCallProvenance,
-    QueryPlan,
-    RetrievalProfileId,
     RevisionKind,
-    SearchResponse,
     SourceFamily,
     SourceRevisionRef,
 )
@@ -72,71 +63,8 @@ from tap.modules.knowledge.ports.models import (
     RedactionResult,
     SearchHit,
 )
-
-
-def _bundle(*, query: str) -> EvidenceBundle:
-    plan = QueryPlan(
-        query_plan_id="plan-a",
-        operation_id="operation-a",
-        tenant_id="tenant-a",
-        project_id=VALIDATION_SCOPE.project_id,
-        policy_decision_id="decision-a",
-        policy_version="policy-a",
-        acl_digest="sha256:" + "a" * 64,
-        answer_mode=AnswerMode.QUICK,
-        retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
-        source_families=(SourceFamily.DOC,),
-        resources=(),
-        effective_environment="production",
-        corpus_version="tapper-demo-v1",
-        candidate_limit=20,
-        raw_request_hash="sha256:" + "b" * 64,
-        sanitized_query=query,
-        sanitized_query_hash="sha256:" + "d" * 64,
-        redaction_version="redaction-v1",
-        embedding_model_id="research-embedding-v1",
-        embedding_dimension=1536,
-    )
-    context_snapshot = ContextSnapshot(
-        context_snapshot_id="snapshot-a",
-        operation_id="operation-a",
-        tenant_id="tenant-a",
-        project_id=VALIDATION_SCOPE.project_id,
-        policy_decision_id="decision-a",
-        policy_version="policy-a",
-        acl_digest="sha256:" + "a" * 64,
-        layers=(
-            ContextLayer(
-                kind=ContextLayerKind.CURRENT_TURN,
-                ref_ids=(),
-                content_hash="sha256:" + "d" * 64,
-                token_count=7,
-            ),
-        ),
-    )
-    return EvidenceBundle(
-        request=AnswerRequest(query=query),
-        generation_query=query,
-        response=SearchResponse(
-            trace_id="trace-a",
-            query_plan_id="plan-a",
-            context_snapshot_id="snapshot-a",
-            corpus_version="tapper-demo-v1",
-            retrieval_profile_id=RetrievalProfileId.QUICK_HYBRID_V1,
-            evidence=(),
-            embedding_provenance=ModelCallProvenance("text-embedding-v4", "embed-a"),
-        ),
-        plan=plan,
-        context_snapshot=context_snapshot,
-        publication=None,
-        relation=None,
-        answer_input=None,
-        evidence_map={},
-        graph_context=(),
-        flow_context={},
-        missing=False,
-        relation_first=False,
-    )
+from tests.conversation_execution_compat import KnowledgeHttpService
+from tests.conversation_execution_fixtures import _bundle
 
 
 class Scoped:
@@ -976,7 +904,7 @@ async def test_output_redaction_records_claims_it_drops_on_the_span(monkeypatch)
     """A claim dropped because redaction left it without one unique span is
     counted on the redaction span next to the output hits, so the drop is
     observable rather than silent."""
-    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    import tap.modules.knowledge.application.conversation_execution as knowledge_service_module
     from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
     from tap.platform.serialization.dataclass_json import to_json
 
@@ -1005,7 +933,7 @@ async def test_output_redaction_records_claims_it_drops_on_the_span(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_final_route_records_claims_it_drops_on_the_span(monkeypatch) -> None:
-    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    import tap.modules.knowledge.application.conversation_execution as knowledge_service_module
     from tap.contracts.http import RetrievalClaim
     from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
     from tap.modules.knowledge.api import answer_response_to_http
@@ -1040,7 +968,7 @@ async def test_final_route_records_claims_it_drops_on_the_span(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_output_redaction_without_drops_records_no_dropped_claims(monkeypatch) -> None:
-    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    import tap.modules.knowledge.application.conversation_execution as knowledge_service_module
     from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
     from tap.platform.serialization.dataclass_json import to_json
 
@@ -1150,7 +1078,7 @@ async def test_output_redaction_hits_land_on_current_span(monkeypatch) -> None:
     -- a claim is always a verbatim paragraph of the answer, so counting its
     hits too (on top of the answer-level count that already covers the same
     match) would double-count."""
-    import tap.interfaces.http.knowledge_service as knowledge_service_module
+    import tap.modules.knowledge.application.conversation_execution as knowledge_service_module
     from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
     from tap.platform.serialization.dataclass_json import to_json
 
@@ -2500,7 +2428,7 @@ async def test_plan_window_expiring_mid_phase_is_a_deterministic_budget_exhausti
     import asyncio
 
     from tap.entrypoints.tapper_turn_failures import classify_turn_failure
-    from tap.interfaces.http.knowledge_service import AnswerBudgetExhausted
+    from tap.modules.knowledge.api import AnswerBudgetExhausted
 
     _frozen, plan = await _retrieve_route()
     short = replace(plan, deadline_at=time.time() + 0.05)
@@ -2510,3 +2438,59 @@ async def test_plan_window_expiring_mid_phase_is_a_deterministic_budget_exhausti
             await asyncio.sleep(1)
 
     assert classify_turn_failure(raised.value) == "deterministic"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"kind": "prepared"},
+        {"kind": "generated", "bundle": {}},
+        {"kind": "verified"},
+        {"kind": "final"},
+        {"kind": "tool_calls", "bundle": {}},
+    ],
+)
+def test_checkpoint_decoder_rejects_incomplete_phase_payloads(payload):
+    from tap.modules.knowledge import api
+
+    decoder = getattr(api, "decode_conversation_step", None)
+    assert callable(decoder), "Knowledge must own the validated checkpoint seam"
+    with pytest.raises(ValueError, match="answer step"):
+        decoder(payload)
+
+
+@pytest.mark.asyncio
+async def test_prepared_checkpoint_resumes_without_retrieval_and_rechecks_authorization():
+    from tap.modules.knowledge import api
+
+    executor_type = getattr(api, "ConversationAnswerExecutor", None)
+    assert executor_type is not None, "Knowledge must own conversation answer execution"
+    frozen, plan = await _retrieve_route()
+    answers = PhaseAnswers()
+    executor = executor_type(answers=answers, citations=Scoped())
+    checks = []
+
+    async def authorize():
+        checks.append("allowed")
+
+    context = api.ConversationExecutionContext(frozen, plan, authorize)
+    prepared = await executor.prepare_conversation_answer(
+        AnswerRequest(query=frozen.message), context
+    )
+    snapshot = json.loads(json.dumps(api.encode_conversation_step(prepared)))
+    assert snapshot["kind"] == "prepared"
+    resumed = api.decode_conversation_step(snapshot)
+    before = len(checks)
+    await executor.generate_conversation_answer(resumed, context)
+    assert answers.prepare_calls == 1
+    assert answers.generate_calls == 1
+    assert len(checks) > before
+
+    async def denied():
+        raise PermissionError("revoked during interruption")
+
+    with pytest.raises(PermissionError, match="revoked"):
+        await executor.generate_conversation_answer(
+            resumed, api.ConversationExecutionContext(frozen, plan, denied)
+        )
+    assert answers.generate_calls == 1
