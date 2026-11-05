@@ -286,6 +286,8 @@ make check
 make test
 ```
 
+`make test` 默认只跑核心回归：项目权限隔离、对话图与重试、Agent/Skill 配置和激活、工具白名单、引用、会话流与关键界面。日常改动先跑受影响的测试，再按风险运行核心集；不必每次运行完整门禁。`make test-full` 保留原有四个项目的完整测试，发布或跨模块变更时按需运行；`make check` 保留静态、契约与构建检查，隔离浏览器回归仍使用 `make demo-e2e`。
+
 `make contracts` 从 FastAPI 路由元数据和公共 Pydantic 模型确定性导出并检查 `contracts/openapi/api.json` 与 `contracts/events/chat-stream.schema.json`：JSON 使用排序键、两空格缩进、一个末尾换行，且不写入时间戳。HTTP DTO 与 SSE event models 是彼此独立的模型图；浏览器可见的 SSE schema 不描述 `text/event-stream` framing。
 
 `make contracts` 同时更新并检查 `apps/tap-ai-frontend/src/shared/api/generated/` 的 TypeScript client/type。冻结安装使用 `uv sync --frozen --all-groups` 和 `corepack pnpm install --frozen-lockfile`，不依赖全局 pnpm。
