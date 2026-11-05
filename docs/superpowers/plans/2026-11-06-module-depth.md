@@ -62,7 +62,7 @@
 - [x] Update architecture and product roadmap with actual implemented ownership and status, preserving concurrent documentation work during integration.
 - [x] Run `git diff --check`, contract drift checks, `make check`, `make test`, and `make demo-e2e` against isolated owned services. Record external blockers precisely and fix failures introduced by this change.
 - [x] Perform whole-change review; address correctness, architecture and compatibility findings.
-- [ ] Integrate verified commits into develop without staging unrelated user edits; report completed scope, validation and remaining blockers accurately.
+- [x] Integrate verified commits into develop without staging unrelated user edits; report completed scope, validation and remaining blockers accurately.
 
 ## 验证记录（2026-11-06）
 
@@ -71,3 +71,4 @@
 - 独立 MySQL/Redis 验证：checkpoint 模型失败恢复 1 项，发布授权复检与取消 5 项，资产修订/反馈/owner 与维护记录原子性 4 项通过；两张维护事件表及三个索引的 MySQL DDL 与迁移前一致。
 - `make demo-e2e` 通过：业务流程 13 项、应用重启 1 项、整套服务重启 1 项、持久化校验 32 项通过；隔离资源清理完成。该门禁使用确定性模型，不代表真实模型效果验收。
 - 三个实施任务和最终 71 文件评审通过。评审发现的同会话重复选择、显式重置幂等键问题均有先失败后通过的行为测试；恢复测试的历史时钟漂移在原版亦可复现，修正仅限测试时钟。
+- 已快进合入本地 `develop`；合并后 101 项后端模块/元数据检查与 14 项会话运行测试通过。原工作区五份未提交文档按字节校验保留（产品路线图仅增加本次完成条目），未纳入本次提交。
