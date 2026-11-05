@@ -16,7 +16,10 @@ import {
   type JourneyState,
   type SafeDocumentState,
 } from "./fixtureBuilder";
-import { preparePublishedFixture } from "./publicationFixture";
+import {
+  preparePublishedFixture,
+  waitForProjectGraph,
+} from "./publicationFixture";
 
 const STAGES = [
   "stored",
@@ -34,6 +37,11 @@ function knowledgePath(page: Page, suffix: string): string {
   const projectId = projectByPage.get(page);
   if (projectId === undefined) throw new Error("Runtime Project is required");
   return `/api/v1/projects/${encodeURIComponent(projectId)}/knowledge/${suffix}`;
+}
+function projectRoot(page: Page): string {
+  const projectId = projectByPage.get(page);
+  if (projectId === undefined) throw new Error("Runtime Project is required");
+  return `/api/v1/projects/${encodeURIComponent(projectId)}`;
 }
 
 interface DocumentSummary {
@@ -556,35 +564,14 @@ test("Library uploads/status and Project API recovery, answers, citations, scope
     policy!.detail.revisionId,
     selectedReference!.detail.revisionId,
   ]);
-  let readySnapshotId: string | undefined;
-  const graphDeadline = Date.now() + 60_000;
-  while (!readySnapshotId && Date.now() < graphDeadline) {
-    const publishedGraphSnapshots = await page.request.get(
-      knowledgePath(page, "graph/snapshots"),
-      { params: { sourceRevisionId: policy!.detail.revisionId } },
-    );
-    expect(publishedGraphSnapshots.status()).toBe(200);
-    const snapshot = (await publishedGraphSnapshots.json()) as {
-      items: Array<{
-        snapshotId: string;
-        status: "CANDIDATE" | "READY" | "FAILED";
-      }>;
-    };
-    readySnapshotId = snapshot.items.find(
-      (item) => item.status === "READY",
-    )?.snapshotId;
-    if (!readySnapshotId) await page.waitForTimeout(500);
-  }
-  expect(readySnapshotId, "graph snapshot becomes READY").toBeTruthy();
+  await waitForProjectGraph(page, projectRoot(page), [
+    policy!.detail.revisionId,
+  ]);
   const publishedGraph = await page.request.post(
     knowledgePath(page, "graph/query"),
     {
       headers: { Origin: ORIGIN },
-      data: {
-        snapshotId: readySnapshotId!,
-        query: "*",
-        nodeLimit: 500,
-      },
+      data: { query: "*", nodeLimit: 500 },
     },
   );
   expect(publishedGraph.status()).toBe(200);

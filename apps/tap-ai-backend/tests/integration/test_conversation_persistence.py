@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
 from tap.modules.chat.application.conversations import (
@@ -15,19 +16,30 @@ from tap.modules.chat.application.conversations import (
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     CitationEvidence,
+    FrozenResource,
     GraphContextStatus,
     RetrievalSummary,
     TurnInput,
+    citation_evidence_digest,
+)
+from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
+from tap.modules.knowledge.ports.answers import AnswerSnapshot, CitationSnapshot
+from tests.integration.test_citation_snapshot_transaction import (
+    ANCHOR_JSON,
+    CHUNK_HASH,
+    SOURCE_HASH,
+    seed_ready,
 )
 from tests.owned_mysql import owned_project_database_url
 
 
-def _input(message="Persist this"):
+def _input(message="Persist this", *, resolved_resources=()):
     return TurnInput(
         message=message,
         actor_id=VALIDATION_SCOPE.actor_id,
         identity_mode="validation",
         model_alias="qwen-plus",
+        resolved_resources=resolved_resources,
         agent_revision_id="validation-knowledge-agent-v1",
         agent_revision_digest="sha256:" + "a" * 64,
         skill_revision_ids=("validation-citation-skill-v1",),
@@ -114,15 +126,15 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
                 await restarted.emit(
                     "conversation-1",
                     "turn-2",
-                    "answer.delta",
-                    {"text": "stale"},
+                    "stage.started",
+                    {"stage": "stale"},
                     lease_token=first_claim.lease_token,
                 )
             await restarted.emit(
                 "conversation-1",
                 "turn-2",
-                "answer.delta",
-                {"text": "current"},
+                "stage.started",
+                {"stage": "current"},
                 lease_token=second_claim.lease_token,
             )
             canceled = await restarted.cancel("conversation-1", "turn-2")
@@ -233,6 +245,171 @@ def test_conversation_first_turn_restart_and_double_snapshot_are_durable(owned_p
     asyncio.run(scenario())
 
 
+def test_turn_with_skill_notices_round_trips_through_mysql(owned_project_mysql):
+    """C-1 regression: a Turn whose merged Skill selection skipped a disabled or
+    inapplicable Skill carries non-empty `skill_notices`, which is part of the
+    frozen `TurnInput`'s digest material -- the loader must reconstruct it, or
+    the reloaded snapshot's recomputed digest silently diverges from the one
+    persisted at write time."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            turn_input = TurnInput(
+                message="Persist a notice",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                identity_mode="validation",
+                model_alias="qwen-plus",
+                agent_revision_id="validation-knowledge-agent-v1",
+                agent_revision_digest="sha256:" + "a" * 64,
+                skill_revision_ids=("validation-citation-skill-v1",),
+                skill_revision_digests=("sha256:" + "b" * 64,),
+                skill_notices=("skill_disabled:validation-skipped-skill-v1",),
+                requested_skill_revision_ids=(
+                    "validation-citation-skill-v1",
+                    "validation-skipped-skill-v1",
+                ),
+                retrieval_policy_digest="sha256:" + "c" * 64,
+            )
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            accepted = await service.create(
+                "notices-conversation", "notices-turn", "notices-request", turn_input
+            )
+            original_digest = accepted.input_snapshot.digest
+
+            reloaded_service = ConversationService(
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                scope=VALIDATION_SCOPE,
+            )
+            loaded = await reloaded_service.load("notices-conversation")
+
+            loaded_snapshot = loaded.turns[0].input_snapshot
+            assert loaded_snapshot.value.skill_notices == (
+                "skill_disabled:validation-skipped-skill-v1",
+            )
+            assert loaded_snapshot.value.requested_skill_revision_ids == (
+                "validation-citation-skill-v1",
+                "validation-skipped-skill-v1",
+            )
+            assert loaded_snapshot.digest == original_digest
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_frozen_manual_and_pinned_activations_written_with_turn(owned_project_mysql):
+    """Manual and pinned Skills are recorded in `turn_skill_activation` in the
+    Turn's own transaction: one row per Skill, at the Turn's creation time,
+    sized by the frozen instruction text (template + references)."""
+
+    import hashlib
+
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.domain.assets import SkillRevision, text_digest
+    from tap.modules.chat.adapters.mysql_skill_activations import activation_id_for
+
+    def _sha(value):
+        return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+            for skill_id, body, references in (
+                ("activation-manual", "手动 instruction", None),
+                ("activation-pinned", "pinned instruction", "\nreference 数据"),
+            ):
+                await catalog.insert_skill_revision(
+                    SkillRevision(
+                        revision_id=f"{skill_id}-v1",
+                        asset_id=skill_id,
+                        display_name=skill_id,
+                        scope=VALIDATION_SCOPE,
+                        content_digest=text_digest(f"{skill_id}-content"),
+                        instruction_template_digest=text_digest(body + (references or "")),
+                        applicable_tasks=frozenset({"knowledge.answer"}),
+                        instruction_template=body,
+                        attached_references=references,
+                    ),
+                    base_revision_id=None,
+                )
+            manual_text = "手动 instruction"
+            pinned_text = "pinned instruction\nreference 数据"
+            turn_input = TurnInput(
+                message="Use Skills",
+                actor_id=VALIDATION_SCOPE.actor_id,
+                identity_mode="validation",
+                model_alias="qwen-plus",
+                skill_revision_ids=("activation-manual-v1", "activation-pinned-v1"),
+                skill_revision_digests=("sha256:" + "b" * 64, "sha256:" + "d" * 64),
+                skill_instruction_templates=(manual_text, pinned_text),
+                skill_instruction_template_digests=(_sha(manual_text), _sha(pinned_text)),
+                requested_skill_revision_ids=("activation-manual-v1",),
+                retrieval_policy_digest="sha256:" + "c" * 64,
+            )
+            service = ConversationService(
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                scope=VALIDATION_SCOPE,
+            )
+            await service.create(
+                "activation-conversation", "activation-turn", "activation-request", turn_input
+            )
+
+            async with engine.connect() as connection:
+                turn_created_at = (
+                    await connection.execute(
+                        text("SELECT created_at FROM chat_turn WHERE turn_id='activation-turn'")
+                    )
+                ).scalar_one()
+                rows = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT activation_id, project_id, skill_id, skill_revision_id, "
+                                "mode, activated_at, bytes FROM turn_skill_activation "
+                                "WHERE turn_id='activation-turn' ORDER BY skill_id"
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+            assert [dict(row) for row in rows] == [
+                {
+                    "activation_id": activation_id_for("activation-turn", "activation-manual"),
+                    "project_id": VALIDATION_SCOPE.project_id,
+                    "skill_id": "activation-manual",
+                    "skill_revision_id": "activation-manual-v1",
+                    "mode": "manual",
+                    "activated_at": turn_created_at,
+                    "bytes": len(manual_text.encode("utf-8")),
+                },
+                {
+                    "activation_id": activation_id_for("activation-turn", "activation-pinned"),
+                    "project_id": VALIDATION_SCOPE.project_id,
+                    "skill_id": "activation-pinned",
+                    "skill_revision_id": "activation-pinned-v1",
+                    "mode": "pinned",
+                    "activated_at": turn_created_at,
+                    "bytes": len(pinned_text.encode("utf-8")),
+                },
+            ]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
     async def scenario():
         url = owned_project_database_url(owned_project_mysql).replace(
@@ -253,6 +430,73 @@ def test_turn_without_input_snapshot_is_an_integrity_error(owned_project_mysql):
 
             with pytest.raises(ConversationIntegrityError, match="input snapshot is missing"):
                 await service.load("snapshotless")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_graph_context_ready_stream_event_persists_and_reloads(owned_project_mysql):
+    """A `graph.context_ready` stream event must
+    persist end-to-end against real MySQL, not only against the in-memory
+    repository fakes the worker unit tests use."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            service = ConversationService(repository, scope=VALIDATION_SCOPE)
+            accepted = await service.create(
+                "graph-context-conversation", "graph-context-turn", "request-1", _input()
+            )
+            claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            assert claim.turn_id == accepted.turn_id
+            await service.complete_evidence(
+                "graph-context-conversation",
+                "graph-context-turn",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-1"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="7",
+                ),
+                lease_token=claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                stream_events=(
+                    (
+                        "graph.context_ready",
+                        {
+                            "status": "APPLIED",
+                            "graphVersion": "7",
+                            "seedCount": 2,
+                            "paths": [["核保流程", "健康告知"]],
+                            "relationCount": 1,
+                        },
+                    ),
+                ),
+            )
+            detail = await service.load("graph-context-conversation")
+            graph_context_ready_events = [
+                event for event in detail.events if event.event_type == "graph.context_ready"
+            ]
+            assert len(graph_context_ready_events) == 1
+            assert graph_context_ready_events[0].payload["graphVersion"] == "7"
+            async with engine.connect() as connection:
+                stored_payload = json.loads(
+                    await connection.scalar(
+                        text(
+                            "SELECT payload FROM chat_event WHERE turn_id=:turn_id "
+                            "AND event_type='graph.context_ready'"
+                        ),
+                        {"turn_id": "graph-context-turn"},
+                    )
+                )
+                assert stored_payload["status"] == "APPLIED"
         finally:
             await engine.dispose()
 
@@ -307,6 +551,274 @@ def test_claim_fails_snapshotless_queued_turn_and_keeps_claiming_others(owned_pr
             assert payload["problem"]["type"].endswith("/conversation-integrity")
             assert payload["problem"]["retryable"] is False
             assert "turn.started" not in [event_type for event_type, _ in events]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_applied_graph_context_validates_edge_citation_graph_version(owned_project_mysql):
+    """When an answer's graph context is
+    APPLIED, every edge citation's persisted `graph_version` must equal the
+    Turn's `graph_snapshot_id` (which, per the
+    `graph_snapshot_id = graph_version` design, is the same string) or
+    `complete()` must raise -- a stale or forged edge citation must not ride
+    along with a graph-grounded answer. This checks the persisted
+    `knowledge_citation_snapshot.graph_version` column, never
+    `graph_project_version` (pruned old versions must not block an answer)."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            document_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            selected = await seed_ready(engine, "graph")
+            edge_citation = CitationSnapshot(
+                trace_id="trace-graph",
+                citation_id="citation-graph-edge",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_graph",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            await document_repository.save_answer_with_citations(
+                AnswerSnapshot(
+                    trace_id="trace-graph",
+                    query_hash="sha256:" + "c" * 64,
+                    selected_revisions=(selected,),
+                    citations=(edge_citation,),
+                )
+            )
+            async with engine.connect() as connection:
+                row = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT citation_id,source_id,trace_id,document_id,"
+                                "revision_id,chunk_id,source_content_hash,chunk_content_"
+                                "hash,anchor_json,claim_text,origin,citation_kind,"
+                                "graph_version,edge_id,subject_node_id,object_node_id,"
+                                "relation_type,relation_label FROM knowledge_citati"
+                                "on_snapshot WHERE citation_id='citation-graph-edge'"
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            digest = citation_evidence_digest(
+                citation_id=row["citation_id"],
+                trace_id=row["trace_id"],
+                source_id=row["source_id"],
+                document_id=row["document_id"],
+                revision_id=row["revision_id"],
+                chunk_id=row["chunk_id"],
+                source_content_hash=row["source_content_hash"],
+                chunk_content_hash=row["chunk_content_hash"],
+                anchor=row["anchor_json"],
+                claim_text=row["claim_text"],
+                origin=row["origin"],
+                citation_kind=row["citation_kind"],
+                graph_version=row["graph_version"],
+                edge_id=row["edge_id"],
+                subject_node_id=row["subject_node_id"],
+                object_node_id=row["object_node_id"],
+                relation_type=row["relation_type"],
+                relation_label=row["relation_label"],
+            )
+            resolved_resources = (
+                FrozenResource(
+                    source_id=selected.source_id,
+                    document_id=selected.document_id,
+                    revision_id=selected.revision_id,
+                    source_content_hash=SOURCE_HASH,
+                ),
+            )
+            service = ConversationService(
+                MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+                scope=VALIDATION_SCOPE,
+            )
+
+            # Matching graph_snapshot_id ("7" == the citation row's graph_version): completes.
+            await service.create(
+                "conversation-graph-match",
+                "turn-graph-match",
+                "request-graph-match",
+                _input(resolved_resources=resolved_resources),
+            )
+            match_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            completed = await service.complete_evidence(
+                "conversation-graph-match",
+                "turn-graph-match",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-graph"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="7",
+                    citations=(CitationEvidence("citation-graph-edge", digest),),
+                ),
+                lease_token=match_claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+            )
+            assert completed.state == "completed"
+
+            # Mismatched graph_snapshot_id ("8" != the citation row's graph_version "7"): rejected.
+            await service.create(
+                "conversation-graph-mismatch",
+                "turn-graph-mismatch",
+                "request-graph-mismatch",
+                _input(resolved_resources=resolved_resources),
+            )
+            mismatch_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            with pytest.raises(ValueError, match="graph version"):
+                await service.complete_evidence(
+                    "conversation-graph-mismatch",
+                    "turn-graph-mismatch",
+                    AnswerEvidence(
+                        "Grounded",
+                        "completed",
+                        RetrievalSummary("completed", trace_id="trace-graph"),
+                        GraphContextStatus.APPLIED,
+                        graph_snapshot_id="8",
+                        citations=(CitationEvidence("citation-graph-edge", digest),),
+                    ),
+                    lease_token=mismatch_claim.lease_token,
+                    terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                )
+
+            # Non-APPLIED graph context (here EMPTY) citing an edge-kind
+            # citation row: rejected regardless of graph_version, since an
+            # edge citation requires an APPLIED graph context on this Turn.
+            await service.create(
+                "conversation-graph-not-applied",
+                "turn-graph-not-applied",
+                "request-graph-not-applied",
+                _input(resolved_resources=resolved_resources),
+            )
+            not_applied_claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            with pytest.raises(ValueError, match="APPLIED graph context"):
+                await service.complete_evidence(
+                    "conversation-graph-not-applied",
+                    "turn-graph-not-applied",
+                    AnswerEvidence(
+                        "Grounded",
+                        "completed",
+                        RetrievalSummary("completed", trace_id="trace-graph"),
+                        GraphContextStatus.EMPTY,
+                        graph_snapshot_id=None,
+                        citations=(CitationEvidence("citation-graph-edge", digest),),
+                    ),
+                    lease_token=not_applied_claim.lease_token,
+                    terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_resolve_citations_then_complete_evidence_round_trips_an_edge_citation(
+    owned_project_mysql,
+):
+    """`resolve_citations()` (the
+    generation worker's own call, `tapper_generation_worker.py:204`) and
+    `complete()` must compute the exact same trusted digest for a persisted
+    edge citation -- this test never hand-computes the digest itself (unlike
+    `test_applied_graph_context_validates_edge_citation_graph_version`), it
+    only uses whatever `resolve_citations()` returns, so a drift between the
+    two call sites' SELECT columns or digest material fails here the same way
+    it fails in production."""
+
+    async def scenario():
+        url = owned_project_database_url(owned_project_mysql).replace(
+            "mysql+pymysql", "mysql+asyncmy"
+        )
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            document_repository = MysqlDocumentRepository(
+                sessions, scope=VALIDATION_SCOPE, audit_factory=create_project_audit
+            )
+            selected = await seed_ready(engine, "roundtrip")
+            edge_citation = CitationSnapshot(
+                trace_id="trace-roundtrip",
+                citation_id="citation-roundtrip-edge",
+                document_id=selected.document_id,
+                revision_id=selected.revision_id,
+                chunk_id="h_roundtrip",
+                source_content_hash=SOURCE_HASH,
+                chunk_content_hash=CHUNK_HASH,
+                anchor_json=ANCHOR_JSON,
+                citation_kind="edge",
+                graph_version="7",
+                edge_id="edge-1",
+                subject_node_id="node-subject",
+                object_node_id="node-object",
+                relation_type="REQUIRES",
+                relation_label="requires",
+            )
+            await document_repository.save_answer_with_citations(
+                AnswerSnapshot(
+                    trace_id="trace-roundtrip",
+                    query_hash="sha256:" + "c" * 64,
+                    selected_revisions=(selected,),
+                    citations=(edge_citation,),
+                )
+            )
+
+            conversation_repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+            resolved = await conversation_repository.resolve_citations(
+                "trace-roundtrip", ("citation-roundtrip-edge",)
+            )
+            assert len(resolved) == 1
+            assert resolved[0].citation_snapshot_id == "citation-roundtrip-edge"
+
+            resolved_resources = (
+                FrozenResource(
+                    source_id=selected.source_id,
+                    document_id=selected.document_id,
+                    revision_id=selected.revision_id,
+                    source_content_hash=SOURCE_HASH,
+                ),
+            )
+            service = ConversationService(conversation_repository, scope=VALIDATION_SCOPE)
+            await service.create(
+                "conversation-roundtrip",
+                "turn-roundtrip",
+                "request-roundtrip",
+                _input(resolved_resources=resolved_resources),
+            )
+            claim = (await service.repository.claim_queued(limit=10))[-1][1]
+            completed = await service.complete_evidence(
+                "conversation-roundtrip",
+                "turn-roundtrip",
+                AnswerEvidence(
+                    "Grounded",
+                    "completed",
+                    RetrievalSummary("completed", trace_id="trace-roundtrip"),
+                    GraphContextStatus.APPLIED,
+                    graph_snapshot_id="7",
+                    citations=resolved,
+                ),
+                lease_token=claim.lease_token,
+                terminal_event=("turn.completed", {"answer": {"answer": "Grounded"}}),
+            )
+            assert completed.state == "completed"
         finally:
             await engine.dispose()
 

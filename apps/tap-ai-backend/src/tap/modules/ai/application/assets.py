@@ -141,7 +141,7 @@ class ValidationAssetSeed:
 def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
     """Versioned server configuration; scope is supplied by trusted composition."""
     return ValidationAssetSeed(
-        version="validation-ai-assets-v2",
+        version="validation-ai-assets-v3",
         agents=(
             AiAgentRevision(
                 revision_id="validation-knowledge-agent-v2",
@@ -156,6 +156,24 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
                 output_schema_json=json.dumps(
                     VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":")
                 ),
+                source_kind="built_in",
+            ),
+            AiAgentRevision(
+                revision_id="validation-knowledge-agent-v3",
+                asset_id="validation-knowledge-agent",
+                display_name="Knowledge agent",
+                scope=scope,
+                content_digest=text_digest("validation-ai-agent-v3"),
+                system_instruction_digest=text_digest(VALIDATION_SYSTEM_INSTRUCTION),
+                tool_allowlist=frozenset(
+                    {"knowledge.search", "knowledge.answer", "graph.relations", "insights.query"}
+                ),
+                output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
+                system_instruction=VALIDATION_SYSTEM_INSTRUCTION,
+                output_schema_json=json.dumps(
+                    VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":")
+                ),
+                source_kind="built_in",
             ),
         ),
         skills=(
@@ -168,6 +186,7 @@ def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
                 instruction_template_digest=text_digest(VALIDATION_SKILL_INSTRUCTION),
                 applicable_tasks=frozenset({"knowledge.answer"}),
                 instruction_template=VALIDATION_SKILL_INSTRUCTION,
+                source_kind="built_in",
             ),
         ),
     )

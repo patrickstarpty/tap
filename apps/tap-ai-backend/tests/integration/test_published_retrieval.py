@@ -3,23 +3,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.access.domain.policy import AuthorizationDenied
-from tap.modules.graph.application.queries import InMemoryGraphStore
-from tap.modules.graph.domain.models import (
-    Evidence as GraphEvidence,
-)
-from tap.modules.graph.domain.models import (
-    GraphNode,
-    GraphSnapshot,
-    GraphSnapshotDraft,
-)
 from tap.modules.knowledge.api import KnowledgeAPI, answer_response_to_http
 from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
-from tap.modules.knowledge.application.graph_enrichment import (
-    GraphAnswerEnricher,
-    GraphContextStatus,
-)
 from tap.modules.knowledge.application.publication import PublishedKnowledgeAuthority
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
@@ -310,54 +296,6 @@ async def test_two_revision_answer_carries_publication_provenance_and_rechecks_d
     models.withdraw_during_answer = True
     with pytest.raises(AuthorizationDenied):
         await knowledge.answer(request, policy)
-
-
-@pytest.mark.asyncio
-async def test_graph_evidence_outside_the_approved_slice_fails_closed() -> None:
-    publication = _publication(project_id=VALIDATION_SCOPE.project_id)
-    authority = PublishedKnowledgeAuthority(PublicationRepository(publication), now=lambda: NOW)
-    store = InMemoryGraphStore()
-    snapshot = GraphSnapshot.create(
-        snapshot_id="snapshot-publication",
-        project_id=VALIDATION_SCOPE.project_id,
-        source_revision_ids=("revision-1", "revision-2"),
-        document_revision_ids=("revision-1", "revision-2"),
-    )
-    evidence = GraphEvidence(
-        "evidence-unapproved",
-        snapshot.snapshot_id,
-        "revision-1",
-        "revision-1",
-        "chunk-unapproved",
-        {
-            "type": "document",
-            "headingPath": ["Unapproved"],
-            "startOffset": 0,
-            "endOffset": 10,
-            "inventoryItemId": "item-3",
-        },
-        DIGEST,
-    )
-    node = GraphNode(
-        "node-unapproved",
-        snapshot.snapshot_id,
-        "Unapproved fact",
-        "ENTITY",
-        "unapproved-fact",
-        (evidence.evidence_id,),
-    )
-    await store.publish(
-        VALIDATION_SCOPE,
-        GraphSnapshotDraft(snapshot, (node,), (), (evidence,), ()),
-    )
-
-    result = await GraphAnswerEnricher(store, publication_authority=authority).enrich(
-        VALIDATION_SCOPE,
-        ("revision-1", "revision-2"),
-        "*",
-    )
-
-    assert result.status is GraphContextStatus.FAILED
 
 
 @pytest.mark.asyncio

@@ -1,24 +1,24 @@
 # TAP — Test Automation Platform
 
-TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。V1 聚焦 TAP AI 的 5 项能力（可靠问答、知识图谱展示、图谱脉络分析、自定义与导入 Skills/Agents、对话可观测性），范围与验收见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)。
+TAP（**Test Automation Platform**）是一套 Knowledge-first 的测试智能平台：Tapper 用企业知识回答问题并生成测试设计，Test Management 保存可审查的测试资产，Low Code Automation 把 BDD 映射成可录制、可执行、可追溯的 Web 自动化。V1 聚焦 TAP AI 的 6 项能力（可靠问答、知识图谱展示、图谱脉络分析、自定义与导入 Skills/Agents、对话可观测性、LangGraph 编排），范围与验收见 [V1 总纲](docs/superpowers/plans/2026-09-29-v1-roadmap.md)。
 
-## 最新产品原型：以 main 为准
+## 最新版本：develop 最新，main 最稳定
 
-**`main` 主分支始终承载最新已确认的完整产品原型，是唯一权威入口。** 原型变更确认后必须连同源码、资源和本节说明一起合入 `main`；不能只留在功能分支、worktree、临时目录或截图中。查看最新设计时直接使用最新 `main`，无需寻找历史分支或另一个原型项目。
+**`develop` 分支是集成分支，始终承载最新已合并的功能；`main` 分支承载最稳定、已通过验收的版本。** 变更合入 `develop`；经验收后由 `develop` 合入 `main`，不能只留在功能分支、worktree、临时目录或截图中。查看最新功能直接使用 `develop`；需要稳定版本时使用 `main`。
 
-完整组合原型是持续演进的唯一设计基准，固定在 `apps/web` 的 `/prototype`，入口组件为 `apps/web/src/widgets/tap/TapProductPrototype.tsx`。从仓库根目录启动：
+完整组合原型保留在 `apps/web` 的 `/prototype`，入口组件为 `apps/web/src/widgets/tap/TapProductPrototype.tsx`，作为全模块产品设计的参考。从仓库根目录启动：
 
 ```sh
 corepack pnpm --dir apps/web dev --port 15176
 ```
 
-打开 `http://127.0.0.1:15176/prototype`。后续需求必须在此基准上增量修改，保留 Tapper（New chat、Agents、Skills、Library、Knowledge Graph）、Test Management、Test Insights、Low Code Automation、跨模块关联与悬浮助手；不得另建一套原型或因近期实施范围缩窄而删除既有模块。UI 展示拟交付产品的用户界面，不放演示开关、模拟场景控件或实现说明。模块清单、截图回归与边界见[产品原型基准规范](docs/guides/2026-09-22-product-prototype-baseline.md)。
+打开 `http://127.0.0.1:15176/prototype`。自 2026-10-14 起，新需求直接在对应应用源码中设计和实现（TAP AI 界面在 `apps/tap-ai-frontend`），不要求先修改 `/prototype`，也不要求原型截图回归；原规则见[产品原型基准规范](docs/guides/2026-09-22-product-prototype-baseline.md)（已停用）。
 
-当前原型包含 Dify 式切片配置、预览与维护（保存索引后直接可用）、原件查看、知识问答引用、项目维度的 Test Insights 和数据接入。`/prototype` 是完整产品设计入口；下方独立应用入口及历史截图用于各自的实现和追溯，不代替最新原型。
+当前原型包含 Dify 式切片配置、预览与维护（保存索引后直接可用）、原件查看、知识问答引用及其 👍/👎 回答反馈、项目维度的 Test Insights 和数据接入。`/prototype` 展示全部模块的设计参考；各应用的实际交互以其运行入口为准。
 
 Tapper 品牌形象自 2026-09-28 起为猫头鹰，替换原 Listening/Aha 啄木鸟；素材包见 [Tapper Owl](apps/tap-ai-frontend/assets/brand/tapper/owl/README.md)。
 
-当前设计截图：[Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。实际交互以 `main` 上运行的 `/prototype` 为准。
+当前设计截图：[Agents（英文）](docs/assets/agents-skills-demo-2026-11-04-en/23-agents-config.png) · [Skills（英文）](docs/assets/agents-skills-demo-2026-11-04-en/19-skills-library.png) · [Test Insights](docs/assets/prototype-current/test-insights.png) · [知识切片维护](docs/assets/knowledge-chunks-2026-09-27/tap-chunks-after-detail.png)。各应用的实际交互以 `develop` 上运行的应用为准。
 
 ## 文档
 
@@ -180,7 +180,7 @@ make demo-dev
 
 上游模型写在 `deploy/local/litellm/config.yaml` 里，`.env` 只放凭据（`DASHSCOPE_API_KEY`、`DASHSCOPE_API_BASE`）；后端角色由 `TAPPER_DEFAULT_CHAT_MODEL`、`TAPPER_EMBEDDING_MODEL`、`TAPPER_VISION_MODEL` 指向 `config.yaml` 里的 `model_name`，详见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)。
 
-`make demo-up` 启动并初始化 MySQL、Redis、MinIO、Milvus 与 LiteLLM；`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
+`make demo-up` 启动并初始化 MySQL、Redis、MinIO、Milvus 与 LiteLLM，并默认启动本地 Langfuse（insights ClickHouse、`langfuse-postgres`、`langfuse-web`、`langfuse-worker`）；`make langfuse-up`/`make langfuse-down` 仍可单独启动或停止 Langfuse。`make demo-dev` 在 `127.0.0.1:8000` 运行 FastAPI，在 `127.0.0.1:5173` 运行 Vite Web，并启动 Relay、Ingestion、Conversation Generation、Graph 与 Test Design Worker。默认本地端口如下：
 
 | 组件           | 默认 loopback 端口 | 职责                                                                             |
 | -------------- | ------------------ | -------------------------------------------------------------------------------- |
@@ -224,7 +224,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 
 ### `demo-check` 故障定位
 
-`make demo-check` 独立检查五个组件，只输出组件、结果和安全修复码：
+`make demo-check` 独立检查六个组件，只输出组件、结果和安全修复码：
 
 | 组件 / 修复码               | 处理方式                                                                                                                                                                                                                                                                                                                                                                                      |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -233,6 +233,7 @@ TAP_TAPPER_COMPOSE_PROJECT=tap-tapper-demo \
 | Blob / `start-blob`         | 先运行 `make object-store-build PLATFORM=linux/arm64`，核对 `.env.example` 的显式 `TAPPER_S3_*` 配置，再运行 `make demo-up`。                                                                                                                                                                                                                                                                 |
 | Milvus / `start-milvus`     | 为 Docker 分配至少 2 vCPU / 8 GiB，运行 `make demo-up`，并保留固定 reader/writer/provisioner 配置。                                                                                                                                                                                                                                                                                           |
 | Models / `configure-models` | 默认 V1 在 ignored `.env` 配置 `DASHSCOPE_API_KEY`、完整 Workspace `/compatible-mode/v1` 地址、`TAPPER_DEFAULT_CHAT_MODEL` 与 `TAPPER_EMBEDDING_MODEL`，重启 `make demo-up` 后确认这两个角色在 LiteLLM 模型目录中存在且能力符合要求（见 [LiteLLM 模型目录指南](docs/guides/2026-09-29-litellm-models.md)）。                                                                                |
+| Langfuse / `start-langfuse` | 运行 `make demo-up`（默认启动 Langfuse）或单独运行 `make langfuse-up`；确认 `.env` 中 `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` 与 `langfuse-web` 发布端口一致。Langfuse 启动失败现在会在数据库迁移前中止 `demo-up`（fail fast）。通过时若 Docker VM 内 ClickHouse 容器所在文件系统余量低于 5 GB 会额外提示清理空间。                                                                              |
 
 ### 确定性 E2E 与真实模型 smoke
 
@@ -284,6 +285,8 @@ make contracts
 make check
 make test
 ```
+
+`make test` 默认只跑核心回归：项目权限隔离、对话图与重试、Agent/Skill 配置和激活、工具白名单、引用、会话流与关键界面。日常改动先跑受影响的测试，再按风险运行核心集；不必每次运行完整门禁。`make test-full` 保留原有四个项目的完整测试，发布或跨模块变更时按需运行；`make check` 保留静态、契约与构建检查，隔离浏览器回归仍使用 `make demo-e2e`。
 
 `make contracts` 从 FastAPI 路由元数据和公共 Pydantic 模型确定性导出并检查 `contracts/openapi/api.json` 与 `contracts/events/chat-stream.schema.json`：JSON 使用排序键、两空格缩进、一个末尾换行，且不写入时间戳。HTTP DTO 与 SSE event models 是彼此独立的模型图；浏览器可见的 SSE schema 不描述 `text/event-stream` framing。
 

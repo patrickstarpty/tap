@@ -1,0 +1,445 @@
+"""`AgentRuntimeMetrics` backed by the Langfuse Metrics API v1 (3.225.11, verified
+2026-10-23). See `global-constraints.md` in the Agent team view SDD folder for the
+exact verified request/response shapes this adapter relies on.
+
+Only Turn-root traces (`turn.request`) carry `agent:<key>` and `outcome:<state>`
+tags (Task 3); every row returned by the `tags`-dimension queries below therefore
+represents a single `(agent, outcome)` (or `(agent, outcome, userId)`) combination,
+never a partial trace. Rows without an `agent:` tag -- including the empty
+"gap-filled" buckets Langfuse inserts for a `timeDimension` query -- carry no
+usable signal and are dropped.
+
+The Metrics API caps any single query at `row_limit` (1000) rows. When a query
+hits the cap, the queried period is bisected at its midday date and re-queried as
+two independent half-periods, recursively, until each sub-query returns fewer than
+1000 rows or the sub-period is a single day (in which case the partial result is
+accepted as-is -- a single day cannot be split further). The raw rows from every
+sub-query are concatenated before aggregation, so `count`/`latency sum`/`totalCost
+sum` combine by plain addition. `latency p50` cannot be combined this way (the
+`tags` dimension returns the whole tag set, so each row is one `outcome:` group),
+so each Agent with runs gets its own dimensionless p50 query filtered to its
+`agent:` tag over the whole period; only if that query fails does the p50 fall
+back to a run-count-weighted mean of the grouped rows' p50s.
+
+Query building, the project/environment filters, the row-limit bisection and
+the HTTP request itself live in
+`tap.platform.reporting.langfuse_metrics_client.LangfuseMetricsClient`
+(shared with Skill Hub); this adapter owns the Agent-specific aggregation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Coroutine, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+import httpx
+
+from tap.modules.agent_team.domain.models import Period
+from tap.modules.agent_team.ports import (
+    AgentRuntimeStats,
+    RuntimeMetricsUnavailable,
+    ServedActor,
+    TrendPoint,
+)
+from tap.platform.reporting.langfuse_metrics_client import LangfuseMetricsClient
+
+_TRACES_PATH = "/api/public/traces"
+_AGENT_PREFIX = "agent:"
+_OUTCOME_PREFIX = "outcome:"
+_PROJECT_PREFIX = "project:"
+# Malformed response bodies (bad numbers, bad timestamps, non-dict rows) are a
+# backend-contract break, not a programming error -- mapped to
+# `RuntimeMetricsUnavailable` same as a network failure.
+_PARSE_ERRORS = (InvalidOperation, ValueError, AttributeError, TypeError, KeyError)
+
+
+def _tag_value(tags: Sequence[str], prefix: str) -> str | None:
+    for tag in tags:
+        if isinstance(tag, str) and tag.startswith(prefix):
+            return tag[len(prefix) :]
+    return None
+
+
+def _as_number(value: Any) -> Decimal:
+    if value is None:
+        return Decimal(0)
+    if isinstance(value, bool):
+        return Decimal(0)
+    if isinstance(value, int):
+        return Decimal(value)
+    return Decimal(str(value))
+
+
+def _as_int(value: Any) -> int:
+    return int(_as_number(value))
+
+
+@dataclass(frozen=True, slots=True)
+class _StatsAccumulator:
+    runs: int = 0
+    failures: int = 0
+    abstained: int = 0
+    canceled: int = 0
+    latency_total_ms: int = 0
+    latency_weighted_p50: Decimal = Decimal(0)
+    cost_usd: Decimal = Decimal(0)
+
+
+async def _gather[T](*awaitables: Coroutine[Any, Any, T]) -> list[T]:
+    """`asyncio.gather` with structured cancellation: the first failure
+    cancels the sibling requests (a bare `gather` leaves them running), and
+    the failure is re-raised bare so callers' `except RuntimeMetricsUnavailable`
+    still matches instead of seeing an `ExceptionGroup`."""
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks: list[asyncio.Task[T]] = [
+                group.create_task(awaitable) for awaitable in awaitables
+            ]
+    except ExceptionGroup as group_error:
+        raise group_error.exceptions[0] from None
+    return [task.result() for task in tasks]
+
+
+class LangfuseRuntimeMetrics:
+    """Queries a single Langfuse project's traces/observations for Agent runtime
+    metrics. `client` is owned by the caller; this adapter never closes it."""
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        host: str,
+        public_key: str,
+        secret_key: str,
+        environment: str,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        self._client = client
+        self._host = host.rstrip("/")
+        self._auth = (public_key, secret_key)
+        self._environment = environment
+        self._timeout_seconds = timeout_seconds
+        self._metrics = LangfuseMetricsClient(
+            client,
+            host=host,
+            public_key=public_key,
+            secret_key=secret_key,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+        """Aggregated runtime stats per Agent over `period`.
+
+        `AgentRuntimeStats.latency_p50_ms` is the p50 over all of the
+        Agent's runs in `period`, from one extra per-Agent query (see module
+        docstring); when that query fails it falls back to a run-count-
+        weighted mean of each `outcome:`/date-segment group's own p50.
+
+        The whole call is bounded by `timeout_seconds` regardless of how many
+        underlying HTTP requests the row-limit bisection needs; raises
+        `RuntimeMetricsUnavailable` on timeout, transport failure, or a
+        malformed response body.
+        """
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._agent_stats(project_id, period)
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable() from error
+        except _PARSE_ERRORS as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    async def _agent_stats(self, project_id: str, period: Period) -> list[AgentRuntimeStats]:
+        outcome_rows, served_rows, generation_rows, tool_rows = await _gather(
+            self._metrics.rows(
+                project_id=project_id,
+                view="traces",
+                dimensions=["tags"],
+                metrics=[
+                    {"measure": "count", "aggregation": "count"},
+                    {"measure": "latency", "aggregation": "sum"},
+                    {"measure": "latency", "aggregation": "p50"},
+                    {"measure": "totalCost", "aggregation": "sum"},
+                ],
+                period=period,
+            ),
+            self._metrics.rows(
+                project_id=project_id,
+                view="traces",
+                dimensions=["tags", "userId"],
+                metrics=[{"measure": "count", "aggregation": "count"}],
+                period=period,
+            ),
+            self._metrics.rows(
+                project_id=project_id,
+                view="observations",
+                dimensions=["tags", "userId"],
+                metrics=[{"measure": "count", "aggregation": "count"}],
+                period=period,
+                extra_filters=[
+                    {
+                        "column": "type",
+                        "operator": "=",
+                        "value": "GENERATION",
+                        "type": "string",
+                    },
+                ],
+            ),
+            self._metrics.rows(
+                project_id=project_id,
+                view="observations",
+                dimensions=["tags", "userId"],
+                metrics=[{"measure": "count", "aggregation": "count"}],
+                period=period,
+                extra_filters=[
+                    {
+                        "column": "name",
+                        "operator": "starts with",
+                        "value": "tool.",
+                        "type": "string",
+                    },
+                ],
+            ),
+        )
+
+        accumulators = self._accumulate_outcomes(outcome_rows)
+        served = self._accumulate_served(served_rows)
+        generation_calls = self._accumulate_counts(generation_rows)
+        tool_calls = self._accumulate_counts(tool_rows)
+
+        p50_keys = sorted(key for key, acc in accumulators.items() if acc.runs > 0)
+        exact_p50 = dict(
+            zip(
+                p50_keys,
+                await _gather(
+                    *(self._fetch_agent_p50(project_id, key, period) for key in p50_keys)
+                ),
+                strict=True,
+            )
+        )
+
+        agent_keys = set(accumulators) | set(served) | set(generation_calls) | set(tool_calls)
+        results: list[AgentRuntimeStats] = []
+        for agent_key in sorted(agent_keys):
+            acc = accumulators.get(agent_key, _StatsAccumulator())
+            p50 = exact_p50.get(agent_key)
+            if p50 is None and acc.runs > 0:
+                p50 = _as_int(acc.latency_weighted_p50 / acc.runs)
+            results.append(
+                AgentRuntimeStats(
+                    agent_key=agent_key,
+                    runs=acc.runs,
+                    failures=acc.failures,
+                    abstained=acc.abstained,
+                    canceled=acc.canceled,
+                    latency_total_ms=acc.latency_total_ms,
+                    latency_p50_ms=p50,
+                    cost_usd=acc.cost_usd,
+                    served=served.get(agent_key, ()),
+                    generation_calls=generation_calls.get(agent_key, 0),
+                    tool_calls=tool_calls.get(agent_key, 0),
+                )
+            )
+        return results
+
+    async def _fetch_agent_p50(self, project_id: str, agent_key: str, period: Period) -> int | None:
+        """The exact p50 latency over all of `agent_key`'s runs in `period`
+        (one row: no dimensions, so no row-limit bisection), or `None` when
+        the query fails or returns no value -- the caller then falls back to
+        the weighted-mean approximation. Never raises, so one Agent's failed
+        query cannot cancel the others'."""
+        query = self._metrics.query(
+            view="traces",
+            dimensions=[],
+            metrics=[{"measure": "latency", "aggregation": "p50"}],
+            filters=self._metrics.base_filters(project_id, tags=[f"{_AGENT_PREFIX}{agent_key}"]),
+            period=period,
+        )
+        try:
+            rows = await self._metrics.request(query)
+            if not rows:
+                return None
+            value = rows[0].get("p50_latency")
+            return None if value is None else _as_int(value)
+        except (RuntimeMetricsUnavailable, *_PARSE_ERRORS):
+            return None
+
+    async def trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
+        """Per-Agent, per-bucket runtime trend. Langfuse labels week/month
+        buckets by the bucket's own start (the Monday of the week, or the
+        1st of the month) even when `fromTimestamp` falls mid-bucket -- so a
+        row-limit bisection that splits a period mid-bucket yields two
+        sub-queries that both report the same `time_dimension` label for
+        that bucket. Grouping by `(bucket_start, agent_key)` before summing
+        (rather than concatenating rows into one list of `TrendPoint`s)
+        merges those back into a single point instead of double-reporting
+        the bucket.
+        """
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._trend(project_id, period, granularity)
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable() from error
+        except _PARSE_ERRORS as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    async def _trend(self, project_id: str, period: Period, granularity: str) -> list[TrendPoint]:
+        rows = await self._metrics.rows(
+            project_id=project_id,
+            view="traces",
+            dimensions=["tags"],
+            metrics=[
+                {"measure": "count", "aggregation": "count"},
+                {"measure": "latency", "aggregation": "sum"},
+                {"measure": "totalCost", "aggregation": "sum"},
+            ],
+            period=period,
+            granularity=granularity,
+        )
+        buckets: dict[tuple[date, str], dict[str, Any]] = {}
+        for row in rows:
+            tags = row.get("tags")
+            if not isinstance(tags, list):
+                continue
+            agent_key = _tag_value(tags, _AGENT_PREFIX)
+            if agent_key is None:
+                continue
+            time_dimension = row.get("time_dimension")
+            if not isinstance(time_dimension, str) or not time_dimension:
+                continue
+            bucket_start = date.fromisoformat(time_dimension[:10])
+            key = (bucket_start, agent_key)
+            bucket = buckets.setdefault(
+                key,
+                {"runs": 0, "failures": 0, "latency_total_ms": 0, "cost_usd": Decimal(0)},
+            )
+            count = _as_int(row.get("count_count"))
+            bucket["runs"] += count
+            if _tag_value(tags, _OUTCOME_PREFIX) == "failed":
+                bucket["failures"] += count
+            bucket["latency_total_ms"] += _as_int(row.get("sum_latency"))
+            bucket["cost_usd"] += _as_number(row.get("sum_totalCost"))
+
+        return [
+            TrendPoint(
+                bucket_start=bucket_start,
+                agent_key=agent_key,
+                runs=bucket["runs"],
+                failures=bucket["failures"],
+                latency_total_ms=bucket["latency_total_ms"],
+                cost_usd=bucket["cost_usd"],
+            )
+            for (bucket_start, agent_key), bucket in sorted(buckets.items())
+        ]
+
+    async def last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._last_runs(project_id, agent_keys)
+        except TimeoutError as error:
+            raise RuntimeMetricsUnavailable() from error
+        except _PARSE_ERRORS as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    async def _last_runs(self, project_id: str, agent_keys: Sequence[str]) -> dict[str, datetime]:
+        pairs = await _gather(
+            *(self._fetch_last_run(project_id, agent_key) for agent_key in agent_keys)
+        )
+        return {agent_key: timestamp for agent_key, timestamp in pairs if timestamp is not None}
+
+    async def _fetch_last_run(self, project_id: str, agent_key: str) -> tuple[str, datetime | None]:
+        try:
+            response = await self._client.get(
+                self._host + _TRACES_PATH,
+                params={
+                    "tags": [f"{_PROJECT_PREFIX}{project_id}", f"{_AGENT_PREFIX}{agent_key}"],
+                    "orderBy": "timestamp.desc",
+                    "limit": "1",
+                    "environment": self._environment,
+                },
+                auth=self._auth,
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeMetricsUnavailable() from error
+        if not isinstance(body, dict):
+            raise RuntimeMetricsUnavailable()
+        data = body.get("data")
+        if not isinstance(data, list) or not data:
+            return agent_key, None
+        first = data[0]
+        if not isinstance(first, dict):
+            raise RuntimeMetricsUnavailable()
+        timestamp = first.get("timestamp")
+        if not isinstance(timestamp, str):
+            raise RuntimeMetricsUnavailable()
+        try:
+            return agent_key, datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise RuntimeMetricsUnavailable() from error
+
+    def _accumulate_outcomes(self, rows: list[dict[str, Any]]) -> dict[str, _StatsAccumulator]:
+        accumulators: dict[str, _StatsAccumulator] = {}
+        for row in rows:
+            tags = row.get("tags")
+            if not isinstance(tags, list):
+                continue
+            agent_key = _tag_value(tags, _AGENT_PREFIX)
+            if agent_key is None:
+                continue
+            outcome = _tag_value(tags, _OUTCOME_PREFIX)
+            count = _as_int(row.get("count_count"))
+            latency_sum = _as_int(row.get("sum_latency"))
+            p50 = _as_number(row.get("p50_latency"))
+            cost = _as_number(row.get("sum_totalCost"))
+            current = accumulators.get(agent_key, _StatsAccumulator())
+            accumulators[agent_key] = _StatsAccumulator(
+                runs=current.runs + count,
+                failures=current.failures + (count if outcome == "failed" else 0),
+                abstained=current.abstained + (count if outcome == "abstained" else 0),
+                canceled=current.canceled + (count if outcome == "canceled" else 0),
+                latency_total_ms=current.latency_total_ms + latency_sum,
+                latency_weighted_p50=current.latency_weighted_p50 + p50 * count,
+                cost_usd=current.cost_usd + cost,
+            )
+        return accumulators
+
+    def _accumulate_served(self, rows: list[dict[str, Any]]) -> dict[str, tuple[ServedActor, ...]]:
+        per_agent: dict[str, dict[str, int]] = {}
+        for row in rows:
+            tags = row.get("tags")
+            if not isinstance(tags, list):
+                continue
+            agent_key = _tag_value(tags, _AGENT_PREFIX)
+            if agent_key is None:
+                continue
+            actor_id = row.get("userId")
+            if not isinstance(actor_id, str) or not actor_id:
+                continue
+            count = _as_int(row.get("count_count"))
+            actors = per_agent.setdefault(agent_key, {})
+            actors[actor_id] = actors.get(actor_id, 0) + count
+
+        result: dict[str, tuple[ServedActor, ...]] = {}
+        for agent_key, actors in per_agent.items():
+            ordered = sorted(actors.items(), key=lambda item: (-item[1], item[0]))
+            result[agent_key] = tuple(ServedActor(actor_id, runs) for actor_id, runs in ordered)
+        return result
+
+    def _accumulate_counts(self, rows: list[dict[str, Any]]) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for row in rows:
+            tags = row.get("tags")
+            if not isinstance(tags, list):
+                continue
+            agent_key = _tag_value(tags, _AGENT_PREFIX)
+            if agent_key is None:
+                continue
+            totals[agent_key] = totals.get(agent_key, 0) + _as_int(row.get("count_count"))
+        return totals

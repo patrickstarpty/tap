@@ -10,8 +10,8 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import { Button, Input } from "antd";
-import { useQuery } from "@tanstack/react-query";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -26,17 +26,25 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { getFileTypeFamily } from "./fileTypes";
 import { AccessibleDialog } from "./AccessibleDialog";
 import type { WorkspaceCopy } from "./copy";
-import { KnowledgeGraph } from "./KnowledgeGraph";
 import {
-  useActiveGraph,
-  useGraphSearch,
-} from "../../../features/graph/api/queries";
-import { publishedGraphData } from "./publishedGraphData";
-import { createKnowledgeClient } from "../../../features/knowledge/api/client";
+  GraphOverview,
+  type GraphSourceScope,
+} from "../../../features/graph/components/GraphOverview";
+import type { GraphHighlightState } from "../../../features/graph/model/highlight";
+import { KnowledgeGraph } from "./KnowledgeGraph";
 import type { LibrarySource } from "./model";
 
 type LibraryMode = "list" | "graph";
+
+// Backend `knowledge_graph.py`'s `sourceRevisionId` query param is capped at
+// `max_length=50` on the overview/search/neighbors endpoints.
+const MAX_GRAPH_SOURCE_REVISIONS = 50;
 type LibraryStatusFilter = "all" | LibrarySource["status"];
+
+export interface PublishedSourceRevision {
+  sourceId: string;
+  revisionId: string;
+}
 
 interface LibraryWorkspaceProps {
   copy: WorkspaceCopy;
@@ -47,120 +55,24 @@ interface LibraryWorkspaceProps {
   onReload?: () => void;
   graphProjectId?: string;
   locale?: "en" | "zh";
+  publishedSources?: readonly PublishedSourceRevision[];
+  publishedSourcesLoading?: boolean;
+  onAskAboutNode?: (label: string, sourceIds: string[]) => void;
+  onOpenSource?: (sourceId: string, trigger: HTMLElement) => void;
+  graphHighlight?: GraphHighlightState | null;
+  onClearGraphHighlight?: () => void;
 }
 
-function ProjectKnowledgeGraph({
-  projectId,
-  sources,
-  locale,
-  copy,
-  query,
-  onViewSource,
-}: {
-  projectId: string;
-  sources: readonly LibrarySource[];
-  locale: "en" | "zh";
-  copy: WorkspaceCopy;
-  query: string;
-  onViewSource: (source: LibrarySource) => void;
-}) {
-  const readySources = sources.filter((source) => source.status === "ready");
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const selectedId = readySources.some(
-    (source) => source.id === selectedSourceId,
-  )
-    ? selectedSourceId
-    : (readySources[0]?.id ?? null);
-  const detail = useQuery({
-    queryKey: ["knowledge", projectId, "source", selectedId, "graph"],
-    queryFn: ({ signal }) =>
-      createKnowledgeClient({ projectId }).getSource(selectedId!, signal),
-    enabled: selectedId !== null,
-    retry: false,
-  });
-  const revisionId = detail.data?.documents.items.find(
-    (document) => document.status === "ready",
-  )?.revisionId;
-  const active = useActiveGraph(projectId, revisionId ? [revisionId] : []);
-  const snapshotId = active.data?.items[0]?.snapshotId ?? null;
-  const graph = useGraphSearch(projectId, snapshotId, "*");
-  const selectedSource = readySources.find(
-    (source) => source.id === selectedId,
+function publishedRevisionIdsOf(
+  sources: readonly LibrarySource[],
+  publishedSources: readonly PublishedSourceRevision[],
+): string[] {
+  const revisionBySourceId = new Map(
+    publishedSources.map((source) => [source.sourceId, source.revisionId]),
   );
-  const published =
-    selectedSource && graph.data
-      ? publishedGraphData(graph.data, selectedSource)
-      : null;
-
-  return (
-    <div className="tap-project-graph">
-      {readySources.length > 0 ? (
-        <div className="tap-project-graph-controls">
-          <label className="tap-project-graph-source">
-            <span>{locale === "zh" ? "图谱来源" : "Graph source"}</span>
-            <select
-              value={selectedId ?? ""}
-              onChange={(event) => setSelectedSourceId(event.target.value)}
-            >
-              {readySources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      ) : null}
-      {selectedId === null ? (
-        <p role="status">
-          {locale === "zh"
-            ? "请选择已就绪来源查看图谱。"
-            : "Select a ready source to view its graph."}
-        </p>
-      ) : detail.isError ? (
-        <p role="alert">
-          {locale === "zh"
-            ? "无法加载图谱来源，请重试。"
-            : "The graph source could not be loaded. Try again."}
-        </p>
-      ) : detail.isPending ? (
-        <p role="status">
-          {locale === "zh" ? "正在加载图谱来源…" : "Loading graph source…"}
-        </p>
-      ) : active.isError || graph.isError ? (
-        <p role="alert">
-          {locale === "zh"
-            ? "已发布图谱暂时无法加载。"
-            : "The published graph is temporarily unavailable."}
-        </p>
-      ) : active.isPending || (snapshotId && graph.isPending) ? (
-        <p role="status">
-          {locale === "zh"
-            ? "正在加载已发布图谱…"
-            : "Loading the published graph…"}
-        </p>
-      ) : published ? (
-        <KnowledgeGraph
-          copy={copy}
-          query={query}
-          sources={selectedSource ? [selectedSource] : []}
-          onViewSource={onViewSource}
-          publishedData={published}
-          publishedCaption={
-            locale === "zh"
-              ? "已发布的来源图谱 · 节点与关系来自服务。"
-              : "Published source graph · nodes and relationships come from the service."
-          }
-        />
-      ) : (
-        <p role="status">
-          {locale === "zh"
-            ? "此来源尚无已发布图谱。"
-            : "No published graph is ready for this source yet."}
-        </p>
-      )}
-    </div>
-  );
+  return sources
+    .map((source) => revisionBySourceId.get(source.id))
+    .filter((revisionId): revisionId is string => revisionId !== undefined);
 }
 
 export function LibraryWorkspace({
@@ -172,13 +84,29 @@ export function LibraryWorkspace({
   onReload,
   graphProjectId,
   locale = "en",
+  publishedSources = [],
+  publishedSourcesLoading = false,
+  onAskAboutNode,
+  onOpenSource,
+  graphHighlight = null,
+  onClearGraphHighlight,
 }: LibraryWorkspaceProps) {
   const [uploadPending, setUploadPending] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
   const [view, setView] = useState<"list" | "cards">("cards");
+  // A pending graph highlight (e.g. "View in Library" on an answer's edge
+  // citation) must land on the Knowledge Graph tab, not the Documents list,
+  // even when a project is selected (which otherwise defaults to "list").
   const [mode, setMode] = useState<LibraryMode>(() =>
-    graphProjectId === undefined ? "graph" : "list",
+    graphProjectId === undefined || graphHighlight !== null ? "graph" : "list",
   );
+  // A highlight that arrives *after* mount (a same-tab "View in Library"
+  // push, or a popstate navigation while already on the Documents tab)
+  // must switch to the Knowledge Graph tab too, not just the initial-mount
+  // case above.
+  useEffect(() => {
+    if (graphHighlight !== null) setMode("graph");
+  }, [graphHighlight]);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<LibraryStatusFilter>("all");
@@ -216,6 +144,46 @@ export function LibraryWorkspace({
     normalizedQuery.length > 0 ||
     typeFilter !== "all" ||
     statusFilter !== "all";
+  // The graph is scoped by the type/status facets, not by the free-text
+  // search box: the search box drives the Knowledge Graph's own node
+  // search (see `GraphOverview`/`KnowledgeGraph`), not which sources the
+  // overview is built from.
+  const sourceFilterActive = typeFilter !== "all" || statusFilter !== "all";
+  const graphSourceRevisionIds = useMemo(
+    () => publishedRevisionIdsOf(facetSources, publishedSources),
+    [facetSources, publishedSources],
+  );
+  // The backend's overview/search/neighbors endpoints reject more than 50
+  // `sourceRevisionId` query params (422) -- a facet that matches more than
+  // that is capped to the first 50 here, with a notice shown below so the
+  // graph's scope doesn't silently shrink without explanation.
+  const sourceRevisionIdsOverLimit =
+    sourceFilterActive &&
+    graphSourceRevisionIds.length > MAX_GRAPH_SOURCE_REVISIONS;
+  const cappedGraphSourceRevisionIds = sourceRevisionIdsOverLimit
+    ? graphSourceRevisionIds.slice(0, MAX_GRAPH_SOURCE_REVISIONS)
+    : graphSourceRevisionIds;
+  const sourceScope: GraphSourceScope =
+    publishedSourcesLoading || loadState === "loading"
+      ? { status: "loading" }
+      : sourceFilterActive && loadState === "error"
+        ? { status: "unavailable" }
+        : sourceFilterActive && graphSourceRevisionIds.length === 0
+          ? { status: "no-match" }
+          : {
+              status: "ready",
+              // No facet active: send an empty array, which the backend
+              // treats as "no filter" (the whole project graph) -- sending
+              // every published source id instead would 422 once a project
+              // has more than 50 published sources, even though the user
+              // narrowed nothing. `GraphOverview` relies on this same
+              // emptiness to tell "unfiltered" apart from "filtered, but the
+              // capped/matched set happens to be empty" (the latter is
+              // always routed to `no-match` above, never `ready`).
+              sourceRevisionIds: sourceFilterActive
+                ? cappedGraphSourceRevisionIds
+                : [],
+            };
 
   const selectMode = (nextMode: LibraryMode) => {
     setMode(nextMode);
@@ -506,18 +474,26 @@ export function LibraryWorkspace({
               {locale === "zh" ? "未选择项目。" : "No project is selected."}
             </p>
           ) : (
-            <ProjectKnowledgeGraph
-              projectId={graphProjectId}
-              sources={visibleSources}
-              locale={locale}
-              copy={copy}
-              query={query}
-              onViewSource={(source) => {
-                setQuery(source.name);
-                setMode("list");
-                listTabRef.current?.focus();
-              }}
-            />
+            <>
+              {sourceRevisionIdsOverLimit ? (
+                <p role="status">
+                  {copy.library.sourceCapNotice(graphSourceRevisionIds.length)}
+                </p>
+              ) : null}
+              <GraphOverview
+                projectId={graphProjectId}
+                locale={locale}
+                copy={copy}
+                query={query}
+                sourceScope={sourceScope}
+                publishedSources={publishedSources}
+                onAskAboutNode={onAskAboutNode}
+                onOpenSource={onOpenSource}
+                highlight={graphHighlight}
+                onClearHighlight={onClearGraphHighlight}
+                Canvas={KnowledgeGraph}
+              />
+            </>
           )}
         </div>
       )}

@@ -39,6 +39,7 @@ from tap.modules.chat.application.ports import (
     TurnNotFound,
 )
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId, TurnState
+from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import augment_project_table, metadata, outbox
 from tap.platform.messaging.mysql_outbox import (
@@ -60,6 +61,8 @@ chat_turn = Table(
     Column("processing_attempt", Integer, nullable=False, server_default="0"),
     Column("processing_lease_token", String(64)),
     Column("processing_lease_expires_at", DATETIME(fsp=6)),
+    Column("next_attempt_at", DATETIME(fsp=6), nullable=True),
+    Column("last_failure", String(128), nullable=True),
     Column("last_sequence", BigInteger, nullable=False, server_default="0"),
     Column("created_at", DATETIME(fsp=6), nullable=False),
     Column("traceparent", String(55), nullable=True),
@@ -344,7 +347,14 @@ class OutboxStore:
     async def reconcile_expired(self, now: datetime, limit: int) -> int:
         if limit <= 0:
             return 0
-        async with self._sessions() as session, session.begin():
+        return await claim_or_nothing(
+            lambda: self._reconcile_expired_once(now, limit),
+            kind="relay-reconcile",
+            nothing=0,
+        )
+
+    async def _reconcile_expired_once(self, now: datetime, limit: int) -> int:
+        async with claim_transaction(self._sessions) as session:
             expired_ids = list(
                 (
                     await session.execute(
@@ -385,8 +395,26 @@ class OutboxStore:
     ) -> list[ClaimedOutbox]:
         if limit <= 0:
             return []
-        claim_time = _utc_naive(now)
-        async with self._sessions() as session, session.begin():
+        return await claim_or_nothing(
+            lambda: self._claim_pending_once(
+                worker_id=worker_id,
+                claim_time=_utc_naive(now),
+                lease_duration=lease_duration,
+                limit=limit,
+            ),
+            kind="relay-outbox",
+            nothing=[],
+        )
+
+    async def _claim_pending_once(
+        self,
+        *,
+        worker_id: str,
+        claim_time: datetime,
+        lease_duration: timedelta,
+        limit: int,
+    ) -> list[ClaimedOutbox]:
+        async with claim_transaction(self._sessions) as session:
             pending_ids = list(
                 (
                     await session.execute(

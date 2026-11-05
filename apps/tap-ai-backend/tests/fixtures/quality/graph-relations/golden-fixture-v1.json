@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "graph-relation-golden-v1",
+  "labeledBy": "generated-fixture",
+  "labeledAt": "2026-10-09",
+  "corpus": {
+    "manifest": "fixture",
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "questions": [
+    {
+      "id": "q-01",
+      "question": "核保流程和健康告知是什么关系",
+      "locale": "zh",
+      "expectedEntities": [
+        {"label": "核保流程"},
+        {"label": "健康告知"}
+      ],
+      "expectedEdges": [
+        {"subject": "核保流程", "relationType": "REQUIRES", "object": "健康告知"}
+      ],
+      "expectedSources": ["underwriting-process"]
+    },
+    {
+      "id": "q-02",
+      "question": "理赔申请需要什么",
+      "locale": "zh",
+      "expectedEntities": [
+        {"label": "理赔申请"},
+        {"label": "健康告知"}
+      ],
+      "expectedEdges": [
+        {"subject": "理赔申请", "relationType": "REQUIRES", "object": "健康告知"}
+      ],
+      "expectedSources": ["claims-process"]
+    },
+    {
+      "id": "q-03",
+      "question": "保单签发之后会发生什么",
+      "locale": "zh",
+      "expectedEntities": [
+        {"label": "保单签发"},
+        {"label": "理赔权益"},
+        {"label": "核保流程"}
+      ],
+      "expectedEdges": [
+        {
+          "subject": "保单签发",
+          "relationType": "TRIGGERS",
+          "object": "理赔权益",
+          "alternatives": [
+            {"subject": "核保流程", "relationType": "PRECEDES", "object": "保单签发"}
+          ]
+        }
+      ],
+      "expectedSources": ["underwriting-process", "claims-process"]
+    }
+  ]
+}

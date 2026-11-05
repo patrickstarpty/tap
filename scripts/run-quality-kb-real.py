@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +29,8 @@ from tap.modules.ai.domain.models import (
     ModelGatewayUnavailable,
     ModelRequest,
     ModelResult,
+    ModelStreamEvent,
+    ModelTextDelta,
 )
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.application.answers import (
@@ -148,6 +150,99 @@ class CapturingModelGateway:
 
     async def generate_structured(self, request: ModelRequest) -> ModelResult:
         return await self._capture("generate_structured", request)
+
+    async def chat_stream(
+        self, request: ModelRequest
+    ) -> AsyncIterator[ModelStreamEvent]:
+        """`KnowledgeModelGateway.answer` (LangGraph PR 3) now streams every
+        grounded answer over `chat_stream` instead of `generate_structured`, so
+        this must attest the call the same way `_capture` does for the other
+        three operations -- just driven by the final `ModelResult` the
+        delegate's async generator yields, with every `ModelTextDelta` forwarded
+        to the caller untouched and uncaptured (it carries no audit)."""
+
+        if self._active is None:
+            raise RuntimeError("ModelGateway call occurred outside a quality attempt")
+        route = self._routes.get(request.operation.value)
+        if route is None or route.get("logicalAlias") != request.alias:
+            raise ValueError("production ModelGateway route is not captured")
+        call_started_at = await self._budget.reserve()
+        receipt: dict[str, object] = {
+            "runnerCallId": str(uuid4()),
+            "requestedAlias": request.alias,
+            "requestedOperation": request.operation.value,
+            "startedAtUtc": _utc_text(call_started_at),
+            "status": "started",
+            "operation": request.operation.value,
+            "alias": request.alias,
+            "promptDigest": request.prompt_digest,
+            "schemaDigest": request.schema_digest,
+            "governanceDigests": list(request.governance_digests),
+        }
+        self._active.append(receipt)
+        started = time.monotonic_ns()
+        result: ModelResult | None = None
+        try:
+            async for event in self._delegate.chat_stream(request):
+                if isinstance(event, ModelTextDelta):
+                    yield event
+                    continue
+                result = event
+            if result is None:
+                raise ModelGatewayUnavailable()
+            audit = getattr(result, "audit", None)
+            if audit is None or (
+                getattr(result, "actual_provider", None)
+                != getattr(audit, "actual_provider", None)
+                or getattr(result, "actual_model", None)
+                != getattr(audit, "actual_model", None)
+            ):
+                raise ValueError("ModelGateway result/audit identity mismatch")
+            usage = getattr(audit, "usage", None)
+            receipt.update(
+                {
+                    "status": "success",
+                    "retryable": False,
+                    "operation": str(getattr(audit, "operation", "")),
+                    "alias": getattr(audit, "alias", None),
+                    "actualProvider": audit.actual_provider,
+                    "actualModel": audit.actual_model,
+                    "promptDigest": audit.prompt_digest,
+                    "schemaDigest": audit.schema_digest,
+                    "contextDigest": audit.context_digest,
+                    "governanceDigests": list(audit.governance_digests),
+                    "providerRequestId": getattr(result, "provider_request_id", None),
+                    "gatewayCallId": getattr(result, "gateway_call_id", None),
+                    "inputTokens": getattr(usage, "input_tokens", None),
+                    "outputTokens": getattr(usage, "output_tokens", None),
+                }
+            )
+            yield result
+        except BaseException as error:
+            receipt.update(
+                {
+                    "status": "error",
+                    "retryable": isinstance(
+                        error,
+                        (ModelGatewayUnavailable, TimeoutError, ConnectionError),
+                    ),
+                    "errorCode": type(error).__name__[:64],
+                }
+            )
+            if result is not None:
+                receipt.update(
+                    {
+                        "actualProvider": getattr(result, "actual_provider", None),
+                        "actualModel": getattr(result, "actual_model", None),
+                        "providerRequestId": getattr(
+                            result, "provider_request_id", None
+                        ),
+                        "gatewayCallId": getattr(result, "gateway_call_id", None),
+                    }
+                )
+            raise
+        finally:
+            receipt["durationMs"] = max(0, (time.monotonic_ns() - started) // 1_000_000)
 
     async def _capture(self, method: str, request: ModelRequest) -> ModelResult:
         if self._active is None:

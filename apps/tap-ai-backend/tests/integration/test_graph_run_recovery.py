@@ -20,6 +20,7 @@ from tap.modules.ai.adapters.mysql_checkpointer import (
     graph_run,
     graph_settlement,
 )
+from tap.modules.ai.application.chat_graph import CHAT_GRAPH_VERSION, CHAT_STATE_SCHEMA_VERSION
 from tap.modules.ai.application.interaction_graph import (
     GraphVersionConflict,
     InteractionGraph,
@@ -31,7 +32,7 @@ from tap.modules.chat.adapters.mysql_conversations import (
     chat_turn,
     turn_answer_evidence_snapshot,
 )
-from tap.modules.chat.application.conversations import ConversationService
+from tap.modules.chat.application.conversations import ClaimBatch, ConversationService
 from tap.modules.chat.domain.conversations import (
     AnswerEvidence,
     FrozenResource,
@@ -53,6 +54,14 @@ from tests.integration.test_knowledge_publication import (
     approved_review,
     seed_authority,
 )
+
+
+class _WorkerKilled(BaseException):
+    """Simulates the worker process dying mid-write (not a Python `Exception`):
+    `GenerationWorker` only classifies and defers `Exception`s, so a real crash --
+    unlike a transient `GraphCheckpointRetryable` the worker now catches and defers
+    with backoff bookkeeping -- must escape `run_once` uncaught and leave no
+    bookkeeping behind, exactly like a killed process would."""
 
 
 def _graph(
@@ -535,13 +544,13 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
             leaked_answer_count = await session.scalar(
                 text(
                     "SELECT COUNT(*) FROM chat_event "
-                    "WHERE turn_id='turn-permanent' AND event_type='answer.delta'"
+                    "WHERE turn_id='turn-permanent' AND event_type='turn.completed'"
                 )
             )
             healthy_answer_count = await session.scalar(
                 text(
                     "SELECT COUNT(*) FROM chat_event "
-                    "WHERE turn_id='turn-healthy' AND event_type='answer.delta'"
+                    "WHERE turn_id='turn-healthy' AND event_type='turn.completed'"
                 )
             )
         assert failure_outbox_count == 1
@@ -563,7 +572,7 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
         await original_aput_writes(self, config, writes, task_id, task_path)
         if not failed and any(channel == "result" for channel, _value in writes):
             failed = True
-            raise GraphCheckpointRetryable("connection lost after durable task write")
+            raise _WorkerKilled("worker killed after durable task write")
 
     monkeypatch.setattr(MysqlGraphCheckpointer, "aput_writes", fail_once_after_durable_write)
 
@@ -591,7 +600,8 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
         knowledge = Knowledge()
         worker = GenerationWorker(conversations, knowledge)
 
-        assert await worker.run_once(limit=1) == 1
+        with pytest.raises(_WorkerKilled):
+            await worker.run_once(limit=1)
         first = (await conversations.load("chat-takeover")).turns[0]
         assert first.state == "running"
         assert first.attempt == 1
@@ -645,7 +655,7 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
             async def claim_queued(self, *, limit):
                 del limit
                 claimed, self.claimed = self.claimed, None
-                return () if claimed is None else (claimed,)
+                return ClaimBatch(()) if claimed is None else ClaimBatch((claimed,))
 
             def __getattr__(self, name):
                 return getattr(self.delegate, name)
@@ -710,17 +720,36 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
         authority = PublishedKnowledgeAuthority(review)
 
         class Knowledge(KnowledgeHttpService):
+            """Overrides every resumable step directly (rather than just
+            `answer_conversation`) so `answer_steps()` sees this double as
+            already implementing `ConversationAnswerSteps` and uses it as-is,
+            without running the real retrieval/governance steps it inherits
+            from `KnowledgeHttpService` against the synthetic `knowledge=
+            object()` wired into `AnswerService` below."""
+
             calls = 0
 
-            async def answer_conversation(self, *_args, **_kwargs):
+            async def prepare_conversation_answer(self, *_args, **_kwargs):
                 self.calls += 1
-                return SimpleNamespace(
-                    answer="grounded secret",
-                    citations=(),
-                    abstained=False,
-                    trace_id="trace-recovery",
-                    model_dump=lambda **_: {"answer": "grounded secret", "citations": []},
-                )
+                return {
+                    "kind": "final",
+                    "response": SimpleNamespace(
+                        answer="grounded secret",
+                        citations=(),
+                        abstained=False,
+                        trace_id="trace-recovery",
+                        model_dump=lambda **_: {"answer": "grounded secret", "citations": []},
+                    ),
+                }
+
+            async def generate_conversation_answer(self, step, *_args, **_kwargs):
+                return step
+
+            async def verify_conversation_answer(self, step, *_args, **_kwargs):
+                return step
+
+            async def finalize_conversation_answer(self, step, *_args, **_kwargs):
+                return step["response"]
 
         knowledge = Knowledge(
             documents=documents,
@@ -770,10 +799,10 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
 
         async def crash_before_settle(*_args, **_kwargs):
             conversations.complete_evidence = settle
-            raise RuntimeError("worker stopped after result checkpoint")
+            raise _WorkerKilled("worker stopped after result checkpoint")
 
         conversations.complete_evidence = crash_before_settle
-        with pytest.raises(RuntimeError, match="worker stopped"):
+        with pytest.raises(_WorkerKilled, match="worker stopped"):
             await worker.run_once(limit=1)
         first = (await conversations.load("chat-publication-recovery")).turns[0]
         assert first.state == "running"
@@ -849,7 +878,10 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
                 .scalars()
                 .all()
             )
-        assert ("answer.delta" in events) == (publication_state == "valid")
+        # PR 3: the model's answer is streamed through Redis drafts, never
+        # as an `answer.delta` MySQL event; `graph.context_ready` is the
+        # equivalent "generation stream events were committed" marker.
+        assert ("graph.context_ready" in events) == (publication_state == "valid")
         assert ("turn.completed" in events) == (publication_state == "valid")
     finally:
         await engine.dispose()
@@ -1200,4 +1232,218 @@ async def test_chat_checkpoint_is_fenced_and_cancel_releases_graph_lease(
                 == 1
             )
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpoint_restart_survives_a_crash_right_after_discard(
+    owned_project_mysql, monkeypatch
+) -> None:
+    """A Turn with a legacy `fast-chat-v1` checkpoint is reclaimed and restarted on
+    `tapper-chat-v2`: the `graph_run` row must end up recording the new graph version,
+    and a simulated crash right after `discard` (before the first new checkpoint
+    write lands) must not strand the Turn -- it must stay reclaimable and complete on
+    the next `run_once`."""
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        conversations = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+        )
+        await conversations.create(
+            "chat-legacy-restart", "turn-legacy-restart", "request-legacy-restart", _input()
+        )
+        claimed = (await conversations.repository.claim_queued(limit=1))[0][1]
+
+        async def authorized() -> bool:
+            return True
+
+        async def classify(_state):
+            return {"reasoning_mode": "direct"}
+
+        async def admit(_state):
+            return {"admitted": True}
+
+        async def execute(_state):
+            raise GraphCheckpointRetryable("legacy run interrupted before completion")
+
+        with pytest.raises(GraphCheckpointRetryable):
+            await InteractionGraph(
+                graph_version="fast-chat-v1",
+                state_schema_version=1,
+                checkpointer=conversations.repository.graph_checkpointer(claimed),
+                classify=classify,
+                admit=admit,
+                execute=execute,
+                authorize=authorized,
+            ).start(
+                run_id=claimed.turn_id,
+                payload={"turnId": claimed.turn_id},
+                execution_mode="inline",
+            )
+
+        async with sessions() as session, session.begin():
+            legacy_row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-legacy-restart")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert legacy_row["graph_version"] == "fast-chat-v1"
+            assert legacy_row["status"] == "RUNNING"
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == "turn-legacy-restart")
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            await session.execute(
+                update(graph_run)
+                .where(graph_run.c.run_id == "turn-legacy-restart")
+                .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+            )
+
+        class Knowledge:
+            calls = 0
+
+            async def answer(self, request):
+                self.calls += 1
+                return SimpleNamespace(
+                    answer="grounded after restart",
+                    citations=(),
+                    abstained=False,
+                    trace_id="trace-legacy-restart",
+                    model_dump=lambda **_: {"answer": "grounded after restart", "citations": []},
+                )
+
+        knowledge = Knowledge()
+        worker = GenerationWorker(conversations, knowledge)
+
+        original_aput = MysqlGraphCheckpointer.aput
+
+        async def fail_every_aput_after_discard(
+            self, config, checkpoint, metadata_value, new_versions
+        ):
+            # Every checkpoint write after discard fails -- simulating the worker
+            # being killed (or losing its connection) before any new checkpoint for
+            # the restarted run lands, not just the first one.
+            raise _WorkerKilled("worker killed right after discard")
+
+        monkeypatch.setattr(MysqlGraphCheckpointer, "aput", fail_every_aput_after_discard)
+
+        # First run_once: reclaims the legacy Turn, discards its stale checkpoint, and
+        # then every checkpoint write for the fresh `tapper-chat-v2` run fails -- no
+        # new checkpoint ever lands.
+        with pytest.raises(_WorkerKilled):
+            await worker.run_once(limit=1)
+        stranded = (await conversations.load("chat-legacy-restart")).turns[0]
+        assert stranded.state == "running"
+        assert knowledge.calls == 0
+
+        async with sessions() as session:
+            after_crash_row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-legacy-restart")
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        # The old `adelete_thread`-based discard left a `CANCELLED` row behind, which
+        # the claim query's reclaim condition (absent, or `RUNNING` with an expired
+        # lease) never matches -- stranding the Turn. After this crash the row must
+        # either be gone entirely or `RUNNING` (reclaimable either way), and if present
+        # it must never carry the discarded legacy `graph_version`.
+        if after_crash_row is not None:
+            assert after_crash_row["status"] == "RUNNING"
+            assert after_crash_row["graph_version"] == CHAT_GRAPH_VERSION
+
+        monkeypatch.setattr(MysqlGraphCheckpointer, "aput", original_aput)
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(chat_turn)
+                .where(chat_turn.c.turn_id == "turn-legacy-restart")
+                .values(
+                    processing_lease_expires_at=func.utc_timestamp() - text("INTERVAL 1 SECOND")
+                )
+            )
+            if after_crash_row is not None:
+                await session.execute(
+                    update(graph_run)
+                    .where(graph_run.c.run_id == "turn-legacy-restart")
+                    .values(lease_until=func.utc_timestamp() - text("INTERVAL 1 SECOND"))
+                )
+
+        # Second run_once: the Turn is still reclaimable (no stale `graph_run` row
+        # blocks it) and the retried start now completes.
+        assert await worker.run_once(limit=1) == 1
+        completed = (await conversations.load("chat-legacy-restart")).turns[0]
+        assert completed.state == "completed"
+        assert knowledge.calls == 1
+
+        async with sessions() as session:
+            final_row = (
+                (
+                    await session.execute(
+                        select(graph_run).where(graph_run.c.run_id == "turn-legacy-restart")
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert final_row["graph_version"] == CHAT_GRAPH_VERSION
+        assert final_row["state_schema_version"] == CHAT_STATE_SCHEMA_VERSION
+        assert final_row["status"] == "SUCCEEDED"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_persists_partial_draft_and_sets_the_redis_cancel_marker(
+    owned_project_mysql, owned_redis_url
+) -> None:
+    """Task 7, real MySQL + real Redis: `cancel` reads the Turn's latest
+    draft text before writing `turn.canceled` (so a client reconnecting
+    after cancel still sees what streamed so far), and marks the Turn
+    canceled in Redis so a running worker's fast poll can observe it."""
+    from redis.asyncio import Redis
+
+    from tap.modules.chat.adapters.redis_drafts import RedisDraftStream
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    redis = Redis.from_url(owned_redis_url, decode_responses=True)
+    drafts = RedisDraftStream(redis=redis)
+    turn_id = "turn-cancel-draft"
+    try:
+        service = ConversationService(
+            MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+            scope=VALIDATION_SCOPE,
+            drafts=drafts,
+        )
+        await service.create("chat-cancel-draft", turn_id, "request-cancel-draft", _input())
+        await service.repository.claim_queued(limit=1)
+        await drafts.append(turn_id, attempt=1, seq=1, text="Stopped ")
+        await drafts.append(turn_id, attempt=1, seq=2, text="mid")
+
+        canceled = await service.cancel("chat-cancel-draft", turn_id)
+
+        assert canceled.state == "canceled"
+        detail = await service.load("chat-cancel-draft")
+        terminal = detail.events[-2]
+        assert terminal.event_type == "turn.canceled"
+        assert dict(terminal.payload) == {
+            "partialAnswerRetained": True,
+            "partialAnswer": "Stopped mid",
+        }
+        assert await drafts.cancel_requested(turn_id) is True
+    finally:
+        await redis.delete(f"tap:turn:{turn_id}:draft", f"tap:turn:{turn_id}:cancel")
+        await redis.aclose()
         await engine.dispose()

@@ -1368,7 +1368,12 @@ def test_embedding_provider_config_is_fixed_and_secrets_remain_empty_placeholder
     )
     for name in ("qwen-plus", "qwen-flash", "qwen-max", "qwen3-vl-plus", "text-embedding-v4"):
         route = next(item for item in gateway["model_list"] if item["model_name"] == name)
-        assert route["litellm_params"] == {
+        params = {
+            key: value
+            for key, value in route["litellm_params"].items()
+            if not key.endswith("_cost_per_token")
+        }
+        assert params == {
             "model": f"dashscope/{name}",
             "api_key": "os.environ/DASHSCOPE_API_KEY",
             "api_base": "os.environ/DASHSCOPE_API_BASE",

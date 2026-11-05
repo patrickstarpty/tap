@@ -237,18 +237,21 @@ def test_review_progression_is_ordered_and_return_to_checking_records_editor():
             target=ReviewStatus.CHECKING,
             actor_id="synthetic-editor-01",
             expected_version=1,
+            now=NOW,
         )
         reviewing = await application.transition_review(
             "krv_001",
             target=ReviewStatus.REVIEWING,
             actor_id="synthetic-editor-01",
             expected_version=2,
+            now=NOW,
         )
         returned = await application.transition_review(
             "krv_001",
             target=ReviewStatus.CHECKING,
             actor_id="synthetic-editor-03",
             expected_version=3,
+            now=NOW,
         )
 
         assert checking.status is ReviewStatus.CHECKING
@@ -262,6 +265,7 @@ def test_review_progression_is_ordered_and_return_to_checking_records_editor():
                 target=ReviewStatus.PUBLISHED,
                 actor_id="synthetic-editor-03",
                 expected_version=4,
+                now=NOW,
             )
 
     run(scenario())
@@ -279,6 +283,7 @@ def test_submit_rejects_an_empty_approved_scope():
                 target=ReviewStatus.REVIEWING,
                 actor_id="synthetic-editor-01",
                 expected_version=3,
+                now=NOW,
             )
 
     run(scenario())
@@ -724,6 +729,7 @@ def test_repeated_item_decisions_are_append_only_and_publication_remains_traceab
             target=ReviewStatus.REVIEWING,
             actor_id="synthetic-editor-01",
             expected_version=5,
+            now=NOW,
         )
         approved = await application.approve_review(
             "krv_001",

@@ -1,4 +1,4 @@
-"""Pipeline stage spans and background job root spans (observability Task 7)."""
+"""Pipeline stage spans and background job root spans."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from tap.modules.chat.application.plan_answer import AnswerPlanner, PlanningInpu
 from tap.modules.graph.application.jobs import InMemoryGraphJobStore
 from tap.modules.graph.application.worker import GraphWorker
 from tap.modules.graph.domain.jobs import GraphJobRequest
-from tap.modules.knowledge.application.graph_enrichment import GraphAnswerEnricher
 from tap.modules.knowledge.application.ingestion import IngestionWorker
 from tap.modules.knowledge.domain.models import (
     AnswerRequest,
@@ -50,6 +49,7 @@ from tests.integration.test_answer_plan_execution import (
 from tests.integration.test_answer_plan_execution import value as planning_value
 from tests.unit.graph.test_graph_worker import Artifacts as GraphArtifacts
 from tests.unit.graph.test_graph_worker import Extractor as GraphExtractor
+from tests.unit.graph.test_graph_worker import _request_chunks as graph_request_chunks
 from tests.unit.knowledge.test_ingestion_worker import (
     Chunker,
     FakeClock,
@@ -149,6 +149,8 @@ async def _planned_three_queries():
                     "source_ids": source_ids,
                 },
             ],
+            "agent_intent": "multi_step_qa",
+            "intent_reason": "compares three chapters",
         }
 
     return await AnswerPlanner(model).plan(planning_value("比较章节 A、B 和 C"))
@@ -178,68 +180,6 @@ async def test_planned_retrieval_emits_one_span_per_query(span_recorder) -> None
 
     spans = [item for item in span_recorder.get_finished_spans() if item.name == "retrieval.search"]
     assert len(spans) == 3
-
-
-@pytest.mark.asyncio
-async def test_graph_enricher_emits_counts(span_recorder) -> None:
-    from tap.modules.graph.application.queries import InMemoryGraphStore
-    from tap.modules.graph.domain.models import (
-        Evidence,
-        GraphEdge,
-        GraphNode,
-        GraphSnapshot,
-        GraphSnapshotDraft,
-        RelationOrigin,
-    )
-
-    evidence = Evidence(
-        "evidence-1",
-        "snapshot-1",
-        "source-revision-1",
-        "document-revision-1",
-        "chunk-1",
-        {"kind": "text", "start": 0, "end": 6},
-        "sha256:" + "a" * 64,
-    )
-    draft = GraphSnapshotDraft(
-        GraphSnapshot.create(
-            snapshot_id="snapshot-1",
-            project_id=VALIDATION_SCOPE.project_id,
-            source_revision_ids=("source-revision-1",),
-            document_revision_ids=("document-revision-1",),
-        ),
-        (
-            GraphNode("node-1", "snapshot-1", "Policy", "ENTITY", "policy"),
-            GraphNode("node-2", "snapshot-1", "Claim", "ENTITY", "claim"),
-        ),
-        (
-            GraphEdge(
-                "edge-1",
-                "snapshot-1",
-                "node-1",
-                "node-2",
-                "GOVERNS",
-                RelationOrigin.EXTRACTED,
-                1.0,
-                ("evidence-1",),
-            ),
-        ),
-        (evidence,),
-        (),
-    )
-    store = InMemoryGraphStore()
-    await store.publish(VALIDATION_SCOPE, draft)
-
-    result_context = await GraphAnswerEnricher(store).enrich(
-        VALIDATION_SCOPE, ("source-revision-1",), "*"
-    )
-
-    spans = [item for item in span_recorder.get_finished_spans() if item.name == "graph.enrich"]
-    assert len(spans) == 1
-    attributes = spans[0].attributes
-    assert attributes["tap.graph.snapshot_id"] == result_context.snapshot_id
-    assert attributes["tap.graph.node_count"] == 2
-    assert attributes["tap.graph.edge_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -343,9 +283,10 @@ async def test_graph_and_test_design_jobs_emit_root_spans(span_recorder) -> None
     )
     job = await jobs.request(VALIDATION_SCOPE, request, now=datetime(2026, 9, 13, 9, 0, 0))
     chunks = await GraphArtifacts().read_chunks("art1.chunks")
-    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
 
-    draft = deterministic_draft(job.snapshot, chunks, filename="revision-1")
+    request_chunks = graph_request_chunks(chunks, revision_id="revision-1")
+    draft = rule_based_draft(job.snapshot, request_chunks, filename="revision-1")
     graph_worker = GraphWorker(
         jobs=jobs,
         artifacts=GraphArtifacts(),
@@ -434,7 +375,7 @@ async def test_graph_idle_run_once_does_not_flush_traces(
 ) -> None:
     """An empty batch must skip the synchronous MySQL flush on the hot loop."""
     import tap.modules.graph.application.worker as graph_worker_module
-    from tap.modules.graph.adapters.fake_extraction import deterministic_draft
+    from tap.modules.graph.adapters.fake_extraction import rule_based_draft
 
     calls = 0
 
@@ -453,7 +394,8 @@ async def test_graph_idle_run_once_does_not_flush_traces(
         model_alias="qwen-plus",
     )
     chunks = await GraphArtifacts().read_chunks("art1.chunks")
-    draft = deterministic_draft(request.snapshot, chunks, filename="revision-1")
+    request_chunks = graph_request_chunks(chunks, revision_id="revision-1")
+    draft = rule_based_draft(request.snapshot, request_chunks, filename="revision-1")
     graph_worker = GraphWorker(
         jobs=jobs,
         artifacts=GraphArtifacts(),

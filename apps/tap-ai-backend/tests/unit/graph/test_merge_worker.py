@@ -1,0 +1,605 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import threading
+from datetime import datetime, timedelta
+
+import pytest
+
+from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.application.merge_jobs import (
+    InMemoryProjectMergeQueue,
+    ProjectMergeLeaseLost,
+)
+from tap.modules.graph.application.merge_worker import (
+    MergingGraphWorker,
+    ProjectGraphMergeWorker,
+)
+from tap.modules.graph.application.merger import ProjectGraphMerger
+from tap.modules.graph.domain.models import Evidence, GraphNode, GraphSnapshot, GraphSnapshotDraft
+from tap.modules.graph.domain.project import FragmentRecord
+
+NOW = datetime(2026, 10, 7, 9, 0, 0)
+
+
+def _digest(seed: str) -> str:
+    return "sha256:" + hashlib.sha256(seed.encode()).hexdigest()
+
+
+def _snapshot(snapshot_id: str) -> GraphSnapshot:
+    return GraphSnapshot.create(
+        snapshot_id=snapshot_id,
+        project_id=VALIDATION_SCOPE.project_id,
+        source_revision_ids=(f"{snapshot_id}-source",),
+        document_revision_ids=(f"{snapshot_id}-document",),
+        status="READY",
+    )
+
+
+def _fragment(snapshot_id: str, *, label: str = "保单") -> FragmentRecord:
+    snapshot = _snapshot(snapshot_id)
+    evidence_id = f"ev-{snapshot_id}"
+    evidence = Evidence(
+        evidence_id=evidence_id,
+        snapshot_id=snapshot_id,
+        source_revision_id=f"{snapshot_id}-source",
+        document_revision_id=f"{snapshot_id}-document",
+        chunk_id=f"chunk-{snapshot_id}",
+        anchor={"kind": "text", "start": 0, "end": 4},
+        content_digest=_digest(evidence_id),
+    )
+    node = GraphNode(f"{snapshot_id}-n1", snapshot_id, label, "ENTITY", label, (evidence_id,))
+    draft = GraphSnapshotDraft(snapshot, (node,), (), (evidence,), ())
+    return FragmentRecord(
+        snapshot_id=snapshot_id,
+        revision_id=f"{snapshot_id}-revision",
+        status="READY",
+        content_digest=_digest(snapshot_id),
+        draft=draft,
+    )
+
+
+class FakeInputs:
+    def __init__(self, fragments: tuple[FragmentRecord, ...]) -> None:
+        self._fragments = fragments
+        self.calls = 0
+
+    async def load_fragments(self, scope):
+        del scope
+        self.calls += 1
+        return self._fragments
+
+
+class RequestingInputs:
+    """Simulates a fragment turning READY while a merge is already in flight:
+    the first `load_fragments` call re-requests the project before returning."""
+
+    def __init__(self, fragments: tuple[FragmentRecord, ...], queue, *, request_at: datetime):
+        self._fragments = fragments
+        self._queue = queue
+        self._request_at = request_at
+        self.calls = 0
+
+    async def load_fragments(self, scope):
+        self.calls += 1
+        if self.calls == 1:
+            await self._queue.request(scope, reason="fragment-ready", now=self._request_at)
+        return self._fragments
+
+
+class FailingInputs:
+    async def load_fragments(self, scope):
+        del scope
+        raise RuntimeError("synthetic merge input failure")
+
+
+class LeaseLostQueue(InMemoryProjectMergeQueue):
+    async def renew(self, scope, claim, *, now, lease_duration):
+        del claim, now, lease_duration
+        raise ProjectMergeLeaseLost(scope.project_id)
+
+
+class RenewCountingQueue(InMemoryProjectMergeQueue):
+    """Loses the lease on the Nth `renew` call (1-indexed); counts every call."""
+
+    def __init__(self, *, lose_on_call: int | None = None) -> None:
+        super().__init__()
+        self.renew_calls = 0
+        self._lose_on_call = lose_on_call
+
+    async def renew(self, scope, claim, *, now, lease_duration):
+        self.renew_calls += 1
+        if self._lose_on_call is not None and self.renew_calls == self._lose_on_call:
+            raise ProjectMergeLeaseLost(scope.project_id)
+        return await super().renew(scope, claim, now=now, lease_duration=lease_duration)
+
+
+class FailLeaseLostQueue(InMemoryProjectMergeQueue):
+    """Simulates another worker having already claimed the row by the time
+    this worker tries to record its own failure."""
+
+    async def fail(self, scope, claim, *, failure_code, now):
+        del claim, failure_code, now
+        raise ProjectMergeLeaseLost(scope.project_id)
+
+
+class RecordingEmbeddings:
+    """Fake embeddings callable: records every batch it was called with and
+    returns one deterministic vector per input text."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    async def __call__(self, texts):
+        batch = tuple(texts)
+        self.calls.append(batch)
+        return tuple((float(len(text)), 0.0) for text in batch)
+
+
+def _worker(
+    *,
+    queue,
+    inputs,
+    monkeypatch,
+    now: datetime = NOW,
+    embeddings=None,
+    embed_chunk_size: int = 64,
+) -> ProjectGraphMergeWorker:
+    worker = ProjectGraphMergeWorker(
+        queue=queue,
+        inputs=inputs,
+        merger=ProjectGraphMerger(),
+        scope=VALIDATION_SCOPE,
+        worker_id="merge-worker-1",
+        embeddings=embeddings,
+        embed_chunk_size=embed_chunk_size,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: now)
+    return worker
+
+
+@pytest.mark.asyncio
+async def test_merge_worker_publishes_a_version_and_clears_due(monkeypatch) -> None:
+    queue = InMemoryProjectMergeQueue()
+    fragments = (_fragment("frag-a"), _fragment("frag-b", label="理赔"))
+    inputs = FakeInputs(fragments)
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+    again = await worker.run_once(limit=10)
+    assert again == 0
+
+
+@pytest.mark.asyncio
+async def test_unchanged_digest_skips_publication(monkeypatch) -> None:
+    queue = InMemoryProjectMergeQueue()
+    fragments = (_fragment("frag-a"),)
+    inputs = FakeInputs(fragments)
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    assert await worker.run_once(limit=10) == 1
+    first = await queue.store.get_current(VALIDATION_SCOPE)
+    assert first is not None and first.version == 1
+
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+    second_result = await worker.run_once(limit=10)
+
+    assert second_result == 1
+    second = await queue.store.get_current(VALIDATION_SCOPE)
+    assert second is not None and second.version == 1
+
+
+@pytest.mark.asyncio
+async def test_request_during_merge_keeps_queue_due(monkeypatch) -> None:
+    queue = InMemoryProjectMergeQueue()
+    fragments = (_fragment("frag-a"),)
+    inputs = RequestingInputs(fragments, queue, request_at=NOW + timedelta(seconds=1))
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+    assert result == 1
+
+    claim = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="merge-worker-2",
+        now=NOW + timedelta(seconds=2),
+        lease_duration=timedelta(seconds=300),
+    )
+    assert claim is not None
+
+
+@pytest.mark.asyncio
+async def test_failure_backs_off_and_records_code(monkeypatch) -> None:
+    queue = InMemoryProjectMergeQueue()
+    worker = _worker(queue=queue, inputs=FailingInputs(), monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    row = queue._rows[VALIDATION_SCOPE.project_id]
+    assert row.failure_code == "load_fragments:RuntimeError"
+    assert row.due_at == NOW + timedelta(seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_is_not_published(monkeypatch) -> None:
+    queue = LeaseLostQueue()
+    fragments = (_fragment("frag-a"),)
+    inputs = FakeInputs(fragments)
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert await queue.store.get_current(VALIDATION_SCOPE) is None
+
+
+@pytest.mark.asyncio
+async def test_embedding_dedupes_labels_before_embedding(monkeypatch) -> None:
+    # Three nodes across two fragments share the label "保单"; a fourth is
+    # distinct. The embedder must see each unique label exactly once, not
+    # once per node.
+    fragments = (
+        _fragment("frag-a", label="保单"),
+        _fragment("frag-b", label="保单"),
+        _fragment("frag-c", label="理赔"),
+    )
+    queue = InMemoryProjectMergeQueue()
+    embeddings = RecordingEmbeddings()
+    worker = _worker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        monkeypatch=monkeypatch,
+        embeddings=embeddings,
+    )
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    embedded_texts = [text for batch in embeddings.calls for text in batch]
+    assert sorted(embedded_texts) == ["保单", "理赔"]
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+
+class ThreadRecordingMerger(ProjectGraphMerger):
+    """Records which thread ran `merge` and whether embeddings reached it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: list[int] = []
+        self.embedded: list[bool] = []
+
+    def merge(self, scope, fragments, *, embeddings=None):
+        self.threads.append(threading.get_ident())
+        self.embedded.append(bool(embeddings))
+        return super().merge(scope, fragments, embeddings=embeddings)
+
+
+@pytest.mark.asyncio
+async def test_merge_with_embedding_alignment_runs_off_the_event_loop_thread(
+    monkeypatch,
+) -> None:
+    fragments = (_fragment("frag-a", label="保单"), _fragment("frag-b", label="理赔"))
+    queue = InMemoryProjectMergeQueue()
+    merger = ThreadRecordingMerger()
+    worker = ProjectGraphMergeWorker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        merger=merger,
+        scope=VALIDATION_SCOPE,
+        worker_id="merge-worker-1",
+        embeddings=RecordingEmbeddings(),
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    assert await worker.run_once(limit=10) == 1
+
+    assert merger.embedded == [True]
+    assert merger.threads and merger.threads[0] != threading.get_ident()
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+
+@pytest.mark.asyncio
+async def test_embedding_renews_the_lease_between_chunks(monkeypatch) -> None:
+    fragments = (
+        _fragment("frag-a", label="A"),
+        _fragment("frag-b", label="B"),
+        _fragment("frag-c", label="C"),
+    )
+    queue = RenewCountingQueue()
+    embeddings = RecordingEmbeddings()
+    worker = _worker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        monkeypatch=monkeypatch,
+        embeddings=embeddings,
+        embed_chunk_size=1,
+    )
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    # One renew before embedding starts, plus one renew per one-label chunk.
+    assert queue.renew_calls == 1 + 3
+    assert len(embeddings.calls) == 3
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_mid_embedding_stops_without_publishing(monkeypatch) -> None:
+    fragments = (
+        _fragment("frag-a", label="A"),
+        _fragment("frag-b", label="B"),
+    )
+    # The pre-embedding renew (call 1) succeeds; the renew after the first
+    # one-label chunk (call 2) loses the lease.
+    queue = RenewCountingQueue(lose_on_call=2)
+    embeddings = RecordingEmbeddings()
+    worker = _worker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        monkeypatch=monkeypatch,
+        embeddings=embeddings,
+        embed_chunk_size=1,
+    )
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert await queue.store.get_current(VALIDATION_SCOPE) is None
+    # Embedding stopped after the chunk whose renew lost the lease; it never
+    # reached the second label's chunk.
+    assert len(embeddings.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_embedding_skipped_above_node_cap_but_merge_still_publishes(monkeypatch, caplog):
+    fragments = (
+        _fragment("frag-a", label="A"),
+        _fragment("frag-b", label="B"),
+        _fragment("frag-c", label="C"),
+    )
+    queue = InMemoryProjectMergeQueue()
+    embeddings = RecordingEmbeddings()
+    worker = ProjectGraphMergeWorker(
+        queue=queue,
+        inputs=FakeInputs(fragments),
+        merger=ProjectGraphMerger(),
+        scope=VALIDATION_SCOPE,
+        worker_id="merge-worker-1",
+        embeddings=embeddings,
+        embedding_max_nodes=2,
+    )
+    monkeypatch.setattr(worker, "_now", lambda: NOW)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    with caplog.at_level("WARNING"):
+        result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert embeddings.calls == []
+    current = await queue.store.get_current(VALIDATION_SCOPE)
+    assert current is not None and current.version == 1
+    assert any(
+        VALIDATION_SCOPE.project_id in record.message and "3" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_logs_a_warning_with_job_kind_project_and_phase(monkeypatch, caplog):
+    queue = LeaseLostQueue()
+    fragments = (_fragment("frag-a"),)
+    inputs = FakeInputs(fragments)
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    with caplog.at_level("WARNING"):
+        result = await worker.run_once(limit=10)
+
+    assert result == 1
+    assert any(
+        "project_merge" in record.message
+        and VALIDATION_SCOPE.project_id in record.message
+        and "renew" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_swallows_a_lease_already_lost_to_another_worker(monkeypatch) -> None:
+    queue = FailLeaseLostQueue()
+    worker = _worker(queue=queue, inputs=FailingInputs(), monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    # Must not raise ProjectMergeLeaseLost out of run_once: the pending_work
+    # loop in tapper_ingestion_worker has no guard around it, so an
+    # unswallowed exception here would kill the whole graph worker process.
+    result = await worker.run_once(limit=10)
+
+    assert result == 1
+
+
+@pytest.mark.asyncio
+async def test_failure_logs_the_stack_with_project_phase_and_attempt(monkeypatch, caplog):
+    queue = InMemoryProjectMergeQueue()
+    worker = _worker(queue=queue, inputs=FailingInputs(), monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    with caplog.at_level(logging.ERROR):
+        await worker.run_once(limit=10)
+
+    [record] = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert record.exc_info is not None and record.exc_info[0] is RuntimeError
+    assert VALIDATION_SCOPE.project_id in record.getMessage()
+    assert "phase=load_fragments" in record.getMessage()
+    assert "attempt=0" in record.getMessage()
+
+
+class GatedExtraction:
+    """Extraction `run_once` that blocks until released, like a long model call."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.draining = False
+
+    def stop_claiming(self) -> None:
+        self.draining = True
+
+    async def run_once(self, limit: int) -> str:
+        del limit
+        await self.release.wait()
+        return "extraction-run"
+
+
+class CountingMerge:
+    def __init__(self, extraction: GatedExtraction, *, release_after: int) -> None:
+        self.calls = 0
+        self._extraction = extraction
+        self._release_after = release_after
+
+    async def run_once(self, limit: int) -> int:
+        del limit
+        self.calls += 1
+        if self.calls == self._release_after:
+            self._extraction.release.set()
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_merges_ready_fragments_while_extraction_is_still_running() -> None:
+    extraction = GatedExtraction()
+    merge = CountingMerge(extraction, release_after=3)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=0.001)
+
+    result = await worker.run_once(limit=10)
+
+    assert result == "extraction-run"
+    # Three merges ran while extraction was still blocked, then one after it ended.
+    assert merge.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_merges_once_after_a_quick_extraction() -> None:
+    extraction = GatedExtraction()
+    extraction.release.set()
+    merge = CountingMerge(extraction, release_after=0)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=60)
+
+    assert await worker.run_once(limit=10) == "extraction-run"
+    assert merge.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_run_cancels_the_extraction() -> None:
+    extraction = GatedExtraction()
+    merge = CountingMerge(extraction, release_after=0)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=60)
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await asyncio.sleep(0)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert merge.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_claiming_drains_extraction_and_starts_no_more_merges() -> None:
+    extraction = GatedExtraction()
+    merge = CountingMerge(extraction, release_after=0)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=60)
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await asyncio.sleep(0)
+    worker.stop_claiming()
+    extraction.release.set()
+
+    assert await run == "extraction-run"
+    assert extraction.draining
+    assert merge.calls == 0
+
+
+class FlakyMerge:
+    """Merge poll whose claim fails (a lock wait timeout, a dropped connection)."""
+
+    def __init__(self, extraction: GatedExtraction, *, release_after: int) -> None:
+        self.calls = 0
+        self._extraction = extraction
+        self._release_after = release_after
+
+    async def run_once(self, limit: int) -> int:
+        del limit
+        self.calls += 1
+        if self.calls == self._release_after:
+            self._extraction.release.set()
+        raise RuntimeError("synthetic merge claim failure")
+
+
+@pytest.mark.asyncio
+async def test_a_failing_merge_poll_never_stops_the_running_extraction(caplog) -> None:
+    extraction = GatedExtraction()
+    merge = FlakyMerge(extraction, release_after=3)
+    worker = MergingGraphWorker(extraction=extraction, merge=merge, merge_interval_seconds=0.001)
+
+    with caplog.at_level(logging.ERROR):
+        result = await worker.run_once(limit=10)
+
+    assert result == "extraction-run"
+    assert merge.calls == 4
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 4 and all(record.exc_info is not None for record in errors)
+
+
+class BlockingInputs:
+    """`load_fragments` that blocks, like a slow fragment read during shutdown."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def load_fragments(self, scope):
+        del scope
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_merge_releases_its_lease_and_stays_due(monkeypatch) -> None:
+    queue = InMemoryProjectMergeQueue()
+    inputs = BlockingInputs()
+    worker = _worker(queue=queue, inputs=inputs, monkeypatch=monkeypatch)
+    await queue.request(VALIDATION_SCOPE, reason="fragment-ready", now=NOW)
+
+    run = asyncio.create_task(worker.run_once(limit=10))
+    await inputs.started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    assert await queue.merge_state(VALIDATION_SCOPE, now=NOW) == "PENDING"
+    # A restarted worker claims it straight away, well inside the old lease.
+    claim = await queue.claim(
+        VALIDATION_SCOPE,
+        worker_id="merge-worker-2",
+        now=NOW + timedelta(seconds=1),
+        lease_duration=timedelta(seconds=300),
+    )
+    assert claim is not None and claim.reason == "fragment-ready"

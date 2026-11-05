@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from tap.modules.knowledge.domain.models import Evidence
+import re
+import unicodedata
+from collections.abc import Mapping, Sequence
+
+from tap.modules.knowledge.domain.models import DocumentAnchor, Evidence
 from tap.modules.knowledge.ports.models import GeneratedClaim
 
 
@@ -14,6 +18,7 @@ def parse_grounded_answer_payload(
     max_claims: int,
     max_claim_chars: int,
     max_labels_per_claim: int,
+    extra_labels: frozenset[str] = frozenset(),
 ) -> tuple[str, tuple[GeneratedClaim, ...]]:
     """Validate one closed grounded payload without provider-specific behavior."""
 
@@ -30,44 +35,447 @@ def parse_grounded_answer_payload(
     if not isinstance(raw_claims, list) or not 1 <= len(raw_claims) <= max_claims:
         raise ValueError("claim count is outside the closed bound")
 
-    allowed_labels = {item.evidence_label for item in evidence}
+    allowed_labels = {item.evidence_label for item in evidence} | extra_labels
+    label_documents = {item.evidence_label: item.source.source_id for item in evidence}
+    document_names = _document_names(evidence)
     answer_paragraphs = answer.split("\n\n")
     claims: list[GeneratedClaim] = []
     seen_claims: set[str] = set()
     all_claims_are_unique_paragraphs = True
     for raw in raw_claims:
-        if not isinstance(raw, dict) or set(raw) != {"text", "evidenceLabels"}:
-            raise ValueError("claim must use the closed schema")
-        text, labels = raw["text"], raw["evidenceLabels"]
-        if not _bounded_utf8_string(text, maximum=max_claim_chars) or "\n\n" in text:
-            raise ValueError("claim text is outside the closed bound")
-        is_unique_paragraph = answer_paragraphs.count(text) == 1
-        # A complete single-line sentence stands on its own even when the model summarised it
-        # differently: the canonical answer below is rebuilt from claims, so every displayed
-        # sentence stays a cited claim.
-        is_complete = text[-1] in ".!?。！？"
-        is_unique_statement = is_complete and answer.count(text) == 1
-        is_complete_sentence = is_complete and "\n" not in text
-        if not (is_unique_paragraph or is_unique_statement or is_complete_sentence):
-            raise ValueError("claim text is not one unique complete answer statement")
-        all_claims_are_unique_paragraphs &= is_unique_paragraph
-        if text in seen_claims:
-            raise ValueError("claim text is duplicated")
-        if not isinstance(labels, list) or not 1 <= len(labels) <= max_labels_per_claim:
-            raise ValueError("claim evidence label count is outside the closed bound")
-        if any(
-            not _bounded_utf8_string(label, maximum=64) or label not in allowed_labels
-            for label in labels
-        ):
-            raise ValueError("claim references an unknown evidence label")
-        if len(set(labels)) != len(labels):
-            raise ValueError("claim evidence labels are duplicated")
-        seen_claims.add(text)
-        claims.append(GeneratedClaim(text=text, evidence_labels=tuple(labels)))
+        # A claim that cannot be aligned with the answer and its evidence is dropped rather
+        # than failing the whole answer; with no claim left the caller abstains.
+        claim = _grounded_claim(
+            raw,
+            answer,
+            answer_paragraphs,
+            allowed_labels,
+            seen_claims,
+            max_claim_chars=max_claim_chars,
+            max_labels_per_claim=max_labels_per_claim,
+        )
+        if claim is None or _borrows_another_document(claim, label_documents, document_names):
+            continue
+        all_claims_are_unique_paragraphs &= answer_paragraphs.count(claim.text) == 1
+        seen_claims.add(claim.text)
+        claims.append(claim)
+    if not claims:
+        return "", ()
     canonical_answer = (
-        answer if all_claims_are_unique_paragraphs else "\n\n".join(claim.text for claim in claims)
+        answer
+        if all_claims_are_unique_paragraphs and len(claims) == len(raw_claims)
+        else "\n\n".join(claim.text for claim in claims)
     )
     return canonical_answer, tuple(claims)
+
+
+# Fenced (``` or ~~~, closed or left open to the end) and inline code.
+CODE_SPAN = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)|`[^`\n]*`", re.DOTALL)
+_CODE_SPAN = CODE_SPAN
+# Label grammar only (`S1`..`S999`, `R1`..`R999`, `I1`..`I999` -- PR 5 Task 8
+# adds Insights metric labels; the real allow-list below bounds this further
+# to the evidence/relation/insights labels actually in play) so a Markdown
+# link (`[docs](url)`), a literal `[x]`, or an unrelated `a[0]` index is never
+# mistaken for a citation marker. Spaces/tabs just inside the brackets are
+# tolerated: real qwen-plus output intermittently pads markers as `[ S1 ]`,
+# and an unmatched padded marker left the sentence without a claim, so the
+# whole turn abstained despite a grounded answer.
+_MARKER = re.compile(r"\[[ \t]*([SRI][1-9][0-9]{0,2})[ \t]*\]")
+# CJK terminators always end a sentence; a newline always does (so a Markdown
+# list item/heading line is its own sentence). An ASCII `.!?` only ends a
+# sentence when whitespace, end of text, or a citation marker follows --
+# never mid-token, so "v 1.2", a decimal, or a period inside a URL/Markdown
+# link target (e.g. "example.com/robots.txt") never splits (review ruling,
+# 2026-10-16 round 2).
+_CJK_TERMINATORS = "。！？"
+_ASCII_TERMINATORS = ".!?"
+_LIST_OR_HEADING_PREFIX = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+|#{1,6}[ \t]+)")
+# A Markdown list item line: bullet (`-`/`*`/`+`) or ordered (`1.`/`1)`) marker,
+# optionally indented (nested lists).
+_LIST_ITEM_LINE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
+_ORDERED_LIST_NUMBER = re.compile(r"[ \t]*\d+\.[ \t]")
+
+
+def _sentence_delimiter_at(masked: str, index: int) -> bool:
+    character = masked[index]
+    if character == "\n" or character in _CJK_TERMINATORS:
+        return True
+    if character not in _ASCII_TERMINATORS:
+        return False
+    # The `.` of an ordered list marker (`1. `) numbers the item; it never ends
+    # a sentence (span-level citations: each list item is its own span).
+    line_start = masked.rfind("\n", 0, index) + 1
+    if character == "." and _ORDERED_LIST_NUMBER.fullmatch(masked, line_start, index + 2):
+        return False
+    next_index = index + 1
+    if next_index >= len(masked):
+        return True
+    next_character = masked[next_index]
+    if next_character in " \t\n":
+        return True
+    return _MARKER.match(masked, next_index) is not None
+
+
+def _masked_for_markers(text: str) -> str:
+    """`text` with every code span's characters blanked out, same length and
+    offsets, so marker and sentence-delimiter detection can run position-for-
+    position against it while code-span content is never mistaken for either."""
+
+    masked = list(text)
+    for match in _CODE_SPAN.finditer(text):
+        for index in range(match.start(), match.end()):
+            masked[index] = "\x00"
+    return "".join(masked)
+
+
+def _sentence_spans(text: str, masked: str) -> list[tuple[int, int]]:
+    """Contiguous `[start, end)` spans tiling the whole string, one per sentence:
+    a run of text up to and including a `。！？.!?` or newline delimiter, plus any
+    marker tokens immediately following it (so a marker placed just after the
+    terminal punctuation still belongs to the sentence it cites)."""
+
+    length = len(text)
+    spans: list[tuple[int, int]] = []
+    sentence_start = 0
+    index = 0
+    while index < length:
+        if _sentence_delimiter_at(masked, index):
+            end = index + 1
+            while True:
+                probe = end
+                while probe < length and masked[probe] in " \t":
+                    probe += 1
+                marker = _MARKER.match(masked, probe)
+                if marker is None:
+                    break
+                end = marker.end()
+            spans.append((sentence_start, end))
+            sentence_start = end
+            index = end
+        elif (marker_run_end := _list_item_marker_run_end(masked, index)) is not None:
+            # A list item's claim ends at its last marker; text after it on
+            # the same line is uncited (span-level citations fix round 1).
+            spans.append((sentence_start, marker_run_end))
+            sentence_start = marker_run_end
+            index = marker_run_end
+        else:
+            index += 1
+    if sentence_start < length and text[sentence_start:].strip():
+        spans.append((sentence_start, length))
+    return spans
+
+
+_TRAILING_PUNCTUATION = set(" \t。！？.!?；;，,、：:")
+
+
+def _list_item_marker_run_end(masked: str, index: int) -> int | None:
+    """When a run of markers starts at `index` on a list item line and real
+    (non-punctuation) text follows it on that line, the run's end -- where the
+    item's cited span stops; otherwise `None`."""
+
+    marker = _MARKER.match(masked, index)
+    if marker is None:
+        return None
+    line_start = masked.rfind("\n", 0, index) + 1
+    if _LIST_ITEM_LINE.match(masked, line_start) is None:
+        return None
+    end = marker.end()
+    while True:
+        probe = end
+        while probe < len(masked) and masked[probe] in " \t":
+            probe += 1
+        following = _MARKER.match(masked, probe)
+        if following is None:
+            break
+        end = following.end()
+    # A sentence terminator right after the markers ends the cited sentence
+    # with it, so the claim keeps its `。`/`.` and the uncited remainder does
+    # not start with one. A comma or similar stays outside: it continues the
+    # line's own, uncited text.
+    while end < len(masked) and masked[end] in _CJK_TERMINATORS + _ASCII_TERMINATORS:
+        end += 1
+    line_end = masked.find("\n", end)
+    rest = masked[end : len(masked) if line_end == -1 else line_end]
+    if all(character in _TRAILING_PUNCTUATION for character in rest):
+        return None
+    return end
+
+
+def _strip_real_markers(text: str, masked: str) -> str:
+    """`text` with every real (non-code-span) marker's characters removed and
+    everything else -- whitespace, newlines, Markdown headings/lists -- left
+    exactly as written. This is the only transformation applied to produce the
+    answer body: no whitespace collapsing, so a stray double space left behind
+    where a marker was removed is accepted rather than risking a rewrite of
+    unrelated text (e.g. "v 1.2")."""
+
+    chars = list(text)
+    for match in _MARKER.finditer(masked):
+        for index in range(match.start(), match.end()):
+            chars[index] = ""
+    return "".join(chars)
+
+
+def _claim_text_and_labels(
+    segment: str, masked_segment: str, allowed_labels: set[str]
+) -> tuple[str, list[str]]:
+    """For one sentence span: strip its real markers and any leading Markdown
+    list/heading prefix (`- `, `* `, `1. `, `#`) to get the quoted claim text
+    (this does not affect the answer body, which keeps that markup), and
+    return the labels found, in first-seen order, deduplicated, restricted to
+    `allowed_labels` -- an unknown label is dropped from the label list but its
+    token is still removed from the text like any other marker."""
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    chars = list(segment)
+    for match in _MARKER.finditer(masked_segment):
+        for index in range(match.start(), match.end()):
+            chars[index] = ""
+        label = match.group(1)
+        if label in allowed_labels and label not in seen:
+            seen.add(label)
+            labels.append(label)
+    cleaned = "".join(chars).strip()
+    cleaned = _LIST_OR_HEADING_PREFIX.sub("", cleaned).strip()
+    return cleaned, labels
+
+
+def parse_inline_answer(
+    text: str,
+    evidence: Sequence[Evidence],
+    *,
+    extra_labels: frozenset[str] = frozenset(),
+    max_answer_chars: int,
+    max_claims: int,
+    max_claim_chars: int,
+    max_labels_per_claim: int,
+) -> tuple[str, tuple[GeneratedClaim, ...]]:
+    """Parse Markdown answer text carrying inline `[S1]`/`[R1]` citation markers
+    (PR 3) into the same `(answer, claims)` shape `parse_grounded_answer_payload`
+    produces for the closed JSON schema. A claim is a sentence (split on
+    `。！？.!?` or a newline) that carries at least one marker resolving to an
+    evidence or relation label; markers inside a fenced or inline code span are
+    not markers. The returned answer is `text` with every real marker removed
+    and everything else -- whitespace, headings, list markup -- preserved
+    verbatim. A sentence or list item with no marker (or only unknown labels)
+    is uncited text and stays visible; a labelled candidate later rejected as
+    a duplicate/too-long/non-unique/borrowed-document span is removed from the
+    answer, so labelled text is never shown without its citation. When no sentence
+    yields a valid claim at all, the caller abstains exactly as it does for an
+    empty-claims JSON payload."""
+
+    if not isinstance(text, str) or not text.strip():
+        return "", ()
+
+    allowed_labels = set({item.evidence_label for item in evidence} | extra_labels)
+    label_documents = {item.evidence_label: item.source.source_id for item in evidence}
+    document_names = _document_names(tuple(evidence))
+
+    masked = _masked_for_markers(text)
+    spans = _sentence_spans(text, masked)
+
+    candidates: list[tuple[str, list[str], bool, tuple[int, int]]] = []
+    for start, end in spans:
+        claim_text, labels = _claim_text_and_labels(
+            text[start:end], masked[start:end], allowed_labels
+        )
+        if claim_text and labels:
+            candidates.append(
+                (claim_text, labels, _ends_list_item(text, masked, start, end), (start, end))
+            )
+
+    if not candidates:
+        return "", ()
+    if len(candidates) > max_claims:
+        raise ValueError("claim count is outside the closed bound")
+
+    answer = _strip_real_markers(text, masked)
+    if not _bounded_utf8_string(answer, maximum=max_answer_chars):
+        raise ValueError("answer is outside the closed bound")
+    answer_paragraphs = answer.split("\n\n")
+
+    claims: list[GeneratedClaim] = []
+    seen_claims: set[str] = set()
+    rejected_spans: list[tuple[int, int]] = []
+    for claim_text, labels, list_item, span in candidates:
+        claim = _grounded_claim(
+            {"text": claim_text, "evidenceLabels": labels},
+            answer,
+            answer_paragraphs,
+            allowed_labels,
+            seen_claims,
+            max_claim_chars=max_claim_chars,
+            max_labels_per_claim=max_labels_per_claim,
+            list_item=list_item,
+        )
+        if claim is None or _borrows_another_document(claim, label_documents, document_names):
+            rejected_spans.append(span)
+            continue
+        seen_claims.add(claim.text)
+        claims.append(claim)
+    if not claims:
+        return "", ()
+    if rejected_spans:
+        answer = _strip_real_markers(*_without_spans(text, masked, rejected_spans))
+        answer = re.sub(r"\n{3,}", "\n\n", answer).strip("\n")
+    return answer, tuple(claims)
+
+
+_LINE_MARKUP_PREFIX = re.compile(r"[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+|#{1,6}[ \t]+)")
+_EMPTY_MARKUP_LINE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)]|#{1,6})?[ \t]*")
+
+
+def _without_spans(text: str, masked: str, spans: Sequence[tuple[int, int]]) -> tuple[str, str]:
+    """`text` and `masked` with each span removed -- the whole line when what
+    remains of it is only list/heading markup or whitespace. Text the model
+    labelled but that failed validation must not be shown as if it were
+    merely unsupported (span-level citations fix round 1); unlabelled text is
+    untouched."""
+
+    for start, end in sorted(spans, reverse=True):
+        line_start = masked.rfind("\n", 0, start) + 1
+        line_end = masked.find("\n", end)
+        line_end = len(masked) if line_end == -1 else line_end
+        remaining = masked[line_start:start] + masked[end:line_end]
+        if "\n" not in masked[start:end] and _EMPTY_MARKUP_LINE.fullmatch(remaining):
+            start, end = line_start, min(line_end + 1, len(masked))
+        elif start == line_start:
+            # The rejected span opens a list/heading line that keeps other
+            # text: keep the line's markup prefix, and drop punctuation the
+            # removed span left leading the remainder.
+            prefix = _LINE_MARKUP_PREFIX.match(masked, line_start)
+            if prefix is not None and prefix.end() <= end:
+                start = prefix.end()
+            while end < line_end and masked[end] in _TRAILING_PUNCTUATION:
+                end += 1
+        text, masked = text[:start] + text[end:], masked[:start] + masked[end:]
+    return text, masked
+
+
+def _ends_list_item(text: str, masked: str, start: int, end: int) -> bool:
+    """Whether the sentence span `[start, end)` is the last span of a Markdown
+    list item line: the line it starts on is a list item and the span runs to
+    that line's end. Such a span is complete as written even without terminal
+    punctuation (steps and bullets rarely carry it)."""
+
+    line_start = masked.rfind("\n", 0, start) + 1
+    line_end = masked.find("\n", start)
+    line_end = len(text) if line_end == -1 else line_end
+    if _LIST_ITEM_LINE.match(masked, line_start) is None:
+        return False
+    if _list_item_marker_run_end(masked, _first_marker_start(masked, start, end)) == end:
+        return True
+    return not text[end:line_end].strip()
+
+
+def _first_marker_start(masked: str, start: int, end: int) -> int:
+    starts = [match.start() for match in _MARKER.finditer(masked, start, end)]
+    return starts[0] if starts else end
+
+
+def _grounded_claim(
+    raw: object,
+    answer: str,
+    answer_paragraphs: list[str],
+    allowed_labels: set[str] | frozenset[str],
+    seen_claims: set[str],
+    *,
+    max_claim_chars: int,
+    max_labels_per_claim: int,
+    list_item: bool = False,
+) -> GeneratedClaim | None:
+    if not isinstance(raw, dict) or set(raw) != {"text", "evidenceLabels"}:
+        return None
+    text, labels = raw["text"], raw["evidenceLabels"]
+    if not _bounded_utf8_string(text, maximum=max_claim_chars) or "\n\n" in text:
+        return None
+    is_unique_paragraph = answer_paragraphs.count(text) == 1
+    # A complete single-line sentence stands on its own even when the model summarised it
+    # differently. For the JSON payload the answer is then rebuilt from claims; the inline
+    # parser keeps uncited text and removes only rejected labelled spans.
+    is_complete = text[-1] in ".!?。！？"
+    is_unique_statement = is_complete and answer.count(text) == 1
+    is_complete_sentence = is_complete and "\n" not in text
+    # A cited list item (bullet or numbered step) is its own span; it only has
+    # to be locatable at exactly one offset in the answer.
+    is_unique_list_item = list_item and "\n" not in text and answer.count(text) == 1
+    if not (
+        is_unique_paragraph or is_unique_statement or is_complete_sentence or is_unique_list_item
+    ):
+        return None
+    if text in seen_claims:
+        return None
+    if not isinstance(labels, list) or not 1 <= len(labels) <= max_labels_per_claim:
+        return None
+    if any(
+        not _bounded_utf8_string(label, maximum=64) or label not in allowed_labels
+        for label in labels
+    ):
+        return None
+    if len(set(labels)) != len(labels):
+        return None
+    return GeneratedClaim(text=text, evidence_labels=tuple(labels))
+
+
+# Clause headings ("第二条 投保范围", "一、", "1.2") are sections, not document names.
+_CLAUSE_HEADING = re.compile(
+    r"^(第[一二三四五六七八九十百零〇\d]+[条章节款]|[一二三四五六七八九十]+、|\d)"
+)
+_FILE_EXTENSION = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+_MIN_DOCUMENT_NAME_CHARS = 4
+
+
+def _normalized(text: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def _document_names(evidence: tuple[Evidence, ...]) -> dict[str, frozenset[str]]:
+    """Names (file stem, document title) each evidence document can be referred to by.
+
+    A name shared by several documents identifies none of them and is ignored.
+    """
+
+    names: dict[str, set[str]] = {}
+    for item in evidence:
+        anchor = item.source.anchor
+        if not isinstance(anchor, DocumentAnchor):
+            continue
+        candidates: list[str] = []
+        if item.title:
+            candidates.append(_FILE_EXTENSION.sub("", item.title))
+        if anchor.heading_path:
+            root = anchor.heading_path[0].strip()
+            if _CLAUSE_HEADING.match(root) is None:
+                candidates.append(root)
+        for candidate in candidates:
+            name = _normalized(candidate)
+            if len(name) >= _MIN_DOCUMENT_NAME_CHARS:
+                names.setdefault(name, set()).add(item.source.source_id)
+    by_document: dict[str, set[str]] = {}
+    for name, documents in names.items():
+        if len(documents) == 1:
+            by_document.setdefault(next(iter(documents)), set()).add(name)
+    return {document: frozenset(items) for document, items in by_document.items()}
+
+
+def _borrows_another_document(
+    claim: GeneratedClaim,
+    label_documents: Mapping[str, str],
+    document_names: Mapping[str, frozenset[str]],
+) -> bool:
+    """True when the claim names a document but cites evidence only from other documents."""
+
+    cited = {label_documents[label] for label in claim.evidence_labels if label in label_documents}
+    if not cited:
+        return False
+    text = _normalized(claim.text)
+    named = {
+        document
+        for document, names in document_names.items()
+        if any(name in text for name in names)
+    }
+    return bool(named) and not named & cited
 
 
 def _bounded_utf8_string(value: object, *, maximum: int) -> bool:

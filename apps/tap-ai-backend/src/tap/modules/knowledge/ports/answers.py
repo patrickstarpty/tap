@@ -30,6 +30,8 @@ from tap.modules.knowledge.domain.models import (
     SourceRevisionRef,
 )
 
+RELATION_CITATION_LABEL_PATTERN = re.compile(r"^R(?:[1-9]|1[0-9]|20)$")
+
 
 class DocumentStateChanged(Exception):
     """A selected ready/current document changed before an atomic snapshot commit."""
@@ -70,6 +72,13 @@ class CitationSnapshot:
     anchor_json: str
     claim_text: str | None = None
     origin: str | None = None
+    citation_kind: str = "chunk"
+    graph_version: str | None = None
+    edge_id: str | None = None
+    subject_node_id: str | None = None
+    object_node_id: str | None = None
+    relation_type: str | None = None
+    relation_label: str | None = None
 
     def __post_init__(self) -> None:
         _bounded("citation trace ID", self.trace_id, maximum=64)
@@ -95,6 +104,28 @@ class CitationSnapshot:
             raise ValueError("citation claim text must be bounded nonblank text")
         if self.origin is not None and self.origin != "SOURCE":
             raise ValueError("citation snapshot origin must be SOURCE")
+        if self.citation_kind not in {"chunk", "edge"}:
+            raise ValueError("citation snapshot kind must be chunk or edge")
+        edge_fields = (
+            self.graph_version,
+            self.edge_id,
+            self.subject_node_id,
+            self.object_node_id,
+            self.relation_type,
+            self.relation_label,
+        )
+        if self.citation_kind == "edge":
+            if any(not isinstance(field, str) or not field for field in edge_fields):
+                raise ValueError("edge citation snapshot requires all edge fields")
+            _bounded("edge citation graph version", self.graph_version, maximum=64)
+            _bounded("edge citation edge ID", self.edge_id, maximum=128)
+            _bounded("edge citation subject node ID", self.subject_node_id, maximum=128)
+            _bounded("edge citation object node ID", self.object_node_id, maximum=128)
+            _bounded("edge citation relation type", self.relation_type, maximum=64)
+            if len(self.relation_label or "") > 64:
+                raise ValueError("edge citation relation label must be at most 64 characters")
+        elif any(field is not None for field in edge_fields):
+            raise ValueError("chunk citation snapshot must not carry edge fields")
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +233,7 @@ class AnswerSnapshot:
                 not in selected
             ):
                 raise ValueError("answer citation is outside the selected document revisions")
+            edge = item.edge
             citations.append(
                 CitationSnapshot(
                     trace_id=response.trace_id,
@@ -214,10 +246,30 @@ class AnswerSnapshot:
                     anchor_json=anchor_json,
                     claim_text=claims_by_citation[item.citation_id] or None,
                     origin=("SOURCE" if claims_by_citation[item.citation_id] else None),
+                    citation_kind=item.kind,
+                    graph_version=edge.graph_version if edge is not None else None,
+                    edge_id=edge.edge_id if edge is not None else None,
+                    subject_node_id=edge.subject_node_id if edge is not None else None,
+                    object_node_id=edge.object_node_id if edge is not None else None,
+                    relation_type=edge.relation_type if edge is not None else None,
+                    relation_label=edge.relation_label if edge is not None else None,
                 )
             )
         citation_ids = {item.citation_id for item in citations}
-        if not response.abstained:
+        # A clarification (LangGraph PR 5 Task 5) is a non-abstained answer that
+        # deliberately states no facts and cites nothing -- `claims`/`citations`
+        # are always empty by construction (`AuthorizedRetrieval.verify_answer`),
+        # so the ordinary "every non-abstained answer must carry a grounded
+        # claim" invariant below does not apply to it.
+        # An insights-only answer (final review C-1, Decision C) likewise
+        # carries no knowledge claim or citation: its facts are the cited
+        # `I<n>` records in `insights_facts`, already shape-checked by
+        # `_validate_gateway_response`.
+        if (
+            not response.abstained
+            and response.answer_kind != "clarification"
+            and not is_insights_only_answer(response)
+        ):
             if not response.claims or any(
                 not claim.citation_ids or not set(claim.citation_ids) <= citation_ids
                 for claim in response.claims
@@ -276,6 +328,18 @@ def _document_anchor_json(anchor: DocumentAnchor) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def is_insights_only_answer(response: AnswerResponse) -> bool:
+    """A non-abstained ordinary answer whose only cited evidence is Insights
+    records (Decision C): no claims, at least one `insights_facts` entry."""
+
+    return (
+        not response.abstained
+        and response.answer_kind == "answer"
+        and not response.claims
+        and bool(response.insights_facts)
+    )
+
+
 def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str) -> None:
     if not isinstance(response, AnswerResponse):
         raise TypeError("knowledge gateway must return AnswerResponse")
@@ -304,7 +368,11 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         raise ValueError("gateway answer metadata is outside the fixed snapshot contract")
     if len({item.citation_id for item in response.citations}) != len(response.citations):
         raise ValueError("gateway answer citations must have unique identities")
-    for position, citation in enumerate(response.citations, start=1):
+    chunk_position = 0
+    edge_position = 0
+    seen_edge = False
+    edge_graph_versions: set[str] = set()
+    for citation in response.citations:
         _bounded("citation ID", citation.citation_id, maximum=64)
         _bounded("citation chunk ID", citation.chunk_id, maximum=128)
         _bounded("citation logical chunk ID", citation.logical_chunk_id, maximum=128)
@@ -318,11 +386,30 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
             )
         ):
             raise ValueError("gateway citation structure is malformed")
-        if (
-            citation.evidence_label != f"S{position}"
-            or re.fullmatch(r"S(?:[1-9]|1[0-9]|20)", citation.evidence_label) is None
-        ):
-            raise ValueError("gateway citation evidence labels are malformed")
+        if citation.kind == "chunk":
+            if seen_edge:
+                raise ValueError("gateway chunk citations must precede edge citations")
+            chunk_position += 1
+            if (
+                citation.evidence_label != f"S{chunk_position}"
+                or re.fullmatch(r"S(?:[1-9]|1[0-9]|20)", citation.evidence_label) is None
+            ):
+                raise ValueError("gateway citation evidence labels are malformed")
+        elif citation.kind == "edge":
+            seen_edge = True
+            edge_position += 1
+            if (
+                citation.evidence_label != f"R{edge_position}"
+                or RELATION_CITATION_LABEL_PATTERN.fullmatch(citation.evidence_label) is None
+            ):
+                raise ValueError("gateway citation evidence labels are malformed")
+            if citation.edge is None:
+                raise ValueError("gateway edge citation must carry edge facts")
+            edge_graph_versions.add(citation.edge.graph_version)
+        else:
+            raise ValueError("gateway citation kind must be chunk or edge")
+    if len(edge_graph_versions) > 1:
+        raise ValueError("gateway edge citations must share one graph version")
     citation_ids = {item.citation_id for item in response.citations}
     if response.abstained:
         if (
@@ -333,6 +420,32 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         ):
             raise ValueError("gateway abstention shape is inconsistent")
         return
+    if response.answer_kind == "clarification":
+        # A clarification (LangGraph PR 5 Task 5) is a non-abstained answer
+        # that states no facts and cites nothing by construction -- it never
+        # carries claims or citations, unlike an ordinary grounded answer.
+        if (
+            not response.answer
+            or response.claims
+            or response.citations
+            or response.abstention_reason is not None
+            or not isinstance(response.answer_provenance, ModelCallProvenance)
+        ):
+            raise ValueError("gateway clarification shape is inconsistent")
+        return
+    if not response.claims and response.insights_facts:
+        # An insights-only answer (final review C-1, Decision C): every cited
+        # fact is an Insights `I<n>` record surfaced through
+        # `insights_facts`, so it carries no knowledge claim and no
+        # citation. Every other claim-less non-abstained shape stays invalid.
+        if (
+            not response.answer
+            or response.citations
+            or response.abstention_reason is not None
+            or not isinstance(response.answer_provenance, ModelCallProvenance)
+        ):
+            raise ValueError("gateway insights-only answer shape is inconsistent")
+        return
     if (
         not response.answer
         or not response.claims
@@ -340,7 +453,6 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         or not isinstance(response.answer_provenance, ModelCallProvenance)
     ):
         raise ValueError("gateway grounded answer shape is inconsistent")
-    paragraphs = _paragraph_spans(response.answer)
     previous_end = 0
     claim_ids: set[str] = set()
     for claim in response.claims:
@@ -348,9 +460,11 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         if claim.claim_id in claim_ids:
             raise ValueError("gateway claim IDs must be unique")
         claim_ids.add(claim.claim_id)
-        matches = tuple(
-            span for span in paragraphs if response.answer[span[0] : span[1]] == claim.text
-        )
+        # A claim is a cited sentence, not necessarily a whole paragraph (LangGraph
+        # PR 3: inline `[S1]`/`[R1]` markers can cite one sentence inside a Markdown
+        # list/paragraph that also carries uncited prose) -- it just has to be
+        # locatable at exactly one offset in the answer.
+        matches = _text_occurrences(response.answer, claim.text)
         if (
             not claim.text
             or "\n\n" in claim.text
@@ -370,13 +484,21 @@ def _validate_gateway_response(response: AnswerResponse, *, corpus_version: str)
         previous_end = claim.answer_end
 
 
-def _paragraph_spans(answer: str) -> tuple[tuple[int, int], ...]:
-    start = 0
+def _text_occurrences(answer: str, text: str) -> tuple[tuple[int, int], ...]:
+    """Every non-overlapping `[start, end)` span where `answer[start:end] ==
+    text`; empty `text` never occurs, matching `_bounded`'s "nonblank" rule
+    for claim text."""
+
+    if not text:
+        return ()
     spans: list[tuple[int, int]] = []
-    for paragraph in answer.split("\n\n"):
-        end = start + len(paragraph)
-        spans.append((start, end))
-        start = end + 2
+    start = 0
+    while True:
+        found = answer.find(text, start)
+        if found == -1:
+            break
+        spans.append((found, found + len(text)))
+        start = found + len(text)
     return tuple(spans)
 
 

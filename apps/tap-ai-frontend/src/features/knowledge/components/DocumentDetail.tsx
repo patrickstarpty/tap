@@ -19,6 +19,7 @@ import { COPY, STAGE_STATE_COPY, STAGE_TITLES, safeProblemCopy } from "../copy";
 import { useState } from "react";
 import { ChunkManager } from "./ChunkManager";
 import { DocumentChunkSettings } from "./ChunkSettings";
+import { GraphFragmentStatus } from "./GraphFragmentStatus";
 import { chunkPath, type ChunkSettings } from "../api/chunks";
 
 const INGESTION_STAGES: IngestionStage[] = [
@@ -56,6 +57,7 @@ interface DocumentDetailProps {
   filename: string;
   onClose: () => void;
   onAfterClose: () => void;
+  locale?: "en" | "zh";
 }
 
 export function DocumentDetail({
@@ -63,6 +65,7 @@ export function DocumentDetail({
   filename,
   onClose,
   onAfterClose,
+  locale,
 }: DocumentDetailProps) {
   const { projectId } = useKnowledgeClient();
   const [settings, setSettings] = useState<ChunkSettings | null>(null);
@@ -140,6 +143,12 @@ export function DocumentDetail({
               })}
             />
           </section>
+
+          <GraphFragmentStatus
+            key={detailQuery.data.revisionId}
+            revisionId={detailQuery.data.revisionId}
+            locale={locale}
+          />
 
           <section aria-labelledby="normalized-preview-heading">
             <Typography.Title level={5} id="normalized-preview-heading">

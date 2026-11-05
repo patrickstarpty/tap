@@ -1,10 +1,70 @@
 import { createHash } from "node:crypto";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+import { captureAgentTeamResponse } from "./agentTeamCaptureFixture";
+import {
+  CAPTURE_GRAPH_HIGHLIGHT,
+  CAPTURE_GRAPH_NODE,
+  CAPTURE_GRAPH_OVERVIEW,
+  CAPTURE_GRAPH_PROJECT,
+  CAPTURE_KNOWLEDGE_SOURCES,
+  CAPTURE_PUBLISHED_SOURCES,
+  CAPTURE_RELATION_CONVERSATION,
+} from "./graphCaptureFixture";
+import {
+  CAPTURE_SKILLS_CONVERSATION_TITLE,
+  CAPTURE_SKILLS_QUESTION,
+  captureHubSkill,
+  captureSkillAssetsResponse,
+  captureSkillHubResponse,
+  captureSkillLibraryOf,
+} from "./skillHubCaptureFixture";
 
 // Current independently deployed AI shell, not the archived mixed-product demo.
 // No live backend or provider is contacted; these are deterministic UI captures.
 test.use({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 });
+
+/**
+ * Shared knowledge/graph route fulfillment (sources, published sources, the
+ * project/overview/node-detail graph endpoints, and the `POST .../highlight`
+ * mutation), reused by `beforeEach`'s default route table and the edge
+ * citation/highlight test's conversation-scoped reroute below — both need
+ * the same graph fixture to back the Library's Knowledge Graph tab. Returns
+ * `true` once it has fulfilled the route, `false` when `path` isn't one of
+ * these endpoints (the caller then falls through to its own handling).
+ */
+async function fulfillGraphRoutes(
+  route: Route,
+  path: string,
+): Promise<boolean> {
+  if (path.endsWith("/knowledge/sources")) {
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: CAPTURE_KNOWLEDGE_SOURCES });
+  } else if (path.endsWith("/knowledge/published-sources")) {
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: CAPTURE_PUBLISHED_SOURCES });
+  } else if (path.endsWith("/knowledge/graph/project")) {
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: CAPTURE_GRAPH_PROJECT });
+  } else if (path.endsWith("/knowledge/graph/overview")) {
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: CAPTURE_GRAPH_OVERVIEW });
+  } else if (/\/knowledge\/graph\/nodes\/node-disclosure$/u.test(path)) {
+    // Scoped to the one node this fixture actually backs -- any other node
+    // id falls through to the "Unexpected capture API request" throw below,
+    // so a test that accidentally selects the wrong node fails loudly
+    // instead of silently rendering "Health disclosure" detail for it.
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: CAPTURE_GRAPH_NODE });
+  } else if (path.endsWith("/knowledge/graph/highlight")) {
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({ json: CAPTURE_GRAPH_HIGHLIGHT });
+  } else {
+    return false;
+  }
+  return true;
+}
 
 // Five items (> the four-card batch size) so the "Show others" control renders,
 // matching the prototype's e01-suggestions-default reference state.
@@ -49,6 +109,14 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown;
+    const teamBody = captureAgentTeamResponse(path);
+    // The shared default is an empty Skill library (the "captures AI Agent
+    // and Skill catalogs" empty state); Skill Hub captures reroute to the
+    // populated fixture.
+    const skillHubBody = captureSkillHubResponse(
+      path,
+      captureSkillLibraryOf([]),
+    );
     if (path === "/api/v1/runtime-mode") {
       body = {
         mode: "validation",
@@ -69,11 +137,13 @@ test.beforeEach(async ({ page }) => {
       };
     } else if (path.endsWith("/prompt-suggestions")) {
       body = { items: CAPTURE_PROMPT_SUGGESTIONS };
-    } else if (
-      /\/(ai\/(agents|skills)|conversations|knowledge\/(sources|published-sources))$/u.test(
-        path,
-      )
-    ) {
+    } else if (await fulfillGraphRoutes(route, path)) {
+      return;
+    } else if (teamBody !== undefined) {
+      body = teamBody;
+    } else if (skillHubBody !== undefined) {
+      body = skillHubBody;
+    } else if (/\/(ai\/(agents|skills)|conversations)$/u.test(path)) {
       body = { items: [], nextCursor: null };
     } else {
       throw new Error(
@@ -85,7 +155,7 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto("/");
   await expect(
-    page.getByRole("img", { name: "TAP AI", exact: true }),
+    page.getByRole("img", { name: "TAP platform", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", {
@@ -95,10 +165,189 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.getByText("Loading conversations…", { exact: true }),
   ).toHaveCount(0);
+  // The product rail shows the full TAP shell, every module included.
   await expect(
     page.getByRole("button", { name: "Low Code Automation", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 });
+
+/**
+ * The force-layout worker (`features/graph/model/layout.ts`) keeps refining
+ * node positions asynchronously after the canvas first renders (seeded
+ * fallback positions, then the worker's reply) -- there is no DOM
+ * signal/data-attribute exposed for "layout settled" (confirmed by reading
+ * `KnowledgeGraph.tsx`/`layout.ts`; the capture harness deliberately does
+ * not add a test-only hook to product code). This polls each `.tap-graph-node-core` circle's `cx`/`cy` and
+ * waits until two consecutive samples agree, which is a reasonable
+ * test-only proxy for "the worker has stopped moving things" without
+ * touching `GraphOverview`/`KnowledgeGraph`.
+ */
+const GRAPH_LAYOUT_SETTLE_STREAK = 3;
+
+async function waitForGraphLayoutSettled(page: Page): Promise<void> {
+  // Reset both the previous-sample snapshot and the equal-streak counter at
+  // the start of *every* call -- a leftover snapshot from an earlier call
+  // (e.g. the overview capture) could otherwise spuriously count as an
+  // immediate "match" against the very first sample taken for a different
+  // canvas state (after a node selection or a highlight-fit zoom), ending
+  // the wait before the new state has actually settled.
+  await page.evaluate(() => {
+    delete (window as unknown as { __tapLayoutSnapshot?: string })
+      .__tapLayoutSnapshot;
+    delete (window as unknown as { __tapLayoutSettleStreak?: number })
+      .__tapLayoutSettleStreak;
+  });
+  await page.waitForFunction(
+    (requiredStreak) => {
+      const circles = document.querySelectorAll(
+        ".tap-graph-node-core",
+      ) as NodeListOf<SVGCircleElement>;
+      if (circles.length === 0) return false;
+      const snapshot = Array.from(circles)
+        .map(
+          (circle) =>
+            `${circle.getAttribute("cx")}:${circle.getAttribute("cy")}`,
+        )
+        .join(",");
+      const w = window as unknown as {
+        __tapLayoutSnapshot?: string;
+        __tapLayoutSettleStreak?: number;
+      };
+      const streak =
+        w.__tapLayoutSnapshot === snapshot
+          ? (w.__tapLayoutSettleStreak ?? 0) + 1
+          : 0;
+      w.__tapLayoutSnapshot = snapshot;
+      w.__tapLayoutSettleStreak = streak;
+      return streak >= requiredStreak;
+    },
+    GRAPH_LAYOUT_SETTLE_STREAK,
+    { timeout: 5_000, polling: 100 },
+  );
+}
+
+/**
+ * Share of the smaller box's area two labels may overlap when the node label
+ * involved is drawn over a halo (the canvas only does that when no free spot
+ * exists around the node).
+ */
+const HALO_OVERLAP_TOLERANCE = 0.1;
+
+/**
+ * Asserts, from the browser's real text geometry, that every drawn node has
+ * a label; that a node in view has its label in view too (neither cut off
+ * by the canvas edge nor under the floating toolbar), and a node out of
+ * view its label out of view; that node labels
+ * overlap neither each other nor the visible edge labels -- except
+ * slightly, over a halo -- and that edge labels do not overlap each other.
+ * Labels are re-placed shortly after the view settles, so this polls.
+ */
+async function expectNodeLabelsReadable(page: Page): Promise<void> {
+  const measure = () =>
+    page.evaluate((tolerance) => {
+      type Box = { left: number; right: number; top: number; bottom: number };
+      const area = (box: Box) =>
+        (box.right - box.left) * (box.bottom - box.top);
+      const overlap = (a: Box, b: Box) => {
+        const width = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        return width > 0 && height > 0 ? width * height : 0;
+      };
+      const nodes = [...document.querySelectorAll(".tap-graph-node")];
+      const nodeLabels = nodes.flatMap((node) => {
+        const group = node.querySelector(".tap-graph-node-label-group");
+        const text = group?.querySelector("text");
+        if (!group || !text) return [];
+        return [
+          {
+            name: text.textContent ?? "",
+            halo: group.getAttribute("data-halo") === "true",
+            box: text.getBoundingClientRect() as Box,
+          },
+        ];
+      });
+      const edgeLabels = [
+        ...document.querySelectorAll(".tap-graph-edge-label"),
+      ].map((group) => ({
+        name: group.querySelector("text")?.textContent ?? "",
+        halo: false,
+        box: group.querySelector("rect")!.getBoundingClientRect() as Box,
+      }));
+      const problems: string[] = [];
+      const halos: string[] = [];
+      // A node fully in view (inside the canvas, clear of the toolbar)
+      // keeps its label in view, at any zoom and pan.
+      const canvas = document
+        .querySelector(".tap-graph-canvas")!
+        .getBoundingClientRect();
+      const toolbar = document
+        .querySelector(".tap-graph-toolbar")!
+        .getBoundingClientRect();
+      const inside = (box: Box, slack = 1) =>
+        box.left >= canvas.left - slack &&
+        box.right <= canvas.right + slack &&
+        box.top >= canvas.top - slack &&
+        box.bottom <= canvas.bottom + slack;
+      nodes.forEach((node) => {
+        const core = node.querySelector(".tap-graph-node-core");
+        const text = node.querySelector(".tap-graph-node-label");
+        if (!core || !text) return;
+        const coreBox = core.getBoundingClientRect() as Box;
+        // A node wholly out of view keeps its label out of view too, so no
+        // stray label shows without its node.
+        if (overlap(coreBox, canvas) === 0) {
+          if (overlap(text.getBoundingClientRect() as Box, canvas) > 0) {
+            problems.push(`${text.textContent ?? ""} shows without its node`);
+          }
+          return;
+        }
+        if (!inside(coreBox, 0) || overlap(coreBox, toolbar) > 0) return;
+        const textBox = text.getBoundingClientRect() as Box;
+        if (!inside(textBox)) {
+          problems.push(`${text.textContent ?? ""} is cut off by the canvas`);
+        }
+        if (overlap(textBox, toolbar) > 1) {
+          problems.push(`${text.textContent ?? ""} is under the toolbar`);
+        }
+      });
+      // Edge labels never overlap each other (beyond rounding where two
+      // pills touch): one with no free spot is hidden instead.
+      edgeLabels.forEach((a, i) => {
+        for (const b of edgeLabels.slice(i + 1)) {
+          if (overlap(a.box, b.box) > 1) {
+            problems.push(`edge labels ${a.name} / ${b.name} overlap`);
+          }
+        }
+      });
+      nodeLabels.forEach((a, i) => {
+        for (const b of [...nodeLabels.slice(i + 1), ...edgeLabels]) {
+          const shared = overlap(a.box, b.box);
+          if (shared === 0) continue;
+          const share = shared / Math.min(area(a.box), area(b.box));
+          const pair = `${a.name} / ${b.name} (${(share * 100).toFixed(1)}%)`;
+          if ((a.halo || b.halo) && share < tolerance) halos.push(pair);
+          else problems.push(pair);
+        }
+      });
+      return {
+        nodes: nodes.length,
+        labeled: nodeLabels.length,
+        problems,
+        halos,
+      };
+    }, HALO_OVERLAP_TOLERANCE);
+  await expect
+    .poll(async () => (await measure()).problems, { timeout: 3_000 })
+    .toEqual([]);
+  const report = await measure();
+  expect(report.nodes).toBeGreaterThan(0);
+  expect(report.labeled).toBe(report.nodes);
+  expect(report.problems).toEqual([]);
+  await test.info().attach("label-overlaps-over-halo", {
+    body: JSON.stringify(report.halos),
+    contentType: "application/json",
+  });
+}
 
 async function capture(page: Page, name: string) {
   await page.evaluate(() => document.fonts.ready);
@@ -132,6 +381,7 @@ test("captures the fresh Tapper conversation and model selector", async ({
 
 test("captures AI Agent and Skill catalogs", async ({ page }) => {
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Agents", exact: true }),
   ).toBeVisible();
@@ -143,16 +393,571 @@ test("captures AI Agent and Skill catalogs", async ({ page }) => {
   expect(await capture(page, "04-skills")).not.toBe(agents);
 });
 
+test("captures the Skill import preview, Skill detail and Agent creation form", async ({
+  page,
+}) => {
+  const skillRevisionId = "skill-rev-capture-claim-intake-1";
+  const skillSummary = {
+    skillId: "skill-capture-claim-intake",
+    revisionId: skillRevisionId,
+    displayName: "Claim intake checklist",
+    description:
+      "Checks a claim submission for required fields before a reviewer looks at it.",
+    applicableTasks: ["knowledge.answer"],
+    isLatest: true,
+    builtIn: false,
+    sourceKind: "imported",
+    status: "enabled",
+    contentDigest: "digest-capture-claim-intake-1",
+    assetId: "asset-capture-claim-intake-1",
+  };
+  const skillFiles = [
+    {
+      relativePath: "SKILL.md",
+      sizeBytes: 420,
+      sha256: "a".repeat(64),
+      category: "skill",
+      attached: false,
+    },
+    {
+      relativePath: "references/glossary.md",
+      sizeBytes: 180,
+      sha256: "b".repeat(64),
+      category: "reference",
+      attached: true,
+    },
+    {
+      relativePath: "scripts/check_fields.py",
+      sizeBytes: 260,
+      sha256: "c".repeat(64),
+      category: "script",
+      attached: false,
+    },
+    {
+      relativePath: "assets/template.txt",
+      sizeBytes: 90,
+      sha256: "d".repeat(64),
+      category: "asset",
+      attached: false,
+    },
+  ];
+  const skillDetail = {
+    ...skillSummary,
+    instructions:
+      "Confirm the claimant name, policy number and incident date are present before routing a claim for review.",
+    attachedReferences:
+      "## Glossary\n\nIncident date: the calendar date the loss occurred.",
+    frontmatter: {
+      name: "claim-intake-checklist",
+      description: skillSummary.description,
+    },
+    files: skillFiles,
+  };
+  const importPreview = {
+    importId: "import-capture-claim-intake",
+    expiresAt: "2026-12-31T00:00:00Z",
+    skills: [
+      {
+        root: "",
+        name: "claim-intake-checklist",
+        description: skillSummary.description,
+        frontmatter: skillDetail.frontmatter,
+        files: skillFiles,
+        warnings: [],
+      },
+    ],
+  };
+
+  const skillHubLibrary = captureSkillLibraryOf([
+    captureHubSkill({
+      skillId: skillSummary.skillId,
+      latestRevisionId: skillRevisionId,
+      name: skillSummary.displayName,
+      description: skillSummary.description,
+      category: "knowledge",
+      sourceKind: "imported",
+      originKind: "zip",
+      originRef: "claim-intake-checklist.zip",
+      originImportedAt: "2026-10-18T03:20:00Z",
+    }),
+  ]);
+
+  // This test's own catalogs differ from "captures AI Agent and Skill
+  // catalogs" above (that one deliberately captures the empty-catalog
+  // state), so it reroutes `**/api/v1/**` with its own fixture rather than
+  // widening the shared `beforeEach` route -- the same idiom the graph and
+  // Insights capture tests below use for their own reroutes.
+  await page.unroute("**/api/v1/**");
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
+    if (path === "/api/v1/runtime-mode") {
+      await route.fulfill({
+        json: {
+          mode: "validation",
+          identityMode: "validation",
+          projectId: "project-capture",
+          actorId: "actor-capture",
+        },
+      });
+      return;
+    }
+    if (path.endsWith("/ai/models")) {
+      await route.fulfill({
+        json: {
+          defaultAlias: "qwen-plus",
+          items: [
+            {
+              alias: "qwen-plus",
+              displayName: "Capture model",
+              capabilities: ["chat", "structured"],
+            },
+          ],
+        },
+      });
+      return;
+    }
+    if (path.endsWith("/prompt-suggestions")) {
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
+    if (path.endsWith("/conversations")) {
+      await route.fulfill({ json: { items: [], nextCursor: null } });
+      return;
+    }
+    if (path.endsWith("/knowledge/published-sources")) {
+      // `TapperWorkspace` fetches published sources unconditionally (for
+      // the composer's Library context, regardless of which module tab is
+      // active), so this reroute needs it even though this test never
+      // visits the Library tab itself.
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
+    if (path.endsWith("/ai/skills/imports") && method === "POST") {
+      await route.fulfill({ json: importPreview });
+      return;
+    }
+    if (path.endsWith(`/ai/skills/${skillRevisionId}`) && method === "GET") {
+      await route.fulfill({ json: skillDetail });
+      return;
+    }
+    if (
+      path.endsWith(`/ai/skills/${skillSummary.skillId}/revisions`) &&
+      method === "GET"
+    ) {
+      // `SkillDetailDrawer` fetches revision history unconditionally (not
+      // only when the "Revision history" tab is selected).
+      await route.fulfill({ json: { items: [skillSummary] } });
+      return;
+    }
+    if (path.endsWith("/ai/skills") && method === "GET") {
+      await route.fulfill({
+        json: { items: [skillSummary], nextCursor: null },
+      });
+      return;
+    }
+    if (path.endsWith("/ai/agents") && method === "GET") {
+      await route.fulfill({ json: { items: [], nextCursor: null } });
+      return;
+    }
+    if (path.endsWith("/ai/tools") && method === "GET") {
+      // The Agent form lists checkable tools.
+      await route.fulfill({ json: { items: [] } });
+      return;
+    }
+    const team = captureAgentTeamResponse(path);
+    if (team !== undefined && method === "GET") {
+      await route.fulfill({ json: team });
+      return;
+    }
+    // The Skills page lists the library's Skill Hub records.
+    const hub = captureSkillHubResponse(path, skillHubLibrary);
+    if (hub !== undefined && method === "GET") {
+      await route.fulfill({ json: hub });
+      return;
+    }
+    throw new Error(`Unexpected capture API request: ${method} ${path}`);
+  });
+
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Skills", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: skillSummary.displayName }),
+  ).toBeVisible();
+  const skillsList = await capture(page, "14-skills-list");
+
+  await page.getByRole("button", { name: "Import skill", exact: true }).click();
+  const importDialog = page.getByRole("dialog", { name: "Import a skill" });
+  await importDialog
+    .getByLabel("Paste SKILL.md content", { exact: true })
+    .fill("placeholder content -- the preview response below is mocked");
+  const stagePending = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/ai/skills/imports"),
+  );
+  await importDialog
+    .getByRole("button", { name: "Preview", exact: true })
+    .click();
+  await stagePending;
+  const reviewDialog = page.getByRole("dialog", {
+    name: "Review before import",
+  });
+  await expect(reviewDialog).toBeVisible();
+  await expect(
+    reviewDialog.getByText("Script · saved, not executed", { exact: true }),
+  ).toBeVisible();
+  const importPreviewCapture = await capture(page, "15-skill-import-preview");
+  expect(importPreviewCapture).not.toBe(skillsList);
+  await page.keyboard.press("Escape");
+  await expect(reviewDialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: skillSummary.displayName }).click();
+  await expect(
+    page.getByRole("dialog", { name: skillSummary.displayName }),
+  ).toBeVisible();
+  const skillDetailCapture = await capture(page, "16-skill-detail");
+  expect(skillDetailCapture).not.toBe(importPreviewCapture);
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "New agent", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "New agent" })).toBeVisible();
+  const agentFormCapture = await capture(page, "17-agent-form");
+
+  expect(
+    new Set([
+      skillsList,
+      importPreviewCapture,
+      skillDetailCapture,
+      agentFormCapture,
+    ]).size,
+  ).toBe(4);
+});
+
 test("captures Library graph and document views", async ({ page }) => {
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await page.getByRole("tab", { name: "Knowledge Graph" }).click();
   await expect(
     page.getByRole("tab", { name: "Knowledge Graph" }),
   ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
+  ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsReadable(page);
   const graph = await capture(page, "05-knowledge-graph");
   await page.getByRole("tab", { name: "Documents", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Documents" })).toBeVisible();
   expect(await capture(page, "06-documents")).not.toBe(graph);
+});
+
+// Regression coverage for real-model revalidation report 2 (§9 Important
+// 1/§5): with a project carrying many topic groups, the community sidebar
+// -- unbounded, in the same CSS grid row as the canvas with
+// `align-items: stretch` -- used to stretch the whole `.tap-graph-workspace`
+// row (and so the canvas) well past the viewport, leaving the first screen's
+// canvas empty and the graph itself scrolled out of view below it
+// (`TapperWorkspace.css`'s `.tap-graph-workspace`/`.tap-graph-communities`).
+// This project/overview pair is deliberately local to this test (not added
+// to the shared `graphCaptureFixture`, which every other capture in this
+// file also renders against) -- 24 communities is enough to reproduce the
+// stretch on a 720px-tall viewport without perturbing any existing capture.
+function buildManyCommunitiesProject() {
+  const communities = Array.from({ length: 24 }, (_, index) => ({
+    communityId: `community-${String(index)}`,
+    label: `Topic group ${String(index)}`,
+    size: 4,
+  }));
+  return {
+    graphVersion: 1,
+    status: "READY",
+    nodeCount: communities.length * 4,
+    edgeCount: communities.length * 3,
+    mergedAt: "2026-10-05T08:00:00Z",
+    communities,
+    extractingRevisionIds: [],
+    partialRevisionIds: [],
+  };
+}
+
+function buildManyCommunitiesOverview() {
+  const nodes: {
+    nodeId: string;
+    nodeType: string;
+    label: string;
+    canonicalKey: string;
+    degree: number;
+    communityId: string;
+    aliases: string[];
+  }[] = [];
+  const edges: {
+    edgeId: string;
+    sourceNodeId: string;
+    targetNodeId: string;
+    relationType: string;
+    relationLabel: string;
+    confidence: number;
+    origin: string;
+  }[] = [];
+  for (let community = 0; community < 24; community += 1) {
+    for (let member = 0; member < 4; member += 1) {
+      const nodeId = `node-${String(community)}-${String(member)}`;
+      nodes.push({
+        nodeId,
+        nodeType: "CONCEPT",
+        label: `Node ${String(community)}-${String(member)}`,
+        canonicalKey: nodeId,
+        degree: 2,
+        communityId: `community-${String(community)}`,
+        aliases: [],
+      });
+      if (member > 0) {
+        edges.push({
+          edgeId: `edge-${String(community)}-${String(member)}`,
+          sourceNodeId: `node-${String(community)}-${String(member - 1)}`,
+          targetNodeId: nodeId,
+          relationType: "RELATED_TO",
+          relationLabel: "related to",
+          confidence: 0.9,
+          origin: "EXTRACTED",
+        });
+      }
+    }
+  }
+  return { graphVersion: 1, nodes, edges };
+}
+
+test("keeps the graph canvas inside the first screen when a project has many topic groups", async ({
+  page,
+}) => {
+  const manyCommunitiesProject = buildManyCommunitiesProject();
+  const manyCommunitiesOverview = buildManyCommunitiesOverview();
+  // Registered after `beforeEach`'s catch-all route, so Playwright matches
+  // these two handlers first and everything else (sources, highlight, …)
+  // still falls through to the shared fixture.
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/knowledge/graph/project")) {
+      await route.fulfill({ json: manyCommunitiesProject });
+    } else if (path.endsWith("/knowledge/graph/overview")) {
+      await route.fulfill({ json: manyCommunitiesOverview });
+    } else {
+      await route.fallback();
+    }
+  });
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("tab", { name: "Knowledge Graph" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Topic group 0 · 4 nodes" }),
+  ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  const canvasBox = await page.locator(".tap-graph-canvas").boundingBox();
+  expect(canvasBox).not.toBeNull();
+  // The canvas itself never grows past the workspace's bounded row height,
+  // so its node circles stay inside the viewport without scrolling.
+  expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
+    viewport!.height,
+  );
+  const nodeCore = page.locator(".tap-graph-node-core").first();
+  await expect(nodeCore).toBeVisible();
+  const nodeBox = await nodeCore.boundingBox();
+  expect(nodeBox).not.toBeNull();
+  expect(nodeBox!.y).toBeGreaterThanOrEqual(0);
+  expect(nodeBox!.y).toBeLessThanOrEqual(viewport!.height);
+
+  // The sidebar's own overflow scrolls internally instead of stretching the
+  // row -- its scrollHeight exceeds its own clientHeight once there are more
+  // topic groups than fit, confirming the list didn't just get hidden.
+  const communitiesScrollable = await page
+    .locator(".tap-graph-communities")
+    .evaluate((el) => el.scrollHeight > el.clientHeight);
+  expect(communitiesScrollable).toBe(true);
+});
+
+// Narrow-viewport regression for the fix above: below 821px,
+// `.tap-graph-inspector` becomes an in-flow `grid-row: 3` under the canvas
+// (`TapperWorkspace.css`'s `max-width: 820px` rule), not an overlay — so
+// capping `.tap-graph-workspace`'s height there (as the ≥821px-only fix
+// does not) would leave too little room for the canvas, the caption and the
+// stacked inspector together once a node's detail panel is open. This must
+// keep the pre-fix `min-height` (grow-to-fit) behaviour at 800x900.
+test("keeps the graph canvas and detail panel readable on a narrow viewport with the detail panel open", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 800, height: 900 });
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("tab", { name: "Knowledge Graph" }).click();
+  // Below 820px the community column starts collapsed (`KnowledgeGraph.tsx`
+  // seeds `communitiesOpen` from the same breakpoint) -- wait on the canvas
+  // itself, not the (hidden) community checkboxes.
+  await expect(page.locator(".tap-graph-canvas")).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+
+  await page.getByRole("button", { name: /Health disclosure/u }).click();
+  const nodeDetails = page.getByRole("region", { name: "Node details" });
+  await expect(nodeDetails).toContainText("Aliases");
+
+  // The canvas keeps its unsqueezed (CSS min-height) size at this viewport
+  // both before and after the fix -- it is the *inspector* and the
+  // canvas/inspector overlap below that actually regressed, not the canvas
+  // itself.
+  const canvasBox = await page.locator(".tap-graph-canvas").boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(canvasBox!.height).toBeGreaterThanOrEqual(400);
+
+  // The canvas and the stacked detail panel occupy disjoint vertical space
+  // -- the canvas does not overflow onto the panel below it.
+  const inspectorBox = await page.locator(".tap-graph-inspector").boundingBox();
+  expect(inspectorBox).not.toBeNull();
+  expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
+    inspectorBox!.y + 1,
+  );
+
+  // The overview caption below the canvas is present and not clipped to
+  // zero height by an over-eager container cap.
+  const caption = page.locator("#tap-library-graph-caption");
+  await expect(caption).toBeVisible();
+  const captionBox = await caption.boundingBox();
+  expect(captionBox).not.toBeNull();
+  expect(captionBox!.height).toBeGreaterThan(0);
+
+  // The detail panel itself has real room -- not squeezed down to a sliver
+  // by a height cap meant for the ≥821px overlay layout.
+  expect(inspectorBox!.height).toBeGreaterThanOrEqual(400);
+});
+
+test("captures the graph overview, node detail, edge citations and highlight", async ({
+  page,
+}) => {
+  // Step 1: the community-partitioned overview canvas.
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("tab", { name: "Knowledge Graph" }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Underwriting · 12 nodes" }),
+  ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsReadable(page);
+  const overview = await capture(page, "10-graph-overview");
+
+  // Step 2: node detail for "Health disclosure" (aliases, sources, grouped
+  // relations).
+  await page.getByRole("button", { name: /Health disclosure/u }).click();
+  const nodeDetails = page.getByRole("region", { name: "Node details" });
+  await expect(nodeDetails).toContainText("Aliases");
+  await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsReadable(page);
+  const nodeDetail = await capture(page, "11-graph-node-detail");
+  expect(nodeDetail).not.toBe(overview);
+
+  // Step 3/4 reroute to a durable conversation whose turn renders an edge
+  // citation chip, the same reroute idiom as the Insights test above.
+  await page.unroute("**/api/v1/**");
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (await fulfillGraphRoutes(route, path)) return;
+    let body: unknown;
+    if (path === "/api/v1/runtime-mode") {
+      body = {
+        mode: "validation",
+        identityMode: "validation",
+        projectId: "project-capture",
+        actorId: "actor-capture",
+      };
+    } else if (path.endsWith("/ai/models")) {
+      body = {
+        defaultAlias: "qwen-plus",
+        items: [
+          {
+            alias: "qwen-plus",
+            displayName: "Capture model",
+            capabilities: ["chat", "structured"],
+          },
+        ],
+      };
+    } else if (path.endsWith("/prompt-suggestions")) {
+      body = { items: CAPTURE_PROMPT_SUGGESTIONS };
+    } else if (path.endsWith("/conversations")) {
+      body = {
+        items: [CAPTURE_RELATION_CONVERSATION.summary],
+        nextCursor: null,
+      };
+    } else if (path.endsWith("/conversations/conversation-relation")) {
+      body = CAPTURE_RELATION_CONVERSATION.detail;
+    } else if (path.endsWith("/conversations/conversation-relation/events")) {
+      body = CAPTURE_RELATION_CONVERSATION.events;
+    } else if (
+      /\/conversations\/conversation-relation\/turns\/turn-relation\/citations\/(e1|e5)$/u.test(
+        path,
+      )
+    ) {
+      const citationId = path.slice(path.lastIndexOf("/") + 1) as "e1" | "e5";
+      body = CAPTURE_RELATION_CONVERSATION.citations[citationId];
+    } else if (/\/ai\/(agents|skills)$/u.test(path)) {
+      body = { items: [], nextCursor: null };
+    } else {
+      throw new Error(
+        `Unexpected capture API request: ${route.request().method()} ${path}`,
+      );
+    }
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: body });
+  });
+  await page.goto("/?projectId=project-capture");
+  await page
+    .getByRole("button", { name: "Relation question", exact: true })
+    .click();
+  const edgeChip = page.getByRole("button", {
+    name: "Open relation citation R1",
+  });
+  await expect(edgeChip).toBeVisible();
+  await edgeChip.hover();
+  await expect(
+    page.getByText(
+      "Health disclosure must be completed before underwriting review proceeds.",
+    ),
+  ).toBeVisible();
+  const edgeCitations = await capture(page, "12-answer-edge-citations");
+  expect(new Set([overview, nodeDetail, edgeCitations]).size).toBe(3);
+
+  // Step 4: open the evidence panel and follow "View in Library" into the
+  // highlighted-path state. The turn cites both `e1` (claim 1) and `e5`
+  // (claim 2), so "View in Library" must highlight both -- asserted against
+  // the actual `POST .../highlight` request body, not just the rendered
+  // text list.
+  await edgeChip.click();
+  await expect(
+    page.getByRole("heading", { name: "Relation evidence" }),
+  ).toBeVisible();
+  const highlightRequest = page.waitForRequest(
+    (request) =>
+      request.url().includes("/knowledge/graph/highlight") &&
+      request.method() === "POST",
+  );
+  await page.getByRole("button", { name: "View in Library" }).click();
+  expect((await highlightRequest).postDataJSON()).toEqual({
+    edgeIds: ["e1", "e5"],
+  });
+  await expect(
+    page.getByRole("region", { name: "Highlighted path" }),
+  ).toBeVisible();
+  await waitForGraphLayoutSettled(page);
+  await expectNodeLabelsReadable(page);
+  const highlight = await capture(page, "13-graph-highlight");
+
+  expect(new Set([overview, nodeDetail, edgeCitations, highlight]).size).toBe(
+    4,
+  );
 });
 
 test("captures a restored Insights explanation before and after refresh", async ({
@@ -302,4 +1107,247 @@ test("captures a restored Insights explanation before and after refresh", async 
     page.getByText("Request timed out before retry passed.", { exact: true }),
   ).toHaveCount(0);
   await capture(page, "09-insights-withdrawn");
+});
+
+// Hashes of the Agent team captures so far: each must differ from the others.
+const teamCaptureHashes: string[] = [];
+async function captureTeam(page: Page, name: string) {
+  const hash = await capture(page, name);
+  expect(teamCaptureHashes).not.toContain(hash);
+  teamCaptureHashes.push(hash);
+}
+
+async function openAgentTeam(page: Page, tab: string) {
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: tab, exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: tab, selected: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Loading team data...")).toHaveCount(0);
+}
+
+test("captures the Agent team cards", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  // The leaderboard table is the default roster view; cards are one toggle away.
+  await page.getByRole("button", { name: "Cards", exact: true }).click();
+  // The trend legend also lists Agents; the roster is the card list.
+  const roster = page
+    .getByRole("list")
+    .filter({ hasText: "Claims intake reviewer" })
+    .filter({ hasText: "Disabled" });
+  await expect(
+    roster.getByText("Life Underwriting Analyst", { exact: true }),
+  ).toBeVisible();
+  await expect(roster.getByText("Disabled", { exact: true })).toBeVisible();
+  await expect(roster.getByText("Idle", { exact: true })).toBeVisible();
+  await expect(roster.getByText("Tapper", { exact: true })).toBeVisible();
+  await captureTeam(page, "05-agent-team-cards");
+});
+
+test("captures the Agent team org chart", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  const chart = page.getByRole("group", {
+    name: /Org chart of people and the agents/u,
+  });
+  await chart.scrollIntoViewIfNeeded();
+  await expect(chart).toBeVisible();
+  await page
+    .getByRole("button", { name: "actor-capture", exact: true })
+    .click();
+  await captureTeam(page, "06-agent-team-org-chart");
+});
+
+test("captures an Agent profile", async ({ page }) => {
+  await openAgentTeam(page, "Team");
+  await page
+    .locator(".tap-team-card-name", { hasText: "Claims intake reviewer" })
+    .click();
+  const profile = page.getByRole("dialog", { name: "Claims intake reviewer" });
+  await expect(profile).toBeVisible();
+  await profile.getByRole("tab", { name: "Workload", exact: true }).click();
+  await expect(profile.getByText("Call volume")).toBeVisible();
+  await captureTeam(page, "07-agent-profile");
+});
+
+test("captures My Agents", async ({ page }) => {
+  await openAgentTeam(page, "My Agents");
+  await expect(page.getByText("Agents I own")).toBeVisible();
+  await expect(page.getByText("Feedback waiting for me")).toBeVisible();
+  await captureTeam(page, "08-my-agents");
+});
+
+test("captures the Agent team report", async ({ page }) => {
+  await openAgentTeam(page, "Report");
+  await expect(
+    page.getByRole("button", { name: "Export CSV", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Loading team data...")).toHaveCount(0);
+  await captureTeam(page, "09-agent-team-report");
+});
+
+// -- Skill Hub -------------------------------------------------------------
+
+// Hashes of the Skill Hub captures so far: each must differ from the others.
+const skillHubCaptureHashes: string[] = [];
+async function captureSkillHub(page: Page, name: string) {
+  const hash = await capture(page, name);
+  expect(skillHubCaptureHashes).not.toContain(hash);
+  skillHubCaptureHashes.push(hash);
+}
+
+/** Serves the populated Skill Hub fixture ahead of `beforeEach`'s shared
+ * routes (everything else falls through to them) and reloads the app so no
+ * query keeps the shared default's empty catalogs. */
+async function openWithSkillHubFixture(page: Page) {
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const body =
+      captureSkillHubResponse(path) ?? captureSkillAssetsResponse(path);
+    if (body === undefined) {
+      await route.fallback();
+      return;
+    }
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({ json: body });
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("img", { name: "TAP platform", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Loading conversations…", { exact: true }),
+  ).toHaveCount(0);
+}
+
+async function openSkillLibrary(page: Page) {
+  await page.getByRole("button", { name: "Skills", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Skills", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "Skill library" })
+      .getByRole("listitem", { name: "claim-intake-checklist" }),
+  ).toBeVisible();
+}
+
+test("captures the Skill library", async ({ page }) => {
+  await openWithSkillHubFixture(page);
+  await openSkillLibrary(page);
+  const library = page.getByRole("list", { name: "Skill library" });
+  // Every category, a built-in and a disabled Skill.
+  for (const name of [
+    "underwriting-test-design",
+    "policy-api-automation",
+    "Citation skill",
+    "claim-trend-analysis",
+    "customer-letter-writer",
+    "legacy-claim-summary",
+  ])
+    await expect(library.getByRole("listitem", { name })).toBeVisible();
+  await expect(
+    library
+      .getByRole("listitem", { name: "Citation skill" })
+      .getByText("Built-in", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    library
+      .getByRole("listitem", { name: "legacy-claim-summary" })
+      .getByText("Disabled", { exact: true }),
+  ).toBeVisible();
+  // 61 automatic candidates against a limit of 60.
+  await expect(
+    page.getByRole("status").filter({ hasText: "More than 60 skills" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Library summary" }),
+  ).toContainText("64");
+  await captureSkillHub(page, "18-skill-library");
+});
+
+test("captures a Skill detail usage tab", async ({ page }) => {
+  await openWithSkillHubFixture(page);
+  await openSkillLibrary(page);
+  await page
+    .getByRole("listitem", { name: "claim-intake-checklist" })
+    .getByRole("button", { name: "claim-intake-checklist", exact: true })
+    .click();
+  const detail = page.getByRole("dialog", { name: "claim-intake-checklist" });
+  await expect(detail).toBeVisible();
+  await detail.getByRole("tab", { name: "Usage", exact: true }).click();
+  const usage = detail.getByRole("tabpanel");
+  await expect(
+    usage.getByText("Insufficient sample", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    usage.getByRole("list", { name: "Agents using it" }),
+  ).toContainText("Claims intake reviewer");
+  await expect(usage.getByText("Loading…", { exact: true })).toHaveCount(0);
+  await captureSkillHub(page, "19-skill-detail-usage");
+});
+
+test("captures the Agent form with pinned and excluded Skills", async ({
+  page,
+}) => {
+  await openWithSkillHubFixture(page);
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "New agent", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "New agent" });
+  await expect(form).toBeVisible();
+  await form
+    .getByLabel("Name", { exact: true })
+    .fill("Hospital cash claim reviewer");
+  const pinned = form.getByRole("group", { name: "Pinned Skills" });
+  const excluded = form.getByRole("group", { name: "Excluded Skills" });
+  await pinned
+    .getByRole("checkbox", { name: "claim-intake-checklist", exact: true })
+    .check();
+  await excluded
+    .getByRole("checkbox", { name: "customer-letter-writer", exact: true })
+    .check();
+  // Each picker locks the other's picks.
+  await expect(
+    excluded.getByRole("checkbox", {
+      name: "claim-intake-checklist",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(
+    form.getByText("Calculating the Skill budget…", { exact: true }),
+  ).toHaveCount(0);
+  await pinned.scrollIntoViewIfNeeded();
+  await captureSkillHub(page, "20-agent-form-skill-pickers");
+});
+
+test("captures the Skills used in an answer", async ({ page }) => {
+  await openWithSkillHubFixture(page);
+  await page
+    .getByRole("button", {
+      name: CAPTURE_SKILLS_CONVERSATION_TITLE,
+      exact: true,
+    })
+    .click();
+  const turn = page
+    .locator(".tap-turn")
+    .filter({ hasText: CAPTURE_SKILLS_QUESTION });
+  const answerContext = turn.locator(".tap-answer-context");
+  await answerContext
+    .getByText("Sources and settings used for this answer", { exact: true })
+    .click();
+  const skillsUsed = answerContext.getByRole("list", { name: "Skills used" });
+  await expect(skillsUsed.getByRole("listitem")).toHaveCount(3);
+  for (const [name, mode] of [
+    ["customer-letter-writer", "Manual"],
+    ["claim-intake-checklist", "Pinned"],
+    ["Citation skill", "Auto"],
+  ] as const)
+    await expect(
+      skillsUsed.getByRole("listitem").filter({ hasText: name }),
+    ).toContainText(mode);
+  await skillsUsed.scrollIntoViewIfNeeded();
+  await captureSkillHub(page, "21-answer-skills-used");
 });

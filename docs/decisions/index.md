@@ -5,6 +5,9 @@
 本文记录当前有效决策及被后续决策替代的历史。RFC-009 已在 2026-09-04 接受，当前交付、部署、知识、资产版本和执行基线以 ADR-020–025 为准；ADR-026–029 补充产品命名、应用边界与统一 AI 交互/任务编排。
 
 - [ADR-030：知识切片直接生效](2026-09-27-adr-030-direct-knowledge-chunk-lifecycle.md)（`accepted`）：用户确认采用 Dify 保存、索引、启用的流程，保留原件与历史审批。
+- [ADR-031：项目级图替代按来源集合的快照，Agent 子图契约](2026-10-09-adr-031-project-graph-agent-subgraph-contract.md)（`accepted`）：图谱查询以项目级合并版本（而非按查询即时合并的来源集合快照）为单位；关系分析管线以 `AgentSubgraph` 契约运行，钉定版本、失败不抛出。
+- [ADR-032：Skill 包存放边界与工具注册表](2026-10-12-adr-032-skill-packages-and-tool-registry.md)（`accepted`）：Skill 包作为不可变修订存对象存储、包内代码永不执行、`allowed-tools` 不授予权限；工具注册表为代码定义的边界，V1 两项内置，MCP 不在 V1。
+- [ADR-033：Langfuse 作为默认组件与团队视图运行数据的唯一查询来源](2026-10-23-adr-033-langfuse-default-runtime-source.md)（`accepted`）：Langfuse 由可选改为默认组件；团队视图运行数据以 Langfuse Metrics API v1 为唯一来源，固定 3.x；不可用时降级而非 5xx。
 
 ## 当前平台基线
 

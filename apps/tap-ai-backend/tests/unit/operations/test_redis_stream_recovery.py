@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import subprocess
-import sys
-import time
 from datetime import timedelta
-from uuid import uuid4
 
 import pytest
-from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
@@ -126,87 +121,8 @@ def test_recovery_wait_reclaims_before_waiting_for_new_hints():
     asyncio.run(run())
 
 
-def _remove_owned_redis(docker, name, env):
-    result = subprocess.run(
-        [*docker, "rm", "--force", name], capture_output=True, env=env, timeout=20
-    )
-    if result.returncode:
-        raise RuntimeError("owned Redis cleanup failed")
-
-
-@pytest.fixture
-def owned_redis_url():
-    if os.getenv("TAP_RUN_REDIS_INTEGRATION") != "1":
-        pytest.skip("requires owned disposable Redis")
-    from scripts.migration_support import _local_environment, _run
-
-    env = _local_environment()
-    context = _run(["docker", "context", "show"], env=env)
-    endpoint = _run(
-        [
-            "docker",
-            "context",
-            "inspect",
-            context,
-            "--format",
-            '{{(index .Endpoints "docker").Host}}',
-        ],
-        env=env,
-    )
-    if not endpoint.startswith("unix://"):
-        raise ValueError("recovery tests require a local Docker socket")
-    docker = ["docker", "--context", context]
-    name = "tap-recovery-test-" + uuid4().hex[:12]
-    event = {"event": "owned-redis", "identity": name, "state": "started"}
-    print(json.dumps(event), file=sys.stderr, flush=True)
-    try:
-        subprocess.run(
-            [
-                *docker,
-                "run",
-                "--detach",
-                "--rm",
-                "--name",
-                name,
-                "-p",
-                "127.0.0.1::6379",
-                "redis:7.4.7",
-            ],
-            check=True,
-            capture_output=True,
-            env=env,
-            timeout=60,
-        )
-        port = (
-            subprocess.check_output(
-                [*docker, "port", name, "6379/tcp"], text=True, env=env, timeout=10
-            )
-            .strip()
-            .rsplit(":", 1)[1]
-        )
-        url = f"redis://127.0.0.1:{port}/0"
-        client = SyncRedis.from_url(url)
-        try:
-            for _ in range(100):
-                try:
-                    if client.ping():
-                        break
-                except ConnectionError:
-                    time.sleep(0.05)
-            else:
-                raise RuntimeError("owned Redis did not start")
-        finally:
-            client.close()
-        yield url
-    finally:
-        try:
-            _remove_owned_redis(docker, name, env)
-            event["state"] = "complete"
-        except BaseException:
-            event["state"] = "failed"
-            raise
-        finally:
-            print(json.dumps(event), file=sys.stderr, flush=True)
+# `owned_redis_url` (a disposable, isolated Redis container) lives in
+# `tests/conftest.py` so other suites can reuse it.
 
 
 def test_recovery_trim_preserves_pending_and_unread_across_all_groups(owned_redis_url):
@@ -308,13 +224,15 @@ def test_recovery_publisher_frees_acknowledged_capacity_without_dropping_pending
 
 
 def test_owned_redis_cleanup_failure_is_not_silently_successful(monkeypatch):
-    from tests.unit.operations import test_redis_stream_recovery as current
+    # `_remove_owned_redis` lives in `tests/conftest.py` alongside the
+    # `owned_redis_url` fixture it backs.
+    from tests import conftest as shared_conftest
 
     def failed_remove(*args, **kwargs):
         return subprocess.CompletedProcess(args[0], 1, b"", b"private daemon details")
 
     monkeypatch.setattr(subprocess, "run", failed_remove)
     with pytest.raises(RuntimeError, match="owned Redis cleanup failed"):
-        current._remove_owned_redis(
+        shared_conftest._remove_owned_redis(
             ["docker", "--context", "local"], "tap-recovery-test-0123456789ab", {}
         )

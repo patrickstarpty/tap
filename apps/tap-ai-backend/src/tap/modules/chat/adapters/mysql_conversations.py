@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, replace
+from collections.abc import Mapping, MutableSequence
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -28,8 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tap.contracts.events import ProjectEventEnvelope
 from tap.contracts.problems import build_problem
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
 from tap.modules.chat.adapters.mysql import chat_event, chat_turn
+from tap.modules.chat.adapters.mysql_skill_activations import insert_frozen_activations
 from tap.modules.chat.application.conversations import (
+    ClaimBatch,
     ConversationConflict,
     ConversationIntegrityError,
     ConversationNotFound,
@@ -57,6 +61,7 @@ from tap.modules.governance.domain.audit import (
     AuditResource,
     SafeAuditMetadata,
 )
+from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
 from tap.platform.messaging.mysql_outbox import scoped_outbox_id, write_project_event
@@ -164,6 +169,32 @@ _LIKE_ESCAPE = "!"
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class _UnclaimableTurn:
+    """A Turn a claim attempt settled as `turn.failed`, reported after commit."""
+
+    turn_id: str
+    reason: str
+    last_failure: str
+    attempts_exhausted: bool
+
+    def report(self) -> None:
+        _LOGGER.warning(
+            "conversation turn settled as unclaimable",
+            extra={
+                "turn_id": self.turn_id,
+                "reason": self.reason,
+                "last_failure": self.last_failure,
+            },
+        )
+        if self.attempts_exhausted:
+            with span(
+                "turn.attempts_exhausted",
+                {"tap.turn_id": self.turn_id, "tap.failure.last": self.last_failure},
+            ):
+                pass
+
+
 def _title_pattern(query: str) -> str:
     """Literal, case-insensitive substring pattern; LIKE wildcards never leak."""
     escaped = (
@@ -179,6 +210,44 @@ def _naive(value):
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
+# Shared between `resolve_citations` and `complete()` so both compute the
+# persisted citation's trusted digest the exact same way -- a row selected
+# with fewer columns than this, or passed to a differently-built digest call,
+# silently drifts out of agreement with the other site and every edge
+# citation stops verifying at completion (chunk citations are unaffected
+# since `citation_evidence_digest` only folds the edge fields in when
+# `citation_kind == "edge"`).
+_CITATION_DIGEST_COLUMNS = (
+    "citation_id,source_id,trace_id,document_id,revision_id,chunk_id,"
+    "source_content_hash,chunk_content_hash,anchor_json,claim_text,origin,"
+    "citation_kind,graph_version,edge_id,subject_node_id,object_node_id,"
+    "relation_type,relation_label"
+)
+
+
+def _citation_row_digest(row) -> str:
+    return citation_evidence_digest(
+        citation_id=row["citation_id"],
+        trace_id=row["trace_id"],
+        source_id=row["source_id"],
+        document_id=row["document_id"],
+        revision_id=row["revision_id"],
+        chunk_id=row["chunk_id"],
+        source_content_hash=row["source_content_hash"],
+        chunk_content_hash=row["chunk_content_hash"],
+        anchor=row["anchor_json"],
+        claim_text=row["claim_text"],
+        origin=row["origin"],
+        citation_kind=row["citation_kind"],
+        graph_version=row["graph_version"],
+        edge_id=row["edge_id"],
+        subject_node_id=row["subject_node_id"],
+        object_node_id=row["object_node_id"],
+        relation_type=row["relation_type"],
+        relation_label=row["relation_label"],
+    )
+
+
 def _input_json(value):
     return {
         **asdict(value),
@@ -190,6 +259,9 @@ def _input_json(value):
         "agent_tool_allowlist": list(value.agent_tool_allowlist),
         "skill_instruction_templates": list(value.skill_instruction_templates),
         "skill_instruction_template_digests": list(value.skill_instruction_template_digests),
+        "skill_notices": list(value.skill_notices),
+        "requested_skill_revision_ids": list(value.requested_skill_revision_ids),
+        "skill_catalog": [asdict(entry) for entry in value.skill_catalog],
     }
 
 
@@ -199,9 +271,13 @@ class MysqlConversationRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
+        max_turn_attempts: int = 3,
     ):
+        if not 1 <= max_turn_attempts <= 10:
+            raise ValueError("max_turn_attempts must be within 1..10")
         self.sessions = sessions
         self.scope = require_project_scope(scope)
+        self.max_turn_attempts = max_turn_attempts
 
     async def resolve_citations(
         self, trace_id: str, citation_ids: tuple[str, ...]
@@ -215,9 +291,7 @@ class MysqlConversationRepository:
                     (
                         await session.execute(
                             text(
-                                "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin "
+                                f"SELECT {_CITATION_DIGEST_COLUMNS} "
                                 "FROM knowledge_citation_snapshot WHERE "
                                 "enterprise_id=:enterprise_id "
                                 "AND project_id=:project_id AND trace_id=:trace_id "
@@ -242,19 +316,7 @@ class MysqlConversationRepository:
             by_id = {
                 row["citation_id"]: CitationEvidence(
                     row["citation_id"],
-                    citation_evidence_digest(
-                        citation_id=row["citation_id"],
-                        trace_id=row["trace_id"],
-                        source_id=row["source_id"],
-                        document_id=row["document_id"],
-                        revision_id=row["revision_id"],
-                        chunk_id=row["chunk_id"],
-                        source_content_hash=row["source_content_hash"],
-                        chunk_content_hash=row["chunk_content_hash"],
-                        anchor=row["anchor_json"],
-                        claim_text=row["claim_text"],
-                        origin=row["origin"],
-                    ),
+                    _citation_row_digest(row),
                 )
                 for row in rows
             }
@@ -364,6 +426,13 @@ class MysqlConversationRepository:
                 created_at=now,
             )
         )
+        await insert_frozen_activations(
+            session,
+            self.scope,
+            turn_id=turn.turn_id,
+            value=turn.input_snapshot.value,
+            activated_at=now,
+        )
         await self._event(session, event, conversation_id, turn.turn_id)
 
     async def _next_event(self, session, conversation_id, event):
@@ -442,7 +511,7 @@ class MysqlConversationRepository:
                 existing = await self._load_turn(session, row)
                 if existing.input_snapshot.value != turn.input_snapshot.value:
                     raise ConversationConflict("idempotency-conflict")
-                return existing
+                return existing, None
             event = await self._next_event(session, conversation_id, event)
             await self._insert_turn(session, conversation_id, turn, event)
             await session.execute(
@@ -453,7 +522,7 @@ class MysqlConversationRepository:
                 )
                 .values(updated_at=_naive(event.occurred_at))
             )
-        return turn
+        return turn, event.sequence
 
     async def _load_turn(self, session, row):
         snapshot = (
@@ -488,6 +557,9 @@ class MysqlConversationRepository:
             skill_revision_ids=tuple(raw["skill_revision_ids"]),
             skill_revision_digests=tuple(raw["skill_revision_digests"]),
             skill_labels=tuple(raw.get("skill_labels", [])),
+            skill_notices=tuple(raw.get("skill_notices", [])),
+            requested_skill_revision_ids=tuple(raw.get("requested_skill_revision_ids", [])),
+            skill_catalog=tuple(SkillCatalogEntry(**item) for item in raw.get("skill_catalog", [])),
             agent_system_instruction=raw.get("agent_system_instruction"),
             agent_system_instruction_digest=raw.get("agent_system_instruction_digest"),
             agent_tool_allowlist=tuple(raw.get("agent_tool_allowlist", [])),
@@ -501,6 +573,7 @@ class MysqlConversationRepository:
             retrieval_policy_digest=raw["retrieval_policy_digest"],
             insights_query_id=raw.get("insights_query_id"),
             insights_report_refs=tuple(raw.get("insights_report_refs", [])),
+            persona_version=raw.get("persona_version"),
         )
         input_value = TurnInputSnapshot(
             snapshot["snapshot_id"],
@@ -794,7 +867,7 @@ class MysqlConversationRepository:
             if row is None:
                 raise ConversationNotFound
             if row["state"] in {"completed", "abstained", "failed", "canceled"}:
-                return await self._load_turn(session, row)
+                return await self._load_turn(session, row), None
             if (
                 row["state"] == "running"
                 and snapshot.value.outcome != "canceled"
@@ -834,8 +907,26 @@ class MysqlConversationRepository:
                 raise ValueError(
                     "Answer evidence snapshot/event binding differs from accepted Turn"
                 )
-            if snapshot.value.graph_context_status is GraphContextStatus.APPLIED:
-                raise ValueError("graph snapshot persistence is unavailable")
+            # `graph_snapshot_id` is persisted as an opaque field inside the
+            # `snapshot` JSON blob below (see `raw["graph_snapshot_id"]` in
+            # `_load_turn`'s read path); it is not a foreign key into any
+            # graph table, so completing a Turn whose answer carries an
+            # APPLIED graph context needs no extra artifact linking here,
+            # unlike citations (which are frozen-resource- and ACL-checked
+            # below). An earlier revision of this method (commit a22c55e)
+            # carried an unconditional guard here that raised
+            # `"graph snapshot persistence is unavailable"` for any APPLIED
+            # graph context: at the time, a graph snapshot ID could not be
+            # validated as a durable fact, so the guard failed closed rather
+            # than trust an unverifiable ID. That guard is superseded by the
+            # spec rule that the graph never blocks an answer and by this
+            # plan's `graph_snapshot_id = graph_version` design: the ID is an
+            # audit label, not a row reference (old graph versions are
+            # pruned, so there is nothing durable left to check it against).
+            # Edge citation fidelity on reload — i.e. whether a cited edge's
+            # own `graph_version` still matches this Turn's `graph_snapshot_id`
+            # — is validated below, against the citation row's persisted
+            # `knowledge_citation_snapshot` edge columns.
             frozen_resources = {
                 (
                     item["source_id"],
@@ -854,9 +945,7 @@ class MysqlConversationRepository:
                     (
                         await session.execute(
                             text(
-                                "SELECT citation_id,source_id,trace_id,document_id,revision_id,"
-                                "chunk_id,source_content_hash,chunk_content_hash,anchor_json,"
-                                "claim_text,origin "
+                                f"SELECT {_CITATION_DIGEST_COLUMNS} "
                                 "FROM knowledge_citation_snapshot "
                                 "WHERE enterprise_id=:enterprise_id AND project_id=:project_id "
                                 "AND citation_id=:citation_id AND trace_id=:trace_id"
@@ -874,19 +963,7 @@ class MysqlConversationRepository:
                 )
                 if citation_row is None:
                     raise ValueError("citation snapshot is not a trusted persisted fact")
-                trusted_digest = citation_evidence_digest(
-                    citation_id=citation_row["citation_id"],
-                    trace_id=citation_row["trace_id"],
-                    source_id=citation_row["source_id"],
-                    document_id=citation_row["document_id"],
-                    revision_id=citation_row["revision_id"],
-                    chunk_id=citation_row["chunk_id"],
-                    source_content_hash=citation_row["source_content_hash"],
-                    chunk_content_hash=citation_row["chunk_content_hash"],
-                    anchor=citation_row["anchor_json"],
-                    claim_text=citation_row["claim_text"],
-                    origin=citation_row["origin"],
-                )
+                trusted_digest = _citation_row_digest(citation_row)
                 if trusted_digest != citation.citation_digest:
                     raise ValueError("citation snapshot digest differs from persisted fact")
                 if (
@@ -896,6 +973,15 @@ class MysqlConversationRepository:
                     citation_row["source_content_hash"],
                 ) not in frozen_resources:
                     raise ValueError("citation is outside the frozen Turn resources")
+                if citation_row["citation_kind"] == "edge":
+                    if snapshot.value.graph_context_status is not GraphContextStatus.APPLIED:
+                        raise ValueError(
+                            "edge citation requires an APPLIED graph context on this Turn"
+                        )
+                    if citation_row["graph_version"] != snapshot.value.graph_snapshot_id:
+                        raise ValueError(
+                            "edge citation graph version differs from the Turn's graph snapshot"
+                        )
                 await session.execute(
                     insert(turn_artifact_link).values(
                         **scope_values(self.scope),
@@ -923,6 +1009,7 @@ class MysqlConversationRepository:
                     "turn.completed",
                     "turn.abstained",
                     "turn.failed",
+                    "turn.canceled",
                 }:
                     raise ValueError("completion terminal event is invalid")
                 terminal_event = await self._next_event(session, conversation_id, terminal_event)
@@ -1075,15 +1162,40 @@ class MysqlConversationRepository:
                         ),
                     )
         persisted = await self.load(conversation_id)
-        return next(turn for turn in persisted.turns if turn.turn_id == turn_id)
+        return (
+            next(turn for turn in persisted.turns if turn.turn_id == turn_id),
+            event.sequence,
+        )
 
-    async def claim_queued(self, *, limit: int) -> tuple[tuple[str, ConversationTurn], ...]:
+    async def claim_queued(self, *, limit: int) -> ClaimBatch:
+        """Claims up to `limit` due Turns, writing `turn.started` for each.
+
+        Also settles permanently-faulted Turns inline via
+        `_fail_unclaimable_turn` (`turn.failed`). Both kinds of write bypass
+        `ConversationService.emit`/`complete_evidence`, so the returned
+        `ClaimBatch.wakeups` carries every (conversation_id, committed
+        sequence) pair for the caller (`GenerationWorker.run_once`) to
+        notify wake-ups for after this call returns -- never from inside
+        this transaction, per the Redis-is-only-a-hint design.
+        """
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be positive")
+        # Per candidate the claim locks the conversation, Turn and graph-run
+        # rows while API writes (cancel, delete, new Turns) lock the same rows
+        # in their own order; a rolled-back claim leased and emitted nothing.
+        return await claim_or_nothing(
+            lambda: self._claim_queued_once(limit=limit),
+            kind="chat-turn",
+            nothing=ClaimBatch(),
+        )
+
+    async def _claim_queued_once(self, *, limit: int) -> ClaimBatch:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
         claimed: list[tuple[str, ConversationTurn]] = []
-        async with self.sessions() as session, session.begin():
+        wakeups: list[tuple[str, int]] = []
+        settled: list[_UnclaimableTurn] = []
+        async with claim_transaction(self.sessions) as session:
             candidate_now = _naive(datetime.now(timezone.utc))
             rows = (
                 (
@@ -1109,6 +1221,10 @@ class MysqlConversationRepository:
                         )
                         .where(
                             *scope_predicates(chat_turn, self.scope),
+                            or_(
+                                chat_turn.c.next_attempt_at.is_(None),
+                                chat_turn.c.next_attempt_at <= candidate_now,
+                            ),
                             or_(
                                 and_(
                                     chat_turn.c.state == "queued",
@@ -1162,12 +1278,16 @@ class MysqlConversationRepository:
                     .one_or_none()
                 )
                 now = datetime.now(timezone.utc)
-                if row is None or not (
-                    row["state"] == "queued"
-                    or (
-                        row["state"] == "running"
-                        and row["processing_lease_expires_at"] is not None
-                        and row["processing_lease_expires_at"] < _naive(now)
+                if (
+                    row is None
+                    or not (row["next_attempt_at"] is None or row["next_attempt_at"] <= _naive(now))
+                    or not (
+                        row["state"] == "queued"
+                        or (
+                            row["state"] == "running"
+                            and row["processing_lease_expires_at"] is not None
+                            and row["processing_lease_expires_at"] < _naive(now)
+                        )
                     )
                 ):
                     continue
@@ -1197,7 +1317,29 @@ class MysqlConversationRepository:
                             continue
                 if not await self._has_input_snapshot(session, row["turn_id"]):
                     # A permanent fault: settle the Turn instead of wedging every claim batch.
-                    await self._fail_integrity_turn(session, row, graph is not None, now)
+                    failed_sequence = await self._fail_unclaimable_turn(
+                        session,
+                        row,
+                        graph is not None,
+                        now,
+                        problem_type="conversation-integrity",
+                        reason="input-snapshot-missing",
+                        settled=settled,
+                    )
+                    wakeups.append((row["chat_id"], failed_sequence))
+                    continue
+                if row["processing_attempt"] >= self.max_turn_attempts:
+                    # Exhausted its retry budget: settle it instead of reclaiming forever.
+                    failed_sequence = await self._fail_unclaimable_turn(
+                        session,
+                        row,
+                        graph is not None,
+                        now,
+                        problem_type="answer-unavailable",
+                        reason="attempts-exhausted",
+                        settled=settled,
+                    )
+                    wakeups.append((row["chat_id"], failed_sequence))
                     continue
                 lease_token = uuid4().hex
                 lease_until = _naive(now + timedelta(seconds=60))
@@ -1237,6 +1379,8 @@ class MysqlConversationRepository:
                         processing_attempt=row["processing_attempt"] + 1,
                         processing_lease_token=lease_token,
                         processing_lease_expires_at=lease_until,
+                        next_attempt_at=None,
+                        last_failure=None,
                     )
                 )
                 if graph is not None:
@@ -1262,7 +1406,12 @@ class MysqlConversationRepository:
                 mutable["processing_lease_token"] = lease_token
                 mutable["processing_lease_expires_at"] = lease_until
                 claimed.append((row["chat_id"], await self._load_turn(session, mutable)))
-        return tuple(claimed)
+                wakeups.append((row["chat_id"], event.sequence))
+        # Only now has the settlement committed: a rolled-back attempt (lost
+        # to lock contention and retried) must not report it.
+        for turn in settled:
+            turn.report()
+        return ClaimBatch(claimed, wakeups=wakeups)
 
     async def _has_input_snapshot(self, session, turn_id: str) -> bool:
         return (
@@ -1274,12 +1423,26 @@ class MysqlConversationRepository:
             )
         ) is not None
 
-    async def _fail_integrity_turn(self, session, row, has_graph: bool, now: datetime) -> None:
+    async def _fail_unclaimable_turn(
+        self,
+        session,
+        row,
+        has_graph: bool,
+        now: datetime,
+        *,
+        problem_type: str,
+        reason: str,
+        settled: MutableSequence[_UnclaimableTurn],
+    ) -> int:
         from tap.modules.ai.adapters.mysql_checkpointer import graph_run
 
-        _LOGGER.warning(
-            "conversation turn failed integrity check",
-            extra={"turn_id": row["turn_id"], "reason": "input-snapshot-missing"},
+        settled.append(
+            _UnclaimableTurn(
+                turn_id=row["turn_id"],
+                reason=reason,
+                last_failure=row["last_failure"] or "lease-expired",
+                attempts_exhausted=problem_type == "answer-unavailable",
+            )
         )
         event = await self._next_event(
             session,
@@ -1290,7 +1453,7 @@ class MysqlConversationRepository:
                 "turn.failed",
                 {
                     "problem": build_problem(
-                        "conversation-integrity", correlation_id=row["turn_id"]
+                        problem_type, correlation_id=row["turn_id"]
                     ).model_dump(mode="json", by_alias=True)
                 },
                 now,
@@ -1326,6 +1489,7 @@ class MysqlConversationRepository:
                     updated_at=_naive(now),
                 )
             )
+        return event.sequence
 
     async def renew_processing_lease(
         self,
@@ -1369,20 +1533,59 @@ class MysqlConversationRepository:
                 )
             )
 
-    def graph_checkpointer(self, turn: ConversationTurn):
+    async def defer_turn(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        lease_token: str,
+        *,
+        next_attempt_at: datetime,
+        failure: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        async with self.sessions() as session, session.begin():
+            result = await session.execute(
+                update(chat_turn)
+                .where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    chat_turn.c.turn_id == turn_id,
+                    chat_turn.c.state == "running",
+                    chat_turn.c.processing_lease_token == lease_token,
+                )
+                .values(
+                    processing_lease_expires_at=_naive(now),
+                    next_attempt_at=_naive(next_attempt_at),
+                    last_failure=failure[:128],
+                )
+            )
+            if result.rowcount != 1:
+                raise ConversationConflict("generation lease lost")
+            from tap.modules.ai.adapters.mysql_checkpointer import graph_run
+
+            await session.execute(
+                update(graph_run)
+                .where(
+                    *scope_predicates(graph_run, self.scope),
+                    graph_run.c.run_id == turn_id,
+                    graph_run.c.lease_token == lease_token,
+                )
+                .values(lease_until=_naive(now), updated_at=_naive(now))
+            )
+
+    def graph_checkpointer(
+        self, turn: ConversationTurn, *, budget: Mapping[str, int | float] | None = None
+    ):
         if not turn.lease_token:
             raise ConversationConflict("generation lease lost")
         from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
+        from tap.platform.budget import TurnBudget
 
         return MysqlGraphCheckpointer(
             self.sessions,
             scope=self.scope,
             defer_completion=True,
-            budget={
-                "maxModelCalls": 1,
-                "maxSeconds": 60,
-                "maxCostMicros": 3_000_000 if turn.input_snapshot.value.insights_query_id else 0,
-            },
+            budget=dict(budget) if budget is not None else TurnBudget().to_dict(),
             fence=GraphFence(
                 table=chat_turn,
                 identity_column=chat_turn.c.turn_id,

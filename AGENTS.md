@@ -10,7 +10,7 @@
 
 ## Project Structure & Module Organization
 
-TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, MinIO, LiteLLM and Milvus; API, Relay and worker entrypoints remain separate. The LangGraph interaction graph is currently a fixed `classify → admit → execute` pipeline. Place specs in `docs/superpowers/specs/` and plans in `docs/superpowers/plans/`; guides in `docs/guides/`; cross-module decisions in `docs/decisions/`; `docs/archive/` is read-only. Use `YYYY-MM-DD-<topic>[-design].md` filenames.
+TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-frontend/` (React/TypeScript/Vite). TAP non-AI app boundaries live in `apps/backend/` and `apps/web/`. Generated AI contracts remain in `contracts/`; runtime tooling lives in `scripts/` and `deploy/`. The Tapper local slice uses MySQL, Redis, MinIO, LiteLLM and Milvus; API, Relay and worker entrypoints remain separate. Chat turns run on the versioned `tapper-chat-v2` LangGraph (`ingress → guard_in → seed_search → model ⇄ tools → verify → finalize`, with a bounded tool-calling loop between `model` and `tools`); test-design generation still uses the fixed `classify → admit → execute` graph. Place specs in `docs/superpowers/specs/` and plans in `docs/superpowers/plans/`; guides in `docs/guides/`; cross-module decisions in `docs/decisions/`; `docs/archive/` is read-only. Use `YYYY-MM-DD-<topic>[-design].md` filenames.
 
 ## Documentation Governance
 
@@ -19,11 +19,9 @@ TAP AI lives in `apps/tap-ai-backend/` (Python 3.13/FastAPI) and `apps/tap-ai-fr
 - Use ADRs only for cross-module decisions, with a single `status` field (`docs/decisions/adr-template.md`).
 - Do not maintain RFC or Plan lifecycle states; plan checkboxes record progress.
 
-## Product Prototype Baseline
+## Branches
 
-The `main` branch must always carry the latest approved complete product prototype. Merge confirmed prototype changes, required assets and README entry instructions into `main`; never leave the authoritative version only on a feature branch, worktree or temporary path. Keep the latest-prototype section at the top of README current.
-
-Before changing product UI or interaction design, read [the product prototype baseline](docs/guides/2026-09-22-product-prototype-baseline.md). The complete combined prototype at `apps/web` route `/prototype`, rooted in `apps/web/src/widgets/tap/TapProductPrototype.tsx`, is the sole evolving design baseline. Extend it incrementally; do not create a separate prototype or shell for each requirement, replace it with an independent application entry, or remove existing modules because near-term implementation scope narrows. Preserve Tapper (New chat, Agents, Skills, Library, Knowledge Graph), Test Management, Test Insights, Low Code Automation, cross-module links and the floating assistant. Show the intended delivered product UI: no demo switches, simulated-scenario controls or implementation explanations in product screens. Keep fixture setup and capability disclosures in test tooling and documentation. Verify module navigation and cross-module journeys and compare before/after screenshots for UI changes. This design baseline does not merge TAP AI and TAP runtime boundaries or establish backend completion.
+`develop` is the integration branch and carries the latest merged work; `main` carries the most stable, accepted release. Merge accepted `develop` into `main`. Never leave the authoritative version only on a feature branch, worktree or temporary path.
 
 ## Build, Test, and Development Commands
 
@@ -33,7 +31,8 @@ Run commands from the repository root:
 make bootstrap     # install frozen uv and pnpm dependencies
 make contracts     # regenerate OpenAPI/SSE and Web client/types
 make check         # lint, format, type, architecture, contract and build checks
-make test          # Backend pytest plus Web Vitest
+make test          # essential backend and frontend regression tests
+make test-full     # full backend and frontend suites, when risk warrants
 make demo-up       # start loopback middleware and owned resources
 make demo-check    # run five redacted dependency checks
 make demo-dev      # loopback API, Relay, worker and Web
@@ -53,7 +52,7 @@ Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links a
 
 ## Testing Guidelines
 
-TAP AI Backend tests are in `apps/tap-ai-backend/tests/{unit,contract,integration,smoke}/`; TAP AI Web tests live beside features and in `apps/tap-ai-frontend/tests/e2e/`. TAP non-AI tests live in `apps/backend/tests/` and beside `apps/web/src/`. Use TDD for behavior changes: run the narrow test, then `make check` and `make test` in proportion to risk. `make demo-e2e` owns isolated middleware and must not mutate shared/default services. Real-model smoke requires `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1`; otherwise expect one skip. Review docs, links, lifecycle metadata and Phase boundaries. Never present local `doc` Milvus as enterprise Azure four-index completion or fake E2E as real-model validation.
+TAP AI Backend tests are in `apps/tap-ai-backend/tests/{unit,contract,integration,smoke}/`; TAP AI Web tests live beside features and in `apps/tap-ai-frontend/tests/e2e/`. TAP non-AI tests live in `apps/backend/tests/` and beside `apps/web/src/`. Use TDD for behavior changes and start with the affected tests. `make test` is the default core regression gate; do not run full suites for every change. Use `make check`, `make test-full`, and isolated E2E only when release scope, cross-module changes, migrations, persistence or integration risk warrants them. Documentation-only edits need document/link checks, not application suites. After a gate passes, do not repeat it unless relevant code or dependencies change; an identical-tree merge can reuse that evidence. `make demo-e2e` owns isolated middleware and must not mutate shared/default services. Real-model smoke requires `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1`; otherwise expect one skip. Review docs, links, lifecycle metadata and Phase boundaries. Never present local `doc` Milvus as enterprise Azure four-index completion or fake E2E as real-model validation.
 
 Tapper Demo is loopback-only, unauthenticated and supports text-extractable PDF/DOCX/MD/TXT and bounded XLSX ingestion without OCR. The rendered answer is page-local and not restored as history. Do not widen binds or make LAN/production claims without a separate security design.
 

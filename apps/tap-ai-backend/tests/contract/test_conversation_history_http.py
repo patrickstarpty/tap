@@ -170,3 +170,60 @@ def test_list_search_filters_titles_and_composes_with_cursor():
     assert [item["title"] for item in literal] == ["100% plan"]
     assert len(client.get(BASE, params={"q": "   "}).json()["items"]) == 5
     assert client.get(BASE, params={"q": "x" * 121}).status_code == 422
+
+
+class _SkillActivations:
+    def __init__(self, uses) -> None:
+        self._uses = uses
+        self.requested: list[tuple[str, ...]] = []
+
+    async def for_turns(self, turn_ids):
+        self.requested.append(tuple(turn_ids))
+        return {turn_id: self._uses[turn_id] for turn_id in turn_ids if turn_id in self._uses}
+
+
+def test_turn_view_lists_skills_used_with_modes():
+    from tap.modules.chat.application.ports import TurnSkillUse
+
+    client, _ = _client("With Skills")
+    activations = _SkillActivations(
+        {
+            "turn-0": (
+                TurnSkillUse("skill-manual", "skill-manual-v1", "Manual Skill", "manual"),
+                TurnSkillUse("skill-pinned", "skill-pinned-v2", "Pinned Skill", "pinned"),
+                TurnSkillUse("skill-auto", "skill-auto-v1", "Auto Skill", "auto"),
+            )
+        }
+    )
+    services = client.app.state.http_services
+    client.app.state.http_services = replace(services, skill_activations=activations)
+
+    response = client.get(f"{BASE}/conversation-0")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["turns"][0]["input"]["skillsUsed"] == [
+        {
+            "skillId": "skill-manual",
+            "revisionId": "skill-manual-v1",
+            "label": "Manual Skill",
+            "mode": "manual",
+        },
+        {
+            "skillId": "skill-pinned",
+            "revisionId": "skill-pinned-v2",
+            "label": "Pinned Skill",
+            "mode": "pinned",
+        },
+        {
+            "skillId": "skill-auto",
+            "revisionId": "skill-auto-v1",
+            "label": "Auto Skill",
+            "mode": "auto",
+        },
+    ]
+    assert activations.requested == [("turn-0",)]
+
+    # Without the activation reader the field is still present, empty.
+    client.app.state.http_services = services
+    plain = client.get(f"{BASE}/conversation-0").json()
+    assert plain["turns"][0]["input"]["skillsUsed"] == []

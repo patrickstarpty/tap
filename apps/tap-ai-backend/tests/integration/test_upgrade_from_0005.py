@@ -635,6 +635,7 @@ def test_exact_deployed_0012_shapes_upgrade_without_rewriting_existing_facts(
                 async_sessionmaker(engine, expire_on_commit=False),
                 scope=VALIDATION_SCOPE,
                 default_chat_model="qwen-plus",
+                graph_extraction_profile_digest=tapper_runtime._graph_extraction_profile(_settings),
             )
 
         model = KnowledgeModelGateway(

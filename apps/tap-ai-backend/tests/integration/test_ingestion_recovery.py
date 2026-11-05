@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import suppress
 from datetime import datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from tap.entrypoints import tapper_ingestion_worker
 from tap.entrypoints.tapper_runtime import create_project_audit
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.graph.adapters.mysql_merge import GraphMergeOnSourceChange, MysqlProjectMergeQueue
+from tap.modules.graph.adapters.mysql_project import graph_project_merge_job
 from tap.modules.knowledge.adapters import mysql_documents
 from tap.modules.knowledge.adapters.mysql_documents import MysqlDocumentRepository
 from tap.modules.knowledge.application import ingestion
@@ -43,12 +44,9 @@ from tap.modules.knowledge.ports.documents import (
     ManifestChunk,
     ReserveUpload,
 )
+from tap.platform.db.project_scope import scope_predicates
 from tap.platform.db.session import create_engine_and_session_factory
 
-DATABASE_URL = os.getenv(
-    "TAP_DATABASE_URL",
-    "mysql+asyncmy://tap:tap@127.0.0.1:3306/tap?charset=utf8mb4",
-)
 KNOWLEDGE_TABLES = (
     "knowledge_citation_snapshot",
     "knowledge_answer_source",
@@ -196,6 +194,58 @@ def test_real_mysql_parse_retry_preserves_each_inventory_attempt(owned_project_m
             assert tuple(revision) == (2, config_digest, parsed_digest)
         finally:
             await _clean(engine)
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_single_document_delete_requests_a_project_graph_merge(owned_project_mysql) -> None:  # type: ignore[no-untyped-def]
+    """Deleting one document (not a whole source) must also request a merge:
+    it removes a revision from the currently-ready set `MysqlMergeInputs`
+    replays, exactly like a whole-source delete does."""
+
+    async def scenario() -> None:
+        database_url = owned_project_mysql.url.replace("+pymysql", "+asyncmy")
+        engine, sessions = create_engine_and_session_factory(database_url)
+        try:
+            merge_queue = MysqlProjectMergeQueue(sessions)
+            repository = MysqlDocumentRepository(
+                sessions,
+                scope=VALIDATION_SCOPE,
+                audit_factory=create_project_audit,
+                source_deleted_projection=GraphMergeOnSourceChange(merge_queue),
+            )
+            reservation = await repository.reserve_upload(
+                ReserveUpload(
+                    filename="delete-triggers-merge.md",
+                    media_type="text/markdown",
+                    source_content_hash=canonical_sha256(b"delete triggers merge"),
+                    size=24,
+                    now=datetime.now(),
+                    staging_key="staging:delete-triggers-merge",
+                )
+            )
+            await repository.activate_upload(
+                reservation, ArtifactLocator("artifact:delete-triggers-merge")
+            )
+
+            await repository.request_delete(DocumentId(reservation.document_id), datetime.now())
+
+            async with sessions() as session:
+                row = (
+                    (
+                        await session.execute(
+                            select(graph_project_merge_job).where(
+                                *scope_predicates(graph_project_merge_job, VALIDATION_SCOPE)
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+            assert row["due_at"] is not None
+            assert row["last_reason"] == "source-deleted"
+        finally:
             await engine.dispose()
 
     asyncio.run(scenario())
@@ -365,11 +415,13 @@ class OneChunk:
         )
 
 
-def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
+def test_real_mysql_restart_resumes_from_persisted_embedding_artifact(
+    owned_module_database_url: str,
+) -> None:
     """A fresh process must publish from MySQL/blob facts without repeating model work."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -499,7 +551,7 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
                 worker=restarted,
                 wakeups=UnavailableWakeups(),  # type: ignore[arg-type]
                 settings=tapper_ingestion_worker.WorkerSettings(
-                    database_url=DATABASE_URL,
+                    database_url=owned_module_database_url,
                     redis_url="redis://127.0.0.1:16379/0",
                     job_batch_size=10,
                     poll_seconds=0.01,
@@ -532,11 +584,13 @@ def test_real_mysql_restart_resumes_from_persisted_embedding_artifact() -> None:
     asyncio.run(scenario())
 
 
-def test_real_mysql_ordinary_list_excludes_deleting_document_immediately() -> None:
+def test_real_mysql_ordinary_list_excludes_deleting_document_immediately(
+    owned_module_database_url: str,
+) -> None:
     """The ordinary list is a selection source and must not expose deleting rows."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -565,11 +619,13 @@ def test_real_mysql_ordinary_list_excludes_deleting_document_immediately() -> No
     asyncio.run(scenario())
 
 
-def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
+def test_real_mysql_deletion_waits_for_cancelled_owner_settlement(
+    owned_module_database_url: str,
+) -> None:
     """A deletion claim must not race an active owner whose provider call may still finish."""
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -684,6 +740,7 @@ def test_real_mysql_deletion_waits_for_cancelled_owner_settlement() -> None:
 
 def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
     monkeypatch,
+    owned_module_database_url: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """Without a live heartbeat, a crashed cancelled owner releases deletion by lease expiry."""
 
@@ -695,7 +752,7 @@ def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
     )
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -765,6 +822,7 @@ def test_real_mysql_cancelled_owner_crash_releases_barrier_only_after_expiry(
 
 def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
     monkeypatch,
+    owned_module_database_url: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """Delete may finish only after the old publisher settles, then fencing keeps zero durable."""
 
@@ -779,7 +837,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
     )
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         try:
             repository = MysqlDocumentRepository(
@@ -984,6 +1042,7 @@ def test_real_mysql_blocked_publish_cannot_resurrect_after_delete(
 
 def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
     monkeypatch,
+    owned_module_database_url: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """A late chunks write must stay fenced past its original lease and be cleaned after settle."""
 
@@ -999,7 +1058,7 @@ def test_real_mysql_blocked_artifact_write_renews_delete_barrier_until_terminal(
     )
 
     async def scenario() -> None:
-        engine, sessions = create_engine_and_session_factory(DATABASE_URL)
+        engine, sessions = create_engine_and_session_factory(owned_module_database_url)
         await _clean(engine)
         old_task: asyncio.Task | None = None
         artifacts = BlockingChunkArtifacts()

@@ -19,7 +19,10 @@ from tap.modules.knowledge.domain.parse_inventory import (
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_NORMALIZED_CHARACTERS = 8_000_000
 MAX_CHUNKS_PER_DOCUMENT = 10_000
-PARSER_VERSION = "tapper-parser-v1"
+# Revision identity of parser output. A bump gives re-parsed originals a new revision.
+PARSER_VERSION = "tapper-parser-v2"
+# Earlier revisions stay readable, citable and indexable under their own identity.
+LEGACY_PARSER_VERSIONS = frozenset({"tapper-parser-v1"})
 CHUNKER_VERSION = "tapper-structure-512-v1"
 NORMALIZED_ARTIFACT_SCHEMA = "normalized-artifact-v1"
 STABLE_ID_SCHEMA = "stable-id-v1"

@@ -6,6 +6,7 @@ export interface WorkspaceCopy {
     zh: string;
   };
   navigation: Record<ProductModule, string> & {
+    moduleOpensInTap: string;
     collapseSidebar: string;
     closeSidebar: string;
     expandSidebar: string;
@@ -46,6 +47,8 @@ export interface WorkspaceCopy {
     noContextNotice: string;
     selectedContextNotice: string;
     selectedContext: string;
+    skillsUsed: string;
+    skillModes: { manual: string; pinned: string; auto: string };
     assistant: string;
     questionNavigation: string;
     jumpToQuestion: string;
@@ -58,6 +61,35 @@ export interface WorkspaceCopy {
     regenerate: string;
     retry: string;
     editQuestion: string;
+    answerSummary(
+      sourceCount: number,
+      chunkCitationCount: number,
+      relationCount: number,
+    ): string;
+    seedEntities(count: number): string;
+    relationPaths: string;
+    noRelationEvidence: string;
+    toolStepRow(
+      toolRound: number,
+      toolName: string,
+      summary: string,
+      durationMs: number,
+    ): string;
+    toolName(toolId: string): string;
+    stepStatus: {
+      running: string;
+      completed: string;
+      rejected: string;
+      failed: string;
+    };
+    clarificationLabel: string;
+    insightsMetricsHeading: string;
+    insightsFactRow(
+      label: string,
+      metricId: string,
+      value: number | null,
+      asOf: string,
+    ): string;
   };
   sources: {
     heading: string;
@@ -109,6 +141,24 @@ export interface WorkspaceCopy {
     attachmentFailed: string;
     reviewInLibrary: string;
     removeAttachment: string;
+    fromAgent: string;
+    skillBudgetWarning: string;
+    skillBudgetExceeded: string;
+    largestSkills: string;
+    agentModelFallback(agentName: string): string;
+    skillDisabledNotice(skillName: string): string;
+    skillInapplicableNotice(skillName: string): string;
+    /** N-2: `skillById` only ever carries the latest revision of each
+     * Skill (C-1), so a `skill_disabled:<id>`/`skill_inapplicable:<id>`
+     * notice naming an older bound revision can't be resolved to a name
+     * -- these generic (nameless) sentences are the fallback so the raw
+     * wire code is never shown to begin with. */
+    skillDisabledNoticeGeneric: string;
+    skillInapplicableNoticeGeneric: string;
+    /** Label/tooltip shown on a greyed-out, unselectable Skill option in
+     * the composer picker (spec §4.4) when it doesn't apply to knowledge
+     * Q&A. */
+    skillNotApplicable: string;
   };
   catalog: {
     agents: string;
@@ -133,9 +183,585 @@ export interface WorkspaceCopy {
     agentCatalog: string;
     skillCatalog: string;
   };
+  skillsWorkspace: {
+    heading: string;
+    description: string;
+    importSkill: string;
+    createSkill: string;
+    filterAll: string;
+    filterBuiltIn: string;
+    filterCustom: string;
+    filterDisabled: string;
+    noResults: string;
+    applicableTasks: string;
+    revision: string;
+    useInChat: string;
+    edit: string;
+    /** Imported skills aren't offered Edit (I-3): editing would rebuild a
+     * SKILL.md-only package and silently drop the original package's
+     * references/scripts/assets. This points at re-importing instead. */
+    editUnavailableImported: string;
+    enable: string;
+    disable: string;
+    statusEnabled: string;
+    statusDisabled: string;
+    copyAsCustom: string;
+    unavailable: string;
+    cancel: string;
+    close: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    download: string;
+    savedNotExecuted: string;
+    attachedReferences: string;
+    noAttachedReferences: string;
+    taskLabels: {
+      "knowledge.answer": string;
+      "test-plan.generate": string;
+      "automation.generate": string;
+    };
+    import: {
+      step1Title: string;
+      step1Description: string;
+      browseFiles: string;
+      browseFolder: string;
+      pasteLabel: string;
+      pastePlaceholder: string;
+      next: string;
+      back: string;
+      commit: string;
+      step2Title: string;
+      frontmatter: string;
+      files: string;
+      warnings: string;
+      category: {
+        skill: string;
+        referenceAttached: string;
+        referenceUnattached: string;
+        script: string;
+        asset: string;
+      };
+      nameConflict: string;
+      importAsNewRevision: string;
+      skip: string;
+      stageFailed: string;
+      commitFailed: string;
+      /** Maps the server's closed error-code vocabulary (I-8) to prose;
+       * an unlisted code falls back to `stageFailed`/`commitFailed`. */
+      errors: {
+        skill_package_too_large: string;
+        skill_path_rejected: string;
+        skill_frontmatter_invalid: string;
+        skill_not_found_in_package: string;
+        skill_name_conflict: string;
+        revision_conflict: string;
+        import_expired: string;
+        skill_built_in_immutable: string;
+      };
+    };
+    form: {
+      createTitle: string;
+      editTitle: string;
+      copyTitle: string;
+      name: string;
+      description: string;
+      applicableTasks: string;
+      instructions: string;
+      preview: string;
+      save: string;
+      cancel: string;
+      nameInvalid: string;
+      descriptionRequired: string;
+      instructionsRequired: string;
+      budgetExceeded: string;
+      revisionConflict: string;
+      saveFailed: string;
+    };
+  };
+  skillHub: {
+    libraryLabel: string;
+    searchLabel: string;
+    searchPlaceholder: string;
+    categoryFilter: string;
+    taskFilter: string;
+    sourceFilter: string;
+    statusFilter: string;
+    sortLabel: string;
+    allCategories: string;
+    allTasks: string;
+    allSources: string;
+    allStatuses: string;
+    categories: {
+      "test-design": string;
+      automation: string;
+      knowledge: string;
+      analysis: string;
+      writing: string;
+      other: string;
+    };
+    sources: { imported: string; authored: string; built_in: string };
+    statuses: { enabled: string; disabled: string };
+    sortOptions: {
+      activations: string;
+      name: string;
+      last_used_at: string;
+      updated_at: string;
+    };
+    summaryLabel: string;
+    summary: {
+      skillTotal: string;
+      enabled: string;
+      usedInPeriod: string;
+      unused: string;
+      autoShare: string;
+    };
+    cardFields: {
+      category: string;
+      version: string;
+      source: string;
+      updated: string;
+      activations: string;
+    };
+    /** Activations count once per Skill a conversation used. */
+    activationsHint: string;
+    /** `{limit}` is the number of Skills Tapper can offer automatically. */
+    candidateNotice: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    importSkill: string;
+    createSkill: string;
+    noResults: string;
+    exportCsv: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    /** The Skill detail drawer. */
+    detail: {
+      tabs: {
+        overview: string;
+        instructions: string;
+        files: string;
+        revisions: string;
+        usage: string;
+        settings: string;
+      };
+      fields: {
+        description: string;
+        category: string;
+        version: string;
+        source: string;
+        originKind: string;
+        originRef: string;
+        importedAt: string;
+        importedBy: string;
+        createdBy: string;
+        owner: string;
+        ownerSince: string;
+        compatibility: string;
+        applicableTasks: string;
+        revision: string;
+      };
+      originKinds: {
+        files: string;
+        zip: string;
+        paste: string;
+        authored: string;
+        built_in: string;
+        unknown: string;
+      };
+      noDescription: string;
+      notSpecified: string;
+      loadFailed: string;
+    };
+    compare: {
+      heading: string;
+      left: string;
+      right: string;
+      placeholder: string;
+      choose: string;
+      /** `{side}` is Left/Right, `{revision}` the revision's version. */
+      regionLabel: string;
+      latest: string;
+      loading: string;
+    };
+    usage: {
+      modes: { manual: string; pinned: string; auto: string };
+      users: string;
+      satisfaction: string;
+      insufficientSample: string;
+      lastUsed: string;
+      neverUsed: string;
+      pinnedByAgents: string;
+      cost: string;
+      latencyTotal: string;
+      failures: string;
+      runtimeUnavailable: string;
+      trendHeading: string;
+      trendUnit: string;
+      noUsage: string;
+      topAgents: string;
+      topCallers: string;
+      noRanking: string;
+      tapperDefault: string;
+      removedAgent: string;
+      /** `{count}` is a number of runs. */
+      runs: { one: string; other: string };
+      loadFailed: string;
+    };
+    settings: {
+      category: string;
+      categoryFailed: string;
+      owner: string;
+      newOwner: string;
+      newOwnerPlaceholder: string;
+      transfer: string;
+      transferred: string;
+      actorNotFound: string;
+      transferFailed: string;
+      status: string;
+      statusFailed: string;
+      revision: string;
+      newRevision: string;
+      builtInReadOnly: string;
+    };
+  };
+  agentsWorkspace: {
+    heading: string;
+    description: string;
+    createAgent: string;
+    filterAll: string;
+    filterBuiltIn: string;
+    filterCustom: string;
+    filterDisabled: string;
+    noResults: string;
+    useInChat: string;
+    edit: string;
+    enable: string;
+    disable: string;
+    close: string;
+    revision: string;
+    defaultModel: string;
+    defaultModelGlobal: string;
+    skills: string;
+    toolsLabel: string;
+    toolsBuiltIn: string;
+    pinnedSkills: string;
+    excludedSkills: string;
+    noPinnedSkills: string;
+    noExcludedSkills: string;
+    pinnedSkillDisabledWarning: string;
+    statusEnabled: string;
+    statusDisabled: string;
+    copyAsCustom: string;
+    unavailable: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    revisionConflict: string;
+    tabs: {
+      overview: string;
+      skills: string;
+      revisions: string;
+    };
+    form: {
+      createTitle: string;
+      editTitle: string;
+      copyTitle: string;
+      name: string;
+      description: string;
+      systemInstruction: string;
+      defaultModel: string;
+      defaultModelGlobal: string;
+      pinnedSkills: string;
+      pinnedSkillsHint: string;
+      excludedSkills: string;
+      excludedSkillsHint: string;
+      searchSkills: string;
+      noSkills: string;
+      skillDisabled: string;
+      removeSkill: string;
+      toolsLabel: string;
+      toolsLoadFailed: string;
+      save: string;
+      cancel: string;
+      nameInvalid: string;
+      descriptionRequired: string;
+      descriptionTooLong: string;
+      systemInstructionRequired: string;
+      systemInstructionTooLarge: string;
+      budgetCalculating: string;
+      budgetUnavailable: string;
+      budgetWarning: string;
+      budgetExceeded: string;
+      largestSkills: string;
+      nameConflict: string;
+      revisionConflict: string;
+      skillConflict: string;
+      skillLimitExceeded: string;
+      saveFailed: string;
+    };
+  };
+  agentTeam: {
+    heading: string;
+    /** Display name of the built-in `tapper_default` member; the server sends one fixed-language name. */
+    tapperDefaultName: string;
+    descriptions: { mine: string; team: string; report: string };
+    tablistLabel: string;
+    tabs: { mine: string; team: string; report: string; config: string };
+    period: {
+      label: string;
+      last7: string;
+      last30: string;
+      thisMonth: string;
+      lastMonth: string;
+      custom: string;
+      from: string;
+      to: string;
+      invalidRange: string;
+    };
+    metrics: {
+      runs: string;
+      active: string;
+      idle: string;
+      agentTotal: string;
+      failures: string;
+      satisfaction: string;
+      latency: string;
+      cost: string;
+      maintenance: string;
+      servedAvg: string;
+      ownersAvg: string;
+    };
+    kpi: {
+      idle: string;
+      perDay: string;
+      failureRate: string;
+      perRun: string;
+      previous: string;
+      vsPrevious: string;
+      noBaseline: string;
+      trendLabel: string;
+    };
+    trend: {
+      byAgent: string;
+      metricLabel: string;
+      metrics: {
+        runs: string;
+        failures: string;
+        cost: string;
+        latency: string;
+      };
+      others: string;
+      total: string;
+      periodTotal: string;
+      peak: string;
+      legendLabel: string;
+      empty: string;
+    };
+    heatmap: {
+      heading: string;
+      subtitle: string;
+      label: string;
+      roleDescription: string;
+      hint: string;
+      less: string;
+      more: string;
+      total: string;
+      perDay: string;
+      perBucket: string;
+      activeDays: string;
+      activeBuckets: string;
+      busiestDay: string;
+      busiestBucket: string;
+    };
+    status: { active: string; idle: string; disabled: string };
+    platformOwner: string;
+    insufficientSample: string;
+    runtimeUnavailable: string;
+    runtimeSyncing: string;
+    runtimeLag: string;
+    updatedAt: string;
+    pendingFeedbackMine: string;
+    markResolved: string;
+    transferOwner: string;
+    viewConfig: string;
+    exportPdf: string;
+    exportCsv: string;
+    exportFailed: string;
+    durationUnits: { ms: string; s: string; m: string; h: string };
+    emptyState: string;
+    createAgent: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    report: {
+      title: string;
+      project: string;
+      period: string;
+      summaryHeading: string;
+      comparisonHeading: string;
+      comparedWith: string;
+      trendHeading: string;
+      current: string;
+      previous: string;
+      change: string;
+      metric: string;
+      failures: string;
+      noTrend: string;
+    };
+    team: {
+      viewLabel: string;
+      viewCards: string;
+      viewTable: string;
+      filterOwner: string;
+      filterStatus: string;
+      filterKind: string;
+      allOwners: string;
+      allStatuses: string;
+      allKinds: string;
+      kinds: { custom: string; built_in: string; tapper_default: string };
+      rosterHeading: string;
+      peopleHeading: string;
+      orgChartHeading: string;
+      orgChartLabel: string;
+      orgChartEmpty: string;
+      orgChartOwns: string;
+      orgChartServes: string;
+      orgChartDimmed: string;
+      orgChartUsers: string;
+      orgChartHint: string;
+      chartHint: string;
+      trendHeading: string;
+      noJobTitle: string;
+      ownerLabel: string;
+      runsInPeriod: string;
+      runsTrend: string;
+      sparklineCaption: string;
+      topServed: string;
+      noServed: string;
+      lastRun: string;
+      lastMaintenance: string;
+      pendingFeedback: string;
+      noPeople: string;
+      noMatch: string;
+      rank: string;
+      sortLabel: string;
+      sortDefault: string;
+      sortAscending: string;
+      sortDescending: string;
+      peopleViewLabel: string;
+      viewRanking: string;
+      viewDetails: string;
+      ownsChip: string;
+      usesChip: string;
+      maintenanceChip: string;
+      servedMore: string;
+      last30Column: string;
+      periodActivity: { column: string; ran: string; noRuns: string };
+      columns: {
+        name: string;
+        jobTitle: string;
+        owner: string;
+        status: string;
+        kind: string;
+        runs: string;
+        failures: string;
+        latencyTotal: string;
+        latencyP50: string;
+        cost: string;
+        served: string;
+        lastRun: string;
+        satisfaction: string;
+        lastMaintenance: string;
+        pendingFeedback: string;
+        joinedAt: string;
+        actor: string;
+        ownedAgents: string;
+        ownedRuns: string;
+        servedByAgents: string;
+        calls: string;
+        maintenance: string;
+      };
+    };
+    mine: {
+      ownedHeading: string;
+      servedHeading: string;
+      noFeedback: string;
+      noOwned: string;
+      noServed: string;
+      ratingUp: string;
+      ratingDown: string;
+      ratingNone: string;
+    };
+    profile: {
+      close: string;
+      tabs: {
+        basic: string;
+        workload: string;
+        history: string;
+        feedback: string;
+        settings: string;
+      };
+      tablistLabel: string;
+      noOwner: string;
+      servedPeople: string;
+      noServed: string;
+      currentRevision: string;
+      joinedAt: string;
+      secondaryMetrics: string;
+      primaryMetrics: string;
+      generationCalls: string;
+      toolCalls: string;
+      callsPerRun: string;
+      abstained: string;
+      canceled: string;
+      trendRuns: string;
+      trendFailures: string;
+      runsUnit: string;
+      noHistory: string;
+      loadMore: string;
+      openRevision: string;
+      maintenanceKinds: {
+        revised: string;
+        skill_upgraded: string;
+        disabled: string;
+        enabled: string;
+        feedback_resolved: string;
+        owner_transferred: string;
+      };
+      noFeedback: string;
+      feedbackCount: string;
+      resolutionNote: string;
+      noteTooLong: string;
+      jobTitleLabel: string;
+      jobTitleTooLong: string;
+      save: string;
+      saved: string;
+      currentOwner: string;
+      newOwnerLabel: string;
+      transferred: string;
+      transferFailed: string;
+      errors: {
+        actor_not_found: string;
+        agent_read_only: string;
+        job_title_too_long: string;
+        note_too_long: string;
+        feedback_not_found: string;
+        generic: string;
+      };
+    };
+  };
+  migrationBanner: {
+    heading: string;
+    descriptionAgent: string;
+    descriptionSkill: string;
+    import: string;
+    dismiss: string;
+    importing: string;
+    importFailed: string;
+  };
   library: {
-    testingCommunity: string;
-
     listView: string;
     cardView: string;
     preview: string;
@@ -156,7 +782,6 @@ export interface WorkspaceCopy {
     clearFilters: string;
     knowledgeGraphImage: string;
     graphSummary: string;
-    visibleDocuments: string;
     concepts: string;
     labeledRelationships: string;
     search: string;
@@ -168,32 +793,31 @@ export interface WorkspaceCopy {
     noResults: string;
     communities: string;
     selectAllTopics: string;
-    sourceCommunity: string;
-    newBusinessCommunity: string;
-    servicingCommunity: string;
-    claimsCommunity: string;
-    codebaseCommunity: string;
-    applicationCommunity: string;
-    underwritingCommunity: string;
-    partiesCommunity: string;
     nodes: string;
     nodeDetails: string;
     searchResults: string;
     noMatchingNodes: string;
-    viewSource: string;
     selectNode: string;
     community: string;
     relationships: string;
     provenance: string;
-    documentNode: string;
-    conceptNode: string;
-    entityNode: string;
     connections: string;
     zoomIn: string;
     zoomOut: string;
     resetView: string;
     toggleCommunities: string;
     closeNodeDetails: string;
+    aliases: string;
+    nodeSources: string;
+    evidenceSnippets: string;
+    openOriginal: string;
+    askAboutNode: string;
+    showAllRelations(n: number): string;
+    relationCount(n: number): string;
+    relationIncoming: string;
+    relationOutgoing: string;
+    nodeDetailsLoading: string;
+    nodeDetailsError: string;
     enterFullscreen: string;
     exitFullscreen: string;
     fullscreenUnavailable: string;
@@ -201,6 +825,46 @@ export interface WorkspaceCopy {
     extracted: string;
     inferred: string;
     graphNavigationHint: string;
+    canvasRegionLabel: string;
+    overviewCaption: string;
+    highlightedPath: string;
+    highlightCaption: string;
+    clearHighlight: string;
+    versionUpdated: string;
+    highlightLoading: string;
+    highlightError: string;
+    loadMore: string;
+    extractingSources(n: number): string;
+    partialSources(n: number): string;
+    sourceCapNotice(n: number): string;
+    graphEmpty: string;
+    graphEmptyHint: string;
+    graphFailed: string;
+    graphFailedHint: string;
+    graphMerging: string;
+    graphLoading: string;
+    graphUnavailable: string;
+    otherCommunity: string;
+    nodeTypes: Record<
+      "ENTITY" | "CONCEPT" | "REQUIREMENT" | "SYSTEM" | "ACTOR" | "PROCESS",
+      string
+    >;
+    relationTypes: Record<
+      | "REQUIRES"
+      | "APPLIES_TO"
+      | "PART_OF"
+      | "EXCEPTION_OF"
+      | "SUPERSEDES"
+      | "TRIGGERS"
+      | "PRECEDES"
+      | "VALIDATED_BY"
+      | "RESPONSIBLE_FOR"
+      | "USES"
+      | "DEFINES"
+      | "CONFLICTS_WITH"
+      | "RELATED_TO",
+      string
+    >;
   };
 }
 
@@ -213,6 +877,9 @@ export const WORKSPACE_COPY = {
       skills: "Skills",
       library: "Library",
       "test-management": "Test Management",
+      "low-code": "Low Code Automation",
+      "test-insights": "Test Insights",
+      moduleOpensInTap: "{module} opens in the TAP workspace.",
       collapseSidebar: "Collapse sidebar",
       closeSidebar: "Close sidebar",
       expandSidebar: "Expand sidebar",
@@ -256,6 +923,8 @@ export const WORKSPACE_COPY = {
       selectedContextNotice:
         "Citations identify the sources that supported this answer.",
       selectedContext: "Selected context",
+      skillsUsed: "Skills used",
+      skillModes: { manual: "Manual", pinned: "Pinned", auto: "Auto" },
       assistant: "Tapper assistant",
       questionNavigation: "Questions in this conversation",
       jumpToQuestion: "Jump to question",
@@ -268,6 +937,45 @@ export const WORKSPACE_COPY = {
       regenerate: "Regenerate",
       retry: "Retry",
       editQuestion: "Edit question",
+      answerSummary: (
+        sourceCount: number,
+        chunkCitationCount: number,
+        relationCount: number,
+      ) =>
+        `Searched ${sourceCount} source${sourceCount === 1 ? "" : "s"} · ${chunkCitationCount} passage${chunkCitationCount === 1 ? "" : "s"} · ${relationCount} relation${relationCount === 1 ? "" : "s"}`,
+      seedEntities: (count: number) =>
+        `${count} seed entit${count === 1 ? "y" : "ies"}`,
+      relationPaths: "Relation paths",
+      noRelationEvidence:
+        "No direct relation evidence was found; the answer below is grounded in source passages.",
+      toolStepRow: (
+        toolRound: number,
+        toolName: string,
+        summary: string,
+        durationMs: number,
+      ) => `Round ${toolRound} · ${toolName} · ${summary} · ${durationMs} ms`,
+      toolName: (toolId: string) =>
+        (
+          ({
+            "knowledge.search": "Knowledge search",
+            "graph.relations": "Relation analysis",
+            "insights.query": "Insights query",
+          }) as Record<string, string>
+        )[toolId] ?? toolId,
+      stepStatus: {
+        running: "Running",
+        completed: "Done",
+        rejected: "Rejected",
+        failed: "Failed",
+      },
+      clarificationLabel: "Needs more information",
+      insightsMetricsHeading: "Insights metrics",
+      insightsFactRow: (
+        label: string,
+        metricId: string,
+        value: number | null,
+        asOf: string,
+      ) => `${label} · ${metricId} = ${value ?? "—"} (as of ${asOf})`,
     },
     sources: {
       heading: "Knowledge sources",
@@ -322,6 +1030,23 @@ export const WORKSPACE_COPY = {
       attachmentFailed: "Upload failed",
       reviewInLibrary: "Open in Library",
       removeAttachment: "Remove attachment",
+      fromAgent: "From Agent",
+      skillBudgetWarning:
+        "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+      skillBudgetExceeded:
+        "Selected skills exceed the per-turn budget. Remove some before sending.",
+      largestSkills: "Largest skills",
+      agentModelFallback: (agentName: string) =>
+        `${agentName}'s default model is no longer available; using the global default instead.`,
+      skillDisabledNotice: (skillName: string) =>
+        `Skill "${skillName}" is disabled and was skipped for this answer.`,
+      skillInapplicableNotice: (skillName: string) =>
+        `Skill "${skillName}" does not apply to knowledge Q&A and was skipped for this answer.`,
+      skillDisabledNoticeGeneric:
+        "A selected skill is disabled and was skipped for this answer.",
+      skillInapplicableNoticeGeneric:
+        "A selected skill does not apply to knowledge Q&A and was skipped for this answer.",
+      skillNotApplicable: "Doesn't apply to knowledge Q&A",
     },
     catalog: {
       agents: "Agents",
@@ -348,13 +1073,631 @@ export const WORKSPACE_COPY = {
       agentCatalog: "Agent catalog",
       skillCatalog: "Skill catalog",
     },
+    skillsWorkspace: {
+      heading: "Skills",
+      description: "Reusable instructions and files for every conversation.",
+      importSkill: "Import skill",
+      createSkill: "New skill",
+      filterAll: "All",
+      filterBuiltIn: "Built-in",
+      filterCustom: "Custom",
+      filterDisabled: "Disabled",
+      noResults: "No skills match this filter.",
+      applicableTasks: "Applicable tasks",
+      revision: "Revision",
+      useInChat: "Use in chat",
+      edit: "Edit",
+      editUnavailableImported:
+        "Imported skills can't be edited in place — import the updated package as a new revision instead.",
+      enable: "Enable",
+      disable: "Disable",
+      statusEnabled: "Enabled",
+      statusDisabled: "Disabled",
+      copyAsCustom: "Copy as custom",
+      unavailable: "Skills are not available for this chat yet.",
+      cancel: "Cancel",
+      close: "Close",
+      loading: "Loading…",
+      loadFailed: "This skill could not be loaded.",
+      retry: "Retry",
+      download: "Download",
+      savedNotExecuted: "Saved, not executed",
+      attachedReferences: "Attached reference text",
+      noAttachedReferences: "No reference text was attached.",
+      taskLabels: {
+        "knowledge.answer": "Knowledge answers",
+        "test-plan.generate": "Test plan generation",
+        "automation.generate": "Automation generation",
+      },
+      import: {
+        step1Title: "Import a skill",
+        step1Description:
+          "Drop a SKILL.md file, a zip archive or a folder, or paste the file content below.",
+        browseFiles: "Browse files",
+        browseFolder: "Browse folder",
+        pasteLabel: "Paste SKILL.md content",
+        pastePlaceholder: "Paste the SKILL.md content here",
+        next: "Preview",
+        back: "Back",
+        commit: "Import selected",
+        step2Title: "Review before import",
+        frontmatter: "Frontmatter",
+        files: "Files",
+        warnings: "Warnings",
+        category: {
+          skill: "Instructions",
+          referenceAttached: "Reference · attached",
+          referenceUnattached: "Reference · not attached",
+          script: "Script · saved, not executed",
+          asset: "Asset",
+        },
+        nameConflict: "A skill with this name already exists.",
+        importAsNewRevision: "Import as a new revision",
+        skip: "Skip",
+        stageFailed: "This import could not be read.",
+        commitFailed: "The selected skills could not be imported.",
+        errors: {
+          skill_package_too_large: "This package is over the 20 MB limit.",
+          skill_path_rejected:
+            'This package contains an unsafe path (absolute path, "..", or a symlink).',
+          skill_frontmatter_invalid:
+            "SKILL.md's frontmatter is missing a required field or is invalid.",
+          skill_not_found_in_package:
+            "No SKILL.md was found at the selected location in this package.",
+          skill_name_conflict:
+            'A skill with this name already exists. Choose "Import as a new revision" or skip it.',
+          revision_conflict:
+            "This skill was updated elsewhere. Go back and import again.",
+          import_expired:
+            "This staged import has expired. Start the import again.",
+          skill_built_in_immutable:
+            "Built-in skills cannot receive an imported revision.",
+        },
+      },
+      form: {
+        createTitle: "New skill",
+        editTitle: "Edit skill",
+        copyTitle: "Copy as a custom skill",
+        name: "Name",
+        description: "Description",
+        applicableTasks: "Applicable tasks",
+        instructions: "Instructions",
+        preview: "SKILL.md preview",
+        save: "Save",
+        cancel: "Cancel",
+        nameInvalid: "Enter a lowercase, hyphenated name up to 64 characters.",
+        descriptionRequired: "Enter a description.",
+        instructionsRequired: "Enter instructions.",
+        budgetExceeded: "SKILL.md is over the 256 KB limit.",
+        revisionConflict: "This content was updated elsewhere. Please refresh.",
+        saveFailed: "This skill could not be saved.",
+      },
+    },
+    skillHub: {
+      libraryLabel: "Skill library",
+      searchLabel: "Search skills",
+      searchPlaceholder: "Search by name or description",
+      categoryFilter: "Category",
+      taskFilter: "Task",
+      sourceFilter: "Source",
+      statusFilter: "Status",
+      sortLabel: "Sort by",
+      allCategories: "All categories",
+      allTasks: "All tasks",
+      allSources: "All sources",
+      allStatuses: "All statuses",
+      categories: {
+        "test-design": "Test design",
+        automation: "Automation",
+        knowledge: "Knowledge",
+        analysis: "Analysis",
+        writing: "Writing",
+        other: "Other",
+      },
+      sources: {
+        imported: "Imported",
+        authored: "Created in Tapper",
+        built_in: "Built-in",
+      },
+      statuses: { enabled: "Enabled", disabled: "Disabled" },
+      sortOptions: {
+        activations: "Most activations",
+        name: "Name (A–Z)",
+        last_used_at: "Recently used",
+        updated_at: "Recently updated",
+      },
+      summaryLabel: "Library summary",
+      summary: {
+        skillTotal: "Skills",
+        enabled: "Enabled",
+        usedInPeriod: "Used in period",
+        unused: "Unused in period",
+        autoShare: "Activated automatically",
+      },
+      cardFields: {
+        category: "Category",
+        version: "Version",
+        source: "Source",
+        updated: "Updated",
+        activations: "Activations in period",
+      },
+      activationsHint:
+        "A conversation that uses several skills counts once for each skill, so activations don't add up across skills.",
+      candidateNotice:
+        "More than {limit} skills are enabled, so Tapper can't offer all of them automatically. Some skills can only be selected manually.",
+      emptyTitle: "Your skill library is empty",
+      emptyDescription:
+        "Import a skill package or create a skill to give Tapper reusable instructions.",
+      importSkill: "Import skill",
+      createSkill: "New skill",
+      noResults: "No skills match these filters.",
+      exportCsv: "Export CSV",
+      loading: "Loading…",
+      loadFailed: "The skill library could not be loaded.",
+      retry: "Retry",
+      detail: {
+        tabs: {
+          overview: "Overview",
+          instructions: "Instructions",
+          files: "Files",
+          revisions: "Revision history",
+          usage: "Usage",
+          settings: "Settings",
+        },
+        fields: {
+          description: "Description",
+          category: "Category",
+          version: "Version",
+          source: "Source",
+          originKind: "Imported as",
+          originRef: "File or package",
+          importedAt: "Imported at",
+          importedBy: "Imported by",
+          createdBy: "Created by",
+          owner: "Owner",
+          ownerSince: "Owner since",
+          compatibility: "Compatibility",
+          applicableTasks: "Applicable tasks",
+          revision: "Revision",
+        },
+        originKinds: {
+          files: "Uploaded files",
+          zip: "Zip package",
+          paste: "Pasted text",
+          authored: "Created in Tapper",
+          built_in: "Built-in",
+          unknown: "Unknown",
+        },
+        noDescription: "No description.",
+        notSpecified: "Not specified",
+        loadFailed: "The skill's details could not be loaded.",
+      },
+      compare: {
+        heading: "Compare revisions",
+        left: "Left revision",
+        right: "Right revision",
+        placeholder: "Select a revision",
+        choose: "Choose two revisions to compare.",
+        regionLabel: "{side}: {revision}",
+        latest: "latest",
+        loading: "Loading…",
+      },
+      usage: {
+        modes: {
+          manual: "Manual",
+          pinned: "Pinned by an Agent",
+          auto: "Automatic",
+        },
+        users: "Users",
+        satisfaction: "Satisfaction",
+        insufficientSample: "Insufficient sample",
+        lastUsed: "Last used",
+        neverUsed: "Never",
+        pinnedByAgents: "Agents pinning it",
+        cost: "Cost",
+        latencyTotal: "Total latency",
+        failures: "Failures",
+        runtimeUnavailable: "Run data unavailable",
+        trendHeading: "Activations by mode",
+        trendUnit: "activations",
+        noUsage: "Not used in this period.",
+        topAgents: "Agents using it",
+        topCallers: "People using it",
+        noRanking: "No one used it in this period.",
+        tapperDefault: "Tapper default",
+        removedAgent: "Removed Agent",
+        runs: { one: "{count} run", other: "{count} runs" },
+        loadFailed: "Usage could not be loaded.",
+      },
+      settings: {
+        category: "Category",
+        categoryFailed: "The category could not be saved.",
+        owner: "Owner",
+        newOwner: "New owner",
+        newOwnerPlaceholder: "User ID",
+        transfer: "Transfer",
+        transferred: "Ownership transferred.",
+        actorNotFound: "No user with this ID was found in this project.",
+        transferFailed: "Ownership could not be transferred.",
+        status: "Status",
+        statusFailed: "The status could not be changed.",
+        revision: "Revisions",
+        newRevision: "New revision",
+        builtInReadOnly:
+          "Built-in skills are maintained by Tapper. You can only enable or disable them.",
+      },
+    },
+    agentsWorkspace: {
+      heading: "Agents",
+      description:
+        "Focused collaborators with a system prompt, a default model and pinned skills.",
+      createAgent: "New agent",
+      filterAll: "All",
+      filterBuiltIn: "Built-in",
+      filterCustom: "Custom",
+      filterDisabled: "Disabled",
+      noResults: "No agents match this filter.",
+      useInChat: "Use in chat",
+      edit: "Edit",
+      enable: "Enable",
+      disable: "Disable",
+      close: "Close",
+      revision: "Revision",
+      defaultModel: "Default model",
+      defaultModelGlobal: "Use the global default model",
+      skills: "Skills",
+      toolsLabel: "Built-in tools",
+      toolsBuiltIn: "Knowledge search, Knowledge answer (always enabled)",
+      pinnedSkills: "Pinned Skills",
+      excludedSkills: "Excluded Skills",
+      noPinnedSkills: "No pinned skills.",
+      noExcludedSkills: "No excluded skills.",
+      pinnedSkillDisabledWarning:
+        "A pinned skill has been disabled and will be skipped when this agent answers.",
+      statusEnabled: "Enabled",
+      statusDisabled: "Disabled",
+      copyAsCustom: "Copy as custom",
+      unavailable: "Agents are not available for this chat yet.",
+      loading: "Loading agents…",
+      loadFailed: "Agents could not be loaded.",
+      retry: "Retry",
+      revisionConflict: "This content was updated elsewhere. Please refresh.",
+      tabs: {
+        overview: "Overview",
+        skills: "Skills",
+        revisions: "Revision history",
+      },
+      form: {
+        createTitle: "New agent",
+        editTitle: "Edit agent",
+        copyTitle: "Copy as a custom agent",
+        name: "Name",
+        description: "Description",
+        systemInstruction: "System instruction",
+        defaultModel: "Default model",
+        defaultModelGlobal: "Use the global default model",
+        pinnedSkills: "Pinned Skills",
+        pinnedSkillsHint:
+          "Always loaded, at their latest version, when this agent answers.",
+        excludedSkills: "Excluded Skills",
+        excludedSkillsHint:
+          "Never activated automatically when this agent answers.",
+        searchSkills: "Search skills",
+        noSkills: "No enabled skills available.",
+        skillDisabled:
+          "This skill has been disabled and will be skipped when the agent answers.",
+        removeSkill: "Remove",
+        toolsLabel: "Tools",
+        toolsLoadFailed: "Tools could not be loaded.",
+        save: "Save",
+        cancel: "Cancel",
+        nameInvalid: "Enter a name up to 128 characters.",
+        descriptionRequired: "Enter a description.",
+        descriptionTooLong: "Description is over the 1,024 character limit.",
+        systemInstructionRequired: "Enter a system instruction.",
+        systemInstructionTooLarge:
+          "System instruction is over the 32 KB limit.",
+        budgetCalculating: "Calculating the Skill budget…",
+        budgetUnavailable:
+          "The Skill budget could not be calculated. Try again.",
+        budgetWarning:
+          "Selected skills are near the per-turn budget. Remove some before they are needed together.",
+        budgetExceeded:
+          "Selected skills exceed the per-turn budget. Remove some before saving.",
+        largestSkills: "Largest skills",
+        nameConflict: "An agent with this name already exists.",
+        revisionConflict: "This content was updated elsewhere. Please refresh.",
+        skillConflict: "A skill can't be both pinned and excluded.",
+        skillLimitExceeded:
+          "An agent can pin or exclude at most 64 skills each. Remove some before saving.",
+        saveFailed: "This agent could not be saved.",
+      },
+    },
+    agentTeam: {
+      heading: "Agent team",
+      tapperDefaultName: "Tapper",
+      descriptions: {
+        mine: "The Agents you own, the Agents that serve you, and feedback waiting for you.",
+        team: "Who is on the Agent team, what each member has done and who looks after them.",
+        report:
+          "A printable summary of the selected period compared with the one before.",
+      },
+      tablistLabel: "Agents views",
+      tabs: {
+        mine: "My Agents",
+        team: "Team",
+        report: "Report",
+        config: "Configuration",
+      },
+      period: {
+        label: "Period",
+        last7: "Last 7 days",
+        last30: "Last 30 days",
+        thisMonth: "This month",
+        lastMonth: "Last month",
+        custom: "Custom",
+        from: "From",
+        to: "To",
+        invalidRange: "Start date must be on or before end date",
+      },
+      metrics: {
+        runs: "Runs",
+        active: "Active",
+        idle: "Idle",
+        agentTotal: "Agents",
+        failures: "Failures",
+        satisfaction: "Satisfaction",
+        latency: "Total latency",
+        cost: "Cost",
+        maintenance: "Maintenance actions",
+        servedAvg: "Agents used per caller",
+        ownersAvg: "Agents per owner",
+      },
+      kpi: {
+        idle: "{value} idle",
+        perDay: "{value} / day",
+        failureRate: "{value} failed",
+        perRun: "{value} / run",
+        previous: "Previous period {from} – {to}: {value}",
+        vsPrevious: "vs last period",
+        noBaseline: "no baseline",
+        trendLabel: "trend",
+      },
+      trend: {
+        byAgent: "By Agent · the 5 busiest and the rest",
+        metricLabel: "Trend metric",
+        metrics: {
+          runs: "Runs",
+          failures: "Failures",
+          cost: "Cost",
+          latency: "Total latency",
+        },
+        others: "{count} others",
+        total: "Total",
+        periodTotal: "this period",
+        peak: "Peak {value} · {date}",
+        legendLabel: "Show or hide Agents",
+        empty: "No runs in this period",
+      },
+      heatmap: {
+        heading: "Activity",
+        subtitle: "Runs per day",
+        label: "Runs per day",
+        roleDescription: "heatmap",
+        hint: "Use the arrow keys: up and down move a day, left and right a week.",
+        less: "Less",
+        more: "More",
+        total: "Total runs",
+        perDay: "Daily average",
+        perBucket: "Average per bucket",
+        activeDays: "Days with runs",
+        activeBuckets: "Buckets with runs",
+        busiestDay: "Busiest day",
+        busiestBucket: "Busiest bucket",
+      },
+      status: { active: "Active", idle: "Idle", disabled: "Disabled" },
+      platformOwner: "Platform-maintained",
+      insufficientSample: "Not enough ratings",
+      runtimeUnavailable: "Run data is temporarily unavailable",
+      runtimeSyncing: "Run data is syncing",
+      runtimeLag: "Run data can trail conversations by one sync cycle",
+      updatedAt: "Data updated at {time} ({timezone})",
+      pendingFeedbackMine: "Feedback waiting for me",
+      markResolved: "Mark as resolved",
+      transferOwner: "Transfer owner",
+      viewConfig: "View configuration",
+      exportPdf: "Export PDF",
+      exportCsv: "Export CSV",
+      exportFailed: "The CSV export failed. Please try again.",
+      durationUnits: { ms: "ms", s: "s", m: "m", h: "h" },
+      emptyState: "No Agents yet. Create one",
+      createAgent: "Create Agent",
+      loading: "Loading team data...",
+      loadFailed: "Team data could not be loaded.",
+      retry: "Retry",
+      report: {
+        title: "Agent team report",
+        project: "Project",
+        period: "Period",
+        summaryHeading: "Summary",
+        comparisonHeading: "Compared with the previous period",
+        comparedWith: "Compared with {from} – {to}",
+        trendHeading: "Run trend",
+        current: "This period",
+        previous: "Previous period",
+        change: "Change",
+        metric: "Metric",
+        failures: "Failures",
+        noTrend: "No run trend in this period",
+      },
+      team: {
+        viewLabel: "Roster view",
+        viewCards: "Cards",
+        viewTable: "Table",
+        filterOwner: "Owner",
+        filterStatus: "Status",
+        filterKind: "Type",
+        allOwners: "All owners",
+        allStatuses: "All statuses",
+        allKinds: "All types",
+        kinds: {
+          custom: "Custom",
+          built_in: "Built-in",
+          tapper_default: "Tapper default",
+        },
+        rosterHeading: "Roster",
+        peopleHeading: "People",
+        orgChartHeading: "Org chart",
+        orgChartLabel:
+          "Org chart of people and the agents they own or are served by",
+        orgChartEmpty: "No ownership or usage relations in this period.",
+        orgChartOwns: "Owns",
+        orgChartServes: "Served by",
+        orgChartDimmed: "Not related to the selected person",
+        orgChartUsers: "Other people",
+        orgChartHint: "Select a person to see the Agents that serve them.",
+        chartHint: "Use the left and right arrow keys to read each point.",
+        trendHeading: "Run trend",
+        noJobTitle: "No job title",
+        ownerLabel: "Owner",
+        runsInPeriod: "Runs in period",
+        runsTrend: "Runs trend, last 30 days",
+        sparklineCaption: "Last 30 days",
+        topServed: "Top served",
+        noServed: "No one yet",
+        lastRun: "Last run",
+        lastMaintenance: "Last maintenance",
+        pendingFeedback: "Pending feedback",
+        noPeople: "No people in this period",
+        noMatch: "No matching Agents",
+        rank: "Rank",
+        sortLabel: "Sort",
+        sortDefault: "Default (runs)",
+        sortAscending: "Ascending",
+        sortDescending: "Descending",
+        peopleViewLabel: "People view",
+        viewRanking: "Ranking",
+        viewDetails: "Details",
+        ownsChip: "Owns {count}",
+        usesChip: "Uses {count}",
+        maintenanceChip: "{count} maintenance",
+        servedMore: "+{count}",
+        last30Column: "Last 30 days",
+        periodActivity: {
+          column: "This period",
+          ran: "Ran this period",
+          noRuns: "No runs this period",
+        },
+        columns: {
+          name: "Name",
+          jobTitle: "Job title",
+          owner: "Owner",
+          status: "Status",
+          kind: "Type",
+          runs: "Runs",
+          failures: "Failures",
+          latencyTotal: "Total latency",
+          latencyP50: "Median latency",
+          cost: "Cost",
+          served: "People served",
+          lastRun: "Last run",
+          satisfaction: "Satisfaction",
+          lastMaintenance: "Last maintenance",
+          pendingFeedback: "Pending feedback",
+          joinedAt: "Joined",
+          actor: "Person",
+          ownedAgents: "Agents owned",
+          ownedRuns: "Runs of owned Agents",
+          servedByAgents: "Agents used",
+          calls: "Calls made",
+          maintenance: "Maintenance actions",
+        },
+      },
+      mine: {
+        ownedHeading: "Agents I own",
+        servedHeading: "Agents that serve me",
+        noFeedback: "No feedback waiting for you",
+        noOwned: "You do not own any Agents yet",
+        noServed: "No Agent has served you in this period",
+        ratingUp: "Helpful",
+        ratingDown: "Not helpful",
+        ratingNone: "Comment only",
+      },
+      profile: {
+        close: "Close",
+        tabs: {
+          basic: "Basics",
+          workload: "Workload",
+          history: "History",
+          feedback: "Pending feedback",
+          settings: "Settings",
+        },
+        tablistLabel: "Agent profile sections",
+        noOwner: "No owner",
+        servedPeople: "People served",
+        noServed: "No one served in this period",
+        currentRevision: "Current revision",
+        joinedAt: "Joined",
+        secondaryMetrics: "Call volume",
+        primaryMetrics: "Run metrics",
+        generationCalls: "Model calls",
+        toolCalls: "Tool calls",
+        callsPerRun: "Calls per run",
+        abstained: "Abstained",
+        canceled: "Canceled",
+        trendRuns: "Runs",
+        trendFailures: "Failures",
+        runsUnit: "runs",
+        noHistory: "No maintenance history yet.",
+        loadMore: "Load more",
+        openRevision: "Open revision",
+        maintenanceKinds: {
+          revised: "Revised",
+          skill_upgraded: "Skill upgraded",
+          disabled: "Disabled",
+          enabled: "Enabled",
+          feedback_resolved: "Feedback resolved",
+          owner_transferred: "Owner transferred",
+        },
+        noFeedback: "No pending feedback.",
+        feedbackCount: "Pending feedback: {count}",
+        resolutionNote: "Resolution note (optional, up to 500 characters)",
+        noteTooLong: "The note is over 500 characters.",
+        jobTitleLabel: "Job title",
+        jobTitleTooLong: "The job title is over 64 characters.",
+        save: "Save",
+        saved: "Saved",
+        currentOwner: "Current owner",
+        newOwnerLabel: "New owner",
+        transferred: "Transferred to {owner}",
+        transferFailed: "The owner could not be transferred.",
+        errors: {
+          actor_not_found: "That person was not found in this Project.",
+          agent_read_only: "This Agent is read-only.",
+          job_title_too_long: "The job title is over 64 characters.",
+          note_too_long: "The note is over 500 characters.",
+          feedback_not_found: "That feedback no longer exists.",
+          generic: "The change could not be saved.",
+        },
+      },
+    },
+    migrationBanner: {
+      heading: "Local drafts found",
+      descriptionAgent:
+        "Markdown agent drafts saved on this device can be imported as real agents.",
+      descriptionSkill:
+        "Markdown skill drafts saved on this device can be imported as real skills.",
+      import: "Import",
+      dismiss: "Dismiss",
+      importing: "Importing…",
+      importFailed: "This draft could not be imported.",
+    },
     library: {
       listView: "List view",
       cardView: "Card view",
       preview: "Preview",
       download: "Download file",
       noPreview: "No preview available for this source.",
-      testingCommunity: "Testing",
       heading: "Library",
       description:
         "Browse source material and explore its curated domain context.",
@@ -368,9 +1711,8 @@ export const WORKSPACE_COPY = {
       allTypes: "All types",
       allStatuses: "All statuses",
       clearFilters: "Clear filters",
-      knowledgeGraphImage: "Life insurance knowledge graph",
+      knowledgeGraphImage: "Project knowledge graph",
       graphSummary: "Knowledge graph summary",
-      visibleDocuments: "Visible documents",
       concepts: "Concepts",
       labeledRelationships: "Labeled relationships",
       search: "Search library",
@@ -382,33 +1724,39 @@ export const WORKSPACE_COPY = {
       noResults: "No matching sources",
       communities: "Topic groups",
       selectAllTopics: "Select all",
-      sourceCommunity: "Sources",
-      newBusinessCommunity: "New business",
-      servicingCommunity: "Policy servicing",
-      claimsCommunity: "Claims",
-      codebaseCommunity: "Codebase",
-      applicationCommunity: "Application",
-      underwritingCommunity: "Underwriting",
-      partiesCommunity: "Parties",
       nodes: "nodes",
       nodeDetails: "Node details",
       searchResults: "Search results",
       noMatchingNodes:
         "No matching documents, concepts or entities. Try another keyword or clear the filters.",
-      viewSource: "View source in document list",
       selectNode: "Select a node to inspect its relationships.",
       community: "Topic group",
       relationships: "Relationships",
       provenance: "Provenance",
-      documentNode: "Document",
-      conceptNode: "Concept",
-      entityNode: "Entity",
       connections: "connections",
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetView: "Reset view",
       toggleCommunities: "Toggle topic groups",
       closeNodeDetails: "Close node details",
+      aliases: "Aliases",
+      nodeSources: "Sources",
+      evidenceSnippets: "Evidence",
+      openOriginal: "Open original",
+      askAboutNode: "Ask about this",
+      showAllRelations: (n: number) => `Show all (${n})`,
+      relationCount: (n: number) => `${n} relation${n === 1 ? "" : "s"}`,
+      relationIncoming: "Incoming",
+      relationOutgoing: "Outgoing",
+      highlightedPath: "Highlighted path",
+      highlightCaption: "Relations cited by the answer",
+      clearHighlight: "Back to overview",
+      versionUpdated:
+        "The graph has been updated; some relations are no longer available.",
+      highlightLoading: "Loading the highlighted path…",
+      highlightError: "The highlighted path is temporarily unavailable.",
+      nodeDetailsLoading: "Loading node details…",
+      nodeDetailsError: "Node details are unavailable. Try again.",
       enterFullscreen: "Enter fullscreen",
       exitFullscreen: "Exit fullscreen",
       fullscreenUnavailable: "Fullscreen is unavailable in this browser.",
@@ -417,6 +1765,47 @@ export const WORKSPACE_COPY = {
       inferred: "INFERRED",
       graphNavigationHint:
         "Drag to pan, use the controls to zoom, and select a node to inspect its relationships.",
+      canvasRegionLabel: "Knowledge graph canvas",
+      overviewCaption: "Project knowledge overview",
+      loadMore: "Load more",
+      extractingSources: (n: number) =>
+        `${n} source${n === 1 ? "" : "s"} still extracting`,
+      partialSources: (n: number) => `${n} partially failed`,
+      sourceCapNotice: (n: number) =>
+        `Showing the graph for the first 50 of ${n} matching sources.`,
+      graphEmpty: "No knowledge graph yet.",
+      graphEmptyHint:
+        "The graph is built automatically after sources are published.",
+      graphFailed: "The knowledge graph build failed.",
+      graphFailedHint: "Retry the build, or check with an operator.",
+      graphMerging: "The graph is being rebuilt…",
+      graphLoading: "Loading the knowledge graph…",
+      graphUnavailable:
+        "The knowledge graph is temporarily unavailable. Try again.",
+      otherCommunity: "Other",
+      nodeTypes: {
+        ENTITY: "Entity",
+        CONCEPT: "Concept",
+        REQUIREMENT: "Requirement",
+        SYSTEM: "System",
+        ACTOR: "Actor",
+        PROCESS: "Process",
+      },
+      relationTypes: {
+        REQUIRES: "Requires",
+        APPLIES_TO: "Applies to",
+        PART_OF: "Part of",
+        EXCEPTION_OF: "Exception of",
+        SUPERSEDES: "Supersedes",
+        TRIGGERS: "Triggers",
+        PRECEDES: "Precedes",
+        VALIDATED_BY: "Validated by",
+        RESPONSIBLE_FOR: "Responsible for",
+        USES: "Uses",
+        DEFINES: "Defines",
+        CONFLICTS_WITH: "Conflicts with",
+        RELATED_TO: "Related to",
+      },
     },
   },
   zh: {
@@ -427,6 +1816,9 @@ export const WORKSPACE_COPY = {
       skills: "技能",
       library: "知识库",
       "test-management": "测试管理",
+      "low-code": "低代码自动化",
+      "test-insights": "Test Insights",
+      moduleOpensInTap: "{module} 在 TAP 工作区中打开。",
       collapseSidebar: "收起侧边栏",
       closeSidebar: "关闭侧边栏",
       expandSidebar: "展开侧边栏",
@@ -468,6 +1860,8 @@ export const WORKSPACE_COPY = {
       noContextNotice: "此轮对话未选择知识上下文。回答仅基于当前可用信息。",
       selectedContextNotice: "引用会标明支持本次回答的知识来源。",
       selectedContext: "已选上下文",
+      skillsUsed: "本轮用到的 Skill",
+      skillModes: { manual: "手动", pinned: "常驻", auto: "自动" },
       assistant: "Tapper 助手",
       questionNavigation: "本次对话中的问题",
       jumpToQuestion: "跳转到问题",
@@ -480,6 +1874,43 @@ export const WORKSPACE_COPY = {
       regenerate: "重新生成",
       retry: "重试",
       editQuestion: "编辑问题",
+      answerSummary: (
+        sourceCount: number,
+        chunkCitationCount: number,
+        relationCount: number,
+      ) =>
+        `搜索 ${sourceCount} 个来源 · ${chunkCitationCount} 段原文 · ${relationCount} 条关系`,
+      seedEntities: (count: number) => `${count} 个种子实体`,
+      relationPaths: "关系路径",
+      noRelationEvidence: "未找到直接关系证据，以下为资料原文依据",
+      toolStepRow: (
+        toolRound: number,
+        toolName: string,
+        summary: string,
+        durationMs: number,
+      ) => `第 ${toolRound} 轮 · ${toolName} · ${summary} · ${durationMs} ms`,
+      toolName: (toolId: string) =>
+        (
+          ({
+            "knowledge.search": "知识检索",
+            "graph.relations": "关系分析",
+            "insights.query": "Insights 查询",
+          }) as Record<string, string>
+        )[toolId] ?? toolId,
+      stepStatus: {
+        running: "运行中",
+        completed: "完成",
+        rejected: "已拒绝",
+        failed: "失败",
+      },
+      clarificationLabel: "需要补充信息",
+      insightsMetricsHeading: "Insights 指标",
+      insightsFactRow: (
+        label: string,
+        metricId: string,
+        value: number | null,
+        asOf: string,
+      ) => `${label} · ${metricId} = ${value ?? "—"}（截至 ${asOf}）`,
     },
     sources: {
       heading: "知识来源",
@@ -531,6 +1962,21 @@ export const WORKSPACE_COPY = {
       attachmentFailed: "上传失败",
       reviewInLibrary: "在知识库中打开",
       removeAttachment: "移除附件",
+      fromAgent: "来自 Agent",
+      skillBudgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
+      skillBudgetExceeded:
+        "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再发送。",
+      largestSkills: "占用最大的 Skill",
+      agentModelFallback: (agentName: string) =>
+        `${agentName} 的默认模型已不可用，已改用全局默认模型。`,
+      skillDisabledNotice: (skillName: string) =>
+        `Skill「${skillName}」已停用，本次回答未使用。`,
+      skillInapplicableNotice: (skillName: string) =>
+        `Skill「${skillName}」不适用于知识问答，本次回答未使用。`,
+      skillDisabledNoticeGeneric: "有一个选用的 Skill 已停用，本次回答未使用。",
+      skillInapplicableNoticeGeneric:
+        "有一个选用的 Skill 不适用于知识问答，本次回答未使用。",
+      skillNotApplicable: "不适用于知识问答",
     },
     catalog: {
       agents: "智能体",
@@ -555,13 +2001,617 @@ export const WORKSPACE_COPY = {
       agentCatalog: "智能体目录",
       skillCatalog: "技能目录",
     },
+    skillsWorkspace: {
+      heading: "技能",
+      description: "可在每次对话中复用的指令与文件。",
+      importSkill: "导入 Skill",
+      createSkill: "新建 Skill",
+      filterAll: "全部",
+      filterBuiltIn: "内置",
+      filterCustom: "自定义",
+      filterDisabled: "已停用",
+      noResults: "没有符合筛选条件的 Skill。",
+      applicableTasks: "适用任务",
+      revision: "修订",
+      useInChat: "在对话中使用",
+      edit: "编辑",
+      editUnavailableImported:
+        "导入的 Skill 不能直接编辑，请将更新后的包作为新修订重新导入。",
+      enable: "启用",
+      disable: "停用",
+      statusEnabled: "已启用",
+      statusDisabled: "已停用",
+      copyAsCustom: "复制为自定义",
+      unavailable: "本次对话暂不支持使用 Skill。",
+      cancel: "取消",
+      close: "关闭",
+      loading: "加载中…",
+      loadFailed: "无法加载该 Skill。",
+      retry: "重试",
+      download: "下载",
+      savedNotExecuted: "已保存，不执行",
+      attachedReferences: "已附加的参考文本",
+      noAttachedReferences: "未附加参考文本。",
+      taskLabels: {
+        "knowledge.answer": "知识问答",
+        "test-plan.generate": "测试计划生成",
+        "automation.generate": "自动化生成",
+      },
+      import: {
+        step1Title: "导入 Skill",
+        step1Description:
+          "拖入 SKILL.md、zip 压缩包或文件夹，或在下方粘贴文本。",
+        browseFiles: "选择文件",
+        browseFolder: "选择文件夹",
+        pasteLabel: "粘贴 SKILL.md 内容",
+        pastePlaceholder: "在此粘贴 SKILL.md 内容",
+        next: "预览",
+        back: "返回",
+        commit: "导入所选",
+        step2Title: "导入前确认",
+        frontmatter: "元数据",
+        files: "文件",
+        warnings: "告警",
+        category: {
+          skill: "指令",
+          referenceAttached: "参考·已附加",
+          referenceUnattached: "参考·未附加",
+          script: "脚本·已保存不执行",
+          asset: "资源",
+        },
+        nameConflict: "已存在同名 Skill。",
+        importAsNewRevision: "作为新修订导入",
+        skip: "跳过",
+        stageFailed: "无法读取此次导入。",
+        commitFailed: "无法导入所选 Skill。",
+        errors: {
+          skill_package_too_large: "压缩包超过 20 MB 上限。",
+          skill_path_rejected:
+            "压缩包内含不安全路径（绝对路径、“..” 或符号链接）。",
+          skill_frontmatter_invalid:
+            "SKILL.md 的 frontmatter 缺少必需字段或不合法。",
+          skill_not_found_in_package: "在该位置未找到 SKILL.md。",
+          skill_name_conflict:
+            "已存在同名 Skill，请选择“作为新修订导入”或跳过。",
+          revision_conflict: "该 Skill 已在别处更新，请返回重新导入。",
+          import_expired: "此次暂存的导入已过期，请重新导入。",
+          skill_built_in_immutable: "内置 Skill 不能接收导入的修订。",
+        },
+      },
+      form: {
+        createTitle: "新建 Skill",
+        editTitle: "编辑 Skill",
+        copyTitle: "复制为自定义 Skill",
+        name: "名称",
+        description: "描述",
+        applicableTasks: "适用任务",
+        instructions: "指令",
+        preview: "SKILL.md 预览",
+        save: "保存",
+        cancel: "取消",
+        nameInvalid: "请输入小写连字符名称，最多 64 个字符。",
+        descriptionRequired: "请填写描述。",
+        instructionsRequired: "请填写指令。",
+        budgetExceeded: "SKILL.md 超过 256 KB 限制。",
+        revisionConflict: "内容已被他人更新，请刷新。",
+        saveFailed: "无法保存该 Skill。",
+      },
+    },
+    skillHub: {
+      libraryLabel: "Skill 库",
+      searchLabel: "搜索 Skill",
+      searchPlaceholder: "按名称或描述搜索",
+      categoryFilter: "类别",
+      taskFilter: "适用任务",
+      sourceFilter: "来源",
+      statusFilter: "状态",
+      sortLabel: "排序",
+      allCategories: "全部类别",
+      allTasks: "全部任务",
+      allSources: "全部来源",
+      allStatuses: "全部状态",
+      categories: {
+        "test-design": "测试设计",
+        automation: "自动化",
+        knowledge: "知识",
+        analysis: "分析",
+        writing: "写作",
+        other: "其他",
+      },
+      sources: {
+        imported: "导入",
+        authored: "在 Tapper 中创建",
+        built_in: "内置",
+      },
+      statuses: { enabled: "已启用", disabled: "已停用" },
+      sortOptions: {
+        activations: "激活次数最多",
+        name: "名称（A–Z）",
+        last_used_at: "最近使用",
+        updated_at: "最近更新",
+      },
+      summaryLabel: "库概览",
+      summary: {
+        skillTotal: "Skill 总数",
+        enabled: "已启用",
+        usedInPeriod: "周期内用到",
+        unused: "周期内未用到",
+        autoShare: "自动激活占比",
+      },
+      cardFields: {
+        category: "类别",
+        version: "版本",
+        source: "来源",
+        updated: "更新于",
+        activations: "周期内激活次数",
+      },
+      activationsHint:
+        "一次对话用到多个 Skill 时，每个 Skill 各计 1 次，不同 Skill 的激活次数不可相加。",
+      candidateNotice:
+        "已启用的 Skill 超过 {limit} 个，Tapper 无法全部自动选用，部分 Skill 只能手动选用。",
+      emptyTitle: "Skill 库还是空的",
+      emptyDescription:
+        "导入 Skill 包或新建 Skill，为 Tapper 提供可复用的指令。",
+      importSkill: "导入 Skill",
+      createSkill: "新建 Skill",
+      noResults: "没有符合筛选条件的 Skill。",
+      exportCsv: "导出 CSV",
+      loading: "加载中…",
+      loadFailed: "Skill 库加载失败。",
+      retry: "重试",
+      detail: {
+        tabs: {
+          overview: "基本信息",
+          instructions: "指令",
+          files: "文件",
+          revisions: "修订历史",
+          usage: "用量",
+          settings: "设置",
+        },
+        fields: {
+          description: "描述",
+          category: "类别",
+          version: "版本",
+          source: "来源",
+          originKind: "导入方式",
+          originRef: "文件或包",
+          importedAt: "导入时间",
+          importedBy: "导入人",
+          createdBy: "创建人",
+          owner: "负责人",
+          ownerSince: "负责起始",
+          compatibility: "兼容性",
+          applicableTasks: "适用任务",
+          revision: "修订",
+        },
+        originKinds: {
+          files: "上传文件",
+          zip: "Zip 包",
+          paste: "粘贴文本",
+          authored: "在 Tapper 中创建",
+          built_in: "内置",
+          unknown: "未知",
+        },
+        noDescription: "暂无描述。",
+        notSpecified: "未注明",
+        loadFailed: "Skill 详情加载失败。",
+      },
+      compare: {
+        heading: "对比修订",
+        left: "左侧修订",
+        right: "右侧修订",
+        placeholder: "选择修订",
+        choose: "选择两个修订进行对比。",
+        regionLabel: "{side}：{revision}",
+        latest: "最新",
+        loading: "加载中…",
+      },
+      usage: {
+        modes: {
+          manual: "手动",
+          pinned: "Agent 常驻",
+          auto: "自动",
+        },
+        users: "使用者",
+        satisfaction: "满意度",
+        insufficientSample: "样本不足",
+        lastUsed: "最近使用",
+        neverUsed: "从未使用",
+        pinnedByAgents: "常驻它的 Agent",
+        cost: "成本",
+        latencyTotal: "耗时合计",
+        failures: "失败",
+        runtimeUnavailable: "运行数据暂不可用",
+        trendHeading: "按方式的激活趋势",
+        trendUnit: "次",
+        noUsage: "本周期内未被用到。",
+        topAgents: "用到它的 Agent",
+        topCallers: "用到它的人",
+        noRanking: "本周期内无人用到。",
+        tapperDefault: "Tapper 默认",
+        removedAgent: "已删除的 Agent",
+        runs: { one: "{count} 次", other: "{count} 次" },
+        loadFailed: "用量加载失败。",
+      },
+      settings: {
+        category: "类别",
+        categoryFailed: "类别保存失败。",
+        owner: "负责人",
+        newOwner: "新负责人",
+        newOwnerPlaceholder: "用户 ID",
+        transfer: "转交",
+        transferred: "已转交负责人。",
+        actorNotFound: "本项目中找不到该用户 ID。",
+        transferFailed: "负责人转交失败。",
+        status: "状态",
+        statusFailed: "状态修改失败。",
+        revision: "修订",
+        newRevision: "新建修订",
+        builtInReadOnly: "内置 Skill 由 Tapper 维护，只能启用或停用。",
+      },
+    },
+    agentsWorkspace: {
+      heading: "智能体",
+      description: "带有系统提示词、默认模型与常驻 Skill 的专注协作者。",
+      createAgent: "新建 Agent",
+      filterAll: "全部",
+      filterBuiltIn: "内置",
+      filterCustom: "自定义",
+      filterDisabled: "已停用",
+      noResults: "没有符合筛选条件的 Agent。",
+      useInChat: "在对话中使用",
+      edit: "编辑",
+      enable: "启用",
+      disable: "停用",
+      close: "关闭",
+      revision: "修订",
+      defaultModel: "默认模型",
+      defaultModelGlobal: "使用全局默认模型",
+      skills: "Skill",
+      toolsLabel: "内置工具",
+      toolsBuiltIn: "知识检索、知识回答（始终启用）",
+      pinnedSkills: "常驻 Skills",
+      excludedSkills: "排除 Skills",
+      noPinnedSkills: "没有常驻 Skill。",
+      noExcludedSkills: "没有排除的 Skill。",
+      pinnedSkillDisabledWarning:
+        "有常驻 Skill 已停用，该 Agent 回答时将跳过。",
+      statusEnabled: "已启用",
+      statusDisabled: "已停用",
+      copyAsCustom: "复制为自定义",
+      unavailable: "本次对话暂不支持使用 Agent。",
+      loading: "正在加载 Agent…",
+      loadFailed: "无法加载 Agent。",
+      retry: "重试",
+      revisionConflict: "内容已被他人更新，请刷新。",
+      tabs: {
+        overview: "概览",
+        skills: "Skill",
+        revisions: "修订历史",
+      },
+      form: {
+        createTitle: "新建 Agent",
+        editTitle: "编辑 Agent",
+        copyTitle: "复制为自定义 Agent",
+        name: "名称",
+        description: "描述",
+        systemInstruction: "系统提示词",
+        defaultModel: "默认模型",
+        defaultModelGlobal: "使用全局默认模型",
+        pinnedSkills: "常驻 Skills",
+        pinnedSkillsHint: "该 Agent 回答时总会加载这些 Skill 的最新版本。",
+        excludedSkills: "排除 Skills",
+        excludedSkillsHint: "该 Agent 回答时不会自动激活这些 Skill。",
+        searchSkills: "搜索 Skill",
+        noSkills: "暂无可用的已启用 Skill。",
+        skillDisabled: "此 Skill 已停用，Agent 回答时将跳过。",
+        removeSkill: "移除",
+        toolsLabel: "工具",
+        toolsLoadFailed: "工具加载失败。",
+        save: "保存",
+        cancel: "取消",
+        nameInvalid: "请输入不超过 128 个字符的名称。",
+        descriptionRequired: "请填写描述。",
+        descriptionTooLong: "描述超过 1024 个字符限制。",
+        systemInstructionRequired: "请填写系统提示词。",
+        systemInstructionTooLarge: "系统提示词超过 32 KB 限制。",
+        budgetCalculating: "正在计算 Skill 预算…",
+        budgetUnavailable: "无法计算 Skill 预算，请重试。",
+        budgetWarning: "所选 Skill 已接近单轮预算上限，请考虑精简组合。",
+        budgetExceeded:
+          "所选 Skill 已超出单轮预算上限，请先移除部分 Skill 再保存。",
+        largestSkills: "占用最大的 Skill",
+        nameConflict: "已存在同名 Agent。",
+        revisionConflict: "内容已被他人更新，请刷新。",
+        skillConflict: "同一个 Skill 不能既常驻又排除。",
+        skillLimitExceeded:
+          "每个 Agent 的常驻和排除 Skill 各最多 64 个，请先移除部分再保存。",
+        saveFailed: "无法保存该 Agent。",
+      },
+    },
+    agentTeam: {
+      heading: "Agent 团队",
+      tapperDefaultName: "Tapper 默认",
+      descriptions: {
+        mine: "你负责的 Agent、服务过你的 Agent，以及等你处理的反馈。",
+        team: "团队里有哪些 Agent、各自做了什么，以及由谁负责。",
+        report: "所选周期与上一周期对比的可打印汇总。",
+      },
+      tablistLabel: "Agent 视图",
+      tabs: {
+        mine: "我的 Agent",
+        team: "团队",
+        report: "汇报",
+        config: "配置",
+      },
+      period: {
+        label: "周期",
+        last7: "近 7 天",
+        last30: "近 30 天",
+        thisMonth: "本月",
+        lastMonth: "上月",
+        custom: "自定义",
+        from: "开始",
+        to: "结束",
+        invalidRange: "开始日期不能晚于结束日期",
+      },
+      metrics: {
+        runs: "运行次数",
+        active: "活跃",
+        idle: "闲置",
+        agentTotal: "Agent 数",
+        failures: "失败",
+        satisfaction: "满意度",
+        latency: "总耗时",
+        cost: "成本",
+        maintenance: "维护动作",
+        servedAvg: "每位使用者用到的 Agent 数",
+        ownersAvg: "每位负责人管理 Agent 数",
+      },
+      kpi: {
+        idle: "闲置 {value}",
+        perDay: "日均 {value}",
+        failureRate: "失败率 {value}",
+        perRun: "每次 {value}",
+        previous: "上一周期 {from} – {to}：{value}",
+        vsPrevious: "较上期",
+        noBaseline: "无可比基线",
+        trendLabel: "趋势",
+      },
+      trend: {
+        byAgent: "按 Agent 拆分 · 运行最多的 5 个与其他",
+        metricLabel: "趋势指标",
+        metrics: {
+          runs: "运行次数",
+          failures: "失败",
+          cost: "成本",
+          latency: "总耗时",
+        },
+        others: "其他 {count} 个",
+        total: "合计",
+        periodTotal: "本周期合计",
+        peak: "峰值 {value} · {date}",
+        legendLabel: "显示或隐藏 Agent",
+        empty: "本周期没有运行",
+      },
+      heatmap: {
+        heading: "活跃日历",
+        subtitle: "每天的运行次数",
+        label: "每日运行次数",
+        roleDescription: "热力图",
+        hint: "用方向键查看：上下切换一天，左右切换一周。",
+        less: "少",
+        more: "多",
+        total: "总运行",
+        perDay: "日均",
+        perBucket: "每段平均",
+        activeDays: "有运行的天数",
+        activeBuckets: "有运行的时段",
+        busiestDay: "最忙的一天",
+        busiestBucket: "最忙的时段",
+      },
+      status: { active: "活跃", idle: "闲置", disabled: "已停用" },
+      platformOwner: "平台维护",
+      insufficientSample: "样本不足",
+      runtimeUnavailable: "运行数据暂不可用",
+      runtimeSyncing: "运行数据同步中",
+      runtimeLag: "运行数据可能比对话晚一个同步周期",
+      updatedAt: "数据更新于 {time}（{timezone}）",
+      pendingFeedbackMine: "待我处理的反馈",
+      markResolved: "标记已处理",
+      transferOwner: "转交负责人",
+      viewConfig: "查看配置",
+      exportPdf: "导出 PDF",
+      exportCsv: "导出 CSV",
+      exportFailed: "导出 CSV 失败，请重试。",
+      durationUnits: { ms: "毫秒", s: "秒", m: "分", h: "小时" },
+      emptyState: "还没有 Agent，新建一个",
+      createAgent: "新建 Agent",
+      loading: "正在加载团队数据…",
+      loadFailed: "无法加载团队数据。",
+      retry: "重试",
+      report: {
+        title: "Agent 团队汇报",
+        project: "项目",
+        period: "周期",
+        summaryHeading: "汇总",
+        comparisonHeading: "与上一周期对比",
+        comparedWith: "对比：{from} – {to}",
+        trendHeading: "运行趋势",
+        current: "本周期",
+        previous: "上一周期",
+        change: "变化",
+        metric: "指标",
+        failures: "失败",
+        noTrend: "本周期没有运行趋势",
+      },
+      team: {
+        viewLabel: "花名册视图",
+        viewCards: "卡片",
+        viewTable: "表格",
+        filterOwner: "负责人",
+        filterStatus: "状态",
+        filterKind: "类型",
+        allOwners: "全部负责人",
+        allStatuses: "全部状态",
+        allKinds: "全部类型",
+        kinds: {
+          custom: "自定义",
+          built_in: "内置",
+          tapper_default: "Tapper 默认",
+        },
+        rosterHeading: "花名册",
+        peopleHeading: "人员",
+        orgChartHeading: "组织架构图",
+        orgChartLabel: "人员与其负责、使用的 Agent 的组织架构图",
+        orgChartEmpty: "本周期内没有负责或使用关系。",
+        orgChartOwns: "负责",
+        orgChartServes: "使用",
+        orgChartDimmed: "与所选成员无关",
+        orgChartUsers: "其他使用者",
+        orgChartHint: "选择一位人员，查看为其服务的 Agent。",
+        chartHint: "用左右方向键逐点查看数值。",
+        trendHeading: "运行趋势",
+        noJobTitle: "未设岗位",
+        ownerLabel: "负责人",
+        runsInPeriod: "周期内运行",
+        runsTrend: "近 30 天运行趋势",
+        sparklineCaption: "近 30 天趋势",
+        topServed: "主要服务对象",
+        noServed: "暂无",
+        lastRun: "最近运行",
+        lastMaintenance: "最近维护",
+        pendingFeedback: "待处理反馈",
+        noPeople: "该周期内没有人员",
+        noMatch: "没有符合条件的 Agent",
+        rank: "排名",
+        sortLabel: "排序",
+        sortDefault: "默认（运行次数）",
+        sortAscending: "升序",
+        sortDescending: "降序",
+        peopleViewLabel: "人员视图",
+        viewRanking: "排行",
+        viewDetails: "明细",
+        ownsChip: "负责 {count}",
+        usesChip: "用到 {count}",
+        maintenanceChip: "维护 {count}",
+        servedMore: "+{count}",
+        last30Column: "近 30 天",
+        periodActivity: {
+          column: "本期",
+          ran: "本期运行",
+          noRuns: "本期未运行",
+        },
+        columns: {
+          name: "名称",
+          jobTitle: "岗位",
+          owner: "负责人",
+          status: "状态",
+          kind: "类型",
+          runs: "运行次数",
+          failures: "失败",
+          latencyTotal: "总耗时",
+          latencyP50: "中位耗时",
+          cost: "成本",
+          served: "服务人数",
+          lastRun: "最近运行",
+          satisfaction: "满意度",
+          lastMaintenance: "最近维护",
+          pendingFeedback: "待处理反馈",
+          joinedAt: "入职日期",
+          actor: "人员",
+          ownedAgents: "负责 Agent 数",
+          ownedRuns: "负责 Agent 运行量",
+          servedByAgents: "被服务 Agent 数",
+          calls: "调用次数",
+          maintenance: "维护动作数",
+        },
+      },
+      mine: {
+        ownedHeading: "我负责的 Agent",
+        servedHeading: "为我服务的 Agent",
+        noFeedback: "暂无待你处理的反馈",
+        noOwned: "你还没有负责的 Agent",
+        noServed: "所选周期内没有 Agent 为你服务",
+        ratingUp: "有帮助",
+        ratingDown: "没帮助",
+        ratingNone: "仅评论",
+      },
+      profile: {
+        close: "关闭",
+        tabs: {
+          basic: "基本信息",
+          workload: "工作量",
+          history: "履历",
+          feedback: "待处理反馈",
+          settings: "设置",
+        },
+        tablistLabel: "Agent 档案分页",
+        noOwner: "无负责人",
+        servedPeople: "服务对象",
+        noServed: "本周期无服务对象",
+        currentRevision: "当前修订",
+        joinedAt: "入职日期",
+        secondaryMetrics: "调用量",
+        primaryMetrics: "运行指标",
+        generationCalls: "模型调用",
+        toolCalls: "工具调用",
+        callsPerRun: "平均每次运行调用数",
+        abstained: "拒答",
+        canceled: "已取消",
+        trendRuns: "运行次数",
+        trendFailures: "失败",
+        runsUnit: "次",
+        noHistory: "暂无维护履历。",
+        loadMore: "加载更多",
+        openRevision: "打开修订",
+        maintenanceKinds: {
+          revised: "修订",
+          skill_upgraded: "Skill 升级",
+          disabled: "停用",
+          enabled: "启用",
+          feedback_resolved: "处理差评",
+          owner_transferred: "转交负责人",
+        },
+        noFeedback: "没有待处理反馈。",
+        feedbackCount: "待处理反馈：{count}",
+        resolutionNote: "处理说明（可选，最多 500 字）",
+        noteTooLong: "说明超过 500 字。",
+        jobTitleLabel: "岗位",
+        jobTitleTooLong: "岗位超过 64 个字符。",
+        save: "保存",
+        saved: "已保存",
+        currentOwner: "当前负责人",
+        newOwnerLabel: "新负责人",
+        transferred: "已转交给 {owner}",
+        transferFailed: "无法转交负责人。",
+        errors: {
+          actor_not_found: "在本项目中找不到该人员。",
+          agent_read_only: "该 Agent 为只读。",
+          job_title_too_long: "岗位超过 64 个字符。",
+          note_too_long: "说明超过 500 字。",
+          feedback_not_found: "该反馈已不存在。",
+          generic: "无法保存更改。",
+        },
+      },
+    },
+    migrationBanner: {
+      heading: "发现本地草稿",
+      descriptionAgent:
+        "此设备上保存的 Markdown Agent 草稿，可导入为正式 Agent。",
+      descriptionSkill:
+        "此设备上保存的 Markdown Skill 草稿，可导入为正式 Skill。",
+      import: "导入",
+      dismiss: "忽略",
+      importing: "正在导入…",
+      importFailed: "无法导入该草稿。",
+    },
     library: {
       listView: "列表视图",
       cardView: "卡片视图",
       preview: "预览",
       download: "下载文件",
       noPreview: "此来源暂无可用预览。",
-      testingCommunity: "测试验证",
       heading: "知识库",
       description: "浏览知识来源，并探索经过编排的领域上下文。",
       addSource: "添加来源",
@@ -574,9 +2624,8 @@ export const WORKSPACE_COPY = {
       allTypes: "全部类型",
       allStatuses: "全部状态",
       clearFilters: "清除筛选",
-      knowledgeGraphImage: "寿险知识图谱",
+      knowledgeGraphImage: "项目知识图谱",
       graphSummary: "知识图谱摘要",
-      visibleDocuments: "可见文档",
       concepts: "概念",
       labeledRelationships: "已标注关系",
       search: "搜索知识库",
@@ -588,32 +2637,37 @@ export const WORKSPACE_COPY = {
       noResults: "没有匹配的来源",
       communities: "主题分组",
       selectAllTopics: "全选",
-      sourceCommunity: "来源",
-      newBusinessCommunity: "新单",
-      servicingCommunity: "保全",
-      claimsCommunity: "理赔",
-      codebaseCommunity: "代码库",
-      applicationCommunity: "投保申请",
-      underwritingCommunity: "核保",
-      partiesCommunity: "参与方",
       nodes: "个节点",
       nodeDetails: "节点详情",
       searchResults: "搜索结果",
       noMatchingNodes: "没有匹配的文档、概念或实体，请更换关键词或清除筛选。",
-      viewSource: "在文档列表中查看来源",
       selectNode: "选择节点以查看其关系。",
       community: "主题分组",
       relationships: "关系",
       provenance: "来源依据",
-      documentNode: "文档",
-      conceptNode: "概念",
-      entityNode: "实体",
       connections: "个关联",
       zoomIn: "放大",
       zoomOut: "缩小",
       resetView: "重置视图",
       toggleCommunities: "显示或收起主题分组",
       closeNodeDetails: "关闭节点详情",
+      aliases: "别名",
+      nodeSources: "来源",
+      evidenceSnippets: "证据片段",
+      openOriginal: "打开原件",
+      askAboutNode: "就此提问",
+      showAllRelations: (n: number) => `显示全部 (${n})`,
+      relationCount: (n: number) => `${n} 条关系`,
+      relationIncoming: "被指向",
+      relationOutgoing: "指向",
+      highlightedPath: "高亮路径",
+      highlightCaption: "回答引用的关系",
+      clearHighlight: "返回总览",
+      versionUpdated: "图谱版本已更新，部分关系不再可用。",
+      highlightLoading: "正在加载高亮路径…",
+      highlightError: "高亮路径暂时无法加载。",
+      nodeDetailsLoading: "正在加载节点详情…",
+      nodeDetailsError: "节点详情暂时无法加载，请重试。",
       enterFullscreen: "进入全屏",
       exitFullscreen: "退出全屏",
       fullscreenUnavailable: "当前浏览器不支持全屏。",
@@ -621,6 +2675,44 @@ export const WORKSPACE_COPY = {
       extracted: "已抽取",
       inferred: "推断",
       graphNavigationHint: "拖动以平移画布，使用控件缩放，并选择节点查看关系。",
+      canvasRegionLabel: "知识图谱画布",
+      overviewCaption: "项目知识总览",
+      loadMore: "加载更多",
+      extractingSources: (n: number) => `${n} 个来源仍在抽取`,
+      partialSources: (n: number) => `${n} 个部分失败`,
+      sourceCapNotice: (n: number) =>
+        `已匹配 ${n} 个来源，图谱仅显示前 50 个。`,
+      graphEmpty: "暂无知识图谱。",
+      graphEmptyHint: "来源发布后会自动建图。",
+      graphFailed: "知识图谱构建失败。",
+      graphFailedHint: "请重试构建，或联系运维排查。",
+      graphMerging: "图谱正在重建…",
+      graphLoading: "正在加载知识图谱…",
+      graphUnavailable: "知识图谱暂时无法加载，请重试。",
+      otherCommunity: "其他",
+      nodeTypes: {
+        ENTITY: "实体",
+        CONCEPT: "概念",
+        REQUIREMENT: "需求",
+        SYSTEM: "系统",
+        ACTOR: "角色",
+        PROCESS: "流程",
+      },
+      relationTypes: {
+        REQUIRES: "需要",
+        APPLIES_TO: "适用于",
+        PART_OF: "属于",
+        EXCEPTION_OF: "例外于",
+        SUPERSEDES: "取代",
+        TRIGGERS: "触发",
+        PRECEDES: "先于",
+        VALIDATED_BY: "由其验证",
+        RESPONSIBLE_FOR: "负责",
+        USES: "使用",
+        DEFINES: "定义",
+        CONFLICTS_WITH: "与其冲突",
+        RELATED_TO: "与其相关",
+      },
     },
   },
 } as const satisfies Record<Locale, WorkspaceCopy>;

@@ -20,7 +20,7 @@ async def main() -> None:
     try:
         async with engine.begin() as connection:
             for table, revision_id in (
-                ("ai_agent_revision", "validation-knowledge-agent-v2"),
+                ("ai_agent_revision", "validation-knowledge-agent-v3"),
                 ("skill_revision", "validation-citation-skill-v2"),
             ):
                 result = await connection.execute(

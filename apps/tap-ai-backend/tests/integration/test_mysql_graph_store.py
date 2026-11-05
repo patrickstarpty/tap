@@ -14,6 +14,7 @@ from tap.modules.graph.adapters.mysql import (
     graph_active_snapshot,
     graph_node_evidence,
     graph_snapshot_revision,
+    publish_graph_snapshot,
 )
 from tap.modules.graph.adapters.mysql_jobs import MysqlGraphJobStore
 from tap.modules.graph.domain.jobs import GraphJobLeaseLost, GraphJobRequest, GraphJobStatus
@@ -21,6 +22,7 @@ from tap.modules.graph.domain.models import (
     Evidence,
     GraphEdge,
     GraphNode,
+    GraphSearchQuery,
     GraphSnapshot,
     GraphSnapshotDraft,
     NeighborQuery,
@@ -29,7 +31,12 @@ from tap.modules.graph.domain.models import (
 from tap.platform.db.schema import outbox
 
 
-def _draft(snapshot_id: str) -> GraphSnapshotDraft:
+def _draft(
+    snapshot_id: str,
+    *,
+    aliases: tuple[str, ...] = (),
+    relation_label: str = "",
+) -> GraphSnapshotDraft:
     evidence = Evidence(
         "evidence-1",
         snapshot_id,
@@ -47,7 +54,9 @@ def _draft(snapshot_id: str) -> GraphSnapshotDraft:
             document_revision_ids=("document-revision-1",),
         ),
         (
-            GraphNode("node-1", snapshot_id, "Policy", "ENTITY", "policy", ("evidence-1",)),
+            GraphNode(
+                "node-1", snapshot_id, "Policy", "ENTITY", "policy", ("evidence-1",), aliases
+            ),
             GraphNode("node-2", snapshot_id, "Claim", "ENTITY", "claim"),
         ),
         (
@@ -60,6 +69,7 @@ def _draft(snapshot_id: str) -> GraphSnapshotDraft:
                 RelationOrigin.EXTRACTED,
                 1.0,
                 ("evidence-1",),
+                relation_label,
             ),
         ),
         (evidence,),
@@ -106,13 +116,11 @@ async def test_mysql_graph_publish_preserves_history_and_atomically_moves_active
         await store.publish(VALIDATION_SCOPE, _draft("snapshot-1"))
         await store.publish(VALIDATION_SCOPE, _draft("snapshot-2"))
 
-        active = await store.active_snapshot(VALIDATION_SCOPE, ("source-revision-1",))
         historical = await store.get_snapshot(VALIDATION_SCOPE, "snapshot-1")
         graph = await store.neighbors(
             VALIDATION_SCOPE,
             NeighborQuery("snapshot-2", "node-1", depth=1, node_limit=10),
         )
-        assert active is not None and active.snapshot_id == "snapshot-2"
         assert historical is not None and historical.snapshot_id == "snapshot-1"
         assert graph.nodes[0].evidence_ids == ("evidence-1",)
         assert graph.edges[0].evidence_ids == ("evidence-1",)
@@ -121,6 +129,9 @@ async def test_mysql_graph_publish_preserves_history_and_atomically_moves_active
             assert (
                 await session.scalar(select(func.count()).select_from(graph_active_snapshot)) == 1
             )
+            # The pointer row is not just singular — it must actually target the
+            # second (most recent) publish, not the first.
+            assert await session.scalar(select(graph_active_snapshot.c.snapshot_id)) == "snapshot-2"
             assert (
                 await session.scalar(select(func.count()).select_from(graph_snapshot_revision)) == 2
             )
@@ -250,5 +261,171 @@ async def test_mysql_graph_job_recovers_expired_lease_and_completes_all_facts_at
             assert (
                 await session.scalar(select(func.count()).select_from(graph_snapshot_revision)) == 1
             )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_publish_round_trips_aliases_relation_label_and_partial_status(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        draft = _draft(
+            "snapshot-aliases-1", aliases=("核保", "underwriting"), relation_label="需要"
+        )
+        async with sessions() as session, session.begin():
+            snapshot = await publish_graph_snapshot(
+                session,
+                VALIDATION_SCOPE,
+                draft,
+                now=datetime(2026, 9, 13, 9, 0, 0),
+                status="PARTIAL",
+            )
+        assert snapshot.status == "PARTIAL"
+        store = MysqlGraphStore(sessions)
+        graph = await store.search(
+            VALIDATION_SCOPE, GraphSearchQuery(snapshot.snapshot_id, "*", 50)
+        )
+        assert graph.nodes[0].aliases == ("核保", "underwriting")
+        assert graph.edges[0].relation_label == "需要"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_graph_job_claim_resolves_the_document_filename(owned_project_mysql) -> None:
+    from sqlalchemy import insert
+
+    from tap.modules.knowledge.adapters.mysql_documents import (
+        knowledge_document,
+        knowledge_document_revision,
+        knowledge_source,
+    )
+    from tap.platform.db.project_scope import scope_values
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    jobs = MysqlGraphJobStore(sessions)
+    now = datetime(2026, 10, 11, 9, 0, 0)
+    source_id = "src_" + "7" * 32
+    document_id = "doc_" + "7" * 32
+    try:
+        async with sessions() as session, session.begin():
+            await session.execute(
+                insert(knowledge_source).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    source_id=source_id,
+                    name="claims-handbook.pdf",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.execute(
+                insert(knowledge_document).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    document_id=document_id,
+                    source_id=source_id,
+                    filename="claims-handbook.pdf",
+                    media_type="application/pdf",
+                    source_content_hash="sha256:" + "1" * 64,
+                    reservation_parser_version="tapper-parser-v1",
+                    reservation_chunker_version="tapper-chunker-v1",
+                    reservation_pipeline_version="tapper-ingestion-v1",
+                    status="ready",
+                    stage="ready",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.execute(
+                insert(knowledge_document_revision).values(
+                    **scope_values(VALIDATION_SCOPE),
+                    revision_id="revision-titled",
+                    source_id=source_id,
+                    document_id=document_id,
+                    source_content_hash="sha256:" + "1" * 64,
+                    original_blob_locator="tapper-originals/claims-handbook.pdf",
+                    chunks_blob_locator="tapper-artifacts/claims-handbook.chunks",
+                    parser_version="tapper-parser-v1",
+                    chunker_version="tapper-chunker-v1",
+                    pipeline_version="tapper-ingestion-v1",
+                    created_at=now,
+                )
+            )
+        for revision_id in ("revision-titled", "revision-without-document"):
+            await jobs.request(
+                VALIDATION_SCOPE,
+                GraphJobRequest.create(
+                    scope=VALIDATION_SCOPE,
+                    revision_id=revision_id,
+                    chunks_locator=f"{revision_id}.chunks",
+                    extraction_profile_digest="sha256:" + "1" * 64,
+                    model_alias="qwen-plus",
+                ),
+                now=now,
+            )
+
+        claims = await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-1",
+            now=now,
+            lease_duration=timedelta(seconds=30),
+            limit=2,
+        )
+
+        titles = {claim.revision_id: claim.document_title for claim in claims}
+        assert titles == {"revision-titled": "claims-handbook.pdf", "revision-without-document": ""}
+        renewed = await jobs.renew(
+            VALIDATION_SCOPE,
+            next(claim for claim in claims if claim.revision_id == "revision-titled"),
+            now=now + timedelta(seconds=1),
+            lease_duration=timedelta(seconds=30),
+        )
+        assert renewed.document_title == "claims-handbook.pdf"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mysql_graph_job_release_hands_a_running_job_back_at_once(
+    owned_project_mysql,
+) -> None:
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    jobs = MysqlGraphJobStore(sessions)
+    now = datetime(2026, 9, 13, 9, 0, 0)
+    request = GraphJobRequest.create(
+        scope=VALIDATION_SCOPE,
+        revision_id="source-revision-1",
+        chunks_locator="art1.chunks",
+        extraction_profile_digest="sha256:" + "1" * 64,
+        model_alias="qwen-plus",
+    )
+    lease = timedelta(seconds=300)
+    try:
+        await jobs.request(VALIDATION_SCOPE, request, now=now)
+        [first] = await jobs.claim(
+            VALIDATION_SCOPE, worker_id="worker-1", now=now, lease_duration=lease, limit=1
+        )
+
+        assert await jobs.release(VALIDATION_SCOPE, first, now=now + timedelta(seconds=1))
+        # A stale holder cannot release (or renew) what it already gave back.
+        assert not await jobs.release(VALIDATION_SCOPE, first, now=now + timedelta(seconds=2))
+        with pytest.raises(GraphJobLeaseLost):
+            await jobs.renew(
+                VALIDATION_SCOPE, first, now=now + timedelta(seconds=2), lease_duration=lease
+            )
+        # Well inside the original lease, another worker claims it straight away.
+        [second] = await jobs.claim(
+            VALIDATION_SCOPE,
+            worker_id="worker-2",
+            now=now + timedelta(seconds=3),
+            lease_duration=lease,
+            limit=1,
+        )
+        assert second.job_id == first.job_id
+        assert second.lease_owner == "worker-2"
     finally:
         await engine.dispose()

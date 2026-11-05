@@ -39,6 +39,16 @@ EXPECTED_TABLES = {
     "graph_edge_evidence",
     "graph_inference_provenance",
     "graph_extraction_job",
+    "graph_fragment_batch",
+    "graph_project_version",
+    "graph_project_node",
+    "graph_project_edge",
+    "graph_project_node_source",
+    "graph_project_edge_evidence",
+    "graph_project_alias",
+    "graph_project_community",
+    "graph_merge_log",
+    "graph_project_merge_job",
     "knowledge_source",
     "knowledge_source_command",
     "knowledge_source_legacy_map",
@@ -48,6 +58,11 @@ EXPECTED_TABLES = {
     "ai_agent_revision",
     "skill",
     "skill_revision",
+    "skill_revision_file",
+    "skill_import",
+    "agent_maintenance_event",
+    "turn_skill_activation",
+    "skill_maintenance_event",
     "enterprise",
     "project",
     "actor_principal",
@@ -63,6 +78,7 @@ EXPECTED_TABLES = {
     "turn_input_snapshot",
     "turn_answer_evidence_snapshot",
     "turn_artifact_link",
+    "answer_feedback",
     "prompt_suggestion_refresh",
     "prompt_suggestion",
     "knowledge_document",
@@ -86,7 +102,13 @@ EXPECTED_TABLES = {
     "trace_span",
     "model_call",
     "model_call_content",
+    "langfuse_sync_cursor",
+    "langfuse_sync_failure",
 }
+
+# System tables owned by the Langfuse sync worker: unscoped by design (it reads
+# across every Project), so excluded from the scope-column requirement below.
+UNSCOPED_SYSTEM_TABLES = {"langfuse_sync_cursor", "langfuse_sync_failure"}
 
 
 def test_registry_is_complete_in_a_fresh_process_and_excludes_incidental_tables() -> None:
@@ -163,7 +185,9 @@ def test_all_business_metadata_requires_project_scope_and_parent_consistency() -
     from tap.platform.db.registry import load_authoritative_metadata
 
     metadata = load_authoritative_metadata()
-    for name in EXPECTED_TABLES - {"enterprise", "project", "actor_principal"}:
+    for name in (
+        EXPECTED_TABLES - {"enterprise", "project", "actor_principal"} - (UNSCOPED_SYSTEM_TABLES)
+    ):
         table = metadata.tables[name]
         for field in (
             "enterprise_id",

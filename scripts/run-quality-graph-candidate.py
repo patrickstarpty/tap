@@ -159,11 +159,16 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("candidate run requires TAPPER_GRAPH_EXTRACTION_MODE=model")
     _endpoint_open(settings.milvus_uri)
     engine, sessions = _open_database(settings)
-    models = _create_embeddings(settings, max_retries=0)
+    models = _create_embeddings(
+        settings,
+        max_retries=0,
+        timeout_ceiling_seconds=settings.graph_extraction_timeout_seconds,
+    )
     capture = CapturingGateway(models.gateway)
     extractor = ModelGatewayGraphExtraction(
         cast(ModelGateway, capture),
-        timeout_seconds=settings.model_timeout_seconds,
+        timeout_seconds=settings.graph_extraction_timeout_seconds,
+        max_output_tokens=settings.graph_extraction_max_tokens,
     )
     store = MysqlGraphStore(sessions)
     observations = deepcopy(profile)
@@ -214,6 +219,13 @@ async def run(profile: dict[str, Any]) -> dict[str, Any]:
                 idempotency_key="quality-graph:" + case_id,
             )
             draft = await extractor.extract(request)
+            if draft is None:
+                # This evaluation script sends one case's documents as a single,
+                # un-batched request; an extractor grounding nothing is a quality
+                # failure for that case, not a success to silently skip.
+                raise ValueError(
+                    f"graph extraction grounded no facts for case {case_id}"
+                )
             await store.publish(VALIDATION_SCOPE, draft)
             for document in selected_documents:
                 for label in labels_by_document[document["documentId"]]:

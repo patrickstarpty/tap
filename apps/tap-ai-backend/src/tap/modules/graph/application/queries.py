@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+from typing import Literal
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.graph.domain.models import (
@@ -14,7 +15,6 @@ from tap.modules.graph.domain.models import (
     GraphSubgraph,
     NeighborQuery,
     PathQuery,
-    source_set_digest,
 )
 from tap.modules.graph.ports.store import GraphFactNotFound
 from tap.platform.db.project_scope import require_project_scope
@@ -23,9 +23,14 @@ from tap.platform.db.project_scope import require_project_scope
 class InMemoryGraphStore:
     def __init__(self) -> None:
         self._drafts: dict[tuple[str, str], GraphSnapshotDraft] = {}
-        self._active: dict[tuple[str, str], str] = {}
 
-    async def publish(self, scope: ProjectScopeContext, draft: GraphSnapshotDraft) -> GraphSnapshot:
+    async def publish(
+        self,
+        scope: ProjectScopeContext,
+        draft: GraphSnapshotDraft,
+        *,
+        status: Literal["READY", "PARTIAL"] = "READY",
+    ) -> GraphSnapshot:
         scope = require_project_scope(scope)
         if draft.snapshot.project_id != scope.project_id:
             raise ValueError("graph snapshot is outside Project scope")
@@ -34,21 +39,20 @@ class InMemoryGraphStore:
             if self._drafts[key] != draft:
                 raise ValueError("immutable graph snapshot conflict")
             return self._drafts[key].snapshot
-        ready = replace(draft.snapshot, status="READY")
+        ready = replace(draft.snapshot, status=status)
         persisted = replace(draft, snapshot=ready)
         self._drafts[key] = persisted
-        self._active[(scope.project_id, ready.source_set_digest)] = ready.snapshot_id
         return ready
 
-    async def active_snapshot(
-        self, scope: ProjectScopeContext, source_ids: tuple[str, ...]
-    ) -> GraphSnapshot | None:
+    def reset(self, scope: ProjectScopeContext, snapshot_id: str) -> None:
+        """Forget a snapshot's published draft so a later `publish` with new
+        facts is treated as fresh rather than rejected as an immutable
+        conflict against the stale draft -- the in-memory mirror of resetting
+        a MySQL snapshot row back to `CANDIDATE` and deleting its fact rows
+        before a fragment retry."""
+
         scope = require_project_scope(scope)
-        identity = self._active.get((scope.project_id, source_set_digest(source_ids)))
-        if identity is None:
-            return None
-        snapshot = self._drafts[(scope.project_id, identity)].snapshot
-        return snapshot if snapshot.source_revision_ids == tuple(sorted(source_ids)) else None
+        self._drafts.pop((scope.project_id, snapshot_id), None)
 
     async def get_snapshot(
         self, scope: ProjectScopeContext, snapshot_id: str

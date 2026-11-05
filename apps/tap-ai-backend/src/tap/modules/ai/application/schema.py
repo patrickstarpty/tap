@@ -58,13 +58,27 @@ def check_schema(schema: object, depth: int = 0) -> None:
                 type(schema[bound]) not in {int, float} or not math.isfinite(schema[bound])
             ):
                 raise ValueError("invalid numeric bound")
+    elif kind == "string":
+        allowed |= {"maxLength"}
+        if "maxLength" in schema and (
+            type(schema["maxLength"]) is not int or not 0 <= schema["maxLength"] <= 100_000
+        ):
+            raise ValueError("invalid string bound")
     if set(schema) - allowed:
         raise ValueError("unsupported locked schema keyword")
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
         raise ValueError("invalid locked schema enum")
 
 
-def validate_output(schema: dict[str, object], value: object) -> None:
+class StructuredOutputOverflow(ValueError):
+    """A top-level structured output array (a property of the root object) is
+    longer than its schema's ``maxItems``: the output as a whole is too large.
+
+    A nested array over its bound is an ordinary invalid output (``ValueError``).
+    """
+
+
+def validate_output(schema: dict[str, object], value: object, *, _depth: int = 0) -> None:
     kind = schema["type"]
     if kind == "object":
         properties = schema["properties"]
@@ -72,16 +86,20 @@ def validate_output(schema: dict[str, object], value: object) -> None:
         if not isinstance(value, dict) or set(value) != set(properties):
             raise ValueError("structured output does not match locked properties")
         for key, child in properties.items():
-            validate_output(child, value[key])
+            validate_output(child, value[key], _depth=_depth + 1)
     elif kind == "array":
         items = schema["items"]
         assert isinstance(items, dict)
         maximum = schema.get("maxItems", 10000)
         assert isinstance(maximum, int)
-        if not isinstance(value, list) or len(value) > maximum:
+        if not isinstance(value, list):
+            raise ValueError("structured output is not a bounded array")
+        if len(value) > maximum:
+            if _depth == 1:
+                raise StructuredOutputOverflow("structured output is not a bounded array")
             raise ValueError("structured output is not a bounded array")
         for item in value:
-            validate_output(items, item)
+            validate_output(items, item, _depth=_depth + 1)
     elif not (
         (kind == "string" and type(value) is str)
         or (kind == "integer" and type(value) is int)
@@ -108,3 +126,8 @@ def validate_output(schema: dict[str, object], value: object) -> None:
                 (value > limit) if exceeds else (value < limit)
             ):
                 raise ValueError("structured output exceeds numeric bound")
+    if kind == "string":
+        assert isinstance(value, str)
+        limit = schema.get("maxLength")
+        if isinstance(limit, int) and len(value) > limit:
+            raise ValueError("structured output exceeds string bound")

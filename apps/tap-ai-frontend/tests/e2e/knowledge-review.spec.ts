@@ -142,7 +142,12 @@ test("uploaded knowledge supports direct chunk editing, indexing, chat and disab
   expect(skillsResponse.status()).toBe(200);
   expect(modelsResponse.status()).toBe(200);
   const agents = (await agentsResponse.json()) as {
-    items: Array<{ displayName: string }>;
+    items: Array<{
+      builtIn: boolean;
+      status: string;
+      isLatest: boolean;
+      displayName: string;
+    }>;
   };
   const skills = (await skillsResponse.json()) as {
     items: Array<{ displayName: string }>;
@@ -152,14 +157,15 @@ test("uploaded knowledge supports direct chunk editing, indexing, chat and disab
     items: Array<{ alias: string; displayName: string }>;
   };
   const model = models.items.find((item) => item.alias === models.defaultAlias);
-  expect(agents.items[0]).toBeDefined();
+  const agent = agents.items.find(
+    (item) => item.builtIn && item.status === "enabled" && item.isLatest,
+  );
+  expect(agent).toBeDefined();
   expect(skills.items[0]).toBeDefined();
   expect(model).toBeDefined();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Agents" }).click();
-  await page
-    .getByRole("option", { name: agents.items[0]!.displayName })
-    .click();
+  await page.getByRole("option", { name: agent!.displayName }).click();
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("menuitem", { name: "Use Skills" }).click();
   await page

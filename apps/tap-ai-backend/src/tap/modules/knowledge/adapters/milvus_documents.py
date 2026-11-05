@@ -17,6 +17,7 @@ from tap.modules.knowledge.adapters.milvus.transport import (
     MilvusCollectionDescriptor,
 )
 from tap.modules.knowledge.domain.documents import (
+    LEGACY_PARSER_VERSIONS,
     MAX_CHUNKS_PER_DOCUMENT,
     PARSER_VERSION,
     ChunkDraft,
@@ -1040,7 +1041,9 @@ class MilvusDocumentIndex:
             and re.fullmatch(r"human-correction-[0-9a-f]{64}", work.parser_version) is not None
         )
         if (
-            work.parser_version not in {PARSER_VERSION, "managed-chunks-v1"} and not corrected_image
+            work.parser_version
+            not in {PARSER_VERSION, *LEGACY_PARSER_VERSIONS, "managed-chunks-v1"}
+            and not corrected_image
         ) or str(canonical_revision) != work.revision_id:
             raise ValueError("Tapper revision provenance is inconsistent")
         if len({str(chunk.chunk_id) for chunk in chunks}) != len(chunks):

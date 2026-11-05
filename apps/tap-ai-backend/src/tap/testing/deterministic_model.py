@@ -8,6 +8,7 @@ import re
 import unicodedata
 from hashlib import sha256
 
+from tap.modules.ai.domain.skill_activation import TurnSkillContext
 from tap.modules.knowledge.domain.models import Evidence
 from tap.modules.knowledge.ports.documents import EmbeddingArtifact
 from tap.modules.knowledge.ports.models import (
@@ -124,7 +125,12 @@ class DeterministicTapperModel:
         query: str,
         evidence: tuple[Evidence, ...],
         profile_id: str,
+        *,
+        skills: TurnSkillContext | None = None,
     ) -> AnswerGeneration:
+        # `skills` (Skill Hub) is accepted and ignored: the fixed E2E answer
+        # quotes evidence only, whatever Skills the Turn renders.
+        del skills
         if (
             not isinstance(query, str)
             or not query.strip()

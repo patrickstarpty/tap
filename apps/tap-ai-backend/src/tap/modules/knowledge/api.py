@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Literal
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from tap.contracts.http import AbstentionReason as HttpAbstentionReason
@@ -18,7 +18,19 @@ from tap.contracts.http import (
     DocumentAnchor as HttpDocumentAnchor,
 )
 from tap.contracts.http import (
+    EdgeCitationView as HttpEdgeCitation,
+)
+from tap.contracts.http import (
     FailureAnchor as HttpFailureAnchor,
+)
+from tap.contracts.http import (
+    GraphContextSummaryView as HttpGraphContextSummaryView,
+)
+from tap.contracts.http import (
+    GraphEndpointView as HttpGraphEndpointView,
+)
+from tap.contracts.http import (
+    InsightsFactView as HttpInsightsFactView,
 )
 from tap.contracts.http import (
     OpenApiAnchor as HttpOpenApiAnchor,
@@ -54,6 +66,8 @@ from tap.contracts.http import (
 from tap.contracts.http import SourceFamily as HttpSourceFamily
 from tap.modules.access.application.ports import CurrentPolicyVerificationPort
 from tap.modules.access.domain.policy import RetrievalPolicyContext
+from tap.modules.ai.domain.persona import CURRENT_PERSONA, TapperPersona
+from tap.modules.ai.domain.skill_activation import TurnSkillContext
 from tap.modules.knowledge.application.answer_templates import (
     get_template,
     latest_template_version,
@@ -66,7 +80,7 @@ from tap.modules.knowledge.application.publication import (
     FlowchartPublicationGate,
     PublishedKnowledgeAuthority,
 )
-from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval
+from tap.modules.knowledge.application.retrieve import AuthorizedRetrieval, RelationAnalysis
 from tap.modules.knowledge.domain.models import (
     AnswerMode,
     AnswerRequest,
@@ -123,6 +137,8 @@ class KnowledgeAPI:
         id_factory: Callable[[], str] | None = None,
         publication_authority: PublishedKnowledgeAuthority | None = None,
         flowchart_gate: FlowchartPublicationGate | None = None,
+        relation_analysis: RelationAnalysis | None = None,
+        retrieval_augment: bool = True,
     ) -> None:
         self._retrieval = AuthorizedRetrieval(
             search=search,
@@ -134,6 +150,8 @@ class KnowledgeAPI:
             id_factory=id_factory or (lambda: str(uuid4())),
             publication_authority=publication_authority,
             flowchart_gate=flowchart_gate,
+            relation_analysis=relation_analysis,
+            retrieval_augment=retrieval_augment,
         )
 
     async def search(
@@ -175,6 +193,139 @@ class KnowledgeAPI:
                 model_alias=model_alias,
                 answer_execution=answer_execution,
                 authorize=authorize,
+            )
+
+    async def prepare_frozen(
+        self,
+        request,
+        policy,
+        *,
+        governance=None,
+        graph_context=(),
+        answer_execution=None,
+        authorize=None,
+        include_relations: bool = True,
+    ):
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.prepare_answer(
+                request,
+                policy,
+                frozen_policy=True,
+                governance=governance,
+                graph_context=graph_context,
+                answer_execution=answer_execution,
+                authorize=authorize,
+                include_relations=include_relations,
+            )
+
+    async def generate_frozen(
+        self,
+        bundle,
+        policy,
+        *,
+        governance=None,
+        model_alias=None,
+        answer_execution=None,
+        authorize=None,
+        on_text=None,
+        persona: TapperPersona = CURRENT_PERSONA,
+        tools: tuple[str, ...] = (),
+        transcript: tuple[Mapping[str, object], ...] = (),
+        skills: TurnSkillContext | None = None,
+    ):
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.generate_answer(
+                bundle,
+                policy,
+                frozen_policy=True,
+                governance=governance,
+                model_alias=model_alias,
+                authorize=authorize,
+                on_text=on_text,
+                persona=persona,
+                tools=tools,
+                transcript=transcript,
+                **({"skills": skills} if skills is not None else {}),
+            )
+
+    async def verify_frozen(
+        self,
+        bundle,
+        generation,
+        policy,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ):
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.verify_answer(
+                bundle,
+                generation,
+                policy,
+                frozen_policy=True,
+                authorize=authorize,
+            )
+
+    async def search_more_frozen(
+        self,
+        bundle,
+        query,
+        source_ids,
+        policy,
+        *,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """The `knowledge.search` tool's frozen entrypoint (Task 6)."""
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.search_more(
+                bundle,
+                query,
+                source_ids,
+                policy,
+                frozen_policy=True,
+                authorize=authorize,
+            )
+
+    async def relations_frozen(
+        self,
+        bundle,
+        query,
+        policy,
+        *,
+        turn_id=None,
+        answer_execution=None,
+        authorize=None,
+    ):
+        """The `graph.relations` tool's frozen entrypoint (Task 6)."""
+        import asyncio
+
+        async with asyncio.timeout(
+            None if answer_execution is None else answer_execution.remaining_seconds
+        ):
+            return await self._retrieval.analyse_relations(
+                bundle,
+                query,
+                authorize=authorize,
+                turn_id=turn_id,
+                policy=policy,
+                frozen_policy=True,
             )
 
 
@@ -220,14 +371,28 @@ def search_response_to_http(response: SearchResponse) -> HttpSearchResponse:
     )
 
 
-def answer_response_to_http(
-    response: AnswerResponse,
-    *,
+def answer_response_to_http(response: AnswerResponse) -> HttpAnswerResponse:
+    relation = response.relation
     graph_context_status: Literal[
-        "APPLIED", "NOT_READY", "FAILED", "UNAVAILABLE", "NOT_SELECTED"
-    ] = "NOT_SELECTED",
-    graph_snapshot_id: str | None = None,
-) -> HttpAnswerResponse:
+        "APPLIED", "NOT_READY", "STALE", "FAILED", "UNAVAILABLE", "NOT_SELECTED", "EMPTY"
+    ] = "UNAVAILABLE" if relation is None else cast(Any, relation.status.value)
+    graph_snapshot_id = (
+        relation.graph_version
+        if relation is not None and relation.status.value == "APPLIED"
+        else None
+    )
+    graph_context = (
+        None
+        if relation is None
+        else HttpGraphContextSummaryView(
+            status=cast(Any, relation.status.value),
+            graph_version=relation.graph_version,
+            seed_count=relation.seed_count,
+            query_seed_count=relation.query_seed_count,
+            paths=[list(path) for path in relation.paths],
+            relation_count=relation.relation_count,
+        )
+    )
     return HttpAnswerResponse(
         trace_id=response.trace_id,
         query_plan_id=response.query_plan_id,
@@ -243,6 +408,7 @@ def answer_response_to_http(
             if response.abstention_reason is not None
             else None
         ),
+        answer_kind=response.answer_kind,
         claims=[
             HttpClaim(
                 claim_id=item.claim_id,
@@ -256,6 +422,20 @@ def answer_response_to_http(
         citations=[_citation_to_http(item) for item in response.citations],
         graph_context_status=graph_context_status,
         graph_snapshot_id=graph_snapshot_id,
+        graph_context=graph_context,
+        insights_facts=(
+            [
+                HttpInsightsFactView(
+                    label=item.label,
+                    query_id=item.query_id,
+                    metric_id=item.metric_id,
+                    value=item.value,
+                    as_of=item.as_of,
+                )
+                for item in response.insights_facts
+            ]
+            or None
+        ),
     )
 
 
@@ -404,6 +584,25 @@ def _citation_to_http(citation: Citation) -> HttpCitation:
             "publicationId": citation.publication_id,
             "approvalDigest": citation.approval_digest,
             "approvedItemId": citation.approved_item_id,
+            "kind": citation.kind,
+            "edge": (
+                None
+                if citation.edge is None
+                else HttpEdgeCitation(
+                    edge_id=citation.edge.edge_id,
+                    graph_version=citation.edge.graph_version,
+                    subject=HttpGraphEndpointView(
+                        node_id=citation.edge.subject_node_id,
+                        label=citation.edge.subject_label,
+                    ),
+                    object=HttpGraphEndpointView(
+                        node_id=citation.edge.object_node_id,
+                        label=citation.edge.object_label,
+                    ),
+                    relation_type=citation.edge.relation_type,
+                    relation_label=citation.edge.relation_label,
+                )
+            ),
         },
         context={"source_family": HttpSourceFamily(citation.family.value)},
     )

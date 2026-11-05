@@ -129,12 +129,19 @@ def test_generated_claim_resolution_maps_citations_and_orders_complete_paragraph
     )
 
 
-def test_generated_claim_resolution_uses_equal_paragraphs_not_substrings() -> None:
+def test_generated_claim_resolution_rejects_an_ambiguously_repeated_claim_text() -> None:
+    """LangGraph PR 3 review ruling (2026-10-16): a claim is a cited sentence, not
+    necessarily a whole paragraph, so resolution now locates it by unique
+    substring offset rather than requiring an exact whole-paragraph match. That
+    means a claim text occurring twice -- once as its own paragraph, once
+    embedded at the end of a longer, uncited paragraph -- is genuinely
+    ambiguous and must be rejected rather than silently resolved to the first
+    (paragraph-exact) occurrence, as the retired paragraph-only rule did."""
     generation = AnswerGeneration(
         text="Claim exact.\n\nAnother paragraph mentions Claim exact.",
         claims=(GeneratedClaim(text="Claim exact.", evidence_labels=("S1",)),),
         model_id="answer-model",
-        profile_id="grounded-answer-v1",
+        profile_id="grounded-answer-v2",
         provider_request_id=None,
     )
 
@@ -144,13 +151,39 @@ def test_generated_claim_resolution_uses_equal_paragraphs_not_substrings() -> No
         id_factory=lambda: "claim-id",
     )
 
+    assert resolved is None
+
+
+def test_generated_claim_resolution_drops_only_the_ambiguous_claim() -> None:
+    """Review ruling (2026-10-16, round 2): an ambiguously repeated claim text
+    drops only itself -- it must never abstain an answer that also carries
+    other, cleanly resolvable claims."""
+    base = _claim_resolution_evidence()
+    second = replace(base, evidence_label="S2", citation_id="citation-source-2")
+    generation = AnswerGeneration(
+        text="Contract takes effect.Note: Contract takes effect. Immediately. Second fact.",
+        claims=(
+            GeneratedClaim(text="Contract takes effect.", evidence_labels=("S1",)),
+            GeneratedClaim(text="Second fact.", evidence_labels=("S2",)),
+        ),
+        model_id="answer-model",
+        profile_id="grounded-answer-v2",
+        provider_request_id=None,
+    )
+
+    resolved = retrieval_application._resolve_generated_claims(
+        generation,
+        (base, second),
+        id_factory=lambda: "claim-id",
+    )
+
     assert resolved == (
         Claim(
             claim_id="claim-id",
-            text="Claim exact.",
-            answer_start=0,
-            answer_end=12,
-            citation_ids=("citation-source-1",),
+            text="Second fact.",
+            answer_start=64,
+            answer_end=76,
+            citation_ids=("citation-source-2",),
         ),
     )
 
@@ -355,6 +388,119 @@ def test_chunks_under_one_heading_in_one_revision_are_not_conflicting_sources() 
     )
 
 
+def _heading_evidence(
+    index: int,
+    *,
+    heading: str,
+    title: str | None,
+    source_id: str,
+    content_hash: str | None = None,
+) -> Evidence:
+    digit = "0123456789abcdef"[index % 16]
+    return Evidence(
+        family=SourceFamily.DOC,
+        chunk_id="h_" + f"{index:02d}" + digit * 62,
+        logical_chunk_id="h_" + digit * 62 + f"{index:02d}",
+        title=title,
+        content=f"Clause text {index}.",
+        source=SourceRevisionRef(
+            source_id=source_id,
+            source_type="doc",
+            revision_kind=RevisionKind.BLOB_VERSION,
+            revision=f"rev-{source_id}",
+            source_content_hash=SOURCE_HASH,
+            anchor=DocumentAnchor(heading_path=(heading,)),
+        ),
+        chunk_content_hash=content_hash or "sha256:" + f"{index:02d}" + digit * 62,
+        content_role=ContentRole.SOURCE,
+        citation_id=f"citation-{index}",
+        evidence_label=f"S{index}",
+        index_revision=IndexRevision(
+            physical_index="kb-doc-v1-20260828",
+            schema_version="search-schema-v1",
+            corpus_version="tapper-demo-v1",
+        ),
+        embedding_model_version="tap-embedding-v1",
+        acl_decision_id="decision-17",
+        score=1 / 61,
+    )
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["_" * 95, "_" * 88 + " " + "_" * 7, "———", "· · ·", "-", "第"],
+)
+def test_noise_or_too_short_headings_never_identify_a_clause(heading: str) -> None:
+    """PDF page-rule separators became the heading of almost every chunk."""
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            _heading_evidence(1, heading=heading, title="policy.pdf", source_id="current"),
+            _heading_evidence(2, heading=heading, title="policy.pdf", source_id="legacy"),
+        )
+    )
+
+
+def test_separator_headings_across_many_selected_documents_do_not_conflict() -> None:
+    separator = "_" * 95
+    evidence = tuple(
+        _heading_evidence(
+            index, heading=separator, title=f"product-{index % 7}.pdf", source_id=f"doc-{index % 7}"
+        )
+        for index in range(10)
+    )
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
+
+
+@pytest.mark.parametrize("heading", ["释义", "责任免除", "Definitions"])
+def test_generic_heading_shared_by_different_documents_is_not_one_clause(heading: str) -> None:
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            _heading_evidence(1, heading=heading, title="annuity-terms.pdf", source_id="a"),
+            _heading_evidence(2, heading=heading, title="group-health-terms.pdf", source_id="b"),
+        )
+    )
+
+
+def test_same_document_lineage_with_contradicting_clause_still_conflicts() -> None:
+    # Two uploads of one document, same clause heading, different clause text.
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources(
+        (
+            _heading_evidence(1, heading="第七条 宽限期", title="Terms.PDF", source_id="v1"),
+            _heading_evidence(2, heading="第七条  宽限期", title="terms.pdf", source_id="v2"),
+        )
+    )
+    # Two revisions of one source keep conflicting without any title.
+    first = _heading_evidence(3, heading="第七条 宽限期", title=None, source_id="same")
+    second = replace(
+        _heading_evidence(4, heading="第七条 宽限期", title=None, source_id="same"),
+        source=replace(first.source, revision="rev-newer"),
+    )
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources((first, second))
+
+
+def test_heading_repeated_on_many_chunks_of_each_revision_is_not_a_clause_identity() -> None:
+    running = "Annuity Insurance Terms"
+    evidence = tuple(
+        _heading_evidence(
+            index, heading=running, title="terms.pdf", source_id="v1" if index < 4 else "v2"
+        )
+        for index in range(1, 7)
+    )
+    assert not retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
+
+
+def test_long_clause_with_many_chunks_in_one_revision_still_conflicts() -> None:
+    clause = "第七条 宽限期"
+    evidence = (
+        *(
+            _heading_evidence(index, heading=clause, title="terms.pdf", source_id="v1")
+            for index in range(1, 4)
+        ),
+        _heading_evidence(4, heading=clause, title="terms.pdf", source_id="v2"),
+    )
+    assert retrieval_application.AuthorizedRetrieval._has_conflicting_sources(evidence)
+
+
 class FakeSearchPort:
     def __init__(
         self,
@@ -380,6 +526,11 @@ class FakeModelPort:
     def __init__(self) -> None:
         self.embedding_queries: list[str] = []
         self.answer_evidence: list[tuple[Evidence, ...]] = []
+        # Task 1 fix round 1: every extended `.answer()` kwarg this fake was
+        # called with (e.g. `persona`), one dict per call -- lets a caller
+        # assert the frozen persona reached this boundary without needing a
+        # stricter, call-shape-specific double.
+        self.answer_kwargs: list[dict[str, object]] = []
 
     async def embed(self, query: str) -> Embedding:
         self.embedding_queries.append(query)
@@ -390,10 +541,11 @@ class FakeModelPort:
         )
 
     async def answer(
-        self, query: str, evidence: tuple[Evidence, ...], profile_id: str
+        self, query: str, evidence: tuple[Evidence, ...], profile_id: str, **kwargs: object
     ) -> AnswerGeneration:
         del query, profile_id
         self.answer_evidence.append(evidence)
+        self.answer_kwargs.append(kwargs)
         return AnswerGeneration(
             text="Policy facts are verified server-side.",
             claims=(
@@ -438,6 +590,55 @@ def api(search: FakeSearchPort, model: FakeModelPort) -> KnowledgeAPI:
         redactor=PassthroughRedactor(),
         id_factory=lambda: next(ids),
     )
+
+
+class _CountingRelationAnalysis:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+        self.calls += 1
+        from tap.modules.knowledge.application.relation_analysis import (
+            RelationContext,
+            RelationContextStatus,
+        )
+
+        return RelationContext(status=RelationContextStatus.EMPTY, graph_version="1")
+
+
+@pytest.mark.asyncio
+async def test_prepare_frozen_threads_include_relations_to_prepare_answer() -> None:
+    """I-1 (Task 6 fix round 1): `KnowledgeAPI.prepare_frozen` must forward
+    `include_relations` unchanged to `AuthorizedRetrieval.prepare_answer` --
+    `False` must skip relation analysis entirely."""
+    relation = _CountingRelationAnalysis()
+    ids = iter(
+        (
+            "operation-1",
+            "query-plan-1",
+            "context-snapshot-1",
+            "trace-1",
+            "citation-1",
+            "claim-1",
+            *(f"generated-{index}" for index in range(100)),
+        )
+    )
+    model = FakeModelPort()
+    knowledge = KnowledgeAPI(
+        search=FakeSearchPort((search_hit(),)),
+        embeddings=model,
+        answers=model,
+        policy_verifier=CurrentPolicyVerifier(),
+        redactor=PassthroughRedactor(),
+        id_factory=lambda: next(ids),
+        relation_analysis=relation,
+    )
+    request = AnswerRequest(query="Where is policy verified?")
+    policy = policy_context()
+
+    await knowledge.prepare_frozen(request, policy, include_relations=False)
+
+    assert relation.calls == 0
 
 
 @pytest.mark.asyncio

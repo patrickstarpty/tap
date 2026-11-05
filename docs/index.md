@@ -10,7 +10,7 @@
 
 ## 指南
 
-- [TAP 产品原型基准规范](guides/2026-09-22-product-prototype-baseline.md)
+- [TAP 产品原型基准规范](guides/2026-09-22-product-prototype-baseline.md)（2026-10-14 停用，保留作历史）
 - [前端开发上手指引](guides/2026-09-27-frontend-developer-onboarding.md)
 - [后端开发上手指引](guides/2026-09-27-backend-developer-onboarding.md)
 - [Tapper 开发者指南](guides/2026-09-13-tapper-developer-guide.md)

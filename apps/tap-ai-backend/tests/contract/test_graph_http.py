@@ -16,12 +16,22 @@ from tap.modules.graph.domain.models import (
 )
 from tests.conftest import validation_http_services
 
+_ORIGIN = "http://127.0.0.1:15180"
+
+
+def _client(services) -> TestClient:
+    app = create_app(services, validation_mode=True, allowed_origins=frozenset({_ORIGIN}))
+    return TestClient(app, headers={"Origin": _ORIGIN})
+
 
 def test_graph_routes_are_project_scoped_and_bounded():
     services = replace(validation_http_services(), graph=InMemoryGraphStore())
     client = TestClient(create_app(services, validation_mode=True))
     paths = client.app.openapi()["paths"]
-    assert "/api/v1/projects/{project_id}/knowledge/graph/snapshots" in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/snapshots" not in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/project" in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/overview" in paths
+    assert "/api/v1/projects/{project_id}/knowledge/graph/highlight" in paths
     assert "/api/v1/projects/{project_id}/knowledge/graph/query" in paths
     assert "/api/v1/projects/{project_id}/knowledge/graph/nodes/{node_id}" in paths
     assert "/api/v1/projects/{project_id}/knowledge/graph/evidence/{evidence_id}" in paths
@@ -34,10 +44,7 @@ def test_graph_routes_are_project_scoped_and_bounded():
 
 def test_graph_outage_is_503_not_an_empty_graph():
     client = TestClient(create_app(validation_http_services(), validation_mode=True))
-    response = client.get(
-        "/api/v1/projects/tapper-demo/knowledge/graph/snapshots",
-        params={"sourceRevisionId": "source-revision-1"},
-    )
+    response = client.get("/api/v1/projects/tapper-demo/knowledge/graph/project")
     assert response.status_code == 503
     assert response.json()["type"].endswith("/graph-unavailable")
 
@@ -45,11 +52,15 @@ def test_graph_outage_is_503_not_an_empty_graph():
 def test_graph_project_path_cannot_widen_the_trusted_scope():
     services = replace(validation_http_services(), graph=InMemoryGraphStore())
     client = TestClient(create_app(services, validation_mode=True))
-    response = client.get(
-        "/api/v1/projects/other-project/knowledge/graph/snapshots",
-        params={"sourceRevisionId": "source-revision-1"},
-    )
+    response = client.get("/api/v1/projects/other-project/knowledge/graph/project")
     assert response.status_code == 403
+
+
+def test_snapshot_contracts_are_retired():
+    client = TestClient(create_app(validation_http_services(), validation_mode=True))
+    schemas = client.app.openapi()["components"]["schemas"]
+    assert "GraphSnapshotPage" not in schemas
+    assert "GraphSnapshotView" not in schemas
 
 
 def test_graph_node_and_evidence_deep_links_are_snapshot_scoped():
@@ -117,3 +128,82 @@ def test_graph_node_and_evidence_deep_links_are_snapshot_scoped():
     assert node.json()["nodes"][0]["evidenceIds"] == ["evidence-1"]
     assert fact.status_code == 200
     assert fact.json()["documentRevisionId"] == "document-revision-1"
+
+
+def test_legacy_snapshot_routes_still_serve_fragment_graphs():
+    """The project-graph routes added alongside this test must not disturb the
+    fragment-scoped snapshot routes this PR keeps available."""
+
+    store = InMemoryGraphStore()
+    evidence = Evidence(
+        "evidence-1",
+        "snapshot-1",
+        "source-revision-1",
+        "document-revision-1",
+        "chunk-1",
+        {"kind": "text", "start": 0, "end": 6},
+        "sha256:" + "a" * 64,
+    )
+    asyncio.run(
+        store.publish(
+            VALIDATION_SCOPE,
+            GraphSnapshotDraft(
+                GraphSnapshot.create(
+                    snapshot_id="snapshot-1",
+                    project_id=VALIDATION_SCOPE.project_id,
+                    source_revision_ids=("source-revision-1",),
+                    document_revision_ids=("document-revision-1",),
+                ),
+                (
+                    GraphNode(
+                        "node-1", "snapshot-1", "Policy", "ENTITY", "policy", ("evidence-1",)
+                    ),
+                    GraphNode("node-2", "snapshot-1", "Claim", "ENTITY", "claim"),
+                ),
+                (
+                    GraphEdge(
+                        "edge-1",
+                        "snapshot-1",
+                        "node-1",
+                        "node-2",
+                        "GOVERNS",
+                        RelationOrigin.EXTRACTED,
+                        1.0,
+                        ("evidence-1",),
+                    ),
+                ),
+                (evidence,),
+                (),
+            ),
+        )
+    )
+    client = _client(replace(validation_http_services(), graph=store))
+    base = "/api/v1/projects/tapper-demo/knowledge/graph"
+
+    query = client.post(f"{base}/query", json={"snapshotId": "snapshot-1", "query": "*"})
+    assert query.status_code == 200
+    assert query.json()["snapshotId"] == "snapshot-1"
+
+    neighbors = client.post(f"{base}/nodes/node-1/neighbors", json={"snapshotId": "snapshot-1"})
+    assert neighbors.status_code == 200
+    assert neighbors.json()["snapshotId"] == "snapshot-1"
+
+    path = client.post(
+        f"{base}/path",
+        json={
+            "snapshotId": "snapshot-1",
+            "sourceNodeId": "node-1",
+            "targetNodeId": "node-2",
+        },
+    )
+    assert path.status_code == 200
+
+    node = client.get(f"{base}/nodes/node-1", params={"snapshotId": "snapshot-1"})
+    assert node.status_code == 200
+    assert node.json()["snapshotId"] == "snapshot-1"
+    assert node.json()["nodes"][0]["evidenceIds"] == ["evidence-1"]
+
+    fact = client.get(f"{base}/evidence/evidence-1", params={"snapshotId": "snapshot-1"})
+    assert fact.status_code == 200
+    assert fact.json()["documentRevisionId"] == "document-revision-1"
+    assert path.json()["snapshotId"] == "snapshot-1"
