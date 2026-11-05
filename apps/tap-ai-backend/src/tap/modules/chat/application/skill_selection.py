@@ -4,8 +4,8 @@ tool loop).
 
 This runs where the Turn input is frozen (the HTTP layer, before `TurnInput` is
 built) -- never at LangGraph graph time, so a checkpoint resume/retry reuses the
-already-applied selection instead of re-merging it (see `entrypoints/tapper_chat_turn.py`,
-graph `tapper-chat-v2`).
+already-applied selection instead of re-merging it
+(see `modules/chat/application/turn_execution.py`, graph `tapper-chat-v2`).
 """
 
 from __future__ import annotations

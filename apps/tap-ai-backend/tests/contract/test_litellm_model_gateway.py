@@ -620,13 +620,13 @@ async def test_deterministic_gateway_cancel_marker_flushes_a_draft_before_the_de
     and Stop would race turn completion (demo-e2e saw the canceled turn reach
     `completed`). Each case stalls one pacing sleep by an extra 0.06s."""
 
-    from tap.entrypoints import tapper_draft_batcher
+    from tap.modules.chat.application import draft_batcher
     from tap.modules.chat.application.draft_batcher import DraftBatcher
     from tap.testing import deterministic_model_gateway
     from tap.testing.deterministic_model_gateway import DeterministicModelGateway
 
     clock = [1000.0]
-    monkeypatch.setattr(tapper_draft_batcher.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(draft_batcher.time, "monotonic", lambda: clock[0])
 
     class RecordingDrafts:
         def __init__(self) -> None:
