@@ -29,6 +29,12 @@
 
 HTTP 路由位于 `interfaces/http/routes/`；公共基础设施位于 `platform/{db,messaging,storage}`；`platform/reporting/` 是 `agent_team` 与 `skill_hub` 共用的报表工具（周期解析、运行数据状态、TTL 单飞缓存、Langfuse Metrics 客户端、CSV/zip、满意度）。进程入口位于 `entrypoints/`：`tapper_api`（API）、`relay_reconciler`（Outbox → Redis Stream 中继），以及 ingestion、parser、graph、generation、test design、prompt suggestion、Langfuse 同步（`tapper_langfuse_sync_worker`，未配置 `LANGFUSE_HOST` 时空转）八个 worker。`legacy_litellm.py` 与 `legacy_loopback_answer_runtime.py` 为遗留路径。轮询式 MySQL 作业领取（ingestion、Turn 生成、prompt suggestion、测试设计、graph 抽取与 relay Outbox）统一经 `platform/db/lock_contention.py`：领取事务遇 InnoDB 锁冲突（1213 死锁、1205 锁等待超时）时在新事务中最多重试 3 次（50–200 ms 抖动退避），仍失败则本轮不领取、只记一条带错误码与领取类别的 warning；其他数据库错误照常抛出。共享 worker 循环与 relay 循环在领取之外的阶段/结算提交遇到同样两类错误时结束本轮并继续轮询，不再退出进程：本轮中已领取但未处理的作业（如 ingestion 批次的其余作业）保留租约，到期后由后续领取接手；本轮的唤醒信号照常 ack，MySQL 仍是权威状态，Redis 只是提示。每次领取尝试经 `claim_transaction` 开启事务：事务首条语句把会话级 `innodb_lock_wait_timeout` 设为领取专用上限（`TAP_DATABASE_CLAIM_LOCK_WAIT_SECONDS`，默认 5 秒，取值 1–50），事务结束（提交或回滚）前恢复连接原值；该变量不随事务回滚，1205 只回滚超时语句，因此恢复语句总会执行，连接归还连接池时已是原值，非领取事务仍使用服务器默认值（50 秒）；恢复失败时作废该连接、不再放回连接池。MySQL 没有事务级的该变量，`SET_VAR` 需逐条加在每个加锁语句上，故采用“设置 + 事务内恢复”。1205 的最坏情况因此约为每个落空轮次 15 秒（3 次 × 5 秒，另加至多 2 × 200 ms 退避），停机延迟同样以此为界。
 
+回答执行的职责按 [ADR-034](decisions/2026-11-06-adr-034-tapper-application-module-ownership.md) 收敛：`modules/knowledge/application/conversation_execution.py` 拥有冻结资源授权、期限控制、回答阶段与工具证据合并；`conversation_phases.py` 定义执行上下文、阶段类型及 v3 checkpoint 编解码。`modules/chat/application/turn_execution.py` 拥有图节点与工具循环，`draft_batcher.py` 拥有草稿批处理。HTTP service 负责传输转换，生成 worker 与推荐问题验证调用应用执行接口；节点内部的可恢复阶段不再要求 HTTP 层掌握执行顺序。checkpoint 的既有持久化字段保持兼容。
+
+前端的 `features/conversations/model/useConversationRuntime.ts` 统一拥有会话详情与 SSE 事件合并、当前流目标、重连与轮询、提交互斥和幂等键。`TapperWorkspace` 保留来源、Agent/Skill 选择和视图映射，将校验后的请求交给会话运行接口；conversations feature 不反向依赖 widget，也不直接依赖其他 feature。普通对话和 Insights 解释共享提交生命周期，对外请求格式保持不变。
+
+资产维护写入由 AI 模块统一拥有：`modules/ai/domain/maintenance.py` 定义 Agent/Skill 维护事件、类型与工厂，`modules/ai/adapters/maintenance.py` 定义两张维护事件表及同 session 写入助手。`agent_team` 与 `skill_hub` 消费这些定义，AI 修订写入不再反向导入报表模块的维护存储。表名、字段、索引及项目约束不变；修订、owner/反馈变更与维护记录仍在同一事务中提交或回滚。
+
 ## 3. 基础设施
 
 `compose.yaml` 中的服务：

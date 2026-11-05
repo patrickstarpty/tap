@@ -2,7 +2,7 @@
 
 ## 范围与目标
 
-用户在代码架构评估后授权执行全部四项优化：回答编排归属、回答阶段接口、前端会话运行状态、资产维护写入归属。遵循 codebase-design 的 depth/locality 原则，以隐藏协议和顺序约束为目标，不以文件长度为验收标准。
+用户在代码架构评估后授权执行全部四项优化：回答编排归属、回答阶段接口、前端会话运行状态、资产维护写入归属。遵循 [codebase-design](https://github.com/mattpocock/skills/blob/main/skills/engineering/codebase-design/SKILL.md) 的 depth/locality 原则，以隐藏协议和顺序约束为目标，不以文件长度为验收标准。
 
 ## 方案选择
 
