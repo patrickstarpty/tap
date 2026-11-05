@@ -718,7 +718,7 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
         documents = MysqlDocumentRepository(
             sessions, scope=VALIDATION_SCOPE, audit_factory=lambda _: None
         )
-        authority = PublishedKnowledgeAuthority(review)
+        authority = PublishedKnowledgeAuthority(review, now=lambda: NOW + timedelta(seconds=2))
 
         class Knowledge(KnowledgeHttpService):
             """Overrides every resumable step directly (rather than just
@@ -798,7 +798,8 @@ async def test_reclaimed_result_requires_current_publication_before_delivery(
         worker = GenerationWorker(conversations, knowledge)
         settle = conversations.complete_evidence
 
-        async def crash_before_settle(*_args, **_kwargs):
+        async def crash_before_settle(_conversation_id, _turn_id, evidence, **_kwargs):
+            assert evidence.outcome == "completed"
             conversations.complete_evidence = settle
             raise _WorkerKilled("worker stopped after result checkpoint")
 
