@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Mapping, Protocol
+from typing import Awaitable, Callable, Mapping, Protocol
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
@@ -22,6 +22,9 @@ class TestDesignContext:
     request: TestPlanGenerationRequest
     input_snapshot: Mapping[str, object]
     answer_evidence_snapshot: Mapping[str, object]
+    before_model_call: Callable[[], Awaitable[None]] | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 class TestDesignGenerator(Protocol):

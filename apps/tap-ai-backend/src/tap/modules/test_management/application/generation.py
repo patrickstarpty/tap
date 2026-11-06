@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -260,8 +260,12 @@ class TestDesignWorker:
 
                     async def execute(_state):
                         context = await self._jobs.generation_context(self._scope, claim)
-                        if self._observation is not None:
-                            await self._observation.before_generate(claim)
+                        observation = self._observation
+                        if observation is not None:
+                            context = replace(
+                                context,
+                                before_model_call=lambda: observation.before_generate(claim),
+                            )
                         generated = await self._generator.generate(context)
                         return {"result": {"draft": _revision_checkpoint(generated)}}
 

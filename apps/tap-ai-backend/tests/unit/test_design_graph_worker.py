@@ -231,6 +231,42 @@ async def test_completed_graph_replays_exact_draft_without_calling_model_again()
 
 
 @pytest.mark.asyncio
+async def test_reconciled_cached_generation_does_not_start_observed_attempt() -> None:
+    jobs = RestartableJobs()
+    generator = ImmediateGenerator()  # Represents the reconciliation cache path.
+
+    class Observation:
+        starts = 0
+        finishes = 0
+
+        async def repair(self, limit=50):
+            return 0
+
+        async def before_generate(self, claim):
+            self.starts += 1
+
+        async def finish_source(self, job_id):
+            self.finishes += 1
+            return False
+
+    observation = Observation()
+    worker = DesignWorker(
+        jobs=jobs,
+        generator=generator,
+        scope=VALIDATION_SCOPE,
+        worker_id="worker",
+        observation=observation,
+    )
+
+    result = await worker.run_once(limit=1)
+
+    assert result.ready == 1
+    assert generator.calls == 1
+    assert observation.starts == 0
+    assert observation.finishes == 1
+
+
+@pytest.mark.asyncio
 async def test_transient_settlement_failure_keeps_completed_graph_retryable() -> None:
     jobs = RestartableJobs()
     jobs.fail_complete_once = True

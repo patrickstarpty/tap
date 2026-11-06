@@ -562,6 +562,8 @@ class MysqlReconciledTestDesign:
                 )
             )
         try:
+            if context.before_model_call is not None:
+                await context.before_model_call()
             revision = await self._delegate.generate(context)
         except (ModelGatewayUnavailable, asyncio.CancelledError) as error:
             async with self._sessions() as session, session.begin():

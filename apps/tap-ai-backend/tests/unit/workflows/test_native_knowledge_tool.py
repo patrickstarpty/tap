@@ -127,8 +127,13 @@ async def test_public_knowledge_search_reserves_shared_model_budget_and_replays_
         calls.append(("authorize", None))
         return True
 
+    seen_steps = set()
+
     async def actual_step(scope, task_id, token, node_id, attempt, kind, call_id, name, outcome):
-        calls.append((kind, outcome))
+        key = (attempt, kind, call_id)
+        if key not in seen_steps:
+            calls.append((kind, outcome))
+            seen_steps.add(key)
 
     tool = JournaledKnowledgeSearch(Store(), Knowledge(), policy_for, on_actual_step=actual_step)
     first = await tool.execute(
@@ -162,6 +167,79 @@ async def test_public_knowledge_search_reserves_shared_model_budget_and_replays_
         ("node.tool_finished", "succeeded"),
     ]
     assert calls.index(("reserve", "model")) < calls.index(("search", "login"))
+
+
+@pytest.mark.asyncio
+async def test_settled_knowledge_result_repairs_original_tool_outcome_after_crash():
+    from tap.modules.workflows.adapters.native_runtime import JournaledKnowledgeSearch
+
+    events: set[tuple[int, str, str | None]] = set()
+    calls: list[str] = []
+
+    class Store:
+        result = None
+
+        async def task_request(self, scope, task_id):
+            return {"resolved_resources": [{"source_id": "source-1"}]}
+
+        async def graph_lineage(self, scope, task_id, node_id, attempt):
+            return "run-1", 1
+
+        async def action_result(self, scope, action_id):
+            return self.result
+
+        async def reserve_action(self, *args, **kwargs):
+            calls.append("reserve")
+            return "reserved"
+
+        async def settle_action(self, scope, task_id, token, action_id, result, **kwargs):
+            self.result = result
+            return result
+
+    class Knowledge:
+        async def search(self, request, policy):
+            calls.append("search")
+            return SimpleNamespace(evidence=())
+
+    async def policy_for(resources):
+        return "policy"
+
+    async def authorize():
+        return True
+
+    fail_finish = True
+
+    async def actual_step(scope, task_id, token, node_id, attempt, kind, call_id, name, outcome):
+        nonlocal fail_finish
+        if kind == "node.tool_finished" and fail_finish:
+            fail_finish = False
+            raise RuntimeError("crash after durable action settlement")
+        events.add((attempt, kind, outcome))
+
+    tool = JournaledKnowledgeSearch(Store(), Knowledge(), policy_for, on_actual_step=actual_step)
+
+    async def execute(attempt):
+        return await tool.execute(
+            VALIDATION_SCOPE,
+            "task-1",
+            f"token-{attempt}",
+            "node-1",
+            attempt,
+            "knowledge_search",
+            {"query": "login"},
+            "call-1",
+            authorize,
+        )
+
+    with pytest.raises(RuntimeError, match="crash after durable"):
+        await execute(1)
+    assert events == {(1, "node.tool_started", None)}
+    assert await execute(2) == await execute(3)
+    assert events == {
+        (1, "node.tool_started", None),
+        (1, "node.tool_finished", "succeeded"),
+    }
+    assert calls == ["reserve", "search"]
 
 
 @pytest.mark.asyncio

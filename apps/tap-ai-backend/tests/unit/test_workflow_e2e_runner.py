@@ -144,3 +144,54 @@ def test_browser_failure_reaps_owned_group_after_parent_exits(tmp_path: Path) ->
         raise AssertionError("browser failure was accepted")
     assert ready.exists()
     assert stopped.exists()
+
+
+def test_failed_or_unverified_compose_down_preserves_owned_data_and_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runner = _runner()
+    project = "tap-workflow-e2e-abc123def456"
+    context = "default"
+    compose = ["docker", "--context", context, "compose", "-p", project]
+    state = tmp_path / "owned"
+    state.mkdir()
+    (state / "database-owner.json").write_text("owned receipt")
+    (state / "mysql").mkdir()
+    (state / "mysql" / "rows").write_text("durable data")
+
+    def failed_down(command, env, *, timeout=300):
+        if "down" in command:
+            raise RuntimeError("Docker unavailable")
+        raise AssertionError("container state must not be guessed after failed down")
+
+    monkeypatch.setattr(runner, "run", failed_down)
+    errors = runner.cleanup_owned_state(state, None, True, compose, {}, context, project)
+    assert errors and "Docker unavailable" in errors[0]
+    assert (state / "database-owner.json").read_text() == "owned receipt"
+    assert (state / "mysql" / "rows").read_text() == "durable data"
+
+    def unknown_state(command, env, *, timeout=300):
+        if "down" in command:
+            return ""
+        raise RuntimeError("Docker status unavailable")
+
+    monkeypatch.setattr(runner, "run", unknown_state)
+    errors = runner.cleanup_owned_state(state, None, True, compose, {}, context, project)
+    assert errors and "Docker status unavailable" in errors[0]
+    assert (state / "database-owner.json").exists()
+
+    def still_attached(command, env, *, timeout=300):
+        return "" if "down" in command else "a" * 64
+
+    monkeypatch.setattr(runner, "run", still_attached)
+    errors = runner.cleanup_owned_state(state, None, True, compose, {}, context, project)
+    assert errors and "containers remain" in errors[0]
+    assert (state / "database-owner.json").exists()
+
+    def clean_state(command, env, *, timeout=300):
+        assert "down" in command or f"label=com.docker.compose.project={project}" in command
+        return ""
+
+    monkeypatch.setattr(runner, "run", clean_state)
+    assert runner.cleanup_owned_state(state, None, True, compose, {}, context, project) == []
+    assert not state.exists()

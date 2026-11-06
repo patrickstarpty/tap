@@ -323,6 +323,21 @@ class JournaledKnowledgeSearch:
             if saved is not None:
                 if "skipped" in saved:
                     raise WorkflowDispatchBlocked("knowledge action settled without dispatch")
+                if self._on_actual_step is not None:
+                    # The action result is durable before its public outcome event.
+                    # Replay repairs that event for the original execution attempt;
+                    # the event ID makes repeated repair harmless.
+                    await self._on_actual_step(
+                        scope,
+                        task_id,
+                        token,
+                        node_id,
+                        prior,
+                        "node.tool_finished",
+                        call_id,
+                        "knowledge.search",
+                        "succeeded",
+                    )
                 return str(saved["summary"])
         remaining = _remaining_seconds(request)
         if remaining is not None and remaining <= 0:

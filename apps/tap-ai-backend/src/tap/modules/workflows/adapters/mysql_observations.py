@@ -596,7 +596,7 @@ class MysqlAgentObservations:
         if not nodes:
             return False
         node = next((item for item in nodes if item["parent_node_id"] is None), nodes[0])
-        winning_attempt = int(node["attempt"])
+        winning_attempt: int | None = int(node["attempt"])
         if winning_claim_key is not None:
             claim_attempt = (
                 await session.execute(
@@ -608,19 +608,18 @@ class MysqlAgentObservations:
                     )
                 )
             ).scalar_one_or_none()
-            if claim_attempt is None:
-                raise ValueError("accepted source claim has no observed attempt")
-            winning_attempt = int(claim_attempt)
-            await session.execute(
-                update(workflow_attempt)
-                .where(
-                    workflow_attempt.c.task_id == task_id,
-                    workflow_attempt.c.node_id == node["node_id"],
-                    workflow_attempt.c.attempt != winning_attempt,
-                    workflow_attempt.c.status == "running",
+            winning_attempt = int(claim_attempt) if claim_attempt is not None else None
+            if winning_attempt is not None:
+                await session.execute(
+                    update(workflow_attempt)
+                    .where(
+                        workflow_attempt.c.task_id == task_id,
+                        workflow_attempt.c.node_id == node["node_id"],
+                        workflow_attempt.c.attempt != winning_attempt,
+                        workflow_attempt.c.status == "running",
+                    )
+                    .values(status="unknown")
                 )
-                .values(status="unknown")
-            )
         node_kind = {
             "succeeded": "node.finished",
             "failed": "node.failed",
@@ -671,6 +670,55 @@ class MysqlAgentObservations:
                 now,
             )
             next_sequence += 1
+        if winning_attempt is None:
+            # A source retry can complete without dispatching the Agent at all.
+            # Its accepted CAS still closes the logical task, while every prior
+            # actual invocation keeps its own evidence and cannot be called a
+            # success of this no-model lease.
+            await session.execute(
+                update(workflow_attempt)
+                .where(
+                    workflow_attempt.c.task_id == task_id,
+                    workflow_attempt.c.node_id == node["node_id"],
+                    workflow_attempt.c.status.in_(("queued", "running")),
+                )
+                .values(status="unknown")
+            )
+            if node["status"] in ("queued", "running"):
+                await session.execute(
+                    update(workflow_node)
+                    .where(workflow_node.c.node_id == node["node_id"])
+                    .values(status="unknown")
+                )
+                await self._event(
+                    session,
+                    scope,
+                    task_id,
+                    node["node_id"],
+                    int(node["attempt"]),
+                    next_sequence,
+                    "node.outcome_unknown",
+                    {"node_id": node["node_id"]},
+                    now,
+                )
+                next_sequence += 1
+            await self._event(
+                session,
+                scope,
+                task_id,
+                None,
+                0,
+                next_sequence,
+                task_kind,
+                {"status": status, "outcome": source_state},
+                now,
+            )
+            await session.execute(
+                update(workflow_task)
+                .where(workflow_task.c.task_id == task_id)
+                .values(status=status, next_sequence=next_sequence + 1, updated_at=now)
+            )
+            return True
         await session.execute(
             update(workflow_node)
             .where(workflow_node.c.node_id == node["node_id"])

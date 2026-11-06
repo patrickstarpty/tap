@@ -357,12 +357,66 @@ def stop_supervisor(process: subprocess.Popen[str] | None) -> None:
         raise RuntimeError(f"workflow app supervisor exited {process.returncode}")
 
 
+def cleanup_owned_state(
+    state: Path,
+    process: subprocess.Popen[str] | None,
+    owned: bool,
+    compose: list[str] | None,
+    env: dict[str, str],
+    context: str | None,
+    project: str,
+) -> list[str]:
+    """Retain data and its receipt unless owned services are proven detached."""
+    errors: list[str] = []
+    try:
+        stop_supervisor(process)
+    except BaseException as error:
+        errors.append(f"app supervisor: {error}")
+    if owned:
+        if compose is None or context is None:
+            errors.append("owned Compose identity is unavailable")
+        else:
+            try:
+                run(
+                    compose + ["down", "--volumes", "--remove-orphans"],
+                    env,
+                    timeout=180,
+                )
+            except BaseException as error:
+                errors.append(f"Compose down: {error}")
+            else:
+                try:
+                    remaining = run(
+                        [
+                            "docker",
+                            "--context",
+                            context,
+                            "ps",
+                            "-aq",
+                            "--filter",
+                            f"label=com.docker.compose.project={project}",
+                        ],
+                        env,
+                    )
+                except BaseException as error:
+                    errors.append(f"owned container verification: {error}")
+                else:
+                    if remaining:
+                        errors.append(
+                            "owned project containers remain after Compose down"
+                        )
+    if not errors:
+        shutil.rmtree(state)
+    return errors
+
+
 def main() -> int:
     project = f"tap-workflow-e2e-{uuid.uuid4().hex[:12]}"
     state = Path(tempfile.mkdtemp(prefix="tap-workflow-e2e-")).resolve()
     state.chmod(0o700)
     env: dict[str, str] = {}
     compose: list[str] | None = None
+    context: str | None = None
     process: subprocess.Popen[str] | None = None
     owned = False
     primary_error: BaseException | None = None
@@ -506,24 +560,13 @@ def main() -> int:
             )
         return 1
     finally:
-        cleanup_errors: list[str] = []
-        try:
-            stop_supervisor(process)
-        except BaseException as error:
-            cleanup_errors.append(str(error))
-        if owned and compose is not None:
-            try:
-                run(
-                    compose + ["down", "--volumes", "--remove-orphans"],
-                    env,
-                    timeout=180,
-                )
-            except BaseException as error:
-                cleanup_errors.append(str(error))
-        shutil.rmtree(state)
+        cleanup_errors = cleanup_owned_state(
+            state, process, owned, compose, env, context, project
+        )
         if cleanup_errors:
             print(
-                "Workflow E2E cleanup failed: " + "; ".join(cleanup_errors),
+                "Workflow E2E cleanup failed; owned state and receipt retained at "
+                f"{state}: " + "; ".join(cleanup_errors),
                 file=sys.stderr,
             )
             if primary_error is None:
