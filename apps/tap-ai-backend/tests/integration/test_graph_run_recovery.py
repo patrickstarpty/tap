@@ -2,7 +2,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 from langgraph.checkpoint.base import empty_checkpoint
@@ -498,13 +497,7 @@ async def test_permanent_checkpoint_error_terminalizes_once_and_does_not_reclaim
 
         async def answer(self, request):
             self.calls.append(request.query)
-            return SimpleNamespace(
-                answer="grounded",
-                citations=(),
-                abstained=False,
-                trace_id="trace",
-                model_dump=lambda **_: {"answer": "grounded", "citations": []},
-            )
+            return direct_answer(answer="grounded", trace_id="trace")
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -582,13 +575,7 @@ async def test_reclaim_takes_over_completed_checkpoint_lease_without_repeating_p
 
         async def answer(self, _request):
             self.calls += 1
-            return SimpleNamespace(
-                answer="grounded",
-                citations=(),
-                abstained=False,
-                trace_id="trace",
-                model_dump=lambda **_: {"answer": "grounded", "citations": []},
-            )
+            return direct_answer(answer="grounded", trace_id="trace")
 
     engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -1315,12 +1302,8 @@ async def test_legacy_checkpoint_restart_survives_a_crash_right_after_discard(
 
             async def answer(self, request):
                 self.calls += 1
-                return SimpleNamespace(
-                    answer="grounded after restart",
-                    citations=(),
-                    abstained=False,
-                    trace_id="trace-legacy-restart",
-                    model_dump=lambda **_: {"answer": "grounded after restart", "citations": []},
+                return direct_answer(
+                    answer="grounded after restart", trace_id="trace-legacy-restart"
                 )
 
         knowledge = Knowledge()

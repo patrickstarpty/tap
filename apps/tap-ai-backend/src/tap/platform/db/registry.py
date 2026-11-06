@@ -50,6 +50,7 @@ from tap.modules.knowledge.adapters.mysql_projection import (
 )
 from tap.modules.knowledge.adapters.mysql_review import KNOWLEDGE_REVIEW_TABLES
 from tap.modules.test_management.adapters.mysql import TEST_MANAGEMENT_TABLES
+from tap.modules.workflows.adapters.schema import WORKFLOW_TABLES
 from tap.platform.db.schema import outbox, outbox_archive, outbox_dead_letter
 from tap.platform.telemetry.schema import (
     langfuse_sync_cursor,
@@ -115,6 +116,7 @@ BUSINESS_TABLES = (
     *GRAPH_TABLES,
     *PROJECT_GRAPH_TABLES,
     *TEST_MANAGEMENT_TABLES,
+    *WORKFLOW_TABLES,
     trace_span,
     model_call,
     model_call_content,

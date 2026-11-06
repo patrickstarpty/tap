@@ -45,8 +45,8 @@
 
 表：`workflow_task`（目标、scope、状态、累计预算、plan_revision、next_sequence、lease owner/token/until）；`workflow_plan_revision`（不可变目标/依赖/输入快照）；`workflow_node`（岗位/修订/父节点/runtime、状态）；`workflow_attempt`（node_id+attempt、graph_run_id、checkpoint/provider refs）；`workflow_dependency`（from/to 同任务且无环）；`workflow_event`（task+sequence 唯一，event_id 去重）；`workflow_command`（command_id、payload_digest、target、expected_plan_revision、receipt）；`workflow_artifact`（不可变对象摘要与版本引用）。复用现有 `graph_run` 作执行底层，不把它的粗状态直接暴露成任务状态。
 
-- [ ] 固化独立 spec：本节表、状态转换、项目隔离、与 Turn/graph_run 的关系及任务预算规则。
-- [ ] 写失败测试，覆盖暂停/取消确认、终态不可覆盖、恢复不清预算；代表性断言：
+- [x] 固化独立 spec：本节表、状态转换、项目隔离、与 Turn/graph_run 的关系及任务预算规则。
+- [x] 写失败测试，覆盖暂停/取消确认、终态不可覆盖、恢复不清预算；代表性断言：
 
 ```python
 import pytest
@@ -61,15 +61,15 @@ def test_pause_requires_runtime_ack():
         transition("succeeded", "runtime_failed")
 ```
 
-- [ ] 运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_transitions.py -q`，先失败；实现状态机、类型和表。状态信号包含 claim、dependency_ready、input_needed、input_applied、pause_requested、runtime_paused、resume_requested、lease_lost、reconciled、cancel_requested、runtime_canceled、runtime_succeeded、runtime_failed、plan_skipped；每项列明允许来源和目标状态。
-- [ ] 存储接口实现 `create_task(scope, request: dict[str, object], idempotency_key: str) -> TaskSnapshot`、`snapshot(scope, task_id: str) -> dict[str, object]`、`append_event(scope, task_id, lease_token, event_id, kind, payload) -> WorkflowEvent`、`events_after(scope, task_id, sequence: int, limit: int) -> tuple[WorkflowEvent, ...]`。锁任务行分配序号，同事务写状态/事件；旧 fencing token、跨项目 node、重复 key 不同 payload 拒绝。
-- [ ] MySQL 测试使用 `owned_project_mysql`：两个独立 session 并发写序号不重复；事件提交前异常不留状态变化；重复创建只一个 task；升级/降级不删旧数据，旧 graph recovery 仍通过。
+- [x] 运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_transitions.py -q`，先失败；实现状态机、类型和表。状态信号包含 claim、dependency_ready、input_needed、input_applied、pause_requested、runtime_paused、resume_requested、lease_lost、reconciled、cancel_requested、runtime_canceled、runtime_succeeded、runtime_failed、plan_skipped；每项列明允许来源和目标状态。
+- [x] 存储接口实现 `create_task(scope, request: dict[str, object], idempotency_key: str) -> TaskSnapshot`、`snapshot(scope, task_id: str) -> dict[str, object]`、`append_event(scope, task_id, lease_token, event_id, kind, payload) -> WorkflowEvent`、`events_after(scope, task_id, sequence: int, limit: int) -> tuple[WorkflowEvent, ...]`。锁任务行分配序号，同事务写状态/事件；旧 fencing token、跨项目 node、重复 key 不同 payload 拒绝。
+- [x] MySQL 测试使用 `owned_project_mysql`：两个独立 session 并发写序号不重复；事件提交前异常不留状态变化；重复创建只一个 task；升级/降级不删旧数据，旧 graph recovery 仍通过。
 
 ```bash
 TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_workflow_store.py apps/tap-ai-backend/tests/integration/test_workflow_migration.py apps/tap-ai-backend/tests/integration/test_graph_run_recovery.py -q
 ```
 
-- [ ] 提交 `feat: persist versioned workflow tasks and events`。
+- [x] 提交 `feat: persist versioned workflow tasks and events`。
 
 ### Task 1.2：控制指令与故障恢复
 

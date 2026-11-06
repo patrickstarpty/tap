@@ -9,6 +9,14 @@ import sys
 from pathlib import Path
 
 EXPECTED_TABLES = {
+    "workflow_task",
+    "workflow_plan_revision",
+    "workflow_node",
+    "workflow_attempt",
+    "workflow_dependency",
+    "workflow_event",
+    "workflow_command",
+    "workflow_artifact",
     "knowledge_managed_document",
     "knowledge_managed_generation",
     "ai_graph_run",

@@ -24,6 +24,7 @@
 | `ai` | Agent/Skill 资产 Revision（含导入的 Skill 包，存 MinIO `skills/{skill_id}/{revision_id}/<相对路径的 sha256>`，包内代码不执行）、代码定义的工具注册表（`domain/tools.py`，PR 5 起四项内置：`knowledge.search`、`knowledge.answer`、`graph.relations`、`insights.query`，后两项 `required=False`/`default_enabled=True`，新建 Agent 默认勾选，用户可取消；另有平台工具 `skill.activate`（`platform=True`，对 Tapper 默认与全部 Agent 开放，不进入 Agent 白名单表单与 `GET /ai/tools`））、Skill 激活规则（`domain/skill_activation.py`：每轮 Skill 文本 ≤ 96 KB、自动激活 ≤ 5 个、候选目录 ≤ 60 条、描述截断到 200 字符）、Agent 常驻/排除 Skill（`pinned_skill_ids`/`excluded_skill_ids`，迁移 `0038_skill_hub` 把原绑定修订映射为常驻）、模型目录、LangGraph 交互图 |
 | `agent_team` | Agent 团队视图：人事档案（岗位、负责人）、维护履历、反馈处理，以及按 Agent、按人、按周期的运行与满意度指标；运行数据只读 Langfuse Metrics API v1（带缓存，不可达时降级为 `unavailable`），其余实时查 MySQL；导出 CSV zip |
 | `skill_hub` | Skill 库：按类别/来源/状态筛选与排序的目录、详情、用量（激活次数按手动/常驻/自动拆分、使用者数、满意度、使用趋势与常用 Agent）、汇总与 CSV zip 导出，类别与负责人维护（`PUT /ai/skills/{id}/profile`、`POST /ai/skills/{id}/owner`，内置 Skill 只读）；激活与满意度实时查 MySQL（`turn_skill_activation`、`skill_maintenance_event`），运行与费用经 Langfuse Metrics API v1 按 `skill:<skill_id>` 标签聚合（带缓存；e2e 用 `TAP_AGENT_TEAM_RUNTIME_METRICS=turn_table` 改读 Turn 表）；目录、汇总与用量视图始终返回 `runtimeStatus: "ok"`，只有详情与导出在 Langfuse 不可达时降级；读接口需 `ai.skill_hub.read` |
+| `workflows` | 通用任务状态、计划修订、节点、attempt、依赖、命令、产物引用和事件序列的项目范围 MySQL 持久化；当前只有存储与状态规则，没有工作流 worker、HTTP 接口或实时界面 |
 | `governance` | 审计 |
 | `test_management` | 测试方案生成、校验与发布（V1 冻结） |
 

@@ -86,6 +86,16 @@ PROJECT_PARENT_LINKS: dict[str, tuple[tuple[str, str, str, str | None], ...]] = 
     "agent_maintenance_event": (("agent_id", "ai_agent", "agent_id", None),),
     "turn_skill_activation": (("skill_id", "skill", "skill_id", None),),
     "skill_maintenance_event": (("skill_id", "skill", "skill_id", None),),
+    "workflow_plan_revision": (("task_id", "workflow_task", "task_id", None),),
+    "workflow_node": (
+        ("task_id", "workflow_task", "task_id", None),
+        ("agent_revision_id", "ai_agent_revision", "revision_id", None),
+    ),
+    "workflow_attempt": (("task_id", "workflow_task", "task_id", None),),
+    "workflow_dependency": (("task_id", "workflow_task", "task_id", None),),
+    "workflow_event": (("task_id", "workflow_task", "task_id", None),),
+    "workflow_command": (("task_id", "workflow_task", "task_id", None),),
+    "workflow_artifact": (("task_id", "workflow_task", "task_id", None),),
 }
 
 
