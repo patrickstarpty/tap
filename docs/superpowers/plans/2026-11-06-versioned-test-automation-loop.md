@@ -51,13 +51,13 @@ TAP_RUN_AUTOMATION_INTEGRATION=1 uv run --project apps/backend pytest apps/backe
 
 ### Task 3.1：领域归属、跨应用合同与迁移规则
 
-**Files:** Create `docs/superpowers/specs/2026-11-06-versioned-test-automation-loop-design.md`、`docs/decisions/2026-11-06-adr-035-test-asset-authority-and-local-execution.md`；Modify ADR-025、`docs/decisions/index.md`；Create `P/test_management/contracts.py`、`PT/contract/test_test_asset_contracts.py`、`B/modules/workflows/adapters/test_assets.py`、`BT/contract/test_test_asset_client.py`。
+**Files:** Create `docs/superpowers/specs/2026-11-06-versioned-test-automation-loop-design.md`、`docs/decisions/2026-11-06-adr-036-test-asset-authority-and-local-execution.md`；Modify ADR-025、`docs/decisions/index.md`；Create `P/test_management/contracts.py`、`PT/contract/test_test_asset_contracts.py`、`B/modules/workflows/adapters/test_assets.py`、`BT/contract/test_test_asset_client.py`。
 
 **Interfaces:** API `/api/v1/projects/{project_id}/test-assets` 管理计划、用例和修订；`/automation` 管理候选/制品/审核；`/executions` 管理 Run 和证据。AI 请求携带 project、actor/授权上下文、workflow_task_id、idempotency_key、资产版本引用。返回正式 ID 与 revision，AI 不直写业务表。
 
 `AssetRevisionRef(kind: Literal["plan","case"], asset_id: str, revision_id: str)`；`CandidateInput(source_refs: tuple[dict[str, object], ...], workflow_task_id: str, content: dict[str, object])`。不把模型生成内容视为已发布资产。`validate_case_refs(refs: tuple[AssetRevisionRef, ...]) -> None` 要求 kind=case、稳定 ID/版本非空、同一用例无重复引用。
 
-- [ ] 写阶段 spec 和 ADR-035，明确 TAP 资产权威、AI 只生成候选、旧 ID 映射/只读历史、项目权限传递、本机执行器替代 Jenkins-first 方向，保留 ADR-024 的不可变制品和幂等约束。ADR-025 现为 deferred，按文档治理记为被新决策替代，不改写历史背景；V1 已验收行为保持兼容。
+- [ ] 写阶段 spec 和 ADR-036，明确 TAP 资产权威、AI 只生成候选、旧 ID 映射/只读历史、项目权限传递、本机执行器替代 Jenkins-first 方向，保留 ADR-024 的不可变制品和幂等约束。ADR-025 现为 deferred，按文档治理记为被新决策替代，不改写历史背景；V1 已验收行为保持兼容。
 - [ ] 写失败合同测试，验证缺修订引用拒绝，cross-project 拒绝，重复请求不生成两个 revision：
 
 ```python
@@ -191,7 +191,7 @@ def test_retry_keeps_previous_failure_as_distinct_record():
 
 ### Task 3.7：真实资产界面与完整隔离验收
 
-**Files:** Create `W/features/testManagement/{api.ts,TestAssetsPage.tsx,RevisionHistory.tsx}`、`W/features/automation/{api.ts,AutomationPage.tsx,RunDetail.tsx}` 及对应测试；Modify `W/widgets/tap/TapProductPrototype.tsx`、`W/legacy/automation/AutomationWorkspace.tsx` 的正式入口连接；Modify `F/features/testManagement/api/client.ts`、`queries.ts` 中旧计划兼容调用及 `F/features/workflows/components/NodeDrawer.tsx`；Create `apps/web/tests/e2e/automation-loop.spec.ts`、`apps/web/playwright.automation.config.ts`、`scripts/run-automation-loop-e2e.py`、`docs/guides/2026-11-06-versioned-test-automation.md`。
+**Files:** Create `W/features/testManagement/{api.ts,TestAssetsPage.tsx,RevisionHistory.tsx}`、`W/features/automation/{api.ts,AutomationPage.tsx,RunDetail.tsx}` 及对应测试；Modify `W/widgets/tap/TapProductPrototype.tsx`、`W/legacy/automation/AutomationWorkspace.tsx` 的正式入口连接；Modify `F/features/testManagement/api/client.ts`、`queries.ts` 中旧计划兼容调用及 `F/features/workflows/components/NodeDetails.tsx`；Create `apps/web/tests/e2e/automation-loop.spec.ts`、`apps/web/playwright.automation.config.ts`、`scripts/run-automation-loop-e2e.py`、`docs/guides/2026-11-06-versioned-test-automation.md`。
 
 **Interfaces:** 页面从生成的 `contracts/openapi/tap-api.json` 对应 TS schema 读取；旧原型数据只能显示为模拟历史，不迁入正式运行表。资产历史页按 immutable revision 查询，运行详情链接对应 plan/case/automation/bundle；AI 节点产物链接指向版本，不指向会变化的 latest。
 

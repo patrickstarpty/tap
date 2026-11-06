@@ -36,7 +36,7 @@
 
 ### Task 2.1：provider 合同与不可变配置快照
 
-**Files:** Create 上表 coding domain/port、profiles/workspaces；Create `BT/unit/workflows/test_copilot_profiles.py`、`BT/contract/test_coding_runtime.py`；Create `docs/superpowers/specs/2026-11-06-copilot-workflow-runtime-design.md`、`docs/decisions/2026-11-06-adr-034-agent-runtime-model-boundary.md`。
+**Files:** Create 上表 coding domain/port、profiles/workspaces；Create `BT/unit/workflows/test_copilot_profiles.py`、`BT/contract/test_coding_runtime.py`；Create `docs/superpowers/specs/2026-11-06-copilot-workflow-runtime-design.md`、`docs/decisions/2026-11-06-adr-035-agent-runtime-model-boundary.md`。
 
 **Interfaces:** `CodingCapabilities(provider, version, event_schema, input_mode: Literal["live","boundary"], resume_mode: Literal["session_and_workspace"], child_identity: bool, parallel: bool)`；`CodingLaunch(task_id, attempt, manifest_digest, workspace_ref, objective, input_refs)`；`CodingHandle(session_id, task_id, attempt, workspace_ref, provider_version)`。端口：
 
@@ -54,7 +54,7 @@ class CodingRuntime(Protocol):
 
 其中 `ControlCommand` 来自阶段 1；字典结果以阶段 1 `WorkflowEvent`/receipt 契约校验，不允许 adapter 任意扩展终态。`FrozenManifest` 明确含 schema_version、task_id、agent_revision_ids、skill_revision_ids、tool_mapping、model_route、CLI version、文件摘要和输入资产引用；不含模型密钥。
 
-- [ ] 固化阶段设计与 ADR-034：native 继续使用 ModelGateway，Copilot 是显式外部模型运行边界；记录费用/权限/事件补偿责任、单一 Orchestrator 规则、生命周期合同和阶段 0 证据。ADR 仅一个 status 字段，不提前宣称实测能力。
+- [ ] 固化阶段设计与 ADR-035：native 继续使用 ModelGateway，Copilot 是显式外部模型运行边界；记录费用/权限/事件补偿责任、单一 Orchestrator 规则、生命周期合同和阶段 0 证据。ADR 仅一个 status 字段，不提前宣称实测能力。
 - [ ] 写失败测试：profile 全量且授权过滤、保留原配置版本、稳定文件名、同显示名不同 ID 不冲突、个人配置不覆盖、未知工具不变为全权限、任何 secret 不进入 manifest。定义 `agent_filename(agent_id: str) -> str`：
 
 ```python
@@ -68,7 +68,7 @@ def test_stable_agent_filename_cannot_escape_workspace():
         agent_filename("../sdet")
 ```
 
-- [ ] `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_copilot_profiles.py apps/tap-ai-backend/tests/contract/test_coding_runtime.py -q` 先失败；实现 profile exporter 与 runtime port。描述用于选择、正文用于执行；始终向 Orchestrator 传入用户显式选择与全部获准 Agent 的简短名册。
+- [ ] `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_copilot_profiles.py apps/tap-ai-backend/tests/contract/test_coding_runtime.py -q` 先失败；实现 profile exporter 与 runtime port。描述用于选择、正文用于执行；始终向 Orchestrator 传入用户显式选择与全部获准专业 Agent 的简短名册。`orchestrator.agent.md` 是 Tapper 的内部启动配置，单独冻结系统根身份及修订，不加入用户可选目录或子 Agent 委派候选；增加根 profile 存在但目录与委派候选不含根身份的测试。
 - [ ] 映射工具权限必须复核阶段 0 实测的 allow/deny 行为；禁止直接把平台工具 ID 写成 Copilot 工具名。Skill 指令按冻结修订映射，包内脚本不自动执行。模型继承及覆盖全部保持 LiteLLM 路由，无兼容模型时拒绝启动。
 - [ ] 新增只读 frozen manifest 校验和独立工作副本；并行写任务不得无协调覆盖同一目录。窄测通过，提交 `feat: define coding runtime and frozen agent profiles`。
 
@@ -138,5 +138,5 @@ def test_old_orchestrator_cannot_take_ownership_back():
 
 - [ ] `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_workflow_handoff.py -q` 先失败；实现冻结输入→CAS 调度权→新运行段→结果汇聚。外层只执行状态与授权，不调用模型重新分配 Copilot 子任务。
 - [ ] 验证纯编码请求直接进 Copilot；非编码途中产生编码需求可交接；同任务简单问答保留当前 Orchestrator；执行已发布制品只调用执行器。显式 @ 保持目标 Agent，停用/缺能力说明原因。
-- [ ] UI 合并两种 runtime 的真实事件；Orchestrator 父层可看运行段与 provider；CLI 原生步骤、平台工具、人工审核明确区分，provider 身份不能伪装成 TAP 内部调用。
+- [ ] UI 合并两种 runtime 的真实事件；任务详情可看内部 Orchestrator 的运行段与 provider，不生成独立可调用档案；CLI 原生步骤、平台工具、人工审核明确区分，provider 身份不能伪装成 TAP 内部调用。
 - [ ] 隔离浏览器重放证明 UI 契约；真实 Copilot 独立验收证明能力。运行总计划检查，更新现状架构/guide/路线图，提交 `feat: connect native and copilot workflow handoffs`。

@@ -73,12 +73,12 @@ flowchart LR
 
 ## V3：测试闭环（设计已确认，实施计划已编写）
 
-2026-11-06 范围调整：[双路径 Agent 工作流与测试闭环设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已由产品负责人确认并进入实施规划；[实施总计划](2026-11-06-agent-workflows-and-test-loop.md)包含四份分阶段计划，尚未执行，不表示实施或验收完成。底座面向测试、软件开发和业务自动化，首版只以测试闭环验收；V1 的范围与未完成门禁不变。
+2026-11-06 范围调整：[双路径 Agent 工作流与测试闭环设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已由产品负责人确认并进入实施规划；[实施总计划](2026-11-06-agent-workflows-and-test-loop.md)包含四份分阶段计划，已按 `34f86106` 模块归属重构和 `524c202d` 回归门禁调整接入点、职责边界与 ADR 预留编号；尚未执行，不表示实施或验收完成。底座面向测试、软件开发和业务自动化，首版只以测试闭环验收；V1 的范围与未完成门禁不变。
 
 | 项 | 确认范围 | 状态 |
 | --- | --- | --- |
 | 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；首版在编码任务启动前一次性生成当前项目已启用且任务获准使用的 Agent 配置，无 `tap-` 前缀，任务内冻结版本，不依赖热加载；编码任务交给 Copilot CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 已设计并确认；阶段 0–2 计划已编写，Copilot 组合能力待实测 |
-| 实时 Agent 流水线 | Agents 模块覆盖全部 Agent 档案与运行实例，Tapper 支持自然语言与选择 / @ 调用；Orchestrator 作为运行父层，单个/多个 Agent 以 Azure Pipelines 风格节点展示，结合对话和活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 已设计并确认；阶段 1–2 计划已编写 |
+| 实时 Agent 流水线 | 默认助手对外统一称为 Tapper，Orchestrator 仅为内部技术角色；Agents 模块提供专业 Agent 档案与运行实例，选择 / @ 只指定专业 Agent，不单列系统 Tapper/Orchestrator；中间对话仅显示简短进度和入口，用户点击打开右侧执行侧栏，查看任务统筹进度、专业 Agent 流水线、节点详情及活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 已设计并确认；阶段 1–2 计划已编写，右侧栏交互已同步；GUI 参考明确为 Claude App（Chat/Cowork）与 Codex App |
 | 测试资产与代码版本 | 测试计划、用例始终在 TAP 管理且各自版本化；首版代码由 TAP 管理；以易懂的“自动化测试步骤”描述结构化操作、数据和预期结果 | 已设计并确认；阶段 3 计划已编写，领域归属及迁移先固化 ADR |
 | 执行与结果回写 | 首个执行器改为 TAP 管理的本机隔离容器，运行 Playwright + TypeScript；固定发布版本，回写真实结果与证据，修复形成新版本 | 已设计并确认；阶段 3 计划已编写 |
 | 后续适配 | Azure DevOps Repos、GitLab 等代码仓库；Jenkins、Azure DevOps Pipelines 执行器；保留 Claude Code、Codex coding provider 接口 | 未设计（仅确认扩展边界，首版不交付这些适配器） |
