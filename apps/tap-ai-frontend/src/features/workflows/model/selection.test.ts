@@ -13,12 +13,16 @@ it("sends all stable Agent IDs only in native mode and keeps legacy exact revisi
     agentRevisionId: null,
     requestedAgentIds: ["sdet", "reviewer"],
   });
-  expect(
+  expect(() =>
     agentSelectionFields(false, ["rev-sdet", "rev-review"], agents),
-  ).toEqual({
+  ).toThrow("Choose one Agent");
+  expect(agentSelectionFields(false, ["rev-sdet"], agents)).toEqual({
     agentRevisionId: "rev-sdet",
     requestedAgentIds: [],
   });
+  expect(() => agentSelectionFields(true, ["removed-rev"], agents)).toThrow(
+    "Unavailable Agent",
+  );
 });
 
 it("only follows a live native task associated with this conversation", () => {

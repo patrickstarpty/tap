@@ -8,10 +8,12 @@ export function RunDetail({
   connection,
   onSelectNode,
   onCommand,
+  onRetryConnection,
 }: {
   snapshot: WorkflowTaskSnapshot;
   connection: "idle" | "connecting" | "live" | "reconnecting" | "error";
   onSelectNode: (nodeId: string) => void;
+  onRetryConnection?: () => void;
   onCommand?: (
     kind: "pause" | "resume" | "cancel",
     nodeId?: string,
@@ -72,8 +74,18 @@ export function RunDetail({
             ? new Date(latest.occurredAt).toLocaleString()
             : new Date(snapshot.createdAt).toLocaleString()}
         </p>
-        {connection === "reconnecting" || connection === "error" ? (
+        {connection === "reconnecting" ? (
           <p role="status">Reconnecting · showing last saved update</p>
+        ) : null}
+        {connection === "error" ? (
+          <p role="status">
+            Disconnected · showing last saved update.{" "}
+            {onRetryConnection ? (
+              <button type="button" onClick={onRetryConnection}>
+                Retry connection
+              </button>
+            ) : null}
+          </p>
         ) : null}
         {waitingText &&
         (waiting === latest ||

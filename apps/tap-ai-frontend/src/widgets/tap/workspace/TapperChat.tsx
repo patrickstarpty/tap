@@ -98,6 +98,7 @@ interface TapperChatProps {
    * default, or the turn's `skillNotices`) shown above the composer until
    * dismissed or replaced. */
   composerNotice?: { text: string; onDismiss: () => void };
+  agentSelectionIssue?: { text: string; onClear: () => void };
 }
 
 const QUESTION_RAIL_ROW_HEIGHT = 14;
@@ -176,6 +177,7 @@ export function TapperChat({
   lockedSkillIds = [],
   skillBudget,
   composerNotice,
+  agentSelectionIssue,
 }: TapperChatProps) {
   const catalog = useModelCatalog(projectId);
   const catalogPage = catalog.isError ? undefined : catalog.data;
@@ -489,7 +491,13 @@ export function TapperChat({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = message.trim();
-    if (prompt.length === 0 || !modelAvailable || sending || overSkillBudget)
+    if (
+      prompt.length === 0 ||
+      !modelAvailable ||
+      sending ||
+      overSkillBudget ||
+      agentSelectionIssue
+    )
       return;
     setSubmitError(false);
     const accepted = await onSend(prompt);
@@ -731,6 +739,19 @@ export function TapperChat({
         </div>
       ) : null}
 
+      {agentSelectionIssue ? (
+        <div
+          className="tap-composer-notice"
+          role="alert"
+          aria-label="Agent selection needs attention"
+        >
+          <span>{agentSelectionIssue.text}</span>
+          <button type="button" onClick={agentSelectionIssue.onClear}>
+            Clear restored Agent selection
+          </button>
+        </div>
+      ) : null}
+
       {composerNotice !== undefined ? (
         <div className="tap-composer-notice" role="status">
           <span>{composerNotice.text}</span>
@@ -935,7 +956,8 @@ export function TapperChat({
               message.trim().length === 0 ||
               !modelAvailable ||
               sending ||
-              overSkillBudget
+              overSkillBudget ||
+              agentSelectionIssue !== undefined
             }
           >
             <span className="tap-composer-send-face">

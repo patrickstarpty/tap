@@ -84,6 +84,15 @@ export function useWorkflowTask(
               if (stopped) return;
             }
             cache.setQueryData(key, next);
+            if (event.nodeId != null)
+              void cache.invalidateQueries({
+                queryKey: workflowKeys.node(projectId, taskId, event.nodeId),
+              });
+            else if (
+              event.kind.startsWith("plan.") ||
+              event.kind.startsWith("node.")
+            )
+              void cache.invalidateQueries({ queryKey: [...key, "node"] });
             cursor = next.lastSequence;
             attempts = 0;
             setConnection("live");
@@ -132,7 +141,8 @@ export function useWorkflowTask(
     isError: query.isError,
     connection,
     retry: () => {
-      void query.refetch();
+      // Keep the last applied event cursor when the snapshot is already loaded.
+      if (!query.isSuccess) void query.refetch();
       setRetryNonce((value) => value + 1);
     },
   };

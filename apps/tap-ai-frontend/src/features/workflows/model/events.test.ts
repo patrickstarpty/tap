@@ -90,3 +90,24 @@ it("does not project a prior attempt onto the current node", () => {
   expect(next?.nodes[0]?.status).toBe("failed");
   expect(next?.nodes[0]?.attempt).toBe(1);
 });
+
+it("requests authoritative actions when task or node transitions change controls", () => {
+  expect(
+    applyWorkflowEvent(snapshot, {
+      ...started,
+      nodeId: null,
+      kind: "task.status",
+      status: "paused",
+    }),
+  ).toBeNull();
+  expect(
+    applyWorkflowEvent(snapshot, {
+      ...started,
+      kind: "node.failed",
+      status: "failed",
+    }),
+  ).toBeNull();
+  expect(
+    applyWorkflowEvent({ ...snapshot, availableActions: ["retry"] }, started),
+  ).toBeNull();
+});

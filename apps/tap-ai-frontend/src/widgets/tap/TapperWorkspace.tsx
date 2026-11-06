@@ -60,6 +60,7 @@ import { WorkflowSidebar } from "../../features/workflows/components/WorkflowSid
 import { RunStatusLink } from "../../features/workflows/components/RunStatusLink";
 import {
   agentSelectionFields,
+  agentSelectionProblem,
   followUpTaskId,
 } from "../../features/workflows/model/selection";
 import { TracePanel } from "../../features/conversations/trace/TracePanel";
@@ -1504,6 +1505,8 @@ export function TapperWorkspace() {
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
   const [workflowTaskId, setWorkflowTaskId] = useState<string | null>(null);
   const [workflowNodeId, setWorkflowNodeId] = useState<string | null>(null);
+  const [workflowAttempt, setWorkflowAttempt] = useState<number | null>(null);
+  const [workflowScrollTop, setWorkflowScrollTop] = useState(0);
   const [conversations, setConversations] = useState<readonly Conversation[]>(
     () => [createConversation("draft")],
   );
@@ -1546,8 +1549,15 @@ export function TapperWorkspace() {
   ) => {
     if (conversationId && conversationId !== activeConversationId)
       conversationRuntime.selectConversation(conversationId);
+    if (
+      workflowTaskId !== taskId ||
+      (nodeId !== undefined && nodeId !== workflowNodeId)
+    ) {
+      setWorkflowNodeId(nodeId ?? null);
+      setWorkflowAttempt(null);
+      setWorkflowScrollTop(0);
+    }
     setWorkflowTaskId(taskId);
-    setWorkflowNodeId(nodeId ?? null);
     setWorkflowPanelOpen(true);
     setSourcesCollapsed(true);
     setActiveModule("tapper");
@@ -1565,6 +1575,8 @@ export function TapperWorkspace() {
         setWorkflowPanelOpen(false);
         setWorkflowTaskId(null);
         setWorkflowNodeId(null);
+        setWorkflowAttempt(null);
+        setWorkflowScrollTop(0);
       }
       latestActiveConversationId.current = id;
       selectRuntimeConversation(id);
@@ -1901,16 +1913,18 @@ export function TapperWorkspace() {
       }),
     ];
     const latestInput = conversationDetail.turns.at(-1)?.input;
-    const restoredAgentIds =
-      runtime.data?.workflowEnabled && latestInput?.requestedAgentIds?.length
-        ? (aiAssets.agents.data ?? [])
-            .filter((item) =>
-              latestInput.requestedAgentIds!.includes(item.assetId),
-            )
-            .map((item) => item.revisionId)
-        : latestInput?.agentRevisionId == null
-          ? []
-          : [latestInput.agentRevisionId];
+    const restoredAssetIds = latestInput?.requestedAgentIds ?? [];
+    const restoredAgentIds = restoredAssetIds.length
+      ? restoredAssetIds.flatMap((assetId) => {
+          const item = (aiAssets.agents.data ?? []).find(
+            (agent) => agent.assetId === assetId,
+          );
+          return item ? [item.revisionId] : [];
+        })
+      : latestInput?.agentRevisionId == null
+        ? []
+        : [latestInput.agentRevisionId];
+    const latestTurnId = conversationDetail.turns.at(-1)?.turnId;
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.conversationId
@@ -1937,7 +1951,15 @@ export function TapperWorkspace() {
                         .input.resolvedResources?.map(
                           (item) => item.sourceId,
                         ) ?? [],
-                    selectedAgentIds: restoredAgentIds,
+                    ...(conversation.agentSelectionTurnId === latestTurnId &&
+                    conversation.agentSelectionTouched
+                      ? {}
+                      : {
+                          selectedAgentIds: restoredAgentIds,
+                          restoredAgentAssetIds: restoredAssetIds,
+                          agentSelectionTurnId: latestTurnId,
+                          agentSelectionTouched: false,
+                        }),
                     // Only the manual picks go back into `selectedSkillIds`;
                     // the restored Agent's pinned Skills reappear as locked
                     // chips via `bundledSkillIdsFor` (minor finding).
@@ -2263,6 +2285,12 @@ export function TapperWorkspace() {
     conversations.find(
       (conversation) => conversation.id === activeConversationId,
     ) ?? conversations[0]!;
+  const agentSelectionIssue = agentSelectionProblem(
+    runtime.data?.workflowEnabled === true,
+    activeConversation.selectedAgentIds,
+    agentById,
+    activeConversation.restoredAgentAssetIds ?? [],
+  );
   const displayedConversation =
     localInsightsTurn === null ||
     localInsightsTurn.conversationId !== activeConversation.id
@@ -2499,6 +2527,8 @@ export function TapperWorkspace() {
       selectedAgentIds: runtime.data?.workflowEnabled
         ? [...conversation.selectedAgentIds, agentId]
         : [agentId],
+      restoredAgentAssetIds: [],
+      agentSelectionTouched: true,
       modelId: resolvedAlias,
     };
   };
@@ -2690,6 +2720,17 @@ export function TapperWorkspace() {
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
       context?.agentIds ?? activeConversation.selectedAgentIds;
+    if (
+      agentSelectionProblem(
+        runtime.data?.workflowEnabled === true,
+        selectedAgentIds,
+        agentById,
+        context === undefined
+          ? (activeConversation.restoredAgentAssetIds ?? [])
+          : [],
+      ) !== null
+    )
+      return false;
     // Manual picks only: the selected Agent's pinned Skills are loaded
     // server-side from the Agent (see `bundledSkillIdsFor`), and a resend's
     // `context.skillIds` is the original turn's manual picks.
@@ -2776,7 +2817,6 @@ export function TapperWorkspace() {
         const readySourceIds = new Set(
           currentPublished.items.map((item) => item.sourceId),
         );
-        const allowedAgentIds = new Set(agents.map((item) => item.id));
         const allowedSkillIds = new Set(skills.map((item) => item.id));
         const futureSourceIds = selectedSourceIds.filter((id) =>
           readySourceIds.has(id),
@@ -2797,7 +2837,7 @@ export function TapperWorkspace() {
           documentRevisionIds: [],
           ...agentSelectionFields(
             runtime.data?.workflowEnabled === true,
-            selectedAgentIds.filter((id) => allowedAgentIds.has(id)),
+            selectedAgentIds,
             agentById,
           ),
           ...(runtime.data?.workflowEnabled &&
@@ -2958,6 +2998,20 @@ export function TapperWorkspace() {
               locale={locale}
               lockedSkillIds={activeLockedSkillIds}
               skillBudget={composerSkillBudget}
+              agentSelectionIssue={
+                agentSelectionIssue === null
+                  ? undefined
+                  : {
+                      text: agentSelectionIssue,
+                      onClear: () =>
+                        updateActiveConversation((conversation) => ({
+                          ...conversation,
+                          selectedAgentIds: [],
+                          restoredAgentAssetIds: [],
+                          agentSelectionTouched: true,
+                        })),
+                    }
+              }
               composerNotice={
                 composerNotice === null
                   ? undefined
@@ -3012,6 +3066,8 @@ export function TapperWorkspace() {
                           conversation.selectedAgentIds,
                           agentId,
                         ),
+                        restoredAgentAssetIds: [],
+                        agentSelectionTouched: true,
                       }
                     : selectComposerAgent(conversation, agentId),
                 )
@@ -3151,7 +3207,16 @@ export function TapperWorkspace() {
                     snapshot={workflow.snapshot}
                     connection={workflow.connection}
                     selectedNodeId={workflowNodeId}
-                    onSelectNode={setWorkflowNodeId}
+                    onSelectNode={(nodeId) => {
+                      setWorkflowNodeId(nodeId);
+                      setWorkflowAttempt(null);
+                      setWorkflowScrollTop(0);
+                    }}
+                    selectedAttempt={workflowAttempt}
+                    onSelectAttempt={setWorkflowAttempt}
+                    scrollTop={workflowScrollTop}
+                    onScrollTopChange={setWorkflowScrollTop}
+                    onRetryConnection={workflow.retry}
                     onClose={dismissKnowledgeSources}
                   />
                 ) : (

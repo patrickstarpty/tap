@@ -133,3 +133,46 @@ it("shows Tapper progress without a callable root card and replaces overview wit
   ).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Workflow" })).toBeNull();
 });
+
+it("keeps selected node visible with authoritative status and connection retry", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
+    const url = (request as Request).url;
+    return Response.json(
+      url.includes("/logs")
+        ? { items: [], nextCursor: null }
+        : { ...snapshot.nodes[1], artifacts: [] },
+    );
+  });
+  const retry = vi.fn();
+  const user = userEvent.setup();
+  const queryClient = createTestQueryClient();
+  const view = (current: Snapshot, connection: "live" | "error") => (
+    <QueryClientProvider client={queryClient}>
+      <WorkflowSidebar
+        projectId="project-1"
+        snapshot={current}
+        connection={connection}
+        onRetryConnection={retry}
+        onClose={() => undefined}
+      />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(view(snapshot, "live"));
+  await user.click(screen.getByRole("button", { name: /SDET/u }));
+  rerender(
+    view(
+      {
+        ...snapshot,
+        availableActions: ["retry"],
+        nodes: snapshot.nodes.map((node) =>
+          node.nodeId === "sdet-1" ? { ...node, status: "failed" } : node,
+        ),
+      },
+      "error",
+    ),
+  );
+  expect(screen.getByRole("heading", { name: "Node details" })).toBeVisible();
+  expect(screen.getByText("agent · failed")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Retry connection" }));
+  expect(retry).toHaveBeenCalledOnce();
+});

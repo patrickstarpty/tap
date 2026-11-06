@@ -10,18 +10,26 @@ export function NodeDetails({
   node,
   onBack,
   onCommand,
+  selectedAttempt,
+  onSelectAttempt,
 }: {
   projectId: string;
   snapshot: WorkflowTaskSnapshot;
   node: Node;
   onBack: () => void;
+  selectedAttempt?: number | null;
+  onSelectAttempt?: (attempt: number) => void;
   onCommand?: (
     kind: "steer" | "retry" | "resume",
     nodeId: string,
     text?: string,
   ) => Promise<WorkflowCommandView | void>;
 }) {
-  const [attempt, setAttempt] = useState(node.attempt);
+  const [localAttempt, setLocalAttempt] = useState(node.attempt);
+  const attempt = onSelectAttempt
+    ? (selectedAttempt ?? node.attempt)
+    : localAttempt;
+  const setAttempt = onSelectAttempt ?? setLocalAttempt;
   const [message, setMessage] = useState("");
   const [receipt, setReceipt] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -32,7 +40,9 @@ export function NodeDetails({
     node.nodeId,
     attempt,
   );
-  const value = detail.data ?? node;
+  const value = detail.data
+    ? { ...detail.data, ...node, artifacts: detail.data.artifacts }
+    : node;
   const artifacts = detail.data?.artifacts ?? [];
   const attempts = value.attempts?.length
     ? value.attempts

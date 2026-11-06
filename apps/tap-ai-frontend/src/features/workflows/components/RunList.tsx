@@ -120,8 +120,18 @@ export function RunList({
                   <small>{pendingItem(node?.status ?? task.status)}</small>
                 ) : null}
                 {node ? <small>Attempt {node.attempt}</small> : null}
-                <time dateTime={node?.createdAt ?? task.createdAt}>
-                  {new Date(node?.createdAt ?? task.createdAt).toLocaleString()}
+                <time
+                  dateTime={
+                    task.recentEvent?.occurredAt ??
+                    node?.createdAt ??
+                    task.createdAt
+                  }
+                >
+                  {new Date(
+                    task.recentEvent?.occurredAt ??
+                      node?.createdAt ??
+                      task.createdAt,
+                  ).toLocaleString()}
                 </time>
               </button>
             </li>

@@ -99,7 +99,10 @@ it("distinguishes goal-empty tasks and exposes participants, activity and pendin
               ...task,
               goalSummary: "",
               taskId: "task-alpha-123",
-              recentEvent: { kind: "node.waiting", occurredAt: task.createdAt },
+              recentEvent: {
+                kind: "node.waiting",
+                occurredAt: "2026-11-06T01:00:00Z",
+              },
               status: "awaiting_input",
             },
             {
@@ -128,6 +131,11 @@ it("distinguishes goal-empty tasks and exposes participants, activity and pendin
   expect(
     screen.getByRole("button", { name: /task-alpha-123/u }),
   ).toHaveTextContent("Latest: node waiting");
+  expect(
+    screen
+      .getByRole("button", { name: /task-alpha-123/u })
+      .querySelector("time")?.dateTime,
+  ).toBe("2026-11-06T01:00:00Z");
   expect(
     screen.getByRole("button", { name: /task-alpha-123/u }),
   ).toHaveTextContent("Input needed");

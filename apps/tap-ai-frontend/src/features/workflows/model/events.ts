@@ -25,6 +25,18 @@ const STATUSES = new Set<Status>([
   "canceled",
   "skipped",
 ]);
+const capabilityTransitions = new Set([
+  "task.status",
+  "task.yielded",
+  "task.completed",
+  "task.canceled",
+  "task.failed",
+  "task.awaiting_input",
+  "node.waiting",
+  "node.finished",
+  "node.failed",
+  "node.canceled",
+]);
 const structural = new Set([
   "node.created",
   "node.delegated",
@@ -46,7 +58,18 @@ export function applyWorkflowEvent(
     return null;
   const cursor = advanceCursor(snapshot.lastSequence, event.sequence);
   if (cursor === "ignore") return snapshot;
-  if (cursor === "resync" || structural.has(event.kind)) return null;
+  if (
+    cursor === "resync" ||
+    structural.has(event.kind) ||
+    (capabilityTransitions.has(event.kind) &&
+      (event.nodeId === null ||
+        event.attempt >=
+          (snapshot.nodes.find((node) => node.nodeId === event.nodeId)
+            ?.attempt ?? 0))) ||
+    (event.kind === "node.started" &&
+      snapshot.availableActions.includes("retry"))
+  )
+    return null;
   const status = STATUSES.has(event.status as Status)
     ? (event.status as Status)
     : null;

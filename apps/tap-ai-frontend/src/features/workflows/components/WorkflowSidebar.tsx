@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   WorkflowCommandRequest,
   WorkflowCommandView,
@@ -17,6 +17,11 @@ export function WorkflowSidebar({
   onClose,
   selectedNodeId,
   onSelectNode,
+  selectedAttempt,
+  onSelectAttempt,
+  scrollTop = 0,
+  onScrollTopChange,
+  onRetryConnection,
 }: {
   projectId: string;
   snapshot: WorkflowTaskSnapshot;
@@ -24,6 +29,11 @@ export function WorkflowSidebar({
   onClose: () => void;
   selectedNodeId?: string | null;
   onSelectNode?: (nodeId: string | null) => void;
+  selectedAttempt?: number | null;
+  onSelectAttempt?: (attempt: number) => void;
+  scrollTop?: number;
+  onScrollTopChange?: (scrollTop: number) => void;
+  onRetryConnection?: () => void;
 }) {
   const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const selection = selectedNodeId === undefined ? localNodeId : selectedNodeId;
@@ -32,6 +42,10 @@ export function WorkflowSidebar({
   const command = useWorkflowCommand(projectId, snapshot.taskId);
   const intent = useRef<{ signature: string; key: string } | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const scroll = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (scroll.current) scroll.current.scrollTop = scrollTop;
+  }, [scrollTop, selected?.nodeId]);
   useEffect(() => {
     if (selected) heading.current?.focus({ preventScroll: true });
   }, [selected?.nodeId]);
@@ -67,7 +81,21 @@ export function WorkflowSidebar({
           Close
         </button>
       </header>
-      <div className="tap-workflow-scroll">
+      {selected && connection === "error" ? (
+        <p className="tap-workflow-connection" role="status">
+          Disconnected · showing last saved update.{" "}
+          {onRetryConnection ? (
+            <button type="button" onClick={onRetryConnection}>
+              Retry connection
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+      <div
+        className="tap-workflow-scroll"
+        ref={scroll}
+        onScroll={(event) => onScrollTopChange?.(event.currentTarget.scrollTop)}
+      >
         {selected ? (
           <NodeDetails
             projectId={projectId}
@@ -75,6 +103,8 @@ export function WorkflowSidebar({
             node={selected}
             onBack={() => select(null)}
             onCommand={issue}
+            selectedAttempt={selectedAttempt}
+            onSelectAttempt={onSelectAttempt}
           />
         ) : (
           <RunDetail
@@ -82,6 +112,7 @@ export function WorkflowSidebar({
             connection={connection}
             onSelectNode={select}
             onCommand={issue}
+            onRetryConnection={onRetryConnection}
           />
         )}
       </div>

@@ -99,6 +99,9 @@ export interface Conversation {
   modelId: ModelId;
   selectedSourceIds: readonly string[];
   selectedAgentIds: readonly string[];
+  restoredAgentAssetIds?: readonly string[];
+  agentSelectionTurnId?: string;
+  agentSelectionTouched?: boolean;
   selectedSkillIds: readonly string[];
 }
 
@@ -148,6 +151,7 @@ export function createConversation(
     modelId: options.modelId ?? PENDING_MODEL_ID,
     selectedSourceIds: [...(options.selectedSourceIds ?? [])],
     selectedAgentIds: [...(options.selectedAgentIds ?? [])],
+    restoredAgentAssetIds: [],
     selectedSkillIds: [...(options.selectedSkillIds ?? [])],
   };
 }
@@ -165,6 +169,9 @@ export function appendTurn(
     turns: [...conversation.turns, turn],
     selectedSourceIds: [],
     selectedAgentIds: [],
+    restoredAgentAssetIds: [],
+    agentSelectionTurnId: undefined,
+    agentSelectionTouched: false,
     selectedSkillIds: [],
   };
 }

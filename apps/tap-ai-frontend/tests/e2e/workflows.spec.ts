@@ -63,5 +63,4 @@ test("workflow details remain user controlled on desktop and mobile", async ({
     path: "test-results/workflows-mobile.png",
     fullPage: true,
   });
-  await page.keyboard.press("Escape");
 });

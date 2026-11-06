@@ -47,3 +47,21 @@ it("shows a truthful cancel request receipt and a recoverable command error", as
   );
   expect(screen.queryByText(/canceled/u)).toBeNull();
 });
+
+it("labels exhausted stream errors as disconnected and offers retry", async () => {
+  const retry = vi.fn();
+  render(
+    <RunDetail
+      snapshot={snapshot}
+      connection="error"
+      onSelectNode={vi.fn()}
+      onRetryConnection={retry}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Disconnected");
+  expect(screen.queryByText(/Reconnecting/u)).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry connection" }),
+  );
+  expect(retry).toHaveBeenCalledOnce();
+});

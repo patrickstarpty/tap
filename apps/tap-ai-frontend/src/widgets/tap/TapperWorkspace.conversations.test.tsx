@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -161,6 +161,10 @@ function completedConversation({
   state = "completed",
   myFeedback = null,
   workflowTaskId = null,
+  workflowNode = null,
+  requestedAgentIds = [],
+  agentCatalog = [],
+  capturedSends,
   resolvedResources = [
     {
       documentId: "document-1",
@@ -173,6 +177,10 @@ function completedConversation({
 }: {
   traceId: string | null;
   workflowTaskId?: string | null;
+  workflowNode?: Record<string, unknown> | null;
+  requestedAgentIds?: readonly string[];
+  agentCatalog?: readonly Record<string, unknown>[];
+  capturedSends?: Record<string, unknown>[];
   answer?: Record<string, unknown>;
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
@@ -225,8 +233,39 @@ function completedConversation({
       payload: { answer },
     },
   ];
-  vi.stubGlobal("fetch", async (request: Request) => {
-    const path = new URL(request.url).pathname;
+  vi.stubGlobal("fetch", async (request: Request | string) => {
+    const path = new URL(
+      typeof request === "string" ? request : request.url,
+      "http://localhost",
+    ).pathname;
+    if (path.endsWith("/ai/agents")) return json({ items: agentCatalog });
+    if (path.endsWith("/ai/skills")) return json({ items: [] });
+    if (
+      capturedSends &&
+      path.endsWith("/conversations/conversation-a/turns") &&
+      request instanceof Request &&
+      request.method === "POST"
+    ) {
+      capturedSends.push((await request.json()) as Record<string, unknown>);
+      return json(
+        { conversationId: "conversation-a", turnId: "turn-2", state: "queued" },
+        202,
+      );
+    }
+    if (
+      workflowTaskId !== null &&
+      workflowNode !== null &&
+      path.endsWith(
+        `/workflows/${workflowTaskId}/nodes/${workflowNode.nodeId}/logs`,
+      )
+    )
+      return json({ items: [], nextCursor: null });
+    if (
+      workflowTaskId !== null &&
+      workflowNode !== null &&
+      path.endsWith(`/workflows/${workflowTaskId}/nodes/${workflowNode.nodeId}`)
+    )
+      return json({ ...workflowNode, artifacts: [] });
     if (
       workflowTaskId !== null &&
       path.endsWith(`/workflows/${workflowTaskId}`)
@@ -243,7 +282,7 @@ function completedConversation({
         displayName: "Tapper",
         goalSummary: "What is the rule?",
         createdAt: "2026-09-29T08:00:00Z",
-        nodes: [],
+        nodes: workflowNode === null ? [] : [workflowNode],
         edges: [],
         commands: [],
         events: [],
@@ -251,7 +290,11 @@ function completedConversation({
         budgetLimit: {},
         budgetUsed: {},
       });
-    if (path.endsWith("/conversations") && request.method === "GET")
+    if (
+      path.endsWith("/conversations") &&
+      request instanceof Request &&
+      request.method === "GET"
+    )
       return json({
         items: [
           {
@@ -286,6 +329,7 @@ function completedConversation({
               documentRevisionIds: [],
               resolvedResources,
               agentRevisionId: null,
+              requestedAgentIds,
               agentLabel: null,
               skillRevisionIds: [],
               skillLabels: [],
@@ -327,7 +371,9 @@ function completedConversation({
         ],
         modelCalls: [],
       });
-    throw new Error(`Unexpected API call: ${request.method} ${request.url}`);
+    throw new Error(
+      `Unexpected API call: ${request instanceof Request ? request.method : "GET"} ${request instanceof Request ? request.url : request}`,
+    );
   });
   return renderKnowledgeApp(<TapperWorkspace />, {
     api,
@@ -363,6 +409,134 @@ it("keeps workflow details closed until clicked and retains the terminal task li
   expect(
     screen.getByRole("button", { name: "View execution details" }),
   ).toBeVisible();
+});
+
+it("shows all restored native Agent IDs and requires an explicit legacy choice", async () => {
+  completedConversation({
+    traceId: null,
+    requestedAgentIds: ["sdet", "retired-agent"],
+    agentCatalog: [
+      {
+        revisionId: "rev-sdet",
+        assetId: "sdet",
+        displayName: "SDET",
+        agentId: "sdet",
+        isLatest: true,
+        status: "enabled",
+        toolAllowlist: [],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  const issue = await screen.findByRole("alert", {
+    name: "Agent selection needs attention",
+  });
+  expect(issue).toHaveTextContent("sdet");
+  expect(issue).toHaveTextContent("retired-agent");
+  expect(screen.getByText("SDET")).toBeVisible();
+  await user.type(
+    screen.getByRole("textbox", { name: "Message Tapper" }),
+    "Next question",
+  );
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await user.click(
+    screen.getByRole("button", { name: "Clear restored Agent selection" }),
+  );
+  expect(
+    screen.queryByRole("alert", { name: "Agent selection needs attention" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+});
+
+it("lets a person resolve two restored workflow Agents to one exact legacy revision", async () => {
+  const capturedSends: Record<string, unknown>[] = [];
+  completedConversation({
+    traceId: null,
+    requestedAgentIds: ["sdet", "reviewer"],
+    capturedSends,
+    agentCatalog: [
+      {
+        revisionId: "rev-sdet",
+        assetId: "sdet",
+        agentId: "sdet",
+        displayName: "SDET",
+        isLatest: true,
+        status: "enabled",
+        toolAllowlist: [],
+      },
+      {
+        revisionId: "rev-reviewer",
+        assetId: "reviewer",
+        agentId: "reviewer",
+        displayName: "Reviewer",
+        isLatest: true,
+        status: "enabled",
+        toolAllowlist: [],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  await screen.findByRole("alert", { name: "Agent selection needs attention" });
+  await user.type(
+    screen.getByRole("textbox", { name: "Message Tapper" }),
+    "Next question",
+  );
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Remove Reviewer" }));
+  expect(
+    screen.queryByRole("alert", { name: "Agent selection needs attention" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(capturedSends).toHaveLength(1));
+  expect(capturedSends[0]?.agentRevisionId).toBe("rev-sdet");
+  expect(capturedSends[0]?.requestedAgentIds).toEqual([]);
+});
+
+it("restores the same task's selected node, historical attempt and scroll after closing the real workspace pane", async () => {
+  completedConversation({
+    traceId: null,
+    workflowTaskId: "task-1",
+    workflowNode: {
+      nodeId: "sdet-1",
+      parentNodeId: null,
+      agentId: "sdet",
+      agentRevisionId: "rev-sdet",
+      displayName: "SDET",
+      kind: "agent",
+      status: "succeeded",
+      attempt: 2,
+      planRevision: 1,
+      sourceRuntime: "native",
+      attempts: [
+        { attempt: 1, status: "failed", createdAt: "2026-09-29T08:00:00Z" },
+        { attempt: 2, status: "succeeded", createdAt: "2026-09-29T08:01:00Z" },
+      ],
+    },
+  });
+  const user = userEvent.setup();
+  await screen.findByText("Tapper · succeeded");
+  await user.click(
+    await screen.findByRole("button", { name: "View execution details" }),
+  );
+  await screen.findByRole("heading", { name: "Task progress" });
+  await user.click(await screen.findByRole("button", { name: /SDET/u }));
+  const attempt = await screen.findByRole("combobox", { name: "Attempt" });
+  await user.selectOptions(attempt, "1");
+  const scroll = document.querySelector<HTMLElement>(".tap-workflow-scroll")!;
+  fireEvent.scroll(scroll, { target: { scrollTop: 123 } });
+  await user.click(
+    screen.getByRole("button", { name: "Close workflow details" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "View execution details" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Node details" }),
+  ).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Attempt" })).toHaveValue("1");
+  expect(
+    document.querySelector<HTMLElement>(".tap-workflow-scroll")?.scrollTop,
+  ).toBe(123);
 });
 
 it("shows a completed task.step row alongside the trace panel for a terminal, traced turn (review fix round 1, Important 1)", async () => {
