@@ -33,7 +33,9 @@ Frontmatter 仅写 `name`、`description`、`tools`、`strict-tools-list`；修�
 
 `CapabilityResult(name, status, evidence_refs, limitation)` 的状态只取 `supported`、`unsupported`、`unverified`。任何缺失证据、未知字段或未运行场景都为 `unverified`，不能写零用量或推测的通过结果。`ready_for_runtime` 仅当 `byok_all_calls`、`child_identity`、`parallel`、`permissions`、`control_receipt`、`resume_workspace`、`reconcile` 全部有真实支持证据才为真。脱敏 fixture 记录采集时间、CLI 版本、模型别名、配置摘要、字段来源和脱敏方法；不保存密钥或租户数据。确定性单测与真实模型结果分栏呈现。
 
-## 4. 阶段交接（0.4，待证据）
+## 4. 阶段交接（0.4，具体缺口已记录，真实门禁待证据）
+
+[能力矩阵与交接记录](../../guides/2026-11-06-copilot-capability-validation.md)已逐项列出七项 required 能力的 `unverified` 状态及实际缺口。现有工程只证明冻结导出、进程捕获和确定性判定；CLI `1.0.105` 仍为候选，真实模型别名、BYOK 路由、事件字段、恢复方法和 fixture 均未知。严格工具白名单缺 `task`，内部 root profile 的真实不可委派边界也待验证。阶段 1 可以继续，阶段 2 不得解锁。
 
 固定组合须明确 CLI 版本、模型别名、BYOK 配置方式、启动模式、事件来源、续接方式、限制和可复现 fixture。优先使用 headless CLI；只有实际证据要求时才改变接口，不能临时引入 SDK/MCP 代理或在 UI 伪造子节点。复跑自动委派与恢复场景后，才将真实字段与能力限制映射进阶段 2 适配设计。外层 LangGraph 只持有父任务生命周期，不与 Copilot 同时规划其内部子任务。任一 required 能力未证实，阶段 2 不解除门禁；阶段 1 的原生通用任务工作可按独立计划推进。
 

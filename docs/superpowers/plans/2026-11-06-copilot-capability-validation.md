@@ -125,8 +125,9 @@ TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 TAP_RUN_COPILOT_PROBE=1 uv run --project apps/
 
 **Interfaces:** 交付一个固定组合：CLI 版本、模型别名、BYOK 配置方式、进程模式、事件来源、续接方式、已知限制，以及 phase-2 使用的 fixture。模式优先 headless CLI；只有证据表明另一 CLI 接口必要才变更方案，不临时增加 SDK 或 MCP 代理。
 
-- [ ] 对照所有 required 结果；任何不通过均保留阻塞，不修改 UI 造事件。
-- [ ] 将真实字段映射写入阶段 2 adapter 任务；确认单次运行不同时由外层 LangGraph 和 Copilot 规划子任务。
+- [x] 对照所有 required 结果；七项均无真实证据，维持阻塞，不修改 UI 造事件。
+- [x] 将阶段 2 adapter 所需的实际字段类别和证据来源写入计划，并确认单次运行不同时由外层 LangGraph 和 Copilot 规划子任务。
+- [ ] 根据真实脱敏 fixture 将观察到的字段名和事件 schema 映射进阶段 2 adapter；当前无真实记录，不能预填。
 - [ ] 复跑一条自动委派与一条恢复场景，确认固定组合可复现；保存报告引用。
-- [ ] 对变更文档进行链接、Markdown 与差异检查；更新路线图为“能力验证通过”或“能力验证存在具体缺口”，不得直接标记编码运行已交付。
+- [x] 对变更文档进行链接、Markdown 与差异检查；路线图记为“能力验证存在具体缺口”，未标记编码运行已交付。
 - [ ] 提交 `docs: record copilot integration capability gate`，满足门禁后进入阶段 2。

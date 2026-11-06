@@ -77,7 +77,7 @@ flowchart LR
 
 | 项 | 确认范围 | 状态 |
 | --- | --- | --- |
-| 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；首版在编码任务启动前一次性生成当前项目已启用且任务获准使用的 Agent 配置，无 `tap-` 前缀，任务内冻结版本，不依赖热加载；编码任务交给 Copilot CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 已设计并确认；阶段 0.1–0.3 的冻结配置、进程采集与确定性能力矩阵已实现，阶段 1 可独立推进；真实 Copilot/LiteLLM 组合验证待配置，阶段 2 接入门禁未解锁 |
+| 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；首版在编码任务启动前一次性生成当前项目已启用且任务获准使用的 Agent 配置，无 `tap-` 前缀，任务内冻结版本，不依赖热加载；编码任务交给 Copilot CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 已设计并确认；能力验证存在具体缺口：阶段 0.1–0.3 的冻结配置、进程采集与确定性矩阵已实现，阶段 1 可独立推进；真实 runner、硬调用计数、provider 终态/子实例字段、恢复与 BYOK 路由尚未验证，七项 required 均为 unverified，阶段 2 接入门禁未解锁 |
 | 实时 Agent 流水线 | 默认助手对外统一称为 Tapper，Orchestrator 仅为内部技术角色；Agents 模块提供专业 Agent 档案与运行实例，选择 / @ 只指定专业 Agent，不单列系统 Tapper/Orchestrator；中间对话仅显示简短进度和入口，用户点击打开右侧执行侧栏，查看任务统筹进度、专业 Agent 流水线、节点详情及活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 已设计并确认；阶段 1–2 计划已编写，右侧栏交互已同步；GUI 参考明确为 Claude App（Chat/Cowork）与 Codex App |
 | 测试资产与代码版本 | 测试计划、用例始终在 TAP 管理且各自版本化；首版代码由 TAP 管理；以易懂的“自动化测试步骤”描述结构化操作、数据和预期结果 | 已设计并确认；阶段 3 计划已编写，领域归属及迁移先固化 ADR |
 | 执行与结果回写 | 首个执行器改为 TAP 管理的本机隔离容器，运行 Playwright + TypeScript；固定发布版本，回写真实结果与证据，修复形成新版本 | 已设计并确认；阶段 3 计划已编写 |

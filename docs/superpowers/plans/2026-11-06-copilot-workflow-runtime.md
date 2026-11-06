@@ -10,6 +10,12 @@
 
 **Spec:** [整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md) §3–7；[总计划](2026-11-06-agent-workflows-and-test-loop.md)；[能力验证门禁](2026-11-06-copilot-capability-validation.md)。
 
+## 阶段 0 实际门禁与 adapter 输入
+
+[阶段 0 矩阵](../../guides/2026-11-06-copilot-capability-validation.md)的七项 required 能力目前全为 `unverified`；`1.0.105` 只是候选 CLI 版本，尚无已验证的模型别名、BYOK 配置、进程模式、事件来源、续接方式或真实 fixture。阶段 0.1–0.3 的确定性结果只可用于探针合同，不能填入下面的 provider 字段或放开编码入口。阶段 1 的原生工作流可独立实施；本阶段须等真实固定组合和阶段 1 运行合同都就绪。
+
+在 Task 2.1–2.3 编码前，将阶段 0 脱敏 fixture 与 provenance 中**实际观察到**的字段映射到 `CodingCapabilities`、`CodingHandle`、`ProviderEventKey`、`normalize_event` 和控制/恢复回执：CLI/模型/配置摘要与启动命令，主子实例 ID、profile ID、父子关系、开始/结束及 provider 终态，稳定事件 ID 或源游标，LiteLLM 请求/用量关联，接收与应用回执，会话/进程/工作区续接证据。字段名、事件名和 schema 目前未知，不预填猜测值。缺可信调用计数与执行端限额、真实终态、子实例身份或恢复证据时继续阻塞；先核实严格工具组中 `task` 的映射与内部 root profile 的委派边界。固定组合还须复跑自动委派和恢复场景，记录 fixture 与报告引用。单次编码运行只由 Copilot 规划内部子任务，外层 LangGraph 保持父任务生命周期与交接职责。
+
 ## Global Constraints
 
 - 阶段 0 的 required 能力必须有真实通过证据；未通过只能继续诊断，不能发布编码入口。
