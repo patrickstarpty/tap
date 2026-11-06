@@ -133,7 +133,7 @@ def test_system_root_cannot_be_requested_as_delegate():
 
 **Interfaces:** `NativeWorkflowRuntime.start(scope, task_id: str) -> None`、`advance(scope, task_id: str, lease_token: str) -> None`；`DelegationRequest(agent_id: str, objective: str, input_refs: tuple[str, ...], expected_output: str, depends_on: tuple[str, ...])`；`delegate(scope, task_id, request, idempotency_key) -> str` 返回 node ID。`can_dispatch(dependencies: tuple[str, ...], statuses: dict[str, str], slots: int) -> bool`。
 
-- [ ] 写失败测试：
+- [x] 写失败测试：
 
 ```python
 from tap.modules.workflows.domain.delegation import can_dispatch
@@ -144,17 +144,17 @@ def test_waiting_dependency_does_not_take_a_worker_slot():
     assert not can_dispatch((), {}, 0)
 ```
 
-- [ ] 通过现有 DeterministicModelGateway 增加脚本化 response fixture：直接回答、普通工具、单委派、双独立委派、等待后汇总。运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_native_graph.py -q`，先失败。
-- [ ] 构建新图 `ingress → model ⇄ tools → verify → finalize`；工具执行按类型分派普通工具或委派命令，子运行使用独立 messages/checkpoint namespace。记录 tool_call_id→node_id，恢复不能重复 spawn；等待子任务时持久化并释放 worker，不 busy-poll、不把子任务全文塞回主上下文。复用知识能力时通过 `B/modules/knowledge/api.py` 的公开接口，在组装处注入依赖；不调用 HTTP `knowledge_service.py` 或复制 Knowledge 内部回答阶段。既有 Chat 的 `ConversationExecutionContext`、授权复检和 checkpoint v3 边界保持兼容。
-- [ ] 在生产 admission 中组合 Task 1.3 的冻结目录、进度/追加接口与路由合并接口：通过现有 Gateway 的首轮响应或显式意图确定并持久化最终 `route_decision`，执行前落实编码能力不可用与低置信度澄清；建立 durable owner/link，连接独立 worker，不能重复进入旧 Chat 队列。
-- [ ] worker 领取任务使用现有 `claim_transaction` 重试规则；新增 `TAP_WORKFLOW_ENABLED=false`、`TAP_WORKFLOW_MAX_PARALLEL_AGENTS=3`、`TAP_WORKFLOW_MAX_MODEL_CALLS=40`、`TAP_WORKFLOW_MAX_SECONDS=900`、`TAP_WORKFLOW_MAX_ATTEMPTS=3`，task 创建时冻结。费用上限可配置，未知成本保持 unknown，仍执行调用数/时间硬限制。委派和普通工具均重查授权。
-- [ ] 独立 MySQL 集成测试用 barrier 协调两个子任务，不用 sleep 证明并行；断电重启只重试未结算动作；保持旧 `test_agent_loop_mysql.py` 的既有聊天验收。
+- [x] 通过现有 DeterministicModelGateway 增加脚本化 response fixture：直接回答、普通工具、单委派、双独立委派、等待后汇总。运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_native_graph.py -q`，先失败。
+- [x] 构建新图 `ingress → model ⇄ tools → verify → finalize`；工具执行按类型分派普通工具或委派命令，子运行使用独立 messages/checkpoint namespace。记录 tool_call_id→node_id，恢复不能重复 spawn；等待子任务时持久化并释放 worker，不 busy-poll、不把子任务全文塞回主上下文。复用知识能力时通过 `B/modules/knowledge/api.py` 的公开接口，在组装处注入依赖；不调用 HTTP `knowledge_service.py` 或复制 Knowledge 内部回答阶段。既有 Chat 的 `ConversationExecutionContext`、授权复检和 checkpoint v3 边界保持兼容。
+- [x] 在生产 admission 中组合 Task 1.3 的冻结目录、进度/追加接口与路由合并接口：通过现有 Gateway 的首轮响应或显式意图确定并持久化最终 `route_decision`，执行前落实编码能力不可用与低置信度澄清；建立 durable owner/link，连接独立 worker，不能重复进入旧 Chat 队列。
+- [x] worker 领取任务使用现有 `claim_transaction` 重试规则；新增 `TAP_WORKFLOW_ENABLED=false`、`TAP_WORKFLOW_MAX_PARALLEL_AGENTS=3`、`TAP_WORKFLOW_MAX_MODEL_CALLS=40`、`TAP_WORKFLOW_MAX_SECONDS=900`、`TAP_WORKFLOW_MAX_ATTEMPTS=3`，task 创建时冻结。费用上限可配置，未知成本保持 unknown，仍执行调用数/时间硬限制。委派和普通工具均重查授权。
+- [x] 独立 MySQL 集成测试用 barrier 协调两个子任务，不用 sleep 证明并行；断电重启只重试未结算动作；保持旧 `test_agent_loop_mysql.py` 的既有聊天验收。
 
 ```bash
 TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_native_workflow.py apps/tap-ai-backend/tests/integration/test_agent_loop_mysql.py -q
 ```
 
-- [ ] 提交 `feat: run durable native agent workflows`。
+- [x] 提交 `feat: run durable native agent workflows`（`bd709a14`）。
 
 ### Task 1.5：快照、SSE、节点详情与控制 HTTP
 
