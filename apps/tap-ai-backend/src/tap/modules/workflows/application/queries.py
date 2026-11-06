@@ -187,6 +187,15 @@ def _task_view(
         if origin == "native"
         else str(request.get("display_name") or "Agent"),
         "goalSummary": "",
+        "recentEvent": None
+        if row.get("recent_event") is None
+        else {
+            "kind": row["recent_event"]["kind"]
+            if row["recent_event"]["kind"] in _PUBLIC_FIELDS
+            or row["recent_event"]["kind"] in _TEXT_FIELDS
+            else "activity",
+            "occurredAt": row["recent_event"]["occurred_at"],
+        },
         "createdAt": row["created_at"],
         "matchingRuns": [
             {
@@ -342,7 +351,7 @@ class WorkflowQueries:
         for row in rows:
             nodes = tuple(row.get("nodes", ()))
             item = _task_view(row, nodes, agent_id)
-            item["goalSummary"] = await self._goal_summary(row.get("goal"))
+            item["goalSummary"] = await self._goal_summary(row["request_json"].get("goal"))
             items.append(item)
         return {"items": items, "nextCursor": next_cursor}
 

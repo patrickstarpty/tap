@@ -169,8 +169,8 @@ async def test_filtered_agent_list_has_typed_parallel_run_summaries() -> None:
                         "plan_revision": 2,
                         "last_sequence": 5,
                         "created_at": now,
-                        "request_json": {"origin": "native"},
-                        "goal": "Review",
+                        "request_json": {"origin": "native", "goal": "Review"},
+                        "recent_event": {"kind": "node.finished", "occurred_at": now},
                         "nodes": (
                             {
                                 "node_id": "n1",
@@ -205,7 +205,13 @@ async def test_filtered_agent_list_has_typed_parallel_run_summaries() -> None:
                 None,
             )
 
-    page = await WorkflowQueries(Store()).list(None, 20, None, "qae")
+    class Redactor:
+        async def redact_text(self, text):
+            return text
+
+    page = await WorkflowQueries(Store(), redactor=Redactor()).list(None, 20, None, "qae")
+    assert page["items"][0]["goalSummary"] == "Review"
+    assert page["items"][0]["recentEvent"] == {"kind": "node.finished", "occurredAt": now}
     runs = page["items"][0]["matchingRuns"]
     assert "resume" in page["items"][0]["availableActions"]
     assert [(run["nodeId"], run["agentId"], run["attempt"]) for run in runs] == [

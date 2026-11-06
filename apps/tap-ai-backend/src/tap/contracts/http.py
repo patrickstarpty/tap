@@ -1362,6 +1362,7 @@ class AnswerFeedbackView(ContractModel):
 
 class ConversationTurnSummary(ContractModel):
     turn_id: str
+    workflow_task_id: str | None = None
     state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
     attempt: StrictInt
     input_snapshot_digest: CanonicalSha256

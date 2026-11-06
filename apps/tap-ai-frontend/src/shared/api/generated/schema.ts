@@ -3182,6 +3182,8 @@ export interface components {
             traceId?: string | null;
             /** Turnid */
             turnId: string;
+            /** Workflowtaskid */
+            workflowTaskId?: string | null;
         };
         /** DocumentAccepted */
         DocumentAccepted: {
@@ -7196,6 +7198,16 @@ export interface components {
             sourceRuntime: string;
             status: components["schemas"]["WorkflowStatus"];
         };
+        /** WorkflowRecentEvent */
+        WorkflowRecentEvent: {
+            /** Kind */
+            kind: string;
+            /**
+             * Occurredat
+             * Format: date-time
+             */
+            occurredAt: string;
+        };
         /**
          * WorkflowStatus
          * @enum {string}
@@ -7254,6 +7266,7 @@ export interface components {
             planRevision: number;
             /** Projectid */
             projectId: string;
+            recentEvent?: components["schemas"]["WorkflowRecentEvent"] | null;
             status: components["schemas"]["WorkflowStatus"];
             /** Taskid */
             taskId: string;
@@ -7286,6 +7299,7 @@ export interface components {
             planRevision: number;
             /** Projectid */
             projectId: string;
+            recentEvent?: components["schemas"]["WorkflowRecentEvent"] | null;
             status: components["schemas"]["WorkflowStatus"];
             /** Taskid */
             taskId: string;

@@ -10,7 +10,7 @@ from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import Result, Row, RowMapping
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -394,12 +394,55 @@ class MysqlWorkflowStore:
                 if task_ids
                 else ()
             )
+            latest = (
+                select(
+                    workflow_event.c.task_id,
+                    func.max(workflow_event.c.sequence).label("sequence"),
+                )
+                .where(
+                    *scope_predicates(workflow_event, scope),
+                    workflow_event.c.task_id.in_(task_ids),
+                )
+                .group_by(workflow_event.c.task_id)
+                .subquery()
+            )
+            event_rows = (
+                (
+                    await session.execute(
+                        select(
+                            workflow_event.c.task_id,
+                            workflow_event.c.kind,
+                            workflow_event.c.occurred_at,
+                        )
+                        .join(
+                            latest,
+                            and_(
+                                workflow_event.c.task_id == latest.c.task_id,
+                                workflow_event.c.sequence == latest.c.sequence,
+                            ),
+                        )
+                        .where(*scope_predicates(workflow_event, scope))
+                    )
+                )
+                .mappings()
+                .all()
+                if task_ids
+                else ()
+            )
+        latest_by_task = {row["task_id"]: dict(row) for row in event_rows}
         by_task: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
         for node in node_rows:
             by_task[node["task_id"]].append(dict(node))
         has_more = len(rows) > limit
         return (
-            tuple({**dict(row), "nodes": tuple(by_task[row["task_id"]])} for row in page),
+            tuple(
+                {
+                    **dict(row),
+                    "nodes": tuple(by_task[row["task_id"]]),
+                    "recent_event": latest_by_task.get(row["task_id"]),
+                }
+                for row in page
+            ),
             page[-1]["task_id"] if has_more else None,
         )
 

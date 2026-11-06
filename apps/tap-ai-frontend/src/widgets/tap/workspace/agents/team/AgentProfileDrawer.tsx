@@ -13,6 +13,7 @@ import {
   type TeamPeriod,
 } from "../../../../../features/knowledge/api/agentTeam";
 import { AccessibleDialog } from "../../AccessibleDialog";
+import { RunList } from "../../../../../features/workflows/components/RunList";
 import { Avatar } from "./avatar";
 import type { WorkspaceCopy } from "../../copy";
 import { bucketAxis, fillBuckets, type Bucket } from "./buckets";
@@ -44,7 +45,7 @@ const JOB_TITLE_MAX = 64;
 const NOTE_MAX = 500;
 
 export type ProfileTab =
-  "basic" | "workload" | "history" | "feedback" | "settings";
+  "basic" | "workload" | "history" | "feedback" | "settings" | "runs";
 
 export interface AgentProfileDrawerProps {
   projectId: string;
@@ -53,6 +54,11 @@ export interface AgentProfileDrawerProps {
   copy: WorkspaceCopy;
   onClose: () => void;
   onViewConfig: (revisionId: string) => void;
+  onOpenWorkflow?: (
+    taskId: string,
+    conversationId: string | null,
+    nodeId?: string,
+  ) => void;
   opener?: HTMLElement | null;
   /** Section to open on, e.g. pending feedback from "Feedback waiting for me". */
   initialTab?: ProfileTab;
@@ -84,6 +90,7 @@ export function AgentProfileDrawer({
   copy,
   onClose,
   onViewConfig,
+  onOpenWorkflow = () => undefined,
   opener = null,
   initialTab = "basic",
 }: AgentProfileDrawerProps) {
@@ -99,7 +106,13 @@ export function AgentProfileDrawer({
   const row = detail?.row;
   const displayName = row === undefined ? null : memberDisplayName(row, text);
 
-  const tabs: ProfileTab[] = ["basic", "workload", "history", "feedback"];
+  const tabs: ProfileTab[] = [
+    "basic",
+    "workload",
+    "history",
+    "feedback",
+    "runs",
+  ];
   if (row?.kind === "custom") tabs.push("settings");
   const active = tabs.includes(tab) ? tab : "basic";
 
@@ -215,7 +228,7 @@ export function AgentProfileDrawer({
                 tabIndex={active === id ? 0 : -1}
                 onClick={() => setTab(id)}
               >
-                {labels.tabs[id]}
+                {id === "runs" ? "Runs" : labels.tabs[id]}
                 {id === "feedback" && detail.pendingFeedback.length > 0 ? (
                   <span className="tap-profile-tab-count" aria-hidden="true">
                     {detail.pendingFeedback.length}
@@ -230,7 +243,13 @@ export function AgentProfileDrawer({
             aria-labelledby={tabId(active)}
             className="tap-profile-body"
           >
-            {active === "basic" ? (
+            {active === "runs" ? (
+              <RunList
+                projectId={projectId}
+                agentId={agentKey}
+                onOpen={onOpenWorkflow}
+              />
+            ) : active === "basic" ? (
               <BasicPanel
                 detail={detail}
                 copy={copy}
@@ -286,6 +305,11 @@ function BasicPanel({
   timezone: string;
   runtimeStatus: CellContext["runtimeStatus"];
   onViewConfig: (revisionId: string) => void;
+  onOpenWorkflow?: (
+    taskId: string,
+    conversationId: string | null,
+    nodeId?: string,
+  ) => void;
 }) {
   const text = copy.agentTeam;
   const labels = text.profile;
@@ -568,6 +592,11 @@ function HistoryPanel({
   copy: WorkspaceCopy;
   timezone: string;
   onViewConfig: (revisionId: string) => void;
+  onOpenWorkflow?: (
+    taskId: string,
+    conversationId: string | null,
+    nodeId?: string,
+  ) => void;
 }) {
   const labels = copy.agentTeam.profile;
   const locale = teamLocale(copy);

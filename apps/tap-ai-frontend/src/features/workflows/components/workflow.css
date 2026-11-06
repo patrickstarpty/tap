@@ -1,0 +1,262 @@
+.tap-workflow-sidebar {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-left: 1px solid var(--tap-line);
+  background: var(--tap-canvas);
+  color: var(--tap-ink);
+  font-size: 12px;
+}
+.tap-workflow-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 16px 12px;
+  border-bottom: 1px solid var(--tap-line);
+}
+.tap-workflow-header h2,
+.tap-workflow-sidebar h2,
+.tap-workflow-sidebar h3 {
+  margin: 0;
+  color: var(--tap-ink);
+}
+.tap-workflow-header h2 {
+  font-size: 14px;
+}
+.tap-workflow-sidebar h3 {
+  font-size: 12px;
+  margin-top: 18px;
+  margin-bottom: 7px;
+}
+.tap-workflow-sidebar button,
+.tap-workflow-run-list button,
+.tap-run-status-link button {
+  font: inherit;
+  cursor: pointer;
+}
+.tap-workflow-sidebar button:focus-visible,
+.tap-workflow-run-list button:focus-visible,
+.tap-run-status-link button:focus-visible,
+.tap-workflow-sidebar textarea:focus-visible,
+.tap-workflow-sidebar select:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+.tap-workflow-sidebar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.tap-workflow-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+}
+.tap-workflow-overview > section + section,
+.tap-workflow-node-detail > section {
+  border-top: 1px solid var(--tap-line);
+  margin-top: 18px;
+  padding-top: 14px;
+}
+.tap-workflow-progress > h2 {
+  font-size: 13px;
+}
+.tap-workflow-goal {
+  font-weight: 600;
+  line-height: 1.45;
+}
+.tap-workflow-meta {
+  color: var(--tap-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.tap-workflow-status {
+  color: var(--tap-muted);
+  text-transform: capitalize;
+}
+.tap-workflow-status[data-status="running"],
+.tap-workflow-status[data-status="succeeded"] {
+  color: var(--tap-accent-dark);
+}
+.tap-workflow-status[data-status="failed"],
+.tap-workflow-status[data-status="canceled"] {
+  color: #a12622;
+}
+.tap-workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tap-workflow-actions button,
+.tap-workflow-node-detail > button,
+.tap-workflow-steer button,
+.tap-workflow-logs > button {
+  border: 1px solid var(--tap-line);
+  border-radius: 6px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  padding: 6px 9px;
+}
+.tap-workflow-graph {
+  position: relative;
+  display: grid;
+  gap: 30px;
+  margin-top: 10px;
+}
+.tap-workflow-edges {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: visible;
+  color: var(--tap-accent-dark);
+  pointer-events: none;
+}
+.tap-workflow-edges > path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  opacity: 0.72;
+}
+.tap-workflow-layer {
+  position: relative;
+  z-index: 1;
+}
+.tap-workflow-layer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  align-items: start;
+  gap: 6px;
+}
+.tap-workflow-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tap-workflow-node > button:first-child {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  padding: 9px;
+  text-align: left;
+}
+.tap-workflow-node > button:first-child:hover {
+  border-color: var(--tap-accent);
+}
+.tap-workflow-node strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.tap-workflow-node small {
+  grid-column: 1 / -1;
+  color: var(--tap-muted);
+}
+.tap-workflow-kind {
+  color: var(--tap-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.tap-workflow-fold {
+  border: 0;
+  background: transparent;
+  color: var(--tap-accent-dark);
+  font-size: 10px;
+}
+.tap-workflow-empty {
+  color: var(--tap-muted);
+}
+.tap-workflow-timeline ol,
+.tap-workflow-logs ol {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.tap-workflow-timeline li,
+.tap-workflow-logs li {
+  border-top: 1px solid var(--tap-line);
+  padding: 8px 0;
+}
+.tap-workflow-timeline time,
+.tap-workflow-logs time {
+  display: block;
+  color: var(--tap-muted);
+  font-size: 10px;
+}
+.tap-workflow-steer form {
+  display: grid;
+  gap: 6px;
+}
+.tap-workflow-steer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  border: 1px solid var(--tap-line);
+  border-radius: 6px;
+  padding: 7px;
+  background: var(--tap-surface);
+  color: var(--tap-ink);
+  font: inherit;
+}
+.tap-workflow-node-detail select {
+  margin-left: 8px;
+}
+.tap-run-status-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 11px;
+  color: var(--tap-muted);
+}
+.tap-run-status-link button {
+  border: 0;
+  background: none;
+  color: var(--tap-accent-dark);
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tap-workflow-run-list {
+  padding: 16px;
+}
+.tap-workflow-run-list ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.tap-workflow-run-list li > button {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid var(--tap-line);
+  border-radius: 8px;
+  background: var(--tap-surface);
+  padding: 10px;
+  color: var(--tap-ink);
+}
+.tap-workflow-run-list li > button:hover {
+  border-color: var(--tap-accent);
+}
+.tap-workflow-run-list time,
+.tap-workflow-run-list small {
+  color: var(--tap-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tap-workflow-sidebar *,
+  .tap-workflow-run-list * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

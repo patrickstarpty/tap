@@ -321,6 +321,7 @@ def _turn(
     frozen = value.input_snapshot.value
     return ConversationTurnSummary(
         turn_id=value.turn_id,
+        workflow_task_id=value.workflow_task_id,
         state=value.state,
         attempt=value.attempt,
         input_snapshot_digest=value.input_snapshot.digest,

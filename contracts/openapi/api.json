@@ -3652,6 +3652,17 @@
           "turnId": {
             "title": "Turnid",
             "type": "string"
+          },
+          "workflowTaskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflowtaskid"
           }
         },
         "required": [
@@ -15085,6 +15096,26 @@
         "title": "WorkflowNodeView",
         "type": "object"
       },
+      "WorkflowRecentEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "occurredAt"
+        ],
+        "title": "WorkflowRecentEvent",
+        "type": "object"
+      },
       "WorkflowStatus": {
         "enum": [
           "queued",
@@ -15249,6 +15280,16 @@
             "title": "Projectid",
             "type": "string"
           },
+          "recentEvent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowRecentEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/WorkflowStatus"
           },
@@ -15348,6 +15389,16 @@
           "projectId": {
             "title": "Projectid",
             "type": "string"
+          },
+          "recentEvent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowRecentEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/WorkflowStatus"

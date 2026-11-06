@@ -106,6 +106,11 @@ class WorkflowMatchingRun(WorkflowContract):
     created_at: datetime
 
 
+class WorkflowRecentEvent(WorkflowContract):
+    kind: str
+    occurred_at: datetime
+
+
 class WorkflowTaskView(WorkflowContract):
     task_id: str
     project_id: str
@@ -119,6 +124,7 @@ class WorkflowTaskView(WorkflowContract):
     goal_summary: str = Field(max_length=200)
     created_at: datetime
     matching_runs: list[WorkflowMatchingRun] = Field(default_factory=list)
+    recent_event: WorkflowRecentEvent | None = None
 
 
 class WorkflowTaskPage(WorkflowContract):

@@ -55,6 +55,24 @@ def _other_owner(service: ConversationService, conversation_id: str) -> None:
     service.repository.values[conversation_id] = replace(stored, actor_id="someone-else")
 
 
+def test_conversation_detail_recovers_linked_task_without_changing_frozen_input():
+    client, service = _client("Run workflow")
+    stored = service.repository.values["conversation-0"]
+    original = stored.turns[0]
+    service.repository.values["conversation-0"] = replace(
+        stored,
+        turns=(replace(original, workflow_task_id="task-1"),),
+    )
+
+    response = client.get(f"{BASE}/conversation-0")
+
+    assert response.status_code == 200, response.text
+    turn = response.json()["turns"][0]
+    assert turn["workflowTaskId"] == "task-1"
+    assert turn["input"]["workflowTaskId"] is None
+    assert turn["inputSnapshotDigest"] == original.input_snapshot.digest
+
+
 def test_history_control_routes_are_published_with_problem_responses():
     client, _ = _client()
     paths = client.app.openapi()["paths"]

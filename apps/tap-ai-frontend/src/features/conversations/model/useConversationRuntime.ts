@@ -116,13 +116,32 @@ export function useConversationRuntime(
   }, [conversationId, events.data?.items]);
   const currentAccepted =
     accepted?.conversationId === conversationId ? accepted : null;
+  const knownTurns = detail.data?.turns ?? [];
+  const acceptedInDetail =
+    currentAccepted !== null &&
+    knownTurns.some((turn) => turn.turnId === currentAccepted.turnId);
+  const candidates = [
+    ...knownTurns.map((turn) => ({ turnId: turn.turnId, status: turn.state })),
+    ...(currentAccepted !== null && !acceptedInDetail
+      ? [{ turnId: currentAccepted.turnId, status: currentAccepted.state }]
+      : []),
+  ];
+  // A continuation can acknowledge its own Turn while the origin still runs.
+  // Anchor the conversation stream to the oldest active Turn, not the latest receipt.
   const targetTurnId =
-    currentAccepted?.turnId ?? detail.data?.turns.at(-1)?.turnId ?? null;
-  const targetDetail = detail.data?.turns.find(
+    candidates.find(
+      (turn) =>
+        !terminal(turn.status) &&
+        !terminal(recovered.turns[turn.turnId]?.status),
+    )?.turnId ??
+    candidates.at(-1)?.turnId ??
+    null;
+  const targetDetail = detail.data?.turns?.find(
     (turn) => turn.turnId === targetTurnId,
   );
   const targetIsInsights =
-    currentAccepted?.kind === "insights" ||
+    (currentAccepted?.turnId === targetTurnId &&
+      currentAccepted.kind === "insights") ||
     targetDetail?.input.insightsQueryId != null;
   const recoveredTarget =
     targetTurnId === null ? undefined : recovered.turns[targetTurnId];
@@ -185,10 +204,7 @@ export function useConversationRuntime(
     stream.error,
     stream.state,
   ]);
-  const targetStatus = turns.find(
-    (turn) => turn.turnId === targetTurnId,
-  )?.status;
-  const hasActiveTurn = targetTurnId !== null && !terminal(targetStatus);
+  const hasActiveTurn = turns.some((turn) => !terminal(turn.status));
   useEffect(() => {
     setPollEvents(hasActiveTurn);
   }, [hasActiveTurn]);

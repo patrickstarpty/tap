@@ -93,7 +93,17 @@ async def test_scoped_agent_page_and_node_attempt_artifact_visibility(owned_proj
                     **scope_values(VALIDATION_SCOPE),
                 )
             )
-        rows = await WorkflowQueries(store).list(VALIDATION_SCOPE, 20, None, "qae")
+
+        class Redactor:
+            async def redact_text(self, text: str) -> str:
+                return text
+
+        rows = await WorkflowQueries(store, redactor=Redactor()).list(
+            VALIDATION_SCOPE, 20, None, "qae"
+        )
+        assert rows["items"][0]["goalSummary"] == "Review"
+        assert rows["items"][0]["recentEvent"]["kind"] == "task.created"
+        assert isinstance(rows["items"][0]["recentEvent"]["occurredAt"], datetime)
         assert [row["taskId"] for row in rows["items"]] == [first.task_id]
         assert {run["nodeId"] for run in rows["items"][0]["matchingRuns"]} == {"n1", "n2"}
         detail = await WorkflowQueries(store).node(VALIDATION_SCOPE, first.task_id, "n1")
@@ -140,6 +150,11 @@ async def test_scoped_agent_page_and_node_attempt_artifact_visibility(owned_proj
         logs = await queries.logs(VALIDATION_SCOPE, first.task_id, "n1", 1, 1, 50)
         assert [item["sequence"] for item in logs["items"]] == [2]
         assert "secret" not in str(logs)
+        updated_page = await WorkflowQueries(store, redactor=Redactor()).list(
+            VALIDATION_SCOPE, 20, None, "qae"
+        )
+        assert updated_page["items"][0]["recentEvent"]["kind"] == "activity"
+        assert "secret" not in str(updated_page)
         async with sessions.begin() as session:
             await session.execute(
                 delete(workflow_event).where(workflow_event.c.event_id == "private-event")

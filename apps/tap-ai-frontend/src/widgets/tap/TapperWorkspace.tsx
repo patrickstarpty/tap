@@ -55,6 +55,13 @@ import {
   useTurnTrace,
 } from "../../features/conversations/api/queries";
 import { useConversationRuntime } from "../../features/conversations/model/useConversationRuntime";
+import { useWorkflowTask } from "../../features/workflows/api/queries";
+import { WorkflowSidebar } from "../../features/workflows/components/WorkflowSidebar";
+import { RunStatusLink } from "../../features/workflows/components/RunStatusLink";
+import {
+  agentSelectionFields,
+  followUpTaskId,
+} from "../../features/workflows/model/selection";
 import { TracePanel } from "../../features/conversations/trace/TracePanel";
 import { ModelCallDrawer } from "../../features/conversations/trace/ModelCallDrawer";
 import { AnswerFeedback } from "../../features/conversations/feedback/AnswerFeedback";
@@ -1494,6 +1501,9 @@ export function TapperWorkspace() {
   const [sourcesCollapsed, setSourcesCollapsed] = useState(
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
+  const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
+  const [workflowTaskId, setWorkflowTaskId] = useState<string | null>(null);
+  const [workflowNodeId, setWorkflowNodeId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<readonly Conversation[]>(
     () => [createConversation("draft")],
   );
@@ -1523,6 +1533,26 @@ export function TapperWorkspace() {
   }, [projectId, publishedSourcesQuery.data, publishedSourcesQuery.isSuccess]);
   const conversationRuntime = useConversationRuntime(projectId);
   const activeConversationId = conversationRuntime.conversationId;
+  const latestLinkedTaskId =
+    [...(conversationRuntime.detail?.turns ?? [])]
+      .reverse()
+      .find((turn) => turn.workflowTaskId != null)?.workflowTaskId ?? null;
+  const activeWorkflowTaskId = workflowTaskId ?? latestLinkedTaskId;
+  const workflow = useWorkflowTask(projectId, activeWorkflowTaskId);
+  const openWorkflow = (
+    taskId: string,
+    conversationId?: string | null,
+    nodeId?: string,
+  ) => {
+    if (conversationId && conversationId !== activeConversationId)
+      conversationRuntime.selectConversation(conversationId);
+    setWorkflowTaskId(taskId);
+    setWorkflowNodeId(nodeId ?? null);
+    setWorkflowPanelOpen(true);
+    setSourcesCollapsed(true);
+    setActiveModule("tapper");
+    if (isCompactViewport) setSidebarCollapsed(true);
+  };
   const selectRuntimeConversation = conversationRuntime.selectConversation;
   // The most recent selection, readable by a `setConversations` updater that
   // an effect queued from an older render: history auto-selection and a New
@@ -1531,6 +1561,11 @@ export function TapperWorkspace() {
   const latestActiveConversationId = useRef("draft");
   const setActiveConversationId = useCallback(
     (id: string) => {
+      if (id !== latestActiveConversationId.current) {
+        setWorkflowPanelOpen(false);
+        setWorkflowTaskId(null);
+        setWorkflowNodeId(null);
+      }
       latestActiveConversationId.current = id;
       selectRuntimeConversation(id);
     },
@@ -1691,7 +1726,12 @@ export function TapperWorkspace() {
           // the Skills/Agents workspace pages can show a "Disabled"
           // filter. The composer must only ever offer selectable (latest
           // + enabled) Agents.
-          .filter((item) => item.isLatest && item.status === "enabled")
+          .filter(
+            (item) =>
+              item.isLatest &&
+              item.status === "enabled" &&
+              item.agentId !== "orchestrator",
+          )
           .map((item) => {
             const presentation = aiAssetPresentation(
               "agent",
@@ -1703,6 +1743,7 @@ export function TapperWorkspace() {
               kind: "agent",
               origin: "built-in",
               name: item.displayName,
+              identity: item.agentId,
               description: presentation.description,
               instructions: presentation.instructions,
             };
@@ -1859,10 +1900,17 @@ export function TapperWorkspace() {
         return accepted === undefined ? [] : [{ ...accepted, ...facts }];
       }),
     ];
+    const latestInput = conversationDetail.turns.at(-1)?.input;
     const restoredAgentIds =
-      conversationDetail.turns.at(-1)?.input.agentRevisionId == null
-        ? []
-        : [conversationDetail.turns.at(-1)!.input.agentRevisionId!];
+      runtime.data?.workflowEnabled && latestInput?.requestedAgentIds?.length
+        ? (aiAssets.agents.data ?? [])
+            .filter((item) =>
+              latestInput.requestedAgentIds!.includes(item.assetId),
+            )
+            .map((item) => item.revisionId)
+        : latestInput?.agentRevisionId == null
+          ? []
+          : [latestInput.agentRevisionId];
     setConversations((current) =>
       current.map((conversation) =>
         conversation.id === conversationDetail.conversationId
@@ -1911,6 +1959,8 @@ export function TapperWorkspace() {
     );
   }, [
     agentById,
+    aiAssets.agents.data,
+    runtime.data?.workflowEnabled,
     conversationDetail,
     conversationRuntime.turns,
     selectableModelAliases,
@@ -1923,7 +1973,9 @@ export function TapperWorkspace() {
   ].includes(activeModule);
   const tapperSidebarOpen = tapperWorkspaceActive && !sidebarCollapsed;
   const mobileTapperDrawerOpen = isNarrowViewport && tapperSidebarOpen;
-  const knowledgeSourcesOpen = activeModule === "tapper" && !sourcesCollapsed;
+  const rightPanelCollapsed = sourcesCollapsed && !workflowPanelOpen;
+  const knowledgeSourcesOpen =
+    activeModule === "tapper" && !rightPanelCollapsed;
   const compactSourcesDrawerOpen = isCompactViewport && knowledgeSourcesOpen;
   const dismissTapperSidebar = useCallback(() => {
     pendingFocusTarget.current = {
@@ -1945,6 +1997,7 @@ export function TapperWorkspace() {
       kind: "selector",
       selector: ".tap-panel-toggle--right-expand",
     };
+    setWorkflowPanelOpen(false);
     setSourcesCollapsed(true);
   }, []);
   const expandKnowledgeSources = useCallback(() => {
@@ -1953,6 +2006,7 @@ export function TapperWorkspace() {
       selector: ".tap-panel-toggle--right-collapse",
     };
     if (isCompactViewport) setSidebarCollapsed(true);
+    setWorkflowPanelOpen(false);
     setSourcesCollapsed(false);
   }, [isCompactViewport]);
 
@@ -1977,7 +2031,13 @@ export function TapperWorkspace() {
       target.focus({ preventScroll: true });
     }
     pendingFocusTarget.current = null;
-  }, [activeConversationId, activeModule, sidebarCollapsed, sourcesCollapsed]);
+  }, [
+    activeConversationId,
+    activeModule,
+    sidebarCollapsed,
+    sourcesCollapsed,
+    workflowPanelOpen,
+  ]);
 
   useEffect(() => {
     const narrowMedia = window.matchMedia("(max-width: 640px)");
@@ -2436,7 +2496,9 @@ export function TapperWorkspace() {
     }
     return {
       ...conversation,
-      selectedAgentIds: [...conversation.selectedAgentIds, agentId],
+      selectedAgentIds: runtime.data?.workflowEnabled
+        ? [...conversation.selectedAgentIds, agentId]
+        : [agentId],
       modelId: resolvedAlias,
     };
   };
@@ -2547,6 +2609,9 @@ export function TapperWorkspace() {
       ...current.filter((item) => item.id !== id),
     ]);
     latestActiveConversationId.current = id;
+    setWorkflowPanelOpen(false);
+    setWorkflowTaskId(null);
+    setWorkflowNodeId(null);
     conversationRuntime.reset();
     setActiveModule("tapper");
     setSidebarCollapsed(isNarrowViewport);
@@ -2730,8 +2795,20 @@ export function TapperWorkspace() {
             .filter((item) => futureSourceIds.includes(item.sourceId))
             .map((item) => item.revisionId),
           documentRevisionIds: [],
-          agentRevisionId:
-            selectedAgentIds.find((id) => allowedAgentIds.has(id)) ?? null,
+          ...agentSelectionFields(
+            runtime.data?.workflowEnabled === true,
+            selectedAgentIds.filter((id) => allowedAgentIds.has(id)),
+            agentById,
+          ),
+          ...(runtime.data?.workflowEnabled &&
+          followUpTaskId(workflow.snapshot, activeConversation.id)
+            ? {
+                workflowTaskId: followUpTaskId(
+                  workflow.snapshot,
+                  activeConversation.id,
+                ),
+              }
+            : {}),
           skillRevisionIds: selectedSkillIds.filter((id) =>
             allowedSkillIds.has(id),
           ),
@@ -2739,6 +2816,8 @@ export function TapperWorkspace() {
         return { kind: "chat", input };
       });
       if (accepted === null) return false;
+      setWorkflowTaskId(null);
+      setWorkflowNodeId(null);
       const optimistic = appendTurn(
         { ...activeConversation, id: accepted.conversationId },
         {
@@ -2856,9 +2935,9 @@ export function TapperWorkspace() {
       >
         <div hidden={activeModule !== "tapper"}>
           <div
-            className={`tap-tapper-layout${sourcesCollapsed ? " tap-tapper-layout--sources-collapsed" : ""}`}
+            className={`tap-tapper-layout${rightPanelCollapsed ? " tap-tapper-layout--sources-collapsed" : ""}`}
           >
-            {sourcesCollapsed ? (
+            {rightPanelCollapsed ? (
               <button
                 type="button"
                 className="tap-panel-toggle tap-panel-toggle--floating tap-panel-toggle--right-expand"
@@ -2956,67 +3035,96 @@ export function TapperWorkspace() {
                 }))
               }
               renderAssistantTurn={(turn) => (
-                <AssistantResponse
-                  contentCopy={WORKSPACE_COPY[turn.locale]}
-                  turn={turn}
-                  insightsClient={insightsClient}
-                  conversationId={activeConversation.id}
-                  projectId={projectId}
-                  onOpenDocument={(documentId) => {
-                    setSourcesCollapsed(false);
-                    setActiveCitation(null);
-                    setActiveDocumentId(documentId);
-                  }}
-                  documentName={(documentId) =>
-                    publishedDocumentNames.get(documentId)
-                  }
-                  activityEvents={(conversationRuntime.events ?? []).filter(
-                    (event) => event.turnId === turn.id,
-                  )}
-                  onOpenAgentRevision={(revisionId) => {
-                    setPendingAgentRevisionId(revisionId);
-                    setActiveModule("agents");
-                  }}
-                  onOpenSkillRevision={(revisionId) => {
-                    setPendingSkillRevisionId(revisionId);
-                    setActiveModule("skills");
-                  }}
-                  onOpenCitation={(citationId, trigger) => {
-                    const citation = turn.response?.citations.find(
-                      (item) => item.citationId === citationId,
-                    );
-                    if (citation !== undefined) {
-                      citationTrigger.current = trigger;
+                <>
+                  <AssistantResponse
+                    contentCopy={WORKSPACE_COPY[turn.locale]}
+                    turn={turn}
+                    insightsClient={insightsClient}
+                    conversationId={activeConversation.id}
+                    projectId={projectId}
+                    onOpenDocument={(documentId) => {
+                      setWorkflowPanelOpen(false);
                       setSourcesCollapsed(false);
-                      setActiveDocumentId(null);
-                      setActiveCitation((current) => ({
-                        citation,
-                        conversationId: activeConversation.id,
-                        generation: (current?.generation ?? 0) + 1,
-                        id: citationId,
-                        turnId: turn.id,
-                      }));
+                      setActiveCitation(null);
+                      setActiveDocumentId(documentId);
+                    }}
+                    documentName={(documentId) =>
+                      publishedDocumentNames.get(documentId)
                     }
-                  }}
-                  onRetryConversation={conversationRuntime.retry}
-                  onResend={
-                    turn.insightsQueryId === undefined
-                      ? () =>
-                          void sendMessage(turn.prompt, resendContextOf(turn))
-                      : undefined
-                  }
-                  onGenerateTestPlan={
-                    projectId !== null &&
-                    turn.status === "completed" &&
-                    turn.answerEvidenceSnapshotDigest != null &&
-                    turn.inputSnapshotDigest !== undefined &&
-                    turn.agentRevisionId != null &&
-                    (turn.skillRevisionIds?.length ?? 0) > 0 &&
-                    (turn.response?.citations.length ?? 0) > 0
-                      ? () => generateTestPlan(activeConversation, turn)
-                      : undefined
-                  }
-                />
+                    activityEvents={(conversationRuntime.events ?? []).filter(
+                      (event) => event.turnId === turn.id,
+                    )}
+                    onOpenAgentRevision={(revisionId) => {
+                      setPendingAgentRevisionId(revisionId);
+                      setActiveModule("agents");
+                    }}
+                    onOpenSkillRevision={(revisionId) => {
+                      setPendingSkillRevisionId(revisionId);
+                      setActiveModule("skills");
+                    }}
+                    onOpenCitation={(citationId, trigger) => {
+                      const citation = turn.response?.citations.find(
+                        (item) => item.citationId === citationId,
+                      );
+                      if (citation !== undefined) {
+                        citationTrigger.current = trigger;
+                        setWorkflowPanelOpen(false);
+                        setSourcesCollapsed(false);
+                        setActiveDocumentId(null);
+                        setActiveCitation((current) => ({
+                          citation,
+                          conversationId: activeConversation.id,
+                          generation: (current?.generation ?? 0) + 1,
+                          id: citationId,
+                          turnId: turn.id,
+                        }));
+                      }
+                    }}
+                    onRetryConversation={conversationRuntime.retry}
+                    onResend={
+                      turn.insightsQueryId === undefined
+                        ? () =>
+                            void sendMessage(turn.prompt, resendContextOf(turn))
+                        : undefined
+                    }
+                    onGenerateTestPlan={
+                      projectId !== null &&
+                      turn.status === "completed" &&
+                      turn.answerEvidenceSnapshotDigest != null &&
+                      turn.inputSnapshotDigest !== undefined &&
+                      turn.agentRevisionId != null &&
+                      (turn.skillRevisionIds?.length ?? 0) > 0 &&
+                      (turn.response?.citations.length ?? 0) > 0
+                        ? () => generateTestPlan(activeConversation, turn)
+                        : undefined
+                    }
+                  />
+                  {(() => {
+                    const linked = conversationRuntime.detail?.turns.find(
+                      (item) => item.turnId === turn.id,
+                    )?.workflowTaskId;
+                    return linked ? (
+                      workflow.snapshot?.taskId === linked ? (
+                        <RunStatusLink
+                          snapshot={workflow.snapshot}
+                          onOpen={() =>
+                            openWorkflow(linked, activeConversation.id)
+                          }
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="tap-run-status-link"
+                          onClick={() =>
+                            openWorkflow(linked, activeConversation.id)
+                          }
+                        >
+                          View execution details
+                        </button>
+                      )
+                    ) : null;
+                  })()}
+                </>
               )}
               skills={skills}
               sources={sourceItems}
@@ -3032,12 +3140,45 @@ export function TapperWorkspace() {
             ) : null}
             <div
               className="tap-sources-shell"
-              aria-hidden={sourcesCollapsed ? true : undefined}
-              data-collapsed={sourcesCollapsed}
-              inert={sourcesCollapsed ? true : undefined}
+              aria-hidden={rightPanelCollapsed ? true : undefined}
+              data-collapsed={rightPanelCollapsed}
+              inert={rightPanelCollapsed ? true : undefined}
             >
-              {activeCitation !== null &&
-              isEdgeCitation(activeCitation.citation) ? (
+              {workflowPanelOpen && projectId !== null ? (
+                workflow.snapshot ? (
+                  <WorkflowSidebar
+                    projectId={projectId}
+                    snapshot={workflow.snapshot}
+                    connection={workflow.connection}
+                    selectedNodeId={workflowNodeId}
+                    onSelectNode={setWorkflowNodeId}
+                    onClose={dismissKnowledgeSources}
+                  />
+                ) : (
+                  <aside
+                    className="tap-workflow-sidebar"
+                    aria-label="Workflow details"
+                  >
+                    <header className="tap-workflow-header">
+                      <h2>Task progress</h2>
+                      <button type="button" onClick={dismissKnowledgeSources}>
+                        Close
+                      </button>
+                    </header>
+                    {workflow.isError ? (
+                      <p role="alert">
+                        Workflow details are unavailable.{" "}
+                        <button type="button" onClick={workflow.retry}>
+                          Retry
+                        </button>
+                      </p>
+                    ) : (
+                      <p role="status">Loading task progress…</p>
+                    )}
+                  </aside>
+                )
+              ) : activeCitation !== null &&
+                isEdgeCitation(activeCitation.citation) ? (
                 <EvidencePanel
                   active={{
                     citation: activeCitation.citation,
@@ -3131,6 +3272,7 @@ export function TapperWorkspace() {
                 key={projectId}
                 projectId={projectId}
                 copy={copy}
+                onOpenWorkflow={openWorkflow}
                 initialTab={
                   pendingAgentRevisionId !== null ? "config" : undefined
                 }

@@ -510,6 +510,7 @@ class ConversationTurn:
     answer_snapshot: AnswerEvidenceSnapshot | None = None
     lease_token: str | None = None
     traceparent: str | None = None
+    workflow_task_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

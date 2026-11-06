@@ -2997,6 +2997,30 @@ describe("Tap product workspace interactions", () => {
     await user.click(send);
   }
 
+  it("sends stable Agent IDs in native mode while retaining the default Tapper assistant", async () => {
+    const { created } = stubPinnedAgentConversation({});
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(["runtime-mode"], {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: "project-test",
+      actorId: "actor-test",
+      workflowEnabled: true,
+    });
+    const user = userEvent.setup();
+    renderKnowledgeApp(<TapperWorkspace />, {
+      api: fakeKnowledgeClient(),
+      queryClient,
+    });
+    await sendWithAgentAndManualSkill(user);
+    await waitFor(() => expect(created).toHaveLength(1));
+    expect(created[0]!.requestedAgentIds).toEqual(["underwriting-reviewer"]);
+    expect(created[0]!.agentRevisionId).toBeNull();
+    expect(
+      screen.getByRole("textbox", { name: "Message Tapper" }),
+    ).toBeVisible();
+  });
+
   it("sends only manually selected skills", async () => {
     const { created } = stubPinnedAgentConversation({});
     const user = userEvent.setup();

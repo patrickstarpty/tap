@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tapper workflow fixture</title>
+    <style>
+      .workflow-fixture {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      .workflow-fixture-head {
+        height: 58px;
+        display: flex;
+        align-items: center;
+        gap: 25px;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--tap-line);
+        background: #fff;
+      }
+      .workflow-fixture-head strong {
+        color: var(--tap-accent-dark);
+        font-size: 18px;
+      }
+      .workflow-fixture-head span {
+        color: var(--tap-muted);
+      }
+      .workflow-fixture-main {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+      .workflow-fixture-chat {
+        flex: 1;
+        padding: 36px min(8vw, 80px);
+      }
+      .workflow-fixture-bubble {
+        max-width: 520px;
+        margin-left: auto;
+        padding: 14px 18px;
+        background: var(--tap-soft);
+        border-radius: 14px;
+      }
+      .workflow-fixture-answer {
+        max-width: 620px;
+        margin: 30px auto 0;
+        line-height: 1.5;
+      }
+      .workflow-fixture-answer > strong {
+        color: var(--tap-accent-dark);
+      }
+      .workflow-fixture-panel {
+        width: 300px;
+        min-height: calc(100vh - 58px);
+        background: var(--tap-canvas);
+      }
+      .workflow-fixture-scrim {
+        display: none;
+      }
+      @media (max-width: 1100px) {
+        .workflow-fixture-panel {
+          position: fixed;
+          z-index: 11;
+          right: 0;
+          top: 0;
+          height: 100dvh;
+          width: min(360px, 100vw);
+        }
+        .workflow-fixture-scrim {
+          display: block;
+          position: fixed;
+          z-index: 10;
+          inset: 0;
+          border: 0;
+          background: rgb(0 0 0 / 0.32);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tests/e2e/workflow-harness.tsx"></script>
+  </body>
+</html>

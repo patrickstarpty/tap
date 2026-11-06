@@ -438,7 +438,13 @@ export function TapperChat({
       return {
         title: copy.composer.useAgents,
         search: copy.composer.searchAgents,
-        items: agents.map((agent) => ({ id: agent.id, name: agent.name })),
+        items: agents.map((agent) => ({
+          id: agent.id,
+          name:
+            agents.filter((other) => other.name === agent.name).length > 1
+              ? `${agent.name} · ${agent.identity ?? agent.id}`
+              : agent.name,
+        })),
         onSelect: onToggleAgent,
         selectedIds: conversation.selectedAgentIds,
       };
@@ -807,7 +813,15 @@ export function TapperChat({
         value={message}
         rows={3}
         placeholder={copy.chat.placeholder}
-        onChange={(event) => setMessage(event.target.value)}
+        onChange={(event) => {
+          const value = event.target.value;
+          setMessage(value);
+          const mention = /(?:^|\s)@([\w-]*)$/u.exec(value);
+          if (mention) {
+            setPicker("agents");
+            setPickerQuery(mention[1] ?? "");
+          }
+        }}
         onKeyDown={handleComposerKeyDown}
       />
 
@@ -1274,7 +1288,12 @@ export function TapperChat({
                     onClick={() => {
                       if (notApplicable) return;
                       pickerConfig.onSelect(item.id);
+                      if (picker === "agents")
+                        setMessage(
+                          message.replace(/(?:^|\s)@[\w-]*$/u, " ").trimEnd(),
+                        );
                       setPicker(null);
+                      composerRef.current?.focus();
                     }}
                   >
                     {picker === "library" ? (

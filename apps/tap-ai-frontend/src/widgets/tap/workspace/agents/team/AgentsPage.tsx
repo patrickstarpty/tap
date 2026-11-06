@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { resolvePeriod } from "../../../../../features/knowledge/api/agentTeam";
+import { RunList } from "../../../../../features/workflows/components/RunList";
 import type { WorkspaceCopy } from "../../copy";
 import { AgentProfileDrawer, type ProfileTab } from "./AgentProfileDrawer";
 import { MyAgentsTab } from "./MyAgentsTab";
@@ -23,9 +24,9 @@ import { handleTablistKey } from "./tabs";
 import { TeamTab } from "./TeamTab";
 import "./team.css";
 
-export type AgentsTab = "mine" | "team" | "report" | "config";
+export type AgentsTab = "mine" | "team" | "report" | "config" | "runs";
 
-const TAB_ORDER: AgentsTab[] = ["mine", "team", "report", "config"];
+const TAB_ORDER: AgentsTab[] = ["mine", "team", "report", "runs", "config"];
 const TAB_PARAM = "agentsTab";
 
 export interface ConfigOpenRequest {
@@ -41,6 +42,11 @@ export interface AgentsPageProps {
   configTab: ReactNode | ((open: ConfigOpenRequest) => ReactNode);
   initialTab?: AgentsTab;
   onOpenMember?: (agentKey: string) => void;
+  onOpenWorkflow?: (
+    taskId: string,
+    conversationId: string | null,
+    nodeId?: string,
+  ) => void;
 }
 
 function isTab(value: string | null): value is AgentsTab {
@@ -70,6 +76,7 @@ export function AgentsPage({
   configTab,
   initialTab,
   onOpenMember = () => undefined,
+  onOpenWorkflow = () => undefined,
 }: AgentsPageProps) {
   const text = copy.agentTeam;
   const [tab, setTab] = useState<AgentsTab>(
@@ -146,7 +153,11 @@ export function AgentsPage({
     <header className="tap-module-heading tap-team-panel-heading">
       <div>
         <h1>{text.heading}</h1>
-        <p>{text.descriptions[tab === "config" ? "team" : tab]}</p>
+        <p>
+          {tab === "runs"
+            ? "Explore current and past workflow runs."
+            : text.descriptions[tab === "config" ? "team" : tab]}
+        </p>
       </div>
       {toolbar === null ? null : (
         <div className="tap-team-toolbar">{toolbar}</div>
@@ -197,7 +208,7 @@ export function AgentsPage({
               tabIndex={tab === id ? 0 : -1}
               onClick={() => select(id)}
             >
-              {text.tabs[id]}
+              {id === "runs" ? "Runs" : text.tabs[id]}
             </button>
           ))}
         </div>
@@ -210,7 +221,11 @@ export function AgentsPage({
         onClickCapture={rememberControl}
         onKeyDownCapture={rememberControl}
       >
-        {tab === "config" ? (
+        {tab === "runs" ? (
+          <div className="tap-module tap-team-panel">
+            <RunList projectId={projectId} onOpen={onOpenWorkflow} />
+          </div>
+        ) : tab === "config" ? (
           typeof configTab === "function" ? (
             <Fragment key={configRequest?.nonce ?? 0}>
               {configTab({
@@ -266,6 +281,10 @@ export function AgentsPage({
           initialTab={profileTab}
           onClose={() => setProfileKey(null)}
           onViewConfig={viewConfig}
+          onOpenWorkflow={(taskId, conversationId, nodeId) => {
+            setProfileKey(null);
+            onOpenWorkflow(taskId, conversationId, nodeId);
+          }}
         />
       )}
     </section>

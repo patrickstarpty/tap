@@ -370,6 +370,85 @@ it("releases a completed accepted target so a later durable turn can become acti
   await waitFor(() => expect(result.current.hasActiveTurn).toBe(true));
 });
 
+it("keeps the origin stream active after a continuation receipt completes", async () => {
+  const wire = transport();
+  const { result, cache } = setup("conversation-1");
+  await waitFor(() => expect(wire.ready()).toBe(true));
+  act(() =>
+    cache.setQueryData(conversationKeys.detail("project-1", "conversation-1"), {
+      ...detail(),
+      turns: [turn("running"), { ...turn("completed"), turnId: "receipt-2" }],
+    }),
+  );
+  await waitFor(() => expect(result.current.turns).toHaveLength(2));
+  expect(result.current.hasActiveTurn).toBe(true);
+  act(() =>
+    wire.emit(2, "turn.completed", {
+      answer: { answer: "Origin final answer", citations: [] },
+    }),
+  );
+  await waitFor(() =>
+    expect(result.current.turns[0]?.status).toBe("completed"),
+  );
+  expect(result.current.turns[0]?.response?.answer).toBe("Origin final answer");
+});
+
+it("continues a Chat origin stream when a newer Insights receipt is terminal", async () => {
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if ((request as Request).method === "POST")
+      return json(
+        {
+          conversationId: "conversation-1",
+          turnId: "insights-2",
+          state: "queued",
+        },
+        202,
+      );
+    return original(request, init);
+  });
+  const { result, cache } = setup("conversation-1");
+  await waitFor(() => expect(wire.ready()).toBe(true));
+  await act(async () => {
+    await result.current.send({
+      kind: "insights",
+      input: {
+        queryId: "query-1",
+        resourceRefs: ["report-1"],
+        question: "Explain",
+        sourceRevisionIds: [],
+        documentRevisionIds: [],
+      },
+    });
+  });
+  act(() =>
+    cache.setQueryData(conversationKeys.detail("project-1", "conversation-1"), {
+      ...detail(),
+      turns: [
+        turn("running"),
+        {
+          ...turn("completed"),
+          turnId: "insights-2",
+          input: { ...turn().input, insightsQueryId: "query-1" },
+        },
+      ],
+    }),
+  );
+  await waitFor(() => expect(result.current.turns).toHaveLength(2));
+  act(() =>
+    wire.emit(2, "answer.draft", {
+      attempt: 1,
+      seq: 1,
+      text: "Still streaming",
+    }),
+  );
+  await waitFor(() =>
+    expect(result.current.turns[0]?.draft?.text).toBe("Still streaming"),
+  );
+  expect(result.current.hasActiveTurn).toBe(true);
+});
+
 it("preserves a pending send when the current conversation is selected again", async () => {
   const wire = transport();
   const original = wire.fetcher.getMockImplementation()!;

@@ -25,7 +25,10 @@ export function renderKnowledgeApp(
   { api, seedRuntimeMode = true, ...options }: KnowledgeRenderOptions,
 ) {
   const queryClient = options.queryClient ?? createTestQueryClient();
-  if (seedRuntimeMode) {
+  if (
+    seedRuntimeMode &&
+    queryClient.getQueryData(["runtime-mode"]) === undefined
+  ) {
     queryClient.setQueryData(["runtime-mode"], {
       mode: "validation",
       identityMode: "validation",

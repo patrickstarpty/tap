@@ -160,6 +160,7 @@ function completedConversation({
   taskStepEvents = [],
   state = "completed",
   myFeedback = null,
+  workflowTaskId = null,
   resolvedResources = [
     {
       documentId: "document-1",
@@ -171,6 +172,7 @@ function completedConversation({
   ],
 }: {
   traceId: string | null;
+  workflowTaskId?: string | null;
   answer?: Record<string, unknown>;
   extraSpans?: readonly Record<string, unknown>[];
   api?: ReturnType<typeof fakeKnowledgeClient>;
@@ -225,6 +227,30 @@ function completedConversation({
   ];
   vi.stubGlobal("fetch", async (request: Request) => {
     const path = new URL(request.url).pathname;
+    if (
+      workflowTaskId !== null &&
+      path.endsWith(`/workflows/${workflowTaskId}`)
+    )
+      return json({
+        taskId: workflowTaskId,
+        projectId: "project-test",
+        conversationId: "conversation-a",
+        status: "succeeded",
+        planRevision: 1,
+        lastSequence: 1,
+        origin: "native",
+        availableActions: [],
+        displayName: "Tapper",
+        goalSummary: "What is the rule?",
+        createdAt: "2026-09-29T08:00:00Z",
+        nodes: [],
+        edges: [],
+        commands: [],
+        events: [],
+        artifacts: [],
+        budgetLimit: {},
+        budgetUsed: {},
+      });
     if (path.endsWith("/conversations") && request.method === "GET")
       return json({
         items: [
@@ -246,6 +272,7 @@ function completedConversation({
         turns: [
           {
             turnId: "turn-1",
+            workflowTaskId,
             state,
             attempt: 1,
             traceId,
@@ -306,6 +333,37 @@ function completedConversation({
     api,
   });
 }
+
+it("keeps workflow details closed until clicked and retains the terminal task link", async () => {
+  completedConversation({ traceId: null, workflowTaskId: "task-1" });
+  const user = userEvent.setup();
+  expect(
+    await screen.findByRole("button", { name: "View execution details" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("complementary", { name: "Workflow details" }),
+  ).toBeNull();
+  await screen.findByText("Tapper · succeeded");
+  await user.click(
+    screen.getByRole("button", { name: "View execution details" }),
+  );
+  expect(
+    await screen.findByRole(
+      "heading",
+      { name: "Task progress" },
+      { timeout: 5000 },
+    ),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Close workflow details" }),
+  );
+  expect(
+    screen.queryByRole("complementary", { name: "Workflow details" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "View execution details" }),
+  ).toBeVisible();
+});
 
 it("shows a completed task.step row alongside the trace panel for a terminal, traced turn (review fix round 1, Important 1)", async () => {
   // `task.step` is a durable event type replayed through `GET

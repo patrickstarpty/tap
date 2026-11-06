@@ -163,7 +163,7 @@ afterEach(() => {
 });
 
 describe("AgentsPage", () => {
-  it("renders four tabs with Team selected by default", () => {
+  it("renders five tabs with Team selected by default", () => {
     mockSummary();
     render(
       <AgentsPage
@@ -177,6 +177,7 @@ describe("AgentsPage", () => {
       "My Agents",
       "Team",
       "Report",
+      "Runs",
       "Configuration",
     ]);
     expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(

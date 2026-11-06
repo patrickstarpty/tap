@@ -658,6 +658,7 @@ class MysqlConversationRepository:
             answer,
             row.get("processing_lease_token"),
             row.get("traceparent"),
+            row.get("workflow_task_id"),
         )
 
     async def load(self, conversation_id):

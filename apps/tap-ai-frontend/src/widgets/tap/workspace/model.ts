@@ -107,6 +107,7 @@ export interface CatalogItem {
   kind: CatalogKind;
   origin: CatalogOrigin;
   name: string;
+  identity?: string;
   description: string;
   instructions: string;
   /** True for a Skill whose `applicableTasks` doesn't include
