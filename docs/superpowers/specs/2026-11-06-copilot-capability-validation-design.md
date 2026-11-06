@@ -1,5 +1,7 @@
 # Copilot 独立能力验证阶段设计
 
+> 2026-11-06 provider 变更：用户已取消 Copilot 订阅，首版改用 OpenCode + LiteLLM。本文仅保留原 Copilot 方案和历史验证记录，不再作为当前执行入口；后续使用 [OpenCode 计划](../plans/2026-11-06-opencode-capability-validation.md)。旧测试、勾选项和能力结果不得转记为 OpenCode 验收。
+
 日期：2026-11-06。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径证据门禁与[阶段 0 计划](../plans/2026-11-06-copilot-capability-validation.md)。这是不接入产品入口或共享 Demo 数据的独立探针设计。当前完成 0.1 配置导出、0.2 确定性进程采集及 0.3 确定性能力矩阵；真实事件、模型和恢复能力均未实测，不能视为已交付。
 
 ## 1. 边界与冻结输入

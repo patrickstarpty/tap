@@ -2,6 +2,8 @@
 
 本页只记录代码中可验证的现状，随代码更新。目标能力与验收见 [V1 总纲](superpowers/plans/2026-09-29-v1-roadmap.md)；历史设计见[归档](archive/index.md)。
 
+规划边界（未实现）：2026-11-06 用户将首个编码 runtime 改为 OpenCode + LiteLLM，见[双路径设计](superpowers/specs/2026-11-06-agent-workflows-and-test-loop-design.md)与[OpenCode 验证计划](superpowers/plans/2026-11-06-opencode-capability-validation.md)。原 Copilot 探针只保留历史，当前编码接入尚未实现。
+
 ## 1. 应用边界
 
 - `apps/tap-ai-backend`：TAP AI 后端（Python 3.13 / FastAPI），Tapper 问答、知识文档、图谱、Agent/Skill 资产与测试方案生成。
