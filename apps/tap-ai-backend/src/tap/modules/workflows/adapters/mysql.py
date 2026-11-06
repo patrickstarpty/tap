@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import ProjectScopeContext, require_identifier
+from tap.modules.ai.adapters.mysql_checkpointer import graph_checkpoint, graph_run
 from tap.modules.workflows.adapters.schema import (
     workflow_attempt,
     workflow_command,
@@ -24,7 +26,12 @@ from tap.modules.workflows.adapters.schema import (
     workflow_plan_revision,
     workflow_task,
 )
-from tap.modules.workflows.domain.commands import ControlCommand, command_disposition
+from tap.modules.workflows.domain.commands import (
+    ControlCommand,
+    WorkflowDispatchBlocked,
+    WorkflowLimitExceeded,
+    command_disposition,
+)
 from tap.modules.workflows.domain.dependencies import validate_dependency_dag
 from tap.modules.workflows.domain.models import TaskSnapshot, WorkflowEvent, WorkflowStatus
 from tap.modules.workflows.domain.transitions import transition
@@ -117,6 +124,7 @@ class MysqlWorkflowStore:
                         next_sequence=2,
                         budget_limit=limit,
                         budget_used={},
+                        admission_ready="origin_turn_id" not in request,
                         created_at=now,
                         updated_at=now,
                         **scope_values(scope),
@@ -166,7 +174,24 @@ class MysqlWorkflowStore:
             return _task(prior)
         return TaskSnapshot(task_id, scope.project_id, conversation_id, 1, WorkflowStatus.QUEUED, 1)
 
-    async def snapshot(self, scope: ProjectScopeContext, task_id: str) -> dict[str, object]:
+    async def task_by_key(
+        self, scope: ProjectScopeContext, idempotency_key: str
+    ) -> TaskSnapshot | None:
+        """Locate only the task bound to this scoped durable admission identity."""
+        scope = require_project_scope(scope)
+        require_identifier("idempotency_key", idempotency_key)
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    select(workflow_task).where(
+                        *scope_predicates(workflow_task, scope),
+                        workflow_task.c.idempotency_key == idempotency_key,
+                    )
+                )
+            ).first()
+        return None if row is None else _task(row)
+
+    async def snapshot(self, scope: ProjectScopeContext, task_id: str) -> dict[str, Any]:
         scope = require_project_scope(scope)
         async with self._sessions.begin() as session:
             # Pin all three reads to one MVCC view even if the engine defaults
@@ -219,6 +244,22 @@ class MysqlWorkflowStore:
                 "nodes": tuple(dict(node) for node in nodes),
                 "events": tuple(_event(event) for event in events),
             }
+
+    async def task_request(self, scope: ProjectScopeContext, task_id: str) -> dict[str, Any]:
+        """Private frozen admission/runtime input, never an HTTP projection."""
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            request = (
+                await session.execute(
+                    select(workflow_task.c.request_json).where(
+                        *scope_predicates(workflow_task, scope),
+                        workflow_task.c.task_id == task_id,
+                    )
+                )
+            ).scalar_one_or_none()
+        if request is None:
+            raise LookupError("workflow task not found")
+        return dict(request)
 
     async def append_event(
         self,
@@ -650,6 +691,111 @@ class MysqlWorkflowStore:
             for row in ordered
         )
 
+    async def expire_idle_task(self, scope: ProjectScopeContext, task_id: str) -> bool:
+        """End an unowned task whose creation-time absolute deadline elapsed."""
+        scope = require_project_scope(scope)
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("workflow task not found")
+            deadline = row["request_json"].get("deadline_at")
+            if not isinstance(deadline, str):
+                return False
+            now = datetime.now(UTC).replace(tzinfo=None)
+            if (
+                datetime.fromisoformat(deadline).replace(tzinfo=None) > now
+                or row["status"] not in ("queued", "waiting_dependency", "awaiting_input", "paused")
+                or (row["lease_until"] is not None and row["lease_until"] > now)
+            ):
+                return False
+            task = dict(row)
+            pending = (
+                (
+                    await session.execute(
+                        select(workflow_command).where(
+                            *scope_predicates(workflow_command, scope),
+                            workflow_command.c.task_id == task_id,
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            for command in sorted(pending, key=lambda item: item["payload"]["accepted_sequence"]):
+                if command["receipt"]["status"] not in ("accepted", "pending"):
+                    continue
+                receipt = {
+                    "status": "rejected",
+                    "reason": "workflow deadline exceeded",
+                    "applied_plan_revision": None,
+                }
+                await session.execute(
+                    update(workflow_command)
+                    .where(
+                        workflow_command.c.command_id == command["command_id"],
+                    )
+                    .values(receipt=receipt)
+                )
+                payload = {"command_id": command["command_id"], "receipt": receipt}
+                await session.execute(
+                    workflow_event.insert().values(
+                        event_id=uuid4().hex,
+                        task_id=task_id,
+                        sequence=task["next_sequence"],
+                        node_id=command["target_node_id"],
+                        attempt=0,
+                        kind="command.receipted",
+                        payload=payload,
+                        payload_digest=_digest(payload),
+                        occurred_at=now,
+                        **scope_values(scope),
+                    )
+                )
+                task["next_sequence"] += 1
+            payload = {"reason": "deadline exceeded"}
+            await session.execute(
+                update(workflow_task)
+                .where(
+                    workflow_task.c.task_id == task_id,
+                )
+                .values(
+                    status="failed",
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_until=None,
+                    next_sequence=task["next_sequence"] + 1,
+                    updated_at=now,
+                )
+            )
+            await session.execute(
+                workflow_event.insert().values(
+                    event_id=uuid4().hex,
+                    task_id=task_id,
+                    sequence=task["next_sequence"],
+                    node_id=None,
+                    attempt=0,
+                    kind="task.failed",
+                    payload=payload,
+                    payload_digest=_digest(payload),
+                    occurred_at=now,
+                    **scope_values(scope),
+                )
+            )
+            return True
+
     async def claim_task(self, scope: ProjectScopeContext, task_id: str, owner: str) -> str | None:
         scope = require_project_scope(scope)
         require_identifier("owner", owner)
@@ -671,13 +817,50 @@ class MysqlWorkflowStore:
                     raise LookupError("workflow task not found")
                 task = row._mapping
                 now = datetime.now(UTC).replace(tzinfo=None)
-                if task["status"] != "queued" or (
-                    task["lease_until"] is not None
-                    and task["lease_until"] > now
-                    and task["lease_token"]
-                    and task["lease_owner"]
+                if (
+                    task["status"] not in ("queued", "waiting_dependency")
+                    or not task["admission_ready"]
+                    or (
+                        task["lease_until"] is not None
+                        and task["lease_until"] > now
+                        and task["lease_token"]
+                        and task["lease_owner"]
+                    )
                 ):
                     return None
+                if task["status"] == "waiting_dependency":
+                    nodes = (
+                        await session.execute(
+                            select(workflow_node.c.node_id, workflow_node.c.status).where(
+                                *scope_predicates(workflow_node, scope),
+                                workflow_node.c.task_id == task_id,
+                            )
+                        )
+                    ).all()
+                    edges = (
+                        await session.execute(
+                            select(
+                                workflow_dependency.c.from_node_id, workflow_dependency.c.to_node_id
+                            ).where(
+                                *scope_predicates(workflow_dependency, scope),
+                                workflow_dependency.c.task_id == task_id,
+                                workflow_dependency.c.plan_revision == task["plan_revision"],
+                            )
+                        )
+                    ).all()
+                    statuses = {node_id: status for node_id, status in nodes}
+                    predecessors: dict[str, set[str]] = {}
+                    for from_id, to_id in edges:
+                        predecessors.setdefault(to_id, set()).add(from_id)
+                    if not any(
+                        status == "queued"
+                        and all(
+                            statuses.get(parent) == "succeeded"
+                            for parent in predecessors.get(node_id, ())
+                        )
+                        for node_id, status in nodes
+                    ):
+                        return None
                 token = uuid4().hex
                 await session.execute(
                     update(workflow_task)
@@ -691,7 +874,7 @@ class MysqlWorkflowStore:
                         next_sequence=task["next_sequence"] + 1,
                     )
                 )
-                payload: dict[str, object] = {"owner": owner}
+                payload: dict[str, object] = {"owner": owner, "execution_token": token}
                 await session.execute(
                     workflow_event.insert().values(
                         event_id=uuid4().hex,
@@ -709,6 +892,332 @@ class MysqlWorkflowStore:
                 return token
 
         return await claim_or_nothing(attempt, kind="workflow", nothing=None)
+
+    @staticmethod
+    def _action_event_id(action_id: str, phase: str) -> str:
+        return hashlib.sha256(f"{phase}:{action_id}".encode()).hexdigest()
+
+    async def reserve_action(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        lease_token: str,
+        action_id: str,
+        action_kind: str,
+        *,
+        node_id: str | None = None,
+        attempt: int = 0,
+    ) -> str:
+        """Reserve one external dispatch and its shared budget before calling it."""
+        scope = require_project_scope(scope)
+        require_identifier("action_id", action_id)
+        if action_kind not in ("model", "tool"):
+            raise ValueError("unsupported action kind")
+        event_id = self._action_event_id(action_id, "reserved")
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("workflow task not found")
+            now = datetime.now(UTC).replace(tzinfo=None)
+            if (
+                row["status"] != "running"
+                or row["lease_owner"] is None
+                or row["lease_token"] != lease_token
+                or row["lease_until"] is None
+                or row["lease_until"] <= now
+            ):
+                raise ValueError("stale workflow lease token")
+            if node_id is not None:
+                node = (
+                    (
+                        await session.execute(
+                            select(workflow_node).where(
+                                *scope_predicates(workflow_node, scope),
+                                workflow_node.c.task_id == task_id,
+                                workflow_node.c.node_id == node_id,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if node is None or node["status"] != "running" or node["attempt"] != attempt:
+                    raise WorkflowDispatchBlocked("workflow node is not running")
+            blockers = (
+                await session.execute(
+                    select(
+                        workflow_command.c.kind,
+                        workflow_command.c.target_node_id,
+                        workflow_command.c.receipt,
+                    ).where(
+                        *scope_predicates(workflow_command, scope),
+                        workflow_command.c.task_id == task_id,
+                        workflow_command.c.kind.in_(("pause", "cancel")),
+                    )
+                )
+            ).all()
+            if any(
+                item.receipt["status"] in ("accepted", "pending")
+                and item.target_node_id in (None, node_id)
+                for item in blockers
+            ):
+                raise WorkflowDispatchBlocked("workflow control blocks new dispatch")
+            previous = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(workflow_event.c.event_id == event_id)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if previous is not None:
+                if (
+                    previous["task_id"] != task_id
+                    or previous["project_id"] != scope.project_id
+                    or previous["payload"].get("action_id") != action_id
+                    or previous["payload"].get("action_kind") != action_kind
+                ):
+                    raise ValueError("action identity conflict")
+                return "existing"
+            deadline = row["request_json"].get("deadline_at")
+            if deadline and datetime.fromisoformat(deadline).replace(tzinfo=None) <= now:
+                raise WorkflowLimitExceeded("workflow deadline exceeded")
+            used = dict(row["budget_used"])
+            cost_cap = row["budget_limit"].get("cost_micros")
+            if cost_cap is not None and used.get("cost_micros", 0) >= cost_cap:
+                raise WorkflowLimitExceeded("workflow known cost budget reached")
+            if action_kind == "model":
+                total = used.get("model_calls", 0) + 1
+                cap = row["budget_limit"].get("model_calls")
+                if cap is not None and total > cap:
+                    raise WorkflowLimitExceeded("workflow model call budget exceeded")
+                used["model_calls"] = total
+            payload: dict[str, object] = {
+                "action_id": action_id,
+                "action_kind": action_kind,
+                "execution_token": lease_token,
+                "node_id": node_id,
+                "attempt": attempt,
+            }
+            await session.execute(
+                update(workflow_task)
+                .where(workflow_task.c.task_id == task_id)
+                .values(budget_used=used, next_sequence=row["next_sequence"] + 1, updated_at=now)
+            )
+            await session.execute(
+                workflow_event.insert().values(
+                    event_id=event_id,
+                    task_id=task_id,
+                    sequence=row["next_sequence"],
+                    node_id=node_id,
+                    attempt=attempt,
+                    kind="action.reserved",
+                    payload=payload,
+                    payload_digest=_digest(payload),
+                    occurred_at=now,
+                    **scope_values(scope),
+                )
+            )
+        return "reserved"
+
+    async def settle_action(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        lease_token: str,
+        action_id: str,
+        result: dict[str, object],
+        *,
+        node_id: str | None = None,
+        attempt: int = 0,
+    ) -> dict[str, object]:
+        scope = require_project_scope(scope)
+        event_id = self._action_event_id(action_id, "settled")
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("workflow task not found")
+            now = datetime.now(UTC).replace(tzinfo=None)
+            if (
+                row["status"] != "running"
+                or row["lease_owner"] is None
+                or row["lease_token"] != lease_token
+                or row["lease_until"] is None
+                or row["lease_until"] <= now
+            ):
+                raise ValueError("stale workflow lease token")
+            previous = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(workflow_event.c.event_id == event_id)
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if previous is not None:
+                return dict(previous["payload"]["result"])
+            reserved = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            workflow_event.c.event_id
+                            == self._action_event_id(action_id, "reserved")
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if reserved is None or reserved["payload"].get("execution_token") != lease_token:
+                raise ValueError("action was not reserved by this execution")
+            payload: dict[str, object] = {
+                "action_id": action_id,
+                "execution_token": lease_token,
+                "result": result,
+            }
+            used = dict(row["budget_used"])
+            if "skipped" not in result:
+                raw_cost = result.get("cost_usd")
+                try:
+                    cost = Decimal(str(raw_cost)) if raw_cost is not None else None
+                except InvalidOperation:
+                    cost = None
+                if cost is not None and cost.is_finite() and cost >= 0:
+                    micros = int((cost * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
+                    used["cost_micros"] = used.get("cost_micros", 0) + micros
+                else:
+                    used["unknown_cost_actions"] = used.get("unknown_cost_actions", 0) + 1
+            await session.execute(
+                update(workflow_task)
+                .where(workflow_task.c.task_id == task_id)
+                .values(
+                    budget_used=used,
+                    next_sequence=row["next_sequence"] + 1,
+                    updated_at=now,
+                )
+            )
+            await session.execute(
+                workflow_event.insert().values(
+                    event_id=event_id,
+                    task_id=task_id,
+                    sequence=row["next_sequence"],
+                    node_id=node_id,
+                    attempt=attempt,
+                    kind="action.settled",
+                    payload=payload,
+                    payload_digest=_digest(payload),
+                    occurred_at=now,
+                    **scope_values(scope),
+                )
+            )
+        return result
+
+    async def action_result(
+        self, scope: ProjectScopeContext, action_id: str
+    ) -> dict[str, object] | None:
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            *scope_predicates(workflow_event, require_project_scope(scope)),
+                            workflow_event.c.event_id
+                            == self._action_event_id(action_id, "settled"),
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        return None if row is None else dict(row["payload"]["result"])
+
+    async def pending_admissions(
+        self, scope: ProjectScopeContext, limit: int
+    ) -> tuple[tuple[str, str, str], ...]:
+        scope = require_project_scope(scope)
+        if limit < 1:
+            raise ValueError("admission scan limit must be positive")
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.admission_ready.is_(False),
+                            workflow_task.c.status == "queued",
+                        )
+                        .order_by(workflow_task.c.created_at)
+                        .limit(limit)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            (row["task_id"], row["conversation_id"], row["request_json"]["origin_turn_id"])
+            for row in rows
+            if row["conversation_id"] and row["request_json"].get("origin_turn_id")
+        )
+
+    async def activate_task(
+        self, scope: ProjectScopeContext, task_id: str, origin_turn_id: str
+    ) -> None:
+        """Trusted composition calls this only after Chat confirms the exact link."""
+        scope = require_project_scope(scope)
+        require_identifier("origin_turn_id", origin_turn_id)
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or row["request_json"].get("origin_turn_id") != origin_turn_id:
+                raise ValueError("workflow origin mismatch")
+            if row["status"] != "queued":
+                return
+            await session.execute(
+                update(workflow_task)
+                .where(workflow_task.c.task_id == task_id)
+                .values(admission_ready=True, updated_at=datetime.now(UTC).replace(tzinfo=None))
+            )
 
     async def ack_command(
         self,
@@ -984,25 +1493,65 @@ class MysqlWorkflowStore:
                         **scope_values(scope),
                     )
                 )
+            changes: dict[str, object] = {"plan_revision": revision}
+            if fields["status"] == "awaiting_input":
+                await session.execute(
+                    update(workflow_node)
+                    .where(
+                        *scope_predicates(workflow_node, scope),
+                        workflow_node.c.task_id == task_id,
+                        workflow_node.c.status == "awaiting_input",
+                    )
+                    .values(status="queued")
+                )
+                await session.execute(
+                    update(workflow_attempt)
+                    .where(
+                        *scope_predicates(workflow_attempt, scope),
+                        workflow_attempt.c.task_id == task_id,
+                        workflow_attempt.c.status == "awaiting_input",
+                    )
+                    .values(status="queued")
+                )
+                changes["status"] = "queued"
             await session.execute(
-                update(workflow_task)
-                .where(workflow_task.c.task_id == task_id)
-                .values(plan_revision=revision)
+                update(workflow_task).where(workflow_task.c.task_id == task_id).values(**changes)
             )
         elif kind == "pause":
             if node_id is None:
-                if fields["status"] != "running":
-                    raise ValueError("task is not running")
+                if fields["status"] not in (
+                    "running",
+                    "queued",
+                    "waiting_dependency",
+                    "awaiting_input",
+                ):
+                    raise ValueError("task cannot be paused")
                 if (
                     receipt.get("stopped") is True
                     and receipt.get("checkpoint_compatible") is not True
                 ):
                     raise ValueError("pause requires a compatible checkpoint")
-                changes: dict[str, object] = {
-                    "status": "paused" if receipt.get("stopped") is True else "pausing"
-                }
+                changes = {"status": "paused" if receipt.get("stopped") is True else "pausing"}
                 if receipt.get("stopped") is True:
                     changes.update(lease_owner=None, lease_token=None, lease_until=None)
+                    await session.execute(
+                        update(workflow_node)
+                        .where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id == task_id,
+                            workflow_node.c.status == "running",
+                        )
+                        .values(status="paused")
+                    )
+                    await session.execute(
+                        update(workflow_attempt)
+                        .where(
+                            *scope_predicates(workflow_attempt, scope),
+                            workflow_attempt.c.task_id == task_id,
+                            workflow_attempt.c.status == "running",
+                        )
+                        .values(status="paused")
+                    )
                 await session.execute(
                     update(workflow_task)
                     .where(workflow_task.c.task_id == task_id)
@@ -1010,8 +1559,8 @@ class MysqlWorkflowStore:
                 )
             else:
                 node = await self._command_node(session, scope, task_id, node_id)
-                if node["status"] != "running":
-                    raise ValueError("node is not running")
+                if node["status"] not in ("running", "queued"):
+                    raise ValueError("node cannot be paused")
                 if (
                     receipt.get("stopped") is True
                     and receipt.get("checkpoint_compatible") is not True
@@ -1026,6 +1575,24 @@ class MysqlWorkflowStore:
             if node_id is None:
                 if fields["status"] != "paused":
                     raise ValueError("task is not paused")
+                await session.execute(
+                    update(workflow_node)
+                    .where(
+                        *scope_predicates(workflow_node, scope),
+                        workflow_node.c.task_id == task_id,
+                        workflow_node.c.status == "paused",
+                    )
+                    .values(status="queued")
+                )
+                await session.execute(
+                    update(workflow_attempt)
+                    .where(
+                        *scope_predicates(workflow_attempt, scope),
+                        workflow_attempt.c.task_id == task_id,
+                        workflow_attempt.c.status == "paused",
+                    )
+                    .values(status="queued")
+                )
                 await session.execute(
                     update(workflow_task)
                     .where(workflow_task.c.task_id == task_id)
@@ -1087,6 +1654,8 @@ class MysqlWorkflowStore:
                 .one()
             )
             attempt = node["attempt"] + 1
+            if attempt > int(fields["request_json"].get("max_attempts", 3)):
+                raise ValueError("workflow node attempt budget exceeded")
             await session.execute(
                 workflow_attempt.insert().values(
                     attempt_id=uuid4().hex,
@@ -1094,7 +1663,10 @@ class MysqlWorkflowStore:
                     node_id=node_id,
                     attempt=attempt,
                     status="queued",
-                    checkpoint_ref=prior["checkpoint_ref"],
+                    checkpoint_ref=None,
+                    graph_run_id=hashlib.sha256(
+                        f"{task_id}:{node_id}:retry:{attempt}".encode()
+                    ).hexdigest(),
                     created_at=now,
                     **scope_values(scope),
                 )
@@ -1221,6 +1793,56 @@ class MysqlWorkflowStore:
                 return "recovering"
             now = datetime.now(UTC).replace(tzinfo=None)
             if result == "queued":
+                active = (
+                    (
+                        await session.execute(
+                            select(workflow_node).where(
+                                *scope_predicates(workflow_node, scope),
+                                workflow_node.c.task_id == task_id,
+                                workflow_node.c.status == "running",
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                deadline = task["request_json"].get("deadline_at")
+                exhausted = any(
+                    int(node["attempt"]) >= int(task["request_json"].get("max_attempts", 3))
+                    for node in active
+                )
+                expired = (
+                    isinstance(deadline, str)
+                    and datetime.fromisoformat(deadline).replace(tzinfo=None) <= now
+                )
+                if exhausted or expired:
+                    result = "failed"
+                    await session.execute(
+                        update(workflow_node)
+                        .where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id == task_id,
+                            workflow_node.c.status == "running",
+                        )
+                        .values(status="failed")
+                    )
+                    await session.execute(
+                        update(workflow_attempt)
+                        .where(
+                            *scope_predicates(workflow_attempt, scope),
+                            workflow_attempt.c.task_id == task_id,
+                            workflow_attempt.c.status == "running",
+                        )
+                        .values(
+                            status="failed",
+                            error_snapshot={
+                                "reason": "deadline exceeded"
+                                if expired
+                                else "attempt limit reached",
+                            },
+                        )
+                    )
+            if result == "queued":
                 rows = (
                     (
                         await session.execute(
@@ -1263,6 +1885,7 @@ class MysqlWorkflowStore:
                             attempt=attempt,
                             status="queued",
                             checkpoint_ref=previous["checkpoint_ref"],
+                            graph_run_id=previous["graph_run_id"],
                             created_at=now,
                             **scope_values(scope),
                         )
@@ -1282,7 +1905,11 @@ class MysqlWorkflowStore:
                     updated_at=now,
                 )
             )
-            payload: dict[str, object] = {"status": result, "runtime_outcome": inspection.outcome}
+            payload: dict[str, object] = (
+                {"reason": "deadline exceeded" if expired else "attempt limit reached"}
+                if result == "failed"
+                else {"status": result, "runtime_outcome": inspection.outcome}
+            )
             await session.execute(
                 workflow_event.insert().values(
                     event_id=uuid4().hex,
@@ -1290,7 +1917,7 @@ class MysqlWorkflowStore:
                     sequence=task["next_sequence"],
                     node_id=None,
                     attempt=0,
-                    kind="task.reconciled",
+                    kind="task.failed" if result == "failed" else "task.reconciled",
                     payload=payload,
                     payload_digest=_digest(payload),
                     occurred_at=now,
@@ -1408,6 +2035,522 @@ class MysqlWorkflowStore:
                 return token
 
         return await claim_or_nothing(attempt, kind="workflow-control", nothing=None)
+
+    async def node_running(self, scope: ProjectScopeContext, task_id: str, node_id: str) -> bool:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            status = await session.scalar(
+                select(workflow_node.c.status).where(
+                    *scope_predicates(workflow_node, scope),
+                    workflow_node.c.task_id == task_id,
+                    workflow_node.c.node_id == node_id,
+                )
+            )
+        return status == "running"
+
+    async def graph_lineage(
+        self, scope: ProjectScopeContext, task_id: str, node_id: str, attempt: int
+    ) -> tuple[str, int]:
+        """Return the durable graph identity and first replayable attempt.
+
+        Lease-loss retries retain a lineage; explicit node retries start a new one.
+        """
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        workflow_attempt.c.attempt,
+                        workflow_attempt.c.graph_run_id,
+                    )
+                    .where(
+                        *scope_predicates(workflow_attempt, scope),
+                        workflow_attempt.c.task_id == task_id,
+                        workflow_attempt.c.node_id == node_id,
+                    )
+                    .order_by(workflow_attempt.c.attempt)
+                )
+            ).all()
+        current = next((row for row in rows if row.attempt == attempt), None)
+        if current is None:
+            raise LookupError("workflow node attempt not found")
+        base_id = hashlib.sha256(f"{task_id}:{node_id}".encode()).hexdigest()
+        run_id = current.graph_run_id or base_id
+        floor = min(row.attempt for row in rows if (row.graph_run_id or base_id) == run_id)
+        return run_id, floor
+
+    async def active_lease(
+        self, scope: ProjectScopeContext, task_id: str, lease_token: str
+    ) -> bool:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    select(
+                        workflow_task.c.status,
+                        workflow_task.c.lease_token,
+                        workflow_task.c.lease_until,
+                    ).where(
+                        *scope_predicates(workflow_task, scope), workflow_task.c.task_id == task_id
+                    )
+                )
+            ).one_or_none()
+        return bool(
+            row is not None
+            and row.status == "running"
+            and row.lease_token == lease_token
+            and row.lease_until is not None
+            and row.lease_until > datetime.now(UTC).replace(tzinfo=None)
+        )
+
+    async def retry_evidence(self, scope: ProjectScopeContext, task_id: str, node_id: str) -> bool:
+        """A failed node may retry only with a compatible graph and settled actions."""
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            node = (
+                (
+                    await session.execute(
+                        select(workflow_node).where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id == task_id,
+                            workflow_node.c.node_id == node_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if node is None or node["status"] not in ("failed", "canceled", "skipped"):
+                return False
+            current_attempt = (
+                await session.execute(
+                    select(workflow_attempt.c.graph_run_id).where(
+                        *scope_predicates(workflow_attempt, scope),
+                        workflow_attempt.c.task_id == task_id,
+                        workflow_attempt.c.node_id == node_id,
+                        workflow_attempt.c.attempt == node["attempt"],
+                    )
+                )
+            ).scalar_one()
+            run_id = current_attempt or hashlib.sha256(f"{task_id}:{node_id}".encode()).hexdigest()
+            graph = (
+                (
+                    await session.execute(
+                        select(graph_run).where(
+                            *scope_predicates(graph_run, scope),
+                            graph_run.c.run_id == run_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                graph is None
+                or graph["graph_version"] != "agent-workflow-v1"
+                or graph["state_schema_version"] != 1
+                or graph["current_checkpoint_id"] is None
+            ):
+                return False
+            checkpoint = await session.scalar(
+                select(graph_checkpoint.c.checkpoint_id).where(
+                    *scope_predicates(graph_checkpoint, scope),
+                    graph_checkpoint.c.run_id == run_id,
+                    graph_checkpoint.c.checkpoint_ns == "",
+                    graph_checkpoint.c.checkpoint_id == graph["current_checkpoint_id"],
+                )
+            )
+            if checkpoint is None:
+                return False
+            events = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            *scope_predicates(workflow_event, scope),
+                            workflow_event.c.task_id == task_id,
+                            workflow_event.c.node_id == node_id,
+                            workflow_event.c.kind.in_(("action.reserved", "action.settled")),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            reserved = {
+                event["payload"]["action_id"]
+                for event in events
+                if event["kind"] == "action.reserved"
+            }
+            settled = {
+                event["payload"]["action_id"]
+                for event in events
+                if event["kind"] == "action.settled"
+            }
+            return not (reserved - settled)
+
+    async def episode_facts(
+        self, scope: ProjectScopeContext, episode: RecoveryEpisode
+    ) -> dict[str, object]:
+        """Read exact old-token process, checkpoint and action facts for inspection."""
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            task = (
+                (
+                    await session.execute(
+                        select(workflow_task).where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == episode.task_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                task is None
+                or task["status"] != "recovering"
+                or task["lease_token"] != episode.execution_token
+            ):
+                return {"owner": None, "checkpoint_compatible": False, "unsettled": True}
+            claims = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            *scope_predicates(workflow_event, scope),
+                            workflow_event.c.task_id == episode.task_id,
+                            workflow_event.c.kind == "task.claimed",
+                            workflow_event.c.payload["execution_token"].as_string()
+                            == episode.execution_token,
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            owner = claims[-1]["payload"].get("owner") if len(claims) == 1 else None
+            actions = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            *scope_predicates(workflow_event, scope),
+                            workflow_event.c.task_id == episode.task_id,
+                            workflow_event.c.payload["execution_token"].as_string()
+                            == episode.execution_token,
+                            workflow_event.c.kind.in_(("action.reserved", "action.settled")),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            reserved = {
+                event["payload"]["action_id"]
+                for event in actions
+                if event["kind"] == "action.reserved"
+            }
+            settled = {
+                event["payload"]["action_id"]
+                for event in actions
+                if event["kind"] == "action.settled"
+            }
+            nodes = (
+                (
+                    await session.execute(
+                        select(workflow_node).where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id == episode.task_id,
+                            workflow_node.c.status == "running",
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            compatible = bool(nodes)
+            for node in nodes:
+                current_attempt = (
+                    await session.execute(
+                        select(workflow_attempt.c.graph_run_id).where(
+                            *scope_predicates(workflow_attempt, scope),
+                            workflow_attempt.c.task_id == episode.task_id,
+                            workflow_attempt.c.node_id == node["node_id"],
+                            workflow_attempt.c.attempt == node["attempt"],
+                        )
+                    )
+                ).scalar_one()
+                run_id = (
+                    current_attempt
+                    or hashlib.sha256(f"{episode.task_id}:{node['node_id']}".encode()).hexdigest()
+                )
+                graph = (
+                    (
+                        await session.execute(
+                            select(graph_run).where(
+                                *scope_predicates(graph_run, scope),
+                                graph_run.c.run_id == run_id,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if (
+                    graph is None
+                    or graph["graph_version"] != "agent-workflow-v1"
+                    or graph["state_schema_version"] != 1
+                    or graph["current_checkpoint_id"] is None
+                ):
+                    compatible = False
+                    break
+                checkpoint = await session.scalar(
+                    select(graph_checkpoint.c.checkpoint_id).where(
+                        *scope_predicates(graph_checkpoint, scope),
+                        graph_checkpoint.c.run_id == run_id,
+                        graph_checkpoint.c.checkpoint_ns == "",
+                        graph_checkpoint.c.checkpoint_id == graph["current_checkpoint_id"],
+                    )
+                )
+                if checkpoint is None:
+                    compatible = False
+                    break
+            return {
+                "owner": owner,
+                "checkpoint_compatible": compatible,
+                "unsettled": bool(reserved - settled),
+            }
+
+    async def stop_evidence(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        lease_token: str,
+        target_node_id: str | None,
+    ) -> bool:
+        """No in-flight action, and each active target has a checkpoint after settlement."""
+        scope = require_project_scope(scope)
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("workflow task not found")
+            self._require_lease(row, lease_token)
+            nodes = (
+                (
+                    await session.execute(
+                        select(workflow_node).where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id == task_id,
+                            workflow_node.c.status == "running",
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            if target_node_id is not None:
+                nodes = [node for node in nodes if node["node_id"] == target_node_id]
+            events = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            *scope_predicates(workflow_event, scope),
+                            workflow_event.c.task_id == task_id,
+                            workflow_event.c.payload["execution_token"].as_string() == lease_token,
+                            workflow_event.c.kind.in_(("action.reserved", "action.settled")),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            target_ids = {node["node_id"] for node in nodes}
+            if target_node_id is not None:
+                target_ids.add(target_node_id)
+            reserved = {
+                event["payload"]["action_id"]
+                for event in events
+                if event["kind"] == "action.reserved"
+                and (target_node_id is None or event["node_id"] in target_ids)
+            }
+            settled = {
+                event["payload"]["action_id"]
+                for event in events
+                if event["kind"] == "action.settled"
+                and (target_node_id is None or event["node_id"] in target_ids)
+            }
+            if reserved - settled:
+                return False
+            for node in nodes:
+                current_attempt = (
+                    await session.execute(
+                        select(workflow_attempt.c.graph_run_id).where(
+                            *scope_predicates(workflow_attempt, scope),
+                            workflow_attempt.c.task_id == task_id,
+                            workflow_attempt.c.node_id == node["node_id"],
+                            workflow_attempt.c.attempt == node["attempt"],
+                        )
+                    )
+                ).scalar_one()
+                run_id = (
+                    current_attempt
+                    or hashlib.sha256(f"{task_id}:{node['node_id']}".encode()).hexdigest()
+                )
+                graph = (
+                    (
+                        await session.execute(
+                            select(graph_run).where(
+                                *scope_predicates(graph_run, scope),
+                                graph_run.c.run_id == run_id,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if (
+                    graph is None
+                    or graph["graph_version"] != "agent-workflow-v1"
+                    or graph["state_schema_version"] != 1
+                    or graph["current_checkpoint_id"] is None
+                ):
+                    return False
+                checkpoint = (
+                    await session.execute(
+                        select(graph_checkpoint.c.created_at).where(
+                            *scope_predicates(graph_checkpoint, scope),
+                            graph_checkpoint.c.run_id == run_id,
+                            # LangGraph normalizes the top-level graph namespace to empty.
+                            # The run_id already binds this checkpoint to the node.
+                            graph_checkpoint.c.checkpoint_ns == "",
+                            graph_checkpoint.c.checkpoint_id == graph["current_checkpoint_id"],
+                        )
+                    )
+                ).scalar_one_or_none()
+                if checkpoint is None:
+                    return False
+                last_settlement = max(
+                    (
+                        event["occurred_at"]
+                        for event in events
+                        if event["kind"] == "action.settled" and event["node_id"] == node["node_id"]
+                    ),
+                    default=None,
+                )
+                if last_settlement is not None and checkpoint < last_settlement:
+                    return False
+            return True
+
+    async def applied_steers(
+        self, scope: ProjectScopeContext, task_id: str, node_id: str
+    ) -> tuple[str, ...]:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(workflow_command).where(
+                            *scope_predicates(workflow_command, scope),
+                            workflow_command.c.task_id == task_id,
+                            workflow_command.c.kind == "steer",
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        ordered = sorted(
+            (
+                row
+                for row in rows
+                if row["receipt"]["status"] == "applied"
+                and row["target_node_id"] in (None, node_id)
+            ),
+            key=lambda row: row["payload"]["accepted_sequence"],
+        )
+        return tuple(str(row["payload"]["text"]) for row in ordered)
+
+    async def scan_work(
+        self, scope: ProjectScopeContext, limit: int
+    ) -> tuple[tuple[str, str], ...]:
+        """Discover this configured project's work; claims recheck every state under lock."""
+        scope = require_project_scope(scope)
+        if limit < 1:
+            raise ValueError("workflow scan limit must be positive")
+        now = datetime.now(UTC).replace(tzinfo=None)
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        workflow_task.c.task_id,
+                        workflow_task.c.status,
+                        workflow_task.c.lease_until,
+                    )
+                    .where(
+                        *scope_predicates(workflow_task, scope),
+                        workflow_task.c.status.in_(
+                            (
+                                "queued",
+                                "waiting_dependency",
+                                "paused",
+                                "awaiting_input",
+                                "running",
+                                "pausing",
+                                "canceling",
+                                "recovering",
+                            )
+                        ),
+                    )
+                    .order_by(workflow_task.c.created_at)
+                    .limit(limit)
+                )
+            ).all()
+        return tuple(
+            (str(row.task_id), str(row.status))
+            for row in rows
+            if row.lease_until is None or row.lease_until <= now
+        )
+
+    async def release_control(
+        self, scope: ProjectScopeContext, task_id: str, lease_token: str
+    ) -> None:
+        """Release an idle control claim without changing task status."""
+        scope = require_project_scope(scope)
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or row["lease_token"] != lease_token:
+                return
+            await session.execute(
+                update(workflow_task)
+                .where(
+                    workflow_task.c.task_id == task_id,
+                )
+                .values(lease_owner=None, lease_token=None, lease_until=None)
+            )
 
     async def rerun_task(
         self, scope: ProjectScopeContext, task_id: str, idempotency_key: str

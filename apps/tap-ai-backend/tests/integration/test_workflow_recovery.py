@@ -319,12 +319,16 @@ async def test_retry_uses_new_attempt_only_after_effect_and_budget_check(workflo
                     workflow_attempt.c.attempt,
                     workflow_attempt.c.status,
                     workflow_attempt.c.checkpoint_ref,
+                    workflow_attempt.c.graph_run_id,
                 )
                 .where(workflow_attempt.c.task_id == task.task_id)
                 .order_by(workflow_attempt.c.attempt)
             )
         ).all()
-    assert attempts == [(1, "failed", "checkpoint-1"), (2, "queued", "checkpoint-1")]
+    assert attempts[0][:3] == (1, "failed", "checkpoint-1")
+    assert attempts[1][:3] == (2, "queued", None)
+    assert attempts[1].graph_run_id is not None
+    assert attempts[1].graph_run_id != attempts[0].graph_run_id
     assert (await store.snapshot(VALIDATION_SCOPE, task.task_id))["budget_used"] == {"tokens": 2}
 
 

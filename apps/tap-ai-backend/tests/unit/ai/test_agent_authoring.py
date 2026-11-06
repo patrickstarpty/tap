@@ -202,13 +202,13 @@ async def test_create_rejects_unknown_tool_id() -> None:
 async def test_platform_tool_in_agent_tool_ids_rejected() -> None:
     service, _catalog = _service()
 
-    with pytest.raises(AgentAuthoringRejected) as excinfo:
-        await service.create(
-            VALIDATION_SCOPE,
-            _draft(tool_ids=frozenset({"knowledge.search", "knowledge.answer", "skill.activate"})),
-        )
-
-    assert excinfo.value.code == "agent_tool_allowlist_invalid"
+    for platform_tool in ("skill.activate", "workflow.delegate"):
+        with pytest.raises(AgentAuthoringRejected) as excinfo:
+            await service.create(
+                VALIDATION_SCOPE,
+                _draft(tool_ids=frozenset({"knowledge.search", "knowledge.answer", platform_tool})),
+            )
+        assert excinfo.value.code == "agent_tool_allowlist_invalid"
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,15 @@ from typing import Literal
 
 from tap.modules.access.domain.context import require_identifier
 
+
+class WorkflowDispatchBlocked(Exception):
+    """A committed pause/cancel blocks a new external reservation."""
+
+
+class WorkflowLimitExceeded(ValueError):
+    """A hard task deadline or shared call limit prevents new external work."""
+
+
 ControlKind = Literal["steer", "pause", "resume", "cancel", "retry"]
 ReceiptStatus = Literal["accepted", "pending", "applied", "rejected", "stale"]
 

@@ -56,17 +56,7 @@ class WorkflowSelection:
         plan_revision = snapshot["plan_revision"]
         if type(plan_revision) is not int:
             raise ValueError("task plan revision unavailable")
-        material = json.dumps(
-            (
-                scope.enterprise_id,
-                scope.project_id,
-                conversation_id,
-                task_id,
-                idempotency_key,
-            ),
-            separators=(",", ":"),
-        )
-        command_id = hashlib.sha256(material.encode()).hexdigest()
+        command_id = self.command_id(scope, conversation_id, task_id, idempotency_key)
         existing = await self._store.command(scope, task_id, command_id)
         if existing is not None:
             self._validate_replay(existing, frozen.message, target_node_id)
@@ -91,6 +81,16 @@ class WorkflowSelection:
                 raise
             self._validate_replay(winner, frozen.message, target_node_id)
             return await self._controls.submit(scope, winner)
+
+    @staticmethod
+    def command_id(
+        scope: ProjectScopeContext, conversation_id: str, task_id: str, idempotency_key: str
+    ) -> str:
+        material = json.dumps(
+            (scope.enterprise_id, scope.project_id, conversation_id, task_id, idempotency_key),
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(material.encode()).hexdigest()
 
     @staticmethod
     def _validate_replay(command: ControlCommand, message: str, target_node_id: str | None) -> None:

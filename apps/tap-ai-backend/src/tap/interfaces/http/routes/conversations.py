@@ -622,8 +622,14 @@ async def append(
     responses={404: problem_response_metadata("Conversation or Turn not found")},
 )
 async def cancel(
-    conversation_id: str, turn_id: str, service: ConversationService = Depends(conversation_service)
+    request: Request,
+    conversation_id: str,
+    turn_id: str,
+    service: ConversationService = Depends(conversation_service),
 ):
+    admission = request.app.state.http_services.workflow_admission
+    if admission is not None and await admission.handles_turn(conversation_id, turn_id):
+        return _turn(await admission.request_cancel(conversation_id, turn_id))
     return _turn(await service.cancel(conversation_id, turn_id))
 
 

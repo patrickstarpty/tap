@@ -3303,3 +3303,41 @@ def test_planner_timeout_must_fit_inside_the_model_gateway_timeout(value):
         module.TapperSettings.from_mapping(
             valid_settings() | {"TAPPER_PLANNER_TIMEOUT_SECONDS": value}
         )
+
+
+def test_native_workflow_settings_default_off_and_bounded():
+    from tap.entrypoints.tapper_runtime import TapperSettings
+
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.workflow_enabled is False
+    assert settings.workflow_max_parallel_agents == 3
+    assert settings.workflow_max_model_calls == 40
+    assert settings.workflow_max_cost_micros == 0
+    assert settings.workflow_max_seconds == 900
+    assert settings.workflow_max_attempts == 3
+    enabled = TapperSettings.from_mapping(S3_SETTINGS | {"TAP_WORKFLOW_ENABLED": "true"})
+    assert enabled.workflow_enabled is True
+    assert (
+        TapperSettings.from_mapping(
+            S3_SETTINGS | {"TAP_WORKFLOW_MAX_COST_MICROS": "7"}
+        ).workflow_max_cost_micros
+        == 7
+    )
+    for name, bad in (
+        ("TAP_WORKFLOW_ENABLED", "yes"),
+        ("TAP_WORKFLOW_MAX_PARALLEL_AGENTS", "0"),
+        ("TAP_WORKFLOW_MAX_MODEL_CALLS", "0"),
+        ("TAP_WORKFLOW_MAX_COST_MICROS", "-1"),
+        ("TAP_WORKFLOW_MAX_SECONDS", "0"),
+        ("TAP_WORKFLOW_MAX_ATTEMPTS", "0"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(S3_SETTINGS | {name: bad})
+
+
+@pytest.mark.asyncio
+async def test_native_workflow_worker_requires_enabled_configuration():
+    from tap.entrypoints.tapper_runtime import TapperSettings, create_workflow_worker_runtime
+
+    with pytest.raises(ValueError, match="disabled"):
+        await create_workflow_worker_runtime(TapperSettings.from_mapping(S3_SETTINGS))

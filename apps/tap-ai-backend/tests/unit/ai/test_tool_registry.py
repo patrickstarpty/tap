@@ -15,9 +15,10 @@ def test_registry_lists_built_in_tools() -> None:
             "graph.relations",
             "insights.query",
             "skill.activate",
+            "workflow.delegate",
         }
     )
-    assert len(TOOL_REGISTRY) == 5
+    assert len(TOOL_REGISTRY) == 6
     required_tool_ids = {"knowledge.search", "knowledge.answer"}
     for tool_id, definition in TOOL_REGISTRY.items():
         assert definition.tool_id == tool_id
@@ -28,16 +29,18 @@ def test_registry_lists_built_in_tools() -> None:
         assert definition.required is (tool_id in required_tool_ids)
 
 
-def test_registry_has_five_tools_with_wire_names() -> None:
+def test_registry_has_six_tools_with_wire_names() -> None:
     from tap.modules.ai.domain.tools import TOOL_REGISTRY, platform_tool_ids, required_tool_ids
 
     assert list(TOOL_REGISTRY) == [
+        "workflow.delegate",
         "knowledge.search",
         "knowledge.answer",
         "graph.relations",
         "insights.query",
         "skill.activate",
     ]
+    assert TOOL_REGISTRY["workflow.delegate"].wire_name == "workflow_delegate"
     assert TOOL_REGISTRY["knowledge.search"].wire_name == "knowledge_search"
     assert TOOL_REGISTRY["knowledge.answer"].wire_name == "knowledge_answer"
     assert TOOL_REGISTRY["graph.relations"].wire_name == "graph_relations"
@@ -45,7 +48,7 @@ def test_registry_has_five_tools_with_wire_names() -> None:
     assert TOOL_REGISTRY["skill.activate"].wire_name == "skill_activate"
     assert TOOL_REGISTRY["knowledge.answer"].model_callable is False
     assert required_tool_ids("knowledge.answer") == {"knowledge.search", "knowledge.answer"}
-    assert platform_tool_ids() == frozenset({"skill.activate"})
+    assert platform_tool_ids() == frozenset({"skill.activate", "workflow.delegate"})
 
 
 def test_skill_activate_definition() -> None:
@@ -64,11 +67,8 @@ def test_skill_activate_definition() -> None:
         "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 128}},
     }
     assert "only" in definition.descriptions["en"]
-    assert all(
-        not other.platform
-        for tool_id, other in TOOL_REGISTRY.items()
-        if tool_id != "skill.activate"
-    )
+    assert TOOL_REGISTRY["workflow.delegate"].platform is True
+    assert TOOL_REGISTRY["workflow.delegate"].tasks == frozenset({"workflow"})
 
 
 def test_skill_activate_bypasses_agent_allowlist() -> None:
@@ -211,3 +211,14 @@ def test_turn_input_and_governance_use_registry(monkeypatch: pytest.MonkeyPatch)
         output_schema_digest=text_digest("schema"),
     )
     assert revision.tool_allowlist == frozenset({"x.test"})
+
+
+def test_workflow_delegate_is_never_offered_to_legacy_knowledge_chat() -> None:
+    from tap.modules.ai.domain.tools import visible_tool_ids
+
+    assert "workflow.delegate" not in visible_tool_ids(
+        agent_allowlist=None,
+        relations_available=True,
+        insights_available=True,
+        skills_available=True,
+    )

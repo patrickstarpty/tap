@@ -429,6 +429,90 @@ def _grounded_claims_from_context(context: str) -> list[dict[str, Any]]:
     return claims
 
 
+_WORKFLOW_SCRIPT = re.compile(
+    r"\[e2e-workflow:(direct|search|single:[a-z0-9_]+|double:[a-z0-9_]+:[a-z0-9_]+)\]"
+)
+
+
+def _workflow_script_body(request: ModelRequest) -> dict[str, Any] | None:
+    """Script only explicitly marked native E2E turns through the real fake gateway."""
+    if request.operation is not ModelOperation.CHAT:
+        return None
+    marker = _WORKFLOW_SCRIPT.search(_question_from_context(request.context) or request.context)
+    if marker is None:
+        return None
+    script = marker.group(1).split(":")
+    prior_tools = sum(message.role == "tool" for message in request.messages)
+    if "Fulfill only the delegated objective" in request.prompt:
+        content = "Specialist deterministic finding"
+        calls: list[ModelToolCall] = []
+    elif prior_tools:
+        content = json.dumps({"answer": "Merged deterministic workflow answer"})
+        calls = []
+    else:
+        content = json.dumps(
+            {
+                "route": {
+                    "kind": "native",
+                    "reason": "deterministic workflow fixture",
+                    "confidence": 0.99,
+                    "required_capabilities": [],
+                },
+                "answer": "Deterministic direct answer" if script[0] == "direct" else "",
+            }
+        )
+        offered = {tool.tool_id for tool in request.tools}
+        if script[0] == "search" and "knowledge.search" in offered:
+            calls = [
+                ModelToolCall(
+                    "fixture-search",
+                    "knowledge_search",
+                    json.dumps({"query": "deterministic query"}),
+                )
+            ]
+        elif script[0] in ("single", "double") and "workflow.delegate" in offered:
+            calls = [
+                ModelToolCall(
+                    f"fixture-delegate-{index}",
+                    "workflow_delegate",
+                    json.dumps(
+                        {
+                            "agentId": agent_id,
+                            "objective": "Review deterministic case",
+                            "inputRefs": [],
+                            "expectedOutput": "finding",
+                            "dependsOn": [],
+                        }
+                    ),
+                )
+                for index, agent_id in enumerate(script[1:])
+            ]
+        else:
+            calls = []
+    message: dict[str, Any] = {"content": content}
+    if calls:
+        message["tool_calls"] = [
+            {
+                "id": call.call_id,
+                "function": {"name": call.name, "arguments": call.arguments_json},
+            }
+            for call in calls
+        ]
+    return {
+        "model": "fake/deterministic-chat-v1",
+        "choices": [
+            {
+                "message": message,
+                "finish_reason": "tool_calls" if calls else "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": len(request.context.split()),
+            "completion_tokens": len(content.split()),
+        },
+    }
+
+
 class DeterministicModelGateway(LiteLLMModelGateway):
     def __init__(
         self,
@@ -496,6 +580,9 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
         attempts.count = 1
+        scripted = _workflow_script_body(request)
+        if scripted is not None:
+            return scripted, httpx.Headers()
         if request.operation is ModelOperation.EMBED:
             vector = (
                 deterministic_vector(request.context)

@@ -412,6 +412,14 @@ class MysqlConversationRepository:
                 client_request_id=turn.client_request_id,
                 message=turn.input_snapshot.value.message,
                 state="queued",
+                execution_owner=(
+                    "workflow"
+                    if (
+                        turn.input_snapshot.value.workflow_root is not None
+                        or turn.input_snapshot.value.workflow_task_id is not None
+                    )
+                    else "chat"
+                ),
                 processing_attempt=turn.attempt,
                 last_sequence=event.sequence,
                 created_at=now,
@@ -1243,6 +1251,7 @@ class MysqlConversationRepository:
                         )
                         .where(
                             *scope_predicates(chat_turn, self.scope),
+                            chat_turn.c.execution_owner == "chat",
                             or_(
                                 chat_turn.c.next_attempt_at.is_(None),
                                 chat_turn.c.next_attempt_at <= candidate_now,
@@ -1302,6 +1311,7 @@ class MysqlConversationRepository:
                 now = datetime.now(timezone.utc)
                 if (
                     row is None
+                    or row["execution_owner"] != "chat"
                     or not (row["next_attempt_at"] is None or row["next_attempt_at"] <= _naive(now))
                     or not (
                         row["state"] == "queued"

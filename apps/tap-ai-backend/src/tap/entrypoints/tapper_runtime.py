@@ -72,6 +72,8 @@ if TYPE_CHECKING:
     from tap.modules.agent_team.domain.models import Period
     from tap.modules.agent_team.ports import AgentRuntimeStats, TrendPoint
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.ports.gateway import ModelGateway
+    from tap.modules.chat.adapters.mysql_workflow_bridge import MysqlWorkflowChatBridge
     from tap.modules.chat.application.ports import DraftStream, EventWakeups
     from tap.modules.governance.ports.audit import ProjectAuditPort
     from tap.modules.knowledge.adapters.milvus.config import (
@@ -85,12 +87,17 @@ if TYPE_CHECKING:
     from tap.modules.knowledge.adapters.mysql_managed_chunks import MysqlManagedChunks
     from tap.modules.knowledge.adapters.mysql_projection import MysqlProjectionCoordinator
     from tap.modules.knowledge.adapters.object_artifacts import KnowledgeArtifactStore
+    from tap.modules.knowledge.api import KnowledgeAPI
     from tap.modules.knowledge.application.ingestion import IngestionStageHook
     from tap.modules.knowledge.ports.answers import AnswerSnapshotRepository
     from tap.modules.knowledge.ports.documents import JobStage
     from tap.modules.skill_hub.application.service import SkillHubService
     from tap.modules.skill_hub.ports import SkillRuntimeStats
+    from tap.modules.workflows.adapters.events import RedisWorkflowEvents
+    from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+    from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
     from tap.operations.milvus.client import TapperDocumentMilvusClients
+    from tap.platform.messaging.redis_dispatch import AsyncRedis, AsyncRedisStream
     from tap.platform.storage.s3 import S3ObjectStore
 
 _PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
@@ -211,6 +218,12 @@ class TapperSettings:
     turn_max_attempts: int = 3
     turn_budget: TurnBudget = field(default_factory=TurnBudget)
     claim_lock_wait_seconds: int = 5
+    workflow_enabled: bool = False
+    workflow_max_parallel_agents: int = 3
+    workflow_max_model_calls: int = 40
+    workflow_max_cost_micros: int = 0
+    workflow_max_seconds: int = 900
+    workflow_max_attempts: int = 3
 
     def __post_init__(self) -> None:
         # The gateway rejects a request whose timeout exceeds its own; the
@@ -708,6 +721,48 @@ class TapperSettings:
             turn_max_attempts=turn_max_attempts,
             turn_budget=turn_budget,
             claim_lock_wait_seconds=claim_lock_wait_seconds,
+            workflow_enabled=_fixed_choice(
+                values,
+                "TAP_WORKFLOW_ENABLED",
+                default="false",
+                choices=frozenset({"true", "false"}),
+            )
+            == "true",
+            workflow_max_parallel_agents=_integer(
+                values,
+                "TAP_WORKFLOW_MAX_PARALLEL_AGENTS",
+                3,
+                minimum=1,
+                maximum=20,
+            ),
+            workflow_max_model_calls=_integer(
+                values,
+                "TAP_WORKFLOW_MAX_MODEL_CALLS",
+                40,
+                minimum=1,
+                maximum=1000,
+            ),
+            workflow_max_cost_micros=_integer(
+                values,
+                "TAP_WORKFLOW_MAX_COST_MICROS",
+                0,
+                minimum=0,
+                maximum=100_000_000,
+            ),
+            workflow_max_seconds=_integer(
+                values,
+                "TAP_WORKFLOW_MAX_SECONDS",
+                900,
+                minimum=1,
+                maximum=86400,
+            ),
+            workflow_max_attempts=_integer(
+                values,
+                "TAP_WORKFLOW_MAX_ATTEMPTS",
+                3,
+                minimum=1,
+                maximum=10,
+            ),
         )
 
 
@@ -962,6 +1017,22 @@ def create_project_audit(
     return MysqlProjectAudit(connection, scope=scope)
 
 
+@dataclass(frozen=True, slots=True)
+class NativeWorkflowComponents:
+    """Enabled-only public application composition for the dedicated worker."""
+
+    sessions: async_sessionmaker[AsyncSession]
+    store: MysqlWorkflowStore
+    chat: MysqlWorkflowChatBridge
+    admission: WorkflowAdmissionCoordinator
+    knowledge: KnowledgeAPI
+    repository: MysqlDocumentRepository
+    asset_catalog: MysqlAssetCatalog
+    gateway: ModelGateway
+    scope: ProjectScopeContext
+    events: RedisWorkflowEvents
+
+
 @dataclass(slots=True)
 class TapperApiRuntime:
     """One API process graph with a single outer ownership boundary."""
@@ -975,6 +1046,7 @@ class TapperApiRuntime:
     # Skill Hub: what the generation worker (which reuses this runtime) runs
     # `skill.activate` through.
     skill_activation_runtime: SkillActivationRuntime | None = None
+    workflow_components: NativeWorkflowComponents | None = None
 
     async def aclose(self) -> None:
         await self._resources.aclose()
@@ -1065,6 +1137,57 @@ async def create_api_runtime(
             event_wakeups=_create_event_wakeups(redis),
             draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
         )
+        workflow_components = None
+        if settings.workflow_enabled:
+            from tap.modules.chat.adapters.mysql_workflow_bridge import MysqlWorkflowChatBridge
+            from tap.modules.workflows.adapters.events import RedisWorkflowEvents
+            from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+            from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
+
+            workflow_events = RedisWorkflowEvents(
+                cast("AsyncRedis", redis),
+                cast("AsyncRedisStream", redis_stream_block),
+                repository.scope,
+                settings.worker_id + "-workflow",
+            )
+            workflow_sessions = async_sessionmaker(engine, expire_on_commit=False)
+            workflow_store = MysqlWorkflowStore(workflow_sessions)
+            workflow_chat = MysqlWorkflowChatBridge(
+                workflow_sessions,
+                scope=repository.scope,
+                wakeups=_create_event_wakeups(redis),
+            )
+            knowledge_application = services.workflow_knowledge_application
+            if services.conversations is None or knowledge_application is None:
+                raise ValueError("native workflow application dependencies are unavailable")
+            workflow_admission = WorkflowAdmissionCoordinator(
+                services.conversations,
+                workflow_chat,
+                workflow_store,
+                max_model_calls=settings.workflow_max_model_calls,
+                max_cost_micros=settings.workflow_max_cost_micros,
+                max_seconds=settings.workflow_max_seconds,
+                max_attempts=settings.workflow_max_attempts,
+                max_parallel_agents=settings.workflow_max_parallel_agents,
+                wakeups=workflow_events,
+            )
+            services = replace(
+                services,
+                workflow_admission=workflow_admission,
+                workflow_enabled=True,
+            )
+            workflow_components = NativeWorkflowComponents(
+                workflow_sessions,
+                workflow_store,
+                workflow_chat,
+                workflow_admission,
+                knowledge_application,
+                repository,
+                asset_catalog,
+                embeddings.gateway,
+                repository.scope,
+                workflow_events,
+            )
         model_catalog = services.model_catalog
         if model_catalog is None:
             agent_authoring = None
@@ -1148,10 +1271,107 @@ async def create_api_runtime(
             failure_controller=failure_controller,
             skill_authoring=skill_authoring,
             skill_activation_runtime=skill_activation_runtime,
+            workflow_components=workflow_components,
         )
     except BaseException as error:
         await resources.aclose(error)
         raise AssertionError("resource settlement unexpectedly returned")
+
+
+async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
+    """Use the API's validated application graph with a separate fenced worker."""
+    if not settings.workflow_enabled:
+        raise ValueError("native workflow worker is disabled")
+    from os import getpid
+    from socket import gethostname
+    from uuid import uuid4
+
+    from tap.entrypoints.tapper_ingestion_worker import WorkerRuntime
+    from tap.entrypoints.tapper_workflow_worker import WorkflowWorker
+    from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
+    from tap.modules.knowledge.application.demo_policy import build_demo_policy_context
+    from tap.modules.workflows.adapters.native_runtime import (
+        JournaledKnowledgeSearch,
+        JournaledModelGateway,
+    )
+    from tap.modules.workflows.adapters.native_state import NativeStateStore
+    from tap.modules.workflows.adapters.schema import workflow_task
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime, WorkflowProjection
+
+    api = await create_api_runtime(settings)
+    components = api.workflow_components
+    if components is None:
+        await api.aclose()
+        raise ValueError("native workflow application composition is unavailable")
+    store = components.store
+    chat = components.chat
+    sessions = components.sessions
+    projection = WorkflowProjection(store, chat)
+
+    async def policy_for(resources):
+        selected = tuple(
+            (str(item["source_id"]), str(item["revision_id"]), str(item["source_content_hash"]))
+            for item in resources
+        )
+        revisions = await components.repository.load_current_source_revisions(selected)
+        return build_demo_policy_context(revisions, corpus_version=settings.corpus_version)
+
+    knowledge_tool = JournaledKnowledgeSearch(store, components.knowledge, policy_for)
+
+    async def load_skill(scope, revision_id):
+        revision = await components.asset_catalog.resolve_historical_skill(scope, revision_id)
+        if revision.status != "enabled" or revision.instruction_template is None:
+            raise ValueError("frozen specialist Skill is unavailable")
+        return revision.instruction_template + (revision.attached_references or "")
+
+    owner = f"workflow:{gethostname()}:{getpid()}:{uuid4().hex}"
+    runtime = NativeWorkflowRuntime(
+        store,
+        NativeStateStore(sessions),
+        components.gateway,
+        checkpointer_factory=lambda scope, task_id, token: MysqlGraphCheckpointer(
+            sessions,
+            scope=scope,
+            fence=GraphFence(
+                table=workflow_task,
+                identity_column=workflow_task.c.task_id,
+                identity=task_id,
+                token_column=workflow_task.c.lease_token,
+                token=token,
+                lease_until_column=workflow_task.c.lease_until,
+                status_column=workflow_task.c.status,
+                running_status="running",
+                lease_owner=owner,
+            ),
+            defer_completion=True,
+        ),
+        action_gateway_factory=lambda scope,
+        task_id,
+        token,
+        node_id,
+        attempt,
+        authorize: JournaledModelGateway(
+            components.gateway, store, task_id, token, node_id, attempt, authorize
+        ),
+        max_parallel_agents=settings.workflow_max_parallel_agents,
+        owner=owner,
+        chat=chat,
+        projection=projection,
+        ordinary_tool=knowledge_tool.execute,
+        skill_loader=load_skill,
+        wakeups=components.events,
+    )
+    return WorkerRuntime(
+        worker=WorkflowWorker(
+            scope=components.scope,
+            store=store,
+            admission=components.admission,
+            runtime=runtime,
+            projection=projection,
+        ),
+        wakeups=components.events,
+        resources=(api,),
+    )
 
 
 async def create_worker_runtime(settings: TapperSettings) -> WorkerRuntime:
@@ -2563,6 +2783,7 @@ def _assemble_http_services(
             default_alias=embeddings.chat_alias,
         ),
         knowledge=knowledge_http,
+        workflow_knowledge_application=knowledge,
         conversation_answers=conversation_answers,
         readiness=readiness,
         scope_provider=scope_provider,

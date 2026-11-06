@@ -57,7 +57,7 @@ from tap.modules.graph.application.jobs import GraphJobStore
 from tap.modules.graph.application.node_enrichment import GraphNodeEnrichmentPort
 from tap.modules.graph.ports.project_store import ProjectGraphStorePort
 from tap.modules.graph.ports.store import GraphStorePort
-from tap.modules.knowledge.api import ConversationAnswerExecutor
+from tap.modules.knowledge.api import ConversationAnswerExecutor, KnowledgeAPI
 from tap.modules.knowledge.ports.answers import ReadyDocumentRevision
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.modules.skill_hub.application.service import SkillHubService
@@ -229,6 +229,10 @@ class WorkflowAdmission(Protocol):
         self, conversation_id: str, turn_id: str, idempotency_key: str, frozen: TurnInput
     ) -> ConversationTurn: ...
 
+    async def handles_turn(self, conversation_id: str, turn_id: str) -> bool: ...
+
+    async def request_cancel(self, conversation_id: str, turn_id: str) -> ConversationTurn: ...
+
 
 class _UnconfiguredReadiness:
     async def check(self) -> ReadyHealth:
@@ -263,6 +267,8 @@ class HttpServices:
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
     workflow_admission: WorkflowAdmission | None = None
+    workflow_enabled: bool = False
+    workflow_knowledge_application: KnowledgeAPI | None = None
     feedback: FeedbackService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None

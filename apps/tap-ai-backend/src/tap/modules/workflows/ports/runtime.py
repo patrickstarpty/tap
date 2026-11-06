@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.workflows.domain.delegation import DelegationRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,3 +35,48 @@ class NativeWorkflowRuntime(Protocol):
         evidence of stop. Return unknown when that binding cannot be verified.
         """
         ...
+
+
+class NativeStatePort(Protocol):
+    async def ensure_root(self, scope: ProjectScopeContext, task_id: str, token: str) -> str: ...
+    async def delegate(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        token: str,
+        parent_id: str,
+        request: DelegationRequest,
+        call_id: str,
+    ) -> str: ...
+    async def start_node(
+        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str
+    ) -> int: ...
+    async def wait_node(
+        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str
+    ) -> None: ...
+    async def await_input(
+        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str, question: str
+    ) -> None: ...
+    async def fail_node(
+        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str, reason: str
+    ) -> None: ...
+    async def finish_node(
+        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str, summary: str
+    ) -> None: ...
+    async def unblock_parents(
+        self, scope: ProjectScopeContext, task_id: str, token: str
+    ) -> tuple[str, ...]: ...
+    async def release_task(
+        self, scope: ProjectScopeContext, task_id: str, token: str, status: str
+    ) -> None: ...
+    async def fail_task(
+        self, scope: ProjectScopeContext, task_id: str, token: str, reason: str
+    ) -> None: ...
+    async def finish_task(
+        self, scope: ProjectScopeContext, task_id: str, token: str, answer: str, outcome: str
+    ) -> None: ...
+    async def renew_task(self, scope: ProjectScopeContext, task_id: str, token: str) -> None: ...
+
+
+class WorkflowWakeups(Protocol):
+    async def notify(self, scope: ProjectScopeContext, task_id: str, sequence: int) -> None: ...

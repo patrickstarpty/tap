@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     ForeignKeyConstraint,
@@ -38,6 +39,7 @@ workflow_task = _scoped(
     Column("next_sequence", BigInteger, nullable=False),
     Column("budget_limit", JSON, nullable=False),
     Column("budget_used", JSON, nullable=False),
+    Column("admission_ready", Boolean, nullable=False, server_default="1"),
     Column("lease_owner", String(128)),
     Column("lease_token", String(64)),
     Column("lease_until", DATETIME(fsp=6)),

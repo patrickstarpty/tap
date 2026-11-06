@@ -10,10 +10,9 @@ adding a built-in tool means adding one entry here.
 the model (OpenAI-style function names reject ``.``); ``input_schema`` is the
 closed JSON Schema object the model must satisfy for a tool call; only
 ``model_callable`` tools are ever offered to a model (``knowledge.answer`` is
-a governance marker, never an invocable function). ``platform`` tools (Skill
-Hub's ``skill.activate``) are offered to every Agent and Tapper whenever their
-runtime precondition holds: they bypass the Agent allowlist, may not be listed
-in an Agent's ``toolIds`` and are not part of the public tool listing.
+a governance marker, never an invocable function). ``platform`` tools bypass the Agent allowlist and are not in public Agent
+``toolIds``. Visibility still depends on the task: ``skill.activate`` is for
+Knowledge Chat, while ``workflow.delegate`` is injected only for a native root.
 """
 
 from __future__ import annotations
@@ -134,7 +133,43 @@ _SKILL_ACTIVATE_SCHEMA: Mapping[str, object] = {
     },
 }
 
+_WORKFLOW_DELEGATE_SCHEMA: Mapping[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["agentId", "objective", "expectedOutput"],
+    "properties": {
+        "agentId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "objective": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "inputRefs": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string", "minLength": 1, "maxLength": 128},
+        },
+        "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 500},
+        "dependsOn": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string", "minLength": 1, "maxLength": 128},
+        },
+    },
+}
+
 TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
+    "workflow.delegate": ToolDefinition(
+        tool_id="workflow.delegate",
+        wire_name="workflow_delegate",
+        names={"en": "Delegate", "zh": "委派 Agent"},
+        descriptions={
+            "en": "Assign a bounded objective to an available specialist Agent.",
+            "zh": "向可用的专业 Agent 委派明确目标。",
+        },
+        required=False,
+        default_enabled=True,
+        model_callable=True,
+        input_schema=_WORKFLOW_DELEGATE_SCHEMA,
+        tasks=frozenset({"workflow"}),
+        platform=True,
+    ),
     "knowledge.search": ToolDefinition(
         tool_id="knowledge.search",
         wire_name="knowledge_search",
@@ -258,17 +293,19 @@ def visible_tool_ids(
 ) -> tuple[str, ...]:
     """Model-callable tool ids visible for this turn, in registry order.
 
-    Starts from the model-callable, non-platform subset of the registry, drops
+    Starts from model-callable tools for the legacy knowledge.answer task, drops
     ``graph.relations``/``insights.query`` when their runtime availability is
     false, and intersects with ``agent_allowlist`` when one is given. Platform
-    tools are then appended when ``skills_available`` (a non-empty Skill
-    catalog), regardless of the allowlist.
+    Knowledge Chat platform tools are then appended when ``skills_available``
+    (a non-empty Skill catalog), regardless of the allowlist.
     """
 
     visible = [
         tool_id
         for tool_id, definition in TOOL_REGISTRY.items()
-        if definition.model_callable and not definition.platform
+        if definition.model_callable
+        and not definition.platform
+        and "knowledge.answer" in definition.tasks
     ]
     if not relations_available:
         visible = [tool_id for tool_id in visible if tool_id != "graph.relations"]
@@ -280,6 +317,8 @@ def visible_tool_ids(
         visible.extend(
             tool_id
             for tool_id, definition in TOOL_REGISTRY.items()
-            if definition.model_callable and definition.platform
+            if definition.model_callable
+            and definition.platform
+            and "knowledge.answer" in definition.tasks
         )
     return tuple(visible)

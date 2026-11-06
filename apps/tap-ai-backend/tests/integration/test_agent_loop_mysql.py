@@ -57,7 +57,6 @@ from tests.contract.test_knowledge_api import CurrentPolicyVerifier, Passthrough
 from tests.conversation_execution_compat import KnowledgeHttpService
 from tests.integration.test_knowledge_publication import (
     ITEM,
-    NOW,
     ReadyProjection,
     approved_review,
     seed_authority,
@@ -429,15 +428,19 @@ async def _setup(
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     await seed_authority(sessions)
     await _activate_revision(sessions)
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+
     review = MysqlKnowledgeReviewRepository(sessions, scope=VALIDATION_SCOPE)
-    await review.create_review(approved_review())
+    current = datetime.now(UTC)
+    await review.create_review(replace(approved_review(), expires_at=current + timedelta(days=30)))
     await KnowledgeReviewApplication(review, ReadyProjection()).publish_review(
         "krv_mysql_001",
         generation="generation-001",
         idempotency_key="publish-agent-loop",
         actor_id="synthetic-reviewer-02",
         expected_version=4,
-        now=NOW,
+        now=current,
     )
     documents = MysqlDocumentRepository(
         sessions, scope=VALIDATION_SCOPE, audit_factory=lambda _: None

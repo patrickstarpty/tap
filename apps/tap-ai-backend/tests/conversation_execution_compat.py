@@ -49,8 +49,13 @@ class KnowledgeHttpService(HttpService):
             if isinstance(frozen, ConversationExecutionContext):
                 return await method(first, frozen, *args, **kwargs)
             if name == "add_insights_records":
-                step, labels = await method(decode_conversation_step(first), frozen)
-                return encode_conversation_step(step), labels
+                # Production graph passes a decoded step; historical JSON callers
+                # still need the codec. Decode only the latter.
+                encoded = isinstance(first.get("bundle"), dict)
+                step, labels = await method(
+                    decode_conversation_step(first) if encoded else first, frozen
+                )
+                return (encode_conversation_step(step) if encoded else step), labels
             context = ConversationExecutionContext(frozen, answer_plan, authorize)
             value = (
                 answer_request_from_http(first)

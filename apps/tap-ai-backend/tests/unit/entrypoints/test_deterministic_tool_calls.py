@@ -225,3 +225,31 @@ async def test_skill_activate_marker_is_consumed_once() -> None:
     second = await gateway.chat(_request(question, tools=tools, messages=messages))
     assert second.tool_calls == ()
     assert isinstance(second.output, str) and second.output
+
+
+@pytest.mark.asyncio
+async def test_native_workflow_scripted_fixture_direct_tool_single_double_and_merge() -> None:
+    gateway = _gateway()
+    direct = await gateway.chat(_request("[e2e-workflow:direct]"))
+    assert json.loads(direct.output)["answer"] == "Deterministic direct answer"
+    search = await gateway.chat(_request("[e2e-workflow:search]", tools=("knowledge.search",)))
+    assert [call.name for call in search.tool_calls] == ["knowledge_search"]
+    single = await gateway.chat(_request("[e2e-workflow:single:ba]", tools=("workflow.delegate",)))
+    assert [call.name for call in single.tool_calls] == ["workflow_delegate"]
+    assert json.loads(single.tool_calls[0].arguments_json)["agentId"] == "ba"
+    double = await gateway.chat(
+        _request("[e2e-workflow:double:ba:qae]", tools=("workflow.delegate",))
+    )
+    assert [call.name for call in double.tool_calls] == ["workflow_delegate"] * 2
+    assert [json.loads(call.arguments_json)["agentId"] for call in double.tool_calls] == [
+        "ba",
+        "qae",
+    ]
+    merged = await gateway.chat(
+        _request(
+            "[e2e-workflow:double:ba:qae]",
+            tools=("workflow.delegate",),
+            messages=tuple(_tool_result_message(call.call_id) for call in double.tool_calls),
+        )
+    )
+    assert "Merged" in merged.output
