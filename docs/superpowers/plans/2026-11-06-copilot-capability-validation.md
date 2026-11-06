@@ -98,7 +98,7 @@ def test_zero_exit_without_terminal_is_incomplete():
 | 名册规模 | 5、25、100 个允许的虚构 Agent | 启动时间、输入 tokens 可见则记录、委派正确性；未知用量标未知 |
 | 配置冻结 | 运行中改目录；新会话重新载入 | 老任务版本不变，新任务版本可核对；不依赖热加载 |
 
-- [ ] 写门禁测试并先失败：
+- [x] 写门禁测试并先失败：
 
 ```python
 from scripts.copilot_probe.evaluate import ready_for_runtime
@@ -109,7 +109,7 @@ def test_unverified_event_identity_blocks_runtime():
     assert not ready_for_runtime((result,), frozenset({"child_identity"}))
 ```
 
-- [ ] 实现矩阵评估及 opt-in skip。required 固定为 `byok_all_calls/child_identity/parallel/permissions/control_receipt/resume_workspace/reconcile`；`control_receipt` 允许已证实的边界交付，报告必须显示该限制。
+- [x] 实现确定性矩阵评估及 opt-in skip；真实执行仍因可信计数与终态 schema 缺失而阻断。required 固定为 `byok_all_calls/child_identity/parallel/permissions/control_receipt/resume_workspace/reconcile`；`control_receipt` 允许已证实的边界交付，报告必须显示该限制。
 - [ ] 执行确定性单测通过，再运行：
 
 ```bash

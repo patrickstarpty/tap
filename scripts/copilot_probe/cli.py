@@ -1,22 +1,19 @@
-"""Task 0.2 CLI boundary; real capability execution belongs to Task 0.3."""
+"""Deterministic capability report; real provider execution remains gated."""
 
 import argparse
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 
-_SCENARIOS = (
-    "simple",
-    "byok_all_calls",
-    "child_identity",
-    "parallel",
-    "permissions",
-    "control_receipt",
-    "resume_workspace",
-    "reconcile",
-    "roster_scale",
-    "config_freeze",
+from scripts.copilot_probe.evaluate import (
+    CAPABILITIES,
+    REQUIRED_CAPABILITIES,
+    capability_matrix,
+    ready_for_runtime,
 )
+
+_SCENARIOS = (*CAPABILITIES, "matrix")
 
 
 def positive_int(value: str) -> int:
@@ -28,7 +25,7 @@ def positive_int(value: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Copilot capability probe (real adapter pending)"
+        description="Copilot capability probe (real execution awaits verified meter and terminal schema)"
     )
     parser.add_argument("--scenario", required=True, choices=_SCENARIOS)
     parser.add_argument("--output", required=True, type=Path)
@@ -40,24 +37,31 @@ def main() -> int:
         and os.environ.get("TAP_RUN_COPILOT_PROBE") == "1"
     )
     reason = (
-        "Model-call meter and terminal event schema are not verified; execution blocked."
+        "Model-call meter and terminal event schema are not verified; real execution blocked."
         if opted_in
         else "Real probe requires both opt-in flags; execution skipped."
     )
-    # No provider call is launched until Task 0.3 can enforce the model budget.
+    # Never launch a provider call until the model budget and terminal state can be verified.
     report = {
         "scenario": args.scenario,
         "status": "unverified",
-        "execution": "skipped",
+        "execution": "blocked" if opted_in else "skipped",
         "reason": reason,
         "budget_enforced": False,
         "model_calls_used": None,
         "max_model_calls": args.max_model_calls,
         "max_seconds": args.max_seconds,
     }
+    if args.scenario == "matrix":
+        matrix = capability_matrix(())
+        report["capabilities"] = [asdict(result) for result in matrix.values()]
+        report["required_capabilities"] = sorted(REQUIRED_CAPABILITIES)
+        report["ready_for_runtime"] = ready_for_runtime(
+            tuple(matrix.values()), REQUIRED_CAPABILITIES
+        )
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-    print(f"{args.scenario}: unverified (execution skipped)")
-    return 0
+    print(f"{args.scenario}: unverified (execution {report['execution']})")
+    return 3 if opted_in else 0
 
 
 if __name__ == "__main__":

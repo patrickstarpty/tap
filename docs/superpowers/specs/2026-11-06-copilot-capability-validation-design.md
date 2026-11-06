@@ -1,6 +1,6 @@
 # Copilot 独立能力验证阶段设计
 
-日期：2026-11-06。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径证据门禁与[阶段 0 计划](../plans/2026-11-06-copilot-capability-validation.md)。这是不接入产品入口或共享 Demo 数据的独立探针设计。当前完成 0.1 配置导出及 0.2 确定性进程采集；真实事件、模型和恢复能力均未实测，不能视为已交付。
+日期：2026-11-06。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径证据门禁与[阶段 0 计划](../plans/2026-11-06-copilot-capability-validation.md)。这是不接入产品入口或共享 Demo 数据的独立探针设计。当前完成 0.1 配置导出、0.2 确定性进程采集及 0.3 确定性能力矩阵；真实事件、模型和恢复能力均未实测，不能视为已交付。
 
 ## 1. 边界与冻结输入
 
@@ -16,7 +16,7 @@ Frontmatter 仅写 `name`、`description`、`tools`、`strict-tools-list`；修�
 
 先用标准库 stub 覆盖交错输出、拆包 JSON、坏 JSON、超长行、非零退出、派生长活进程与取消清理。命令入口限定 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`，只提供预设无敏感样本，达到预算就停止后续调用。真正的事件字段、父子关联、终态及受控输入通道只能记录 CLI 实测值；日志 EOF、命令帮助和模拟 fixture 都不构成真实能力证据。目前 `process.py` 以独立进程组和有界内存捕获输出，`parse_jsonl` 只验证 JSON 对象语法，`classify_capture` 要求外部确认的终态。`cli.py` 已限定预设场景和参数；由于模型调用计数与终态 schema 未实测，它在 opt-in 下仍拒绝启动真实调用，输出 `unverified`，不把预算参数当作已执行的硬限制。真实采集与额度执行仍待 0.3。
 
-## 3. 能力场景与判定（0.3，待实测）
+## 3. 能力场景与判定（0.3 确定性门禁已实现，真实场景待实测）
 
 | 能力 | 固定实验 | 支持所需证据 |
 | --- | --- | --- |
