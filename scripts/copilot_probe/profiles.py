@@ -55,6 +55,9 @@ def export_profiles(
     An existing snapshot is verified byte for byte and never replaced. The
     caller must treat ``root`` as a task-owned, isolated workspace.
     """
+    if root.is_symlink():
+        raise ValueError("profile root must not be a symlink")
+
     seen: set[str] = set()
     rendered: dict[str, bytes] = {}
     for agent in agents:

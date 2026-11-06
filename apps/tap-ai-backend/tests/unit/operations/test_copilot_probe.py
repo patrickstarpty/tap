@@ -111,3 +111,15 @@ def test_symlinked_agents_parent_cannot_escape_root(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         export_profiles(root, (agent("qae"),), frozenset({"qae"}))
     assert list(outside.iterdir()) == []
+
+
+def test_symlinked_root_cannot_export_outside_workspace(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "linked-workspace"
+    root.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError):
+        export_profiles(root, (agent("qae"),), frozenset({"qae"}))
+
+    assert list(outside.iterdir()) == []
