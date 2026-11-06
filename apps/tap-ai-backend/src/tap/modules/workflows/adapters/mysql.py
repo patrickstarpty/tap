@@ -2920,16 +2920,15 @@ class MysqlWorkflowStore:
     ) -> tuple[str, ...]:
         scope = require_project_scope(scope)
         async with self._sessions() as session:
-            delegation = (
+            delegations = (
                 await session.execute(
-                    select(workflow_event.c.payload).where(
+                    select(workflow_event.c.node_id, workflow_event.c.payload).where(
                         *scope_predicates(workflow_event, scope),
                         workflow_event.c.task_id == task_id,
-                        workflow_event.c.node_id == node_id,
                         workflow_event.c.kind == "node.delegated",
                     )
                 )
-            ).scalar_one_or_none()
+            ).all()
             rows = (
                 (
                     await session.execute(
@@ -2943,17 +2942,22 @@ class MysqlWorkflowStore:
                 .mappings()
                 .all()
             )
+        predecessor_by_node = {
+            event_node_id: payload.get("rework_of_node_id")
+            for event_node_id, payload in delegations
+            if isinstance(event_node_id, str) and isinstance(payload, dict)
+        }
+        lineage = {node_id}
+        predecessor = predecessor_by_node.get(node_id)
+        while isinstance(predecessor, str) and predecessor not in lineage:
+            lineage.add(predecessor)
+            predecessor = predecessor_by_node.get(predecessor)
         ordered = sorted(
             (
                 row
                 for row in rows
                 if row["receipt"]["status"] == "applied"
-                and row["target_node_id"]
-                in (
-                    None,
-                    node_id,
-                    delegation.get("rework_of_node_id") if isinstance(delegation, dict) else None,
-                )
+                and (row["target_node_id"] is None or row["target_node_id"] in lineage)
             ),
             key=lambda row: row["payload"]["accepted_sequence"],
         )

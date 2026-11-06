@@ -333,13 +333,19 @@ async def test_projection_scans_past_old_pending_turns_and_known_task_projects_d
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("prior_status", "parent_queued"),
-    [("succeeded", False), ("succeeded", True), ("failed", False)],
+    ("prior_status", "parent_queued", "repeat_rework"),
+    [
+        ("succeeded", False, False),
+        ("succeeded", True, False),
+        ("failed", False, False),
+        ("succeeded", False, True),
+    ],
 )
 async def test_terminal_specialist_steer_executes_rework_and_root_uses_new_result(
     hosted_observations,
     prior_status,
     parent_queued,
+    repeat_rework,
 ) -> None:
     from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
     from tap.modules.ai.domain.models import (
@@ -390,7 +396,7 @@ async def test_terminal_specialist_steer_executes_rework_and_root_uses_new_resul
         await state.fail_node(VALIDATION_SCOPE, task.task_id, token, child, "Old failure")
     if parent_queued:
         assert await state.unblock_parents(VALIDATION_SCOPE, task.task_id, token) == (root,)
-    command_id = f"steer-rework-{prior_status}-{parent_queued}"
+    command_id = f"steer-rework-{prior_status}-{parent_queued}-{repeat_rework}"
     receipt = await store.submit_command(
         VALIDATION_SCOPE,
         ControlCommand(command_id, task.task_id, child, "steer", 1, "Check password reset"),
@@ -420,7 +426,15 @@ async def test_terminal_specialist_steer_executes_rework_and_root_uses_new_resul
 
         async def chat(self, request):
             self.calls.append(request)
-            output = "Reworked findings" if len(self.calls) == 1 else "Final using rework"
+            output = (
+                "First rework findings"
+                if repeat_rework and len(self.calls) == 1
+                else (
+                    "Second rework findings"
+                    if repeat_rework and len(self.calls) == 2
+                    else ("Reworked findings" if len(self.calls) == 1 else "Final using rework")
+                )
+            )
             usage = ModelUsage(1, 1)
             return ModelResult(
                 output=output,
@@ -478,21 +492,62 @@ async def test_terminal_specialist_steer_executes_rework_and_root_uses_new_resul
         owner="worker",
         standalone_authorize=lambda scope, task_id: _allow_owned(scope, task_id),
     )
+    if repeat_rework:
+        await runtime.start(VALIDATION_SCOPE, task.task_id)
+        first_snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
+        first_rework = next(
+            node
+            for node in first_snapshot["nodes"]
+            if node["role"] == "ba" and node["node_id"] != child
+        )
+        assert first_rework["status"] == "succeeded"
+        assert (
+            next(node for node in first_snapshot["nodes"] if node["node_id"] == root)["status"]
+            == "queued"
+        )
+        second_token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker")
+        assert second_token
+        second_id = f"steer-second-{task.task_id}"
+        await store.submit_command(
+            VALIDATION_SCOPE,
+            ControlCommand(
+                second_id,
+                task.task_id,
+                first_rework["node_id"],
+                "steer",
+                first_snapshot["plan_revision"],
+                "Use a table",
+            ),
+        )
+        assert (
+            await store.ack_command(
+                VALIDATION_SCOPE, second_id, second_token, {"status": "applied"}
+            )
+        )["status"] == "applied"
+        await state.release_task(VALIDATION_SCOPE, task.task_id, second_token, "queued")
     for _ in range(4):
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         if (await store.snapshot(VALIDATION_SCOPE, task.task_id))["status"] == "succeeded":
             break
     snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
     assert snapshot["status"] == "succeeded"
-    assert len(gateway.calls) == 2
+    assert len(gateway.calls) == (3 if repeat_rework else 2)
     assert "Check login flow" in gateway.calls[0].context
     assert "Check password reset" in gateway.calls[0].context
-    assert "Reworked findings" in str(gateway.calls[1].messages)
-    assert "Old findings" not in str(gateway.calls[1].messages)
+    if repeat_rework:
+        assert "Check password reset" in gateway.calls[1].context
+        assert "Use a table" in gateway.calls[1].context
+        assert "Second rework findings" in str(gateway.calls[2].messages)
+        assert "First rework findings" not in str(gateway.calls[2].messages)
+    else:
+        assert "Reworked findings" in str(gateway.calls[1].messages)
+        assert "Old findings" not in str(gateway.calls[1].messages)
     children = [node for node in snapshot["nodes"] if node["role"] == "ba"]
-    assert len(children) == 2
+    assert len(children) == (3 if repeat_rework else 2)
     assert {node["status"] for node in children} == {prior_status, "succeeded"}
-    assert sum(event.kind == "node.delegated" for event in snapshot["events"]) == 2
+    assert sum(event.kind == "node.delegated" for event in snapshot["events"]) == (
+        3 if repeat_rework else 2
+    )
 
 
 async def _allow_owned(scope, task_id):

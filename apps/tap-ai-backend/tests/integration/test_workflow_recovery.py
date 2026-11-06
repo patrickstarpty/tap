@@ -277,7 +277,10 @@ async def test_steer_rejects_completed_node_without_executable_delegation(workfl
     assert len(nodes) == 3
     assert (1, "finished", "successor") in edges
     assert not any(edge[0] == 2 for edge in edges)
-    assert set(await store.ready_nodes(VALIDATION_SCOPE, task.task_id)) == {"independent"}
+    assert set(await store.ready_nodes(VALIDATION_SCOPE, task.task_id)) == {
+        "independent",
+        "successor",
+    }
 
 
 @pytest.mark.asyncio

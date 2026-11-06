@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
@@ -220,6 +221,73 @@ async def test_partial_explicit_delegation_resumes_only_missing_specialist():
     )
     assert second["waiting_reason"] == "children"
     assert [item[0] for item in delegated] == ["ba", "qae"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpoint_recovers_completed_manual_selection_without_redelegating():
+    class PreFieldCheckpoint(MemorySaver):
+        legacy_replay = False
+
+        async def aget_tuple(self, config):
+            entry = await super().aget_tuple(config)
+            if entry is None or not self.legacy_replay:
+                return entry
+            checkpoint = deepcopy(entry.checkpoint)
+            checkpoint["channel_values"].pop("fulfilled_requested_ids", None)
+            return entry._replace(checkpoint=checkpoint)
+
+    gateway = ScriptedGateway(
+        [
+            (
+                json.dumps({"route": {"kind": "native", "reason": "review", "confidence": 1.0}}),
+                (
+                    ModelToolCall(
+                        "manual-ba",
+                        "workflow_delegate",
+                        json.dumps(
+                            {
+                                "agentId": "ba",
+                                "objective": "review",
+                                "inputRefs": [],
+                                "expectedOutput": "findings",
+                                "dependsOn": [],
+                            }
+                        ),
+                    ),
+                ),
+            ),
+            ("Final", ()),
+        ]
+    )
+    delegated = []
+
+    async def delegate(request, call_id):
+        delegated.append((request.agent_id, call_id))
+        return f"node-{request.agent_id}"
+
+    checkpoint = PreFieldCheckpoint()
+    graph = NativeWorkflowGraph(gateway, checkpointer=checkpoint, delegate=delegate)
+    first = await graph.run(
+        VALIDATION_SCOPE,
+        "task-pre-field",
+        "root",
+        "Review",
+        "qwen-plus",
+        requested_ids=("ba", "qae"),
+    )
+    assert first["waiting_reason"] == "children"
+    checkpoint.legacy_replay = True
+    second = await graph.run(
+        VALIDATION_SCOPE,
+        "task-pre-field",
+        "root",
+        "Review",
+        "qwen-plus",
+        requested_ids=("ba", "qae"),
+        child_results=({"call_id": "manual-ba", "summary": "BA complete"},),
+    )
+    assert second["waiting_reason"] == "children"
+    assert delegated == [("ba", "manual-ba"), ("qae", "requested:qae")]
 
 
 @pytest.mark.asyncio

@@ -192,6 +192,36 @@ class NativeWorkflowGraph:
         answer = decoded.get("answer")
         return suggestion, answer if isinstance(answer, str) else ""
 
+    @staticmethod
+    def _fulfilled_selections(state: NativeState) -> set[str]:
+        """Recover pre-field checkpoints from confirmed delegation tool messages."""
+        requested = set(state.get("requested_ids") or ())
+        fulfilled = set(state.get("fulfilled_requested_ids") or ()) & requested
+        messages = state.get("messages") or []
+        confirmed_calls = {
+            item.get("tool_call_id")
+            for item in messages
+            if item.get("role") == "tool" and isinstance(item.get("tool_call_id"), str)
+        }
+        for item in messages:
+            if item.get("role") != "assistant":
+                continue
+            for call in item.get("tool_calls") or ():
+                if (
+                    call.get("name") != "workflow_delegate"
+                    or call.get("call_id") not in confirmed_calls
+                ):
+                    continue
+                try:
+                    arguments = json.loads(call["arguments_json"])
+                except (KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(arguments, dict):
+                    agent_id = arguments.get("agentId")
+                    if isinstance(agent_id, str) and agent_id in requested:
+                        fulfilled.add(agent_id)
+        return fulfilled
+
     async def _model(self, state: NativeState) -> dict[str, Any]:
         assert self._scope is not None
         round_number = int(state.get("model_round") or 0) + 1
@@ -336,7 +366,7 @@ class NativeWorkflowGraph:
             and not calls
             and state.get("requested_ids")
         ):
-            fulfilled = set(state.get("fulfilled_requested_ids") or ())
+            fulfilled = self._fulfilled_selections(state)
             calls = [
                 {
                     "call_id": f"requested:{agent_id}",
@@ -377,7 +407,10 @@ class NativeWorkflowGraph:
     async def _tools(self, state: NativeState) -> dict[str, Any]:
         messages = list(state.get("messages") or [])
         delegated = False
-        fulfilled = list(state.get("fulfilled_requested_ids") or ())
+        confirmed = self._fulfilled_selections(state)
+        fulfilled = [
+            agent_id for agent_id in state.get("requested_ids", ()) if agent_id in confirmed
+        ]
         activated = list(state.get("activated_skills") or [])
         for raw in state.get("pending_calls", []):
             if raw["name"] not in self._allowed_wire_names:
