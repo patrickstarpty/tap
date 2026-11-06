@@ -140,7 +140,7 @@ def test_http_sse_reconnect_returns_complete_envelope_for_events_added_while_dis
     assert completed["turnId"] == "turn-2"
     assert completed["event"] == {
         "type": "turn.completed",
-        "payload": {"answer": None, "state": "completed"},
+        "payload": {"answer": None, "state": "completed", "workflowResult": None},
     }
 
     invalid = client.get(

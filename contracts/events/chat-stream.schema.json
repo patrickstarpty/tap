@@ -3038,6 +3038,17 @@
           ],
           "default": null,
           "title": "State"
+        },
+        "workflowResult": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "TurnCompletedPayload",
@@ -3149,6 +3160,28 @@
         "state"
       ],
       "title": "TurnStartedPayload",
+      "type": "object"
+    },
+    "WorkflowResult": {
+      "additionalProperties": false,
+      "description": "Native workflow output, without retrieval evidence or corpus provenance.",
+      "properties": {
+        "answer": {
+          "minLength": 1,
+          "title": "Answer",
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "title": "Taskid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "answer"
+      ],
+      "title": "WorkflowResult",
       "type": "object"
     }
   },

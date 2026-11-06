@@ -1331,7 +1331,9 @@ class _FakeRelationAnalysis:
         self._context = context
         self.calls: list[dict[str, object]] = []
 
-    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+    async def analyse(
+        self, query, evidence, source_revision_ids, *, turn_id=None, operation_id=None
+    ):
         self.calls.append(
             {"query": query, "evidence": evidence, "source_revision_ids": source_revision_ids}
         )

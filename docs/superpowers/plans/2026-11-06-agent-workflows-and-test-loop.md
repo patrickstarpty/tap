@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.13.12、FastAPI、LangGraph 1.2.12、SQLAlchemy/MySQL、Redis、MinIO、LiteLLM、OpenCode CLI、React 19、TypeScript、Playwright 1.62.1。
 
-**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。本计划只授权规划；2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。OpenCode 阶段 0 与阶段 1–3 未实施；旧 Copilot 确定性探针不计入新 provider 进度。
+**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。阶段 1 的原生工程与确定性验收已完成；OpenCode 阶段 0、阶段 2/3 与真实模型验证未实施。旧 Copilot 确定性探针不计入新 provider 进度。
 
 ## Global Constraints
 
@@ -64,7 +64,7 @@
 
 全部路径相对仓库根。分计划约定：`B=apps/tap-ai-backend/src/tap`，`BT=apps/tap-ai-backend/tests`，`F=apps/tap-ai-frontend/src`，`P=apps/backend/src/tap_platform`，`PT=apps/backend/tests`，`W=apps/web/src`。新增 Python 包需在同一任务添加 `__init__.py`。计划中的新增类型/函数是拟议接口，不代表已有实现。
 
-迁移以当前 head 为基线：AI `0038_skill_hub`，TAP `0005_insights_semantics`。阶段 1 预留 AI `0039_agent_workflows`，阶段 2 `0040_coding_sessions`；阶段 3 预留 TAP `0006_test_assets`、`0007_automation_bundles`、`0008_execution_runs`。执行前检查实际 head；若号码已占用，在实现前更新计划和 down_revision，禁止改历史迁移或制造双 head。
+原规划以 AI `0038_skill_hub`、TAP `0005_insights_semantics` 为基线；阶段 1 已顺序占用 AI `0039_agent_workflows`、`0040_native_workflow_bridge`、`0041_observed_refresh_cycle`。阶段 2 的 `coding_sessions` 仅预留 AI `0042`，尚未实施；阶段 3 预留 TAP `0006_test_assets`、`0007_automation_bundles`、`0008_execution_runs`。执行前检查实际 head；若号码已占用，在实现前更新计划和 down_revision，禁止改历史迁移或制造双 head。
 
 ADR-034 已用于模块归属决策；本计划拟新增的运行边界与测试资产决策分别预留 ADR-035、ADR-036。创建前核对决策索引，若已占用则顺延并同步全部引用，不覆盖已有 ADR。
 
@@ -105,8 +105,8 @@ git diff -- README.md docs/ AGENTS.md
 ## 6. 交付进度
 
 - [ ] 阶段 0：实测能力矩阵通过，固定 CLI/模型组合。
-- [ ] 阶段 1：原生任务、控制与 Agents 实时视图通过验收。
+- [x] 阶段 1：原生任务、控制与 Agents 实时视图通过确定性工程验收；真实模型验证按用户要求暂缓。
 - [ ] 阶段 2：OpenCode 全链路 BYOK、事件与恢复通过验收。
 - [ ] 阶段 3：版本化测试闭环及跨应用切换通过验收。
 
-当前只完成计划编写，不代表上述能力已经实现、测试通过或具备生产运行条件。
+阶段 1 的实现与验证证据见[运行指南](../../guides/2026-11-06-agent-workflows.md)及各任务报告；仍待独立评审与集成。阶段 0、2、3 和真实 provider/模型验收均未完成，不宣称生产运行条件。

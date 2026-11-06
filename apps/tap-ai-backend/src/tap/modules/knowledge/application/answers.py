@@ -343,6 +343,7 @@ class AnswerService:
         *,
         authorize=None,
         turn_id: str | None = None,
+        operation_id: str | None = None,
         answer_execution=None,
     ):
         """Task 6: the `graph.relations` tool's frozen entrypoint, same
@@ -356,6 +357,7 @@ class AnswerService:
             query,
             policy,
             turn_id=turn_id,
+            operation_id=operation_id,
             answer_execution=answer_execution,
             authorize=self._reauthorize(publication, authorize),
         )

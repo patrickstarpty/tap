@@ -26,6 +26,7 @@ class _Refresh:
     lease_token: str | None = None
     lease_expires_at: datetime | None = None
     claimed_due_at: datetime | None = None
+    refresh_cycle_id: str | None = None
     attempt_count: int = 0
     failure_code: str | None = None
 
@@ -110,12 +111,18 @@ class InMemorySuggestionStore:
             if row.lease_expires_at is not None and row.lease_expires_at > now:
                 continue
             token = uuid4().hex
+            row.refresh_cycle_id = row.refresh_cycle_id or uuid4().hex
             row.lease_owner = worker_id
             row.lease_token = token
             row.lease_expires_at = now + lease_duration
             row.claimed_due_at = row.due_at
             claims.append(
-                ClaimedRefresh(key=key, lease_token=token, attempt_count=row.attempt_count)
+                ClaimedRefresh(
+                    key=key,
+                    lease_token=token,
+                    attempt_count=row.attempt_count,
+                    refresh_cycle_id=row.refresh_cycle_id,
+                )
             )
         return tuple(claims)
 
@@ -127,7 +134,11 @@ class InMemorySuggestionStore:
         now: datetime,
     ) -> bool:
         row = self._refresh.get(claim.key)
-        if row is None or row.lease_token != claim.lease_token:
+        if (
+            row is None
+            or row.lease_token != claim.lease_token
+            or row.refresh_cycle_id != claim.refresh_cycle_id
+        ):
             return False
         self._suggestions[claim.key] = tuple(suggestions)
         row.last_refreshed_at = now
@@ -138,13 +149,18 @@ class InMemorySuggestionStore:
         if row.due_at == row.claimed_due_at:
             row.due_at = None
         row.claimed_due_at = None
+        row.refresh_cycle_id = None
         return True
 
     async def fail_refresh(
         self, claim: ClaimedRefresh, failure_code: str, *, now: datetime
     ) -> bool:
         row = self._refresh.get(claim.key)
-        if row is None or row.lease_token != claim.lease_token:
+        if (
+            row is None
+            or row.lease_token != claim.lease_token
+            or row.refresh_cycle_id != claim.refresh_cycle_id
+        ):
             return False
         row.lease_owner = None
         row.lease_token = None

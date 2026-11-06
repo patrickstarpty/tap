@@ -1462,9 +1462,17 @@ class ToolPhaseAnswers(PhaseAnswers):
         *,
         authorize=None,
         turn_id=None,
+        operation_id=None,
         answer_execution=None,
     ):
-        self.relations_calls.append({"bundle": bundle, "query": query, "turn_id": turn_id})
+        self.relations_calls.append(
+            {
+                "bundle": bundle,
+                "query": query,
+                "turn_id": turn_id,
+                "operation_id": operation_id,
+            }
+        )
         if authorize is not None:
             await authorize()
         if self._relations_error is not None:

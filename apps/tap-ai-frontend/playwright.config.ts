@@ -12,7 +12,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   use: {
     ...devices["Desktop Chrome"],
-    baseURL: "http://127.0.0.1:15173",
+    baseURL: process.env.TAPPER_WEB_BASE_URL ?? "http://127.0.0.1:15173",
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
     trace: "retain-on-failure",

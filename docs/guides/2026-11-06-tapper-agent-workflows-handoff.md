@@ -1,6 +1,6 @@
 # Tapper Agent 工作流与测试闭环实施交接
 
-交接日期：2026-11-06。供新会话实施使用。本会话完成整体设计、四阶段实施计划及用户反馈修订，尚未开始工作流功能开发。本文汇总上下文，不替代 Spec 或分阶段任务清单。
+交接日期：2026-11-06。以下交接记录保留当时的规划状态；实施现状以本页末的 2026-11-07 更新及[阶段 1 运行指南](2026-11-06-agent-workflows.md)为准。本文汇总上下文，不替代 Spec 或分阶段任务清单。
 
 ## 1. 接手位置与工作区
 
@@ -99,7 +99,7 @@
 
 模块归属以 [ADR-034](../decisions/2026-11-06-adr-034-tapper-application-module-ownership.md)为依据。当前预留 ADR-035 为运行模型边界、ADR-036 为测试资产与本机执行；创建前重查索引，已有号码不能覆盖。
 
-迁移基线为 AI `0038_skill_hub`、TAP `0005_insights_semantics`。计划预留的后续编号需在实际编码前重查 head；不改历史迁移或制造双 head。
+交接时迁移基线为 AI `0038_skill_hub`、TAP `0005_insights_semantics`；阶段 1 已顺序使用 AI `0039_agent_workflows`、`0040_native_workflow_bridge`、`0041_observed_refresh_cycle`。下一 AI 编号为 `0042`，仅预留给后续 OpenCode 阶段，未创建 coding migration。每次实施前仍须重查实际 head；不改历史迁移或制造双 head。
 
 ## 5. 验证与尚未验证的事项
 
@@ -122,3 +122,9 @@
 
 特别遵守：对外默认助手统一叫 Tapper，Orchestrator 只是内部调度角色，不在 Agents 档案或 @ 候选中单列。专业 Agent 按需调用。执行详情只在用户主动打开的右侧栏，中间保持对话。GUI 参考 Claude App/Cowork 与 Codex App；编码运行以 OpenCode CLI 为主。其他已确认规则以交接和 Spec 为准，不重新发散设计。
 ```
+
+## 7. 2026-11-07 阶段 1 工程更新
+
+阶段 1.1–1.6 已分别实施并通过任务级评审；1.7 的既有 Agent 实际调用观测、源事实恢复及隔离确定性浏览器旅程已完成工程门禁，仍待独立评审与合入。现状与运行边界以[阶段 1 运行指南](2026-11-06-agent-workflows.md)、[阶段计划](../superpowers/plans/2026-11-06-native-agent-workflows.md)及[架构](../architecture.md)为准；本页上方“尚未实施/尚未提交”的陈述保留交接当日历史，不是当前状态。
+
+确定性全量组成项为 TAP AI 后端 5587 passed、585 skipped，TAP AI Web 1119 passed，TAP 后端 147 passed、35 skipped，TAP Web 240 passed；`make check` 与真实 API/Relay/native worker/Web 的 `make workflow-e2e` 均通过。全量 `make test-full` 首次在一个旧前端精确对象断言处中断，修正该测试预期后逐项补齐剩余组成项，不声称该单次命令 exit 0。隔离旅程创建并清理自有项目与持久测试数据，不访问共享 Demo。真实模型和 OpenCode 能力探针按用户要求未运行；阶段 0、2、3 仍未完成，不构成生产运行验收。

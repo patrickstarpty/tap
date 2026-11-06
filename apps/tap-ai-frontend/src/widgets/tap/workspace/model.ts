@@ -5,6 +5,7 @@ import type {
   DraftState,
   GraphContextSummary,
   TaskStepView,
+  WorkflowResult,
 } from "../../../features/conversations/model/stream";
 import type { FeedbackValue } from "../../../features/conversations/feedback/AnswerFeedback";
 
@@ -65,6 +66,7 @@ export interface AssistantTurn {
   prompt: string;
   sourceReferences: readonly AssistantSourceReference[];
   response?: RetrievalAnswerResponse | null;
+  workflowResult?: WorkflowResult | null;
   graphContext?: GraphContextSummary | null;
   draft?: DraftState | null;
   citationLabels?: Readonly<Record<string, CitationLabelInfo>>;

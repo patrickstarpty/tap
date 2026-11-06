@@ -103,6 +103,47 @@ it("names dependency predecessors on each workflow node", () => {
   ).not.toBeNull();
 });
 
+it("labels an observed child with an unrecorded result as outcome unknown", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ items: [], nextCursor: null }),
+  );
+  render(
+    <QueryClientProvider client={createTestQueryClient()}>
+      <WorkflowSidebar
+        projectId="project-1"
+        snapshot={{
+          ...snapshot,
+          origin: "observed",
+          status: "succeeded",
+          availableActions: [],
+          nodes: [{ ...snapshot.nodes[1], status: "unknown" }],
+          events: [
+            {
+              ...snapshot.events[0],
+              kind: "node.outcome_unknown",
+              payload: { node_id: "sdet-1" },
+            },
+          ],
+        }}
+        connection="live"
+        onClose={() => undefined}
+      />
+    </QueryClientProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: /SDET Agent Outcome unknown/u }),
+  ).toBeVisible();
+  expect(screen.getByText("Node outcome unknown")).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: /SDET Agent Outcome unknown/u }),
+  );
+  expect(
+    screen.getByText(
+      "The source finished without a recorded result for this operation.",
+    ),
+  ).toBeVisible();
+});
+
 it("shows Tapper progress without a callable root card and replaces overview with node details", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
     const url = (request as Request).url;

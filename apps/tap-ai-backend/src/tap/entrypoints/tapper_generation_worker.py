@@ -30,7 +30,7 @@ from tap.modules.chat.application.conversations import (
     ConversationConflict,
     ConversationNotFound,
 )
-from tap.modules.chat.application.ports import DraftStreamUnavailable
+from tap.modules.chat.application.ports import ChatObservationPort, DraftStreamUnavailable
 from tap.modules.chat.application.turn_execution import (
     ChatTurnNodes,
     _evidence_from_checkpoint,
@@ -80,6 +80,7 @@ class GenerationWorker:
     # Skill Hub: the `SkillActivationRuntime` the `tools` node runs
     # `skill.activate` through (`None` never offers the tool).
     skills: Any | None = None
+    model_observation: ChatObservationPort | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -91,6 +92,8 @@ class GenerationWorker:
             raise ValueError("generation worker lease or turn retry configuration is invalid")
 
     async def run_once(self, *, limit: int) -> int:
+        if self.model_observation is not None:
+            await self.model_observation.repair(limit=min(limit, 50))
         claimed = await self.conversations.repository.claim_queued(limit=limit)
         # `claim_queued` writes `turn.started` for every claimed Turn, and may
         # also settle permanently-faulted Turns (`turn.failed`) inline; both
@@ -155,6 +158,18 @@ class GenerationWorker:
                 ),
             )
 
+        async def finish_observation(source_state: str) -> None:
+            if self.model_observation is None:
+                return
+            try:
+                await self.model_observation.finish_source(
+                    conversation_id, turn.turn_id, source_state
+                )
+            except Exception:
+                # The source CAS has committed; the bounded next worker pass
+                # repairs from the durable Turn fact without rerunning the model.
+                _LOGGER.exception("observed Chat terminal projection deferred")
+
         outcome = "deferred"
         try:
 
@@ -200,6 +215,7 @@ class GenerationWorker:
                 drafts=self.drafts,
                 redact=self.redact,
                 skills=self.skills,
+                model_observation=self.model_observation,
             ).nodes
 
             async def canceled() -> bool:
@@ -323,6 +339,7 @@ class GenerationWorker:
                 terminal_event=terminal_event,
                 stream_events=persisted_stream_events,
             )
+            await finish_observation(evidence.outcome)
             if self.suggestion_refresh is not None and evidence.outcome == "completed":
                 actor_id = getattr(turn.input_snapshot.value, "actor_id", None)
                 if actor_id:
@@ -354,6 +371,7 @@ class GenerationWorker:
                 outcome = "failed"
                 try:
                     await fail_turn()
+                    await finish_observation("failed")
                 except (ConversationConflict, PermissionError):
                     # Token and expiry checks prevent a real loser from failing the Turn.
                     return
@@ -437,6 +455,7 @@ async def main() -> None:
         redact=_redact_chat_egress,
         # Same `MysqlAssetCatalog` and session factory the API composes.
         skills=runtime.skill_activation_runtime,
+        model_observation=runtime.chat_observation,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

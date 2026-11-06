@@ -173,6 +173,7 @@ export function useConversationRuntime(
         detail: persisted,
         status,
         response: latest?.response ?? null,
+        workflowResult: latest?.workflowResult ?? null,
         graphContext: latest?.graphContext ?? null,
         draft: terminal(status) ? null : draftFacts.draft,
         citationLabels: draftFacts.citationLabels,
@@ -189,7 +190,7 @@ export function useConversationRuntime(
             ? ("loading" as const)
             : events.isError
               ? ("error" as const)
-              : latest?.response === undefined
+              : latest?.response === undefined && latest?.workflowResult == null
                 ? ("missing" as const)
                 : ("ready" as const),
       };

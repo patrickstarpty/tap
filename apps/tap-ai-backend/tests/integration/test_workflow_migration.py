@@ -140,3 +140,49 @@ def test_bridge_downgrade_refuses_workflow_owner_or_task_records(
         }
     finally:
         engine.dispose()
+
+
+def test_refresh_cycle_migration_round_trip_and_populated_downgrade_guard(
+    owned_project_mysql,
+) -> None:
+    engine = create_engine(owned_project_mysql.url)
+    now = datetime(2026, 11, 6)
+    try:
+        owned_project_mysql.downgrade("0040_native_workflow_bridge")
+        assert "refresh_cycle_id" not in {
+            column["name"] for column in inspect(engine).get_columns("prompt_suggestion_refresh")
+        }
+        owned_project_mysql.upgrade("head")
+        assert "refresh_cycle_id" in {
+            column["name"] for column in inspect(engine).get_columns("prompt_suggestion_refresh")
+        }
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO prompt_suggestion_refresh "
+                    "(enterprise_id, project_id, actor_id, identity_mode, identity_origin, "
+                    "locale, refresh_cycle_id, created_at, updated_at) VALUES "
+                    "(:enterprise_id, :project_id, :actor_id, :identity_mode, "
+                    ":identity_origin, 'en', :cycle, :now, :now)"
+                ),
+                {
+                    "enterprise_id": VALIDATION_SCOPE.enterprise_id,
+                    "project_id": VALIDATION_SCOPE.project_id,
+                    "actor_id": VALIDATION_SCOPE.actor_id,
+                    "identity_mode": VALIDATION_SCOPE.identity_mode.value,
+                    "identity_origin": VALIDATION_SCOPE.identity_mode.value.upper(),
+                    "cycle": "a" * 32,
+                    "now": now,
+                },
+            )
+        with pytest.raises(RuntimeError, match="local gate command failed"):
+            owned_project_mysql.downgrade("0040_native_workflow_bridge")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    text("SELECT refresh_cycle_id FROM prompt_suggestion_refresh WHERE locale='en'")
+                )
+                == "a" * 32
+            )
+    finally:
+        engine.dispose()

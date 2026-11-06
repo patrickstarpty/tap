@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -253,3 +254,36 @@ async def test_native_workflow_scripted_fixture_direct_tool_single_double_and_me
         )
     )
     assert "Merged" in merged.output
+
+
+@pytest.mark.asyncio
+async def test_native_workflow_child_fixture_keeps_marker_for_safe_second_boundary() -> None:
+    gateway = _gateway()
+    root = await gateway.chat(_request("[e2e-workflow:single:qae]", tools=("workflow.delegate",)))
+    delegated = json.loads(root.tool_calls[0].arguments_json)
+    assert "[e2e-workflow:single:qae]" in delegated["objective"]
+    child_prompt = "Fulfill only the delegated objective; do not route or delegate again."
+    first = await gateway.chat(
+        replace(
+            _request(delegated["objective"], tools=("knowledge.search",)),
+            prompt=child_prompt,
+            prompt_digest=digest(child_prompt),
+            timeout_seconds=10,
+            context=delegated["objective"],
+        )
+    )
+    assert [call.name for call in first.tool_calls] == ["knowledge_search"]
+    second = await gateway.chat(
+        replace(
+            _request(
+                delegated["objective"] + "\n\n已应用的新要求：\nCheck boundary coverage",
+                tools=("knowledge.search",),
+                messages=(_tool_result_message(first.tool_calls[0].call_id),),
+            ),
+            prompt=child_prompt,
+            prompt_digest=digest(child_prompt),
+            context=delegated["objective"] + "\n\n已应用的新要求：\nCheck boundary coverage",
+        )
+    )
+    assert second.tool_calls == ()
+    assert "Check boundary coverage" in second.output

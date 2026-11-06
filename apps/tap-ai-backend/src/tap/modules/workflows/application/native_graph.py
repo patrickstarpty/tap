@@ -36,7 +36,7 @@ Delegate = Callable[[DelegationRequest, str], Awaitable[str]]
 OrdinaryTool = Callable[[str, dict[str, object], str], Awaitable[str]]
 RouteCommit = Callable[[RouteDecision], Awaitable[None]]
 BeforeModel = Callable[[], Awaitable[str]]
-SkillActivation = Callable[[str, tuple[dict[str, object], ...]], Awaitable[dict[str, object]]]
+SkillActivation = Callable[[str, tuple[dict[str, object], ...], str], Awaitable[dict[str, object]]]
 
 
 class NativeState(TypedDict, total=False):
@@ -84,7 +84,10 @@ class NativeWorkflowGraph:
         skill_catalog: tuple[SkillCatalogEntry, ...] = (),
         skill_activation: SkillActivation | None = None,
         loaded_skill_ids: tuple[str, ...] = (),
+        model_timeout_seconds: float = 15.0,
     ) -> None:
+        if not 0 < model_timeout_seconds <= 60:
+            raise ValueError("native model timeout is outside the gateway bound")
         self._gateway = gateway
         self._delegate = delegate
         self._ordinary_tool = ordinary_tool
@@ -101,6 +104,7 @@ class NativeWorkflowGraph:
         self._skill_catalog = skill_catalog
         self._skill_activation = skill_activation
         self._loaded_skill_ids = frozenset(loaded_skill_ids)
+        self._model_timeout_seconds = model_timeout_seconds
         offered = set(self._allowed_tool_ids) & {"knowledge.search"}
         if is_root and delegate is not None:
             offered.add("workflow.delegate")
@@ -240,7 +244,7 @@ class NativeWorkflowGraph:
             prompt=system_prompt,
             prompt_digest=text_digest(system_prompt),
             context=context,
-            timeout_seconds=60.0,
+            timeout_seconds=self._model_timeout_seconds,
             idempotency_key=(
                 f"{self._task_id}:{self._node_id}:graph:{self._graph_run_id}:model:{round_number}"
             ),
@@ -412,7 +416,7 @@ class NativeWorkflowGraph:
                     summary = f"Skill activation rejected: {reason}"
                 else:
                     assert entry is not None
-                    record = await self._skill_activation(name, tuple(activated))
+                    record = await self._skill_activation(name, tuple(activated), raw["call_id"])
                     if (
                         record.get("revisionId") != entry.revision_id
                         or record.get("skillId") != entry.skill_id

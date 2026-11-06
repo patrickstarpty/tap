@@ -461,7 +461,9 @@ class FakeRelationAnalysis:
         self.context = context
         self.calls = 0
 
-    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+    async def analyse(
+        self, query, evidence, source_revision_ids, *, turn_id=None, operation_id=None
+    ):
         self.calls += 1
         return self.context
 

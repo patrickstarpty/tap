@@ -14170,6 +14170,16 @@
               }
             ],
             "title": "State"
+          },
+          "workflowResult": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "TurnCompletedPayload",
@@ -14854,7 +14864,7 @@
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/WorkflowStatus"
+            "$ref": "#/components/schemas/WorkflowNodeStatus"
           }
         },
         "required": [
@@ -14967,7 +14977,7 @@
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/WorkflowStatus"
+            "$ref": "#/components/schemas/WorkflowNodeStatus"
           }
         },
         "required": [
@@ -14985,6 +14995,17 @@
         ],
         "title": "WorkflowNodeDetail",
         "type": "object"
+      },
+      "WorkflowNodeStatus": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          {
+            "const": "unknown",
+            "type": "string"
+          }
+        ]
       },
       "WorkflowNodeView": {
         "additionalProperties": false,
@@ -15078,7 +15099,7 @@
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/WorkflowStatus"
+            "$ref": "#/components/schemas/WorkflowNodeStatus"
           }
         },
         "required": [
@@ -15114,6 +15135,28 @@
           "occurredAt"
         ],
         "title": "WorkflowRecentEvent",
+        "type": "object"
+      },
+      "WorkflowResult": {
+        "additionalProperties": false,
+        "description": "Native workflow output, without retrieval evidence or corpus provenance.",
+        "properties": {
+          "answer": {
+            "minLength": 1,
+            "title": "Answer",
+            "type": "string"
+          },
+          "taskId": {
+            "minLength": 1,
+            "title": "Taskid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "answer"
+        ],
+        "title": "WorkflowResult",
         "type": "object"
       },
       "WorkflowStatus": {

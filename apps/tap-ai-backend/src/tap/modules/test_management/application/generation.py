@@ -30,6 +30,7 @@ from tap.modules.test_management.ports.generation import (
     GenerationResponseUnknown,
     TestDesignGenerator,
     TestDesignJobStore,
+    TestDesignObservationPort,
 )
 from tap.platform.db.project_scope import require_project_scope
 from tap.platform.telemetry import bind_trace, flush_traces, span
@@ -192,6 +193,7 @@ class TestDesignWorker:
         worker_id: str,
         lease_duration: timedelta = timedelta(seconds=60),
         renew_interval_seconds: float = 20.0,
+        observation: TestDesignObservationPort | None = None,
     ) -> None:
         self._jobs = jobs
         self._generator = generator
@@ -206,12 +208,15 @@ class TestDesignWorker:
         self._worker_id = worker_id
         self._lease_duration = lease_duration
         self._renew_interval_seconds = renew_interval_seconds
+        self._observation = observation
 
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
     async def run_once(self, limit: int) -> TestDesignWorkerRun:
+        if self._observation is not None:
+            await self._observation.repair(min(limit, 50))
         claims = await self._jobs.claim_generation_jobs(
             self._scope,
             worker_id=self._worker_id,
@@ -255,6 +260,8 @@ class TestDesignWorker:
 
                     async def execute(_state):
                         context = await self._jobs.generation_context(self._scope, claim)
+                        if self._observation is not None:
+                            await self._observation.before_generate(claim)
                         generated = await self._generator.generate(context)
                         return {"result": {"draft": _revision_checkpoint(generated)}}
 
@@ -315,6 +322,11 @@ class TestDesignWorker:
                     draft = _revision_from_checkpoint(state.get("result", {}).get("draft"))
                     graph_ready = True
                     await self._jobs.complete_generation(self._scope, claim, draft, now=self._now())
+                    if self._observation is not None:
+                        try:
+                            await self._observation.finish_source(claim.job.request.job_id)
+                        except Exception:
+                            logger.exception("test-design observed terminal projection deferred")
                     ready += 1
                 except GenerationResponseUnknown:
                     try:
@@ -344,6 +356,13 @@ class TestDesignWorker:
                             failure_code="test-design-generation-failed",
                             now=self._now(),
                         )
+                        if self._observation is not None:
+                            try:
+                                await self._observation.finish_source(claim.job.request.job_id)
+                            except Exception:
+                                logger.exception(
+                                    "test-design observed terminal projection deferred"
+                                )
                         failed += 1
                     except Exception:
                         lease_lost += 1

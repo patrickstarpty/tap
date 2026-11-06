@@ -25,6 +25,20 @@ const envelope = (
 });
 
 describe("conversation stream reducer", () => {
+  it("restores a native workflow answer without retrieval evidence", () => {
+    const state = reduceStreamEvent(
+      createStreamState(),
+      envelope(1, "turn-1", "turn.completed", {
+        workflowResult: { taskId: "task-1", answer: "Workflow answer" },
+      }),
+    );
+    expect(state.turns["turn-1"]?.workflowResult).toEqual({
+      taskId: "task-1",
+      answer: "Workflow answer",
+    });
+    expect(state.turns["turn-1"]?.response).toBeNull();
+    expect(state.turns["turn-1"]?.status).toBe("completed");
+  });
   it("appends draft text ordered by (attempt, seq) and never advances lastSequence", () => {
     let state = createStreamState();
     state = reduceStreamEvent(

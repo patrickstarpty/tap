@@ -6,6 +6,74 @@ from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 
 
 @pytest.mark.asyncio
+async def test_native_model_provider_key_is_bounded_without_changing_journal_replay_identity():
+    from tap.modules.ai.domain.models import ModelOperation, ModelRequest, ModelUsage, text_digest
+    from tap.modules.workflows.adapters.native_runtime import JournaledModelGateway
+
+    task_id, node_id, run_id = "t" * 32, "n" * 32, "r" * 64
+    original_key = f"{task_id}:{node_id}:graph:{run_id}:model:1"
+
+    class Store:
+        saved = None
+
+        async def graph_lineage(self, scope, task_id, node_id, attempt):
+            return run_id, 1
+
+        async def action_result(self, scope, action_id):
+            return self.saved
+
+        async def task_request(self, scope, task_id):
+            return {}
+
+        async def reserve_action(self, *args, **kwargs):
+            return "reserved"
+
+        async def settle_action(self, scope, task_id, token, action_id, result, **kwargs):
+            self.saved = result
+            return result
+
+        async def snapshot(self, scope, task_id):
+            return {"budget_limit": {}, "budget_used": {}}
+
+    class Gateway:
+        keys = []
+
+        async def chat(self, request):
+            self.keys.append(request.idempotency_key)
+            assert len(request.idempotency_key) <= 128
+            return SimpleNamespace(
+                output="Answer",
+                actual_model="fixture",
+                actual_provider="fixture",
+                usage=ModelUsage(1, 1),
+                provider_request_id=None,
+                gateway_call_id=None,
+                call_id=None,
+                cost_usd=None,
+                tool_calls=(),
+            )
+
+    store, gateway = Store(), Gateway()
+    request = ModelRequest(
+        scope=VALIDATION_SCOPE,
+        alias="qwen-plus",
+        operation=ModelOperation.CHAT,
+        prompt="Review",
+        prompt_digest=text_digest("Review"),
+        context="Review",
+        timeout_seconds=15,
+        idempotency_key=original_key,
+    )
+    first = await JournaledModelGateway(gateway, store, task_id, "token", node_id, 1).chat(request)
+    second = await JournaledModelGateway(gateway, store, task_id, "retry-token", node_id, 2).chat(
+        request
+    )
+    assert first.output == second.output == "Answer"
+    assert first.audit.idempotency_key == second.audit.idempotency_key == original_key
+    assert len(gateway.keys) == 1
+
+
+@pytest.mark.asyncio
 async def test_public_knowledge_search_reserves_shared_model_budget_and_replays_result():
     from tap.modules.workflows.adapters.native_runtime import JournaledKnowledgeSearch
 
@@ -59,7 +127,10 @@ async def test_public_knowledge_search_reserves_shared_model_budget_and_replays_
         calls.append(("authorize", None))
         return True
 
-    tool = JournaledKnowledgeSearch(Store(), Knowledge(), policy_for)
+    async def actual_step(scope, task_id, token, node_id, attempt, kind, call_id, name, outcome):
+        calls.append((kind, outcome))
+
+    tool = JournaledKnowledgeSearch(Store(), Knowledge(), policy_for, on_actual_step=actual_step)
     first = await tool.execute(
         VALIDATION_SCOPE,
         "task-1",
@@ -86,6 +157,10 @@ async def test_public_knowledge_search_reserves_shared_model_budget_and_replays_
     assert "Login steps" in first
     assert [item[0] for item in calls].count("reserve") == 1
     assert [item[0] for item in calls].count("search") == 1
+    assert [item for item in calls if item[0].startswith("node.tool_")] == [
+        ("node.tool_started", None),
+        ("node.tool_finished", "succeeded"),
+    ]
     assert calls.index(("reserve", "model")) < calls.index(("search", "login"))
 
 

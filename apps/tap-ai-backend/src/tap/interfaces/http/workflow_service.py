@@ -30,7 +30,7 @@ class WorkflowHttpService:
         self,
         services: HttpServices,
         store: WorkflowStore,
-        admission: WorkflowAdmissionCoordinator,
+        admission: WorkflowAdmissionCoordinator | None,
         queries: WorkflowQueries,
     ) -> None:
         self._services = services
@@ -41,6 +41,8 @@ class WorkflowHttpService:
     async def create(
         self, scope: ProjectScopeContext, body: WorkflowCreateRequest, key: str
     ) -> dict[str, object]:
+        if self._admission is None or not getattr(self._services, "workflow_enabled", True):
+            raise WorkflowControlUnavailable("native workflow admission is disabled")
         public_request = body.model_dump(mode="json", by_alias=True)
         existing = await self._admission.existing_standalone(scope, public_request, key)
         if existing is not None:
@@ -97,6 +99,8 @@ class WorkflowHttpService:
         body: WorkflowCommandRequest,
         key: str,
     ) -> dict[str, object]:
+        if not getattr(self._services, "workflow_enabled", True):
+            raise WorkflowControlUnavailable("native workflow controls are disabled")
         snapshot = await self.queries.snapshot(scope, task_id)
         if snapshot["origin"] == "observed":
             raise WorkflowControlUnavailable("observed task has no native controls")

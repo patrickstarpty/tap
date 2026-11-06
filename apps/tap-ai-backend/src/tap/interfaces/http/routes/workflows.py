@@ -23,7 +23,6 @@ from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.workflow_service import WorkflowControlUnavailable, WorkflowHttpService
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
-from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
 from tap.modules.workflows.application.queries import SnapshotRequired, WorkflowQueries, replay_from
 
 router = APIRouter(
@@ -37,17 +36,17 @@ def workflow_service(request: Request) -> WorkflowHttpService:
     services = request.app.state.http_services
     store = services.workflow_store
     admission = services.workflow_admission
-    if (
-        not services.workflow_enabled
-        or store is None
-        or not isinstance(admission, WorkflowAdmissionCoordinator)
-    ):
+    if store is None:
         raise KnowledgeRuntimeUnavailable
     return WorkflowHttpService(
         services,
         store,
         admission,
-        WorkflowQueries(store, redactor=PatternEgressRedactor(personal_data=True)),
+        WorkflowQueries(
+            store,
+            redactor=PatternEgressRedactor(personal_data=True),
+            native_controls_enabled=services.workflow_enabled,
+        ),
     )
 
 

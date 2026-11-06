@@ -1821,7 +1821,11 @@ async def test_create_api_runtime_exact_e2e_reuses_redis_for_failure_controller(
         return object()
 
     monkeypatch.setattr(module, "_create_asset_catalog", create_asset_catalog)
-    monkeypatch.setattr(module, "_assemble_http_services", lambda **_kwargs: HttpServices())
+    monkeypatch.setattr(
+        module,
+        "_assemble_http_services",
+        lambda **_kwargs: HttpServices(conversations=SimpleNamespace(repository=object())),
+    )
 
     runtime = await module.create_api_runtime(settings)
 
@@ -1912,7 +1916,7 @@ async def test_create_api_runtime_composes_draft_stream_over_a_dedicated_block_c
     def assemble_http_services(**kwargs):  # type: ignore[no-untyped-def]
         captured["event_wakeups"] = kwargs.get("event_wakeups")
         captured["draft_stream"] = kwargs.get("draft_stream")
-        return HttpServices()
+        return HttpServices(conversations=SimpleNamespace(repository=object()))
 
     monkeypatch.setattr(module, "_create_database", database)
     monkeypatch.setattr(module, "_create_blob", lambda _settings: artifacts)

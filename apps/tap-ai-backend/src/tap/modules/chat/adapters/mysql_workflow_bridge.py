@@ -329,7 +329,11 @@ class MysqlWorkflowChatBridge:
                 stream_type = "turn.completed" if outcome == "completed" else f"turn.{outcome}"
                 stream_payload: dict[str, object]
                 if outcome == "completed":
-                    stream_payload = {"state": "completed"}
+                    stream_payload = (
+                        {"workflowResult": {"taskId": fact.task_id, "answer": answer}}
+                        if answer.strip()
+                        else {"state": "completed"}
+                    )
                 elif outcome == "canceled":
                     stream_payload = {"partialAnswerRetained": False}
                 else:

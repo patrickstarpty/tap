@@ -39,7 +39,8 @@ from tap.modules.ai.application.catalog import ModelCatalog
 from tap.modules.ai.application.skill_authoring import SkillAuthoringService
 from tap.modules.ai.ports.model_calls import ModelCallRecorder
 from tap.modules.chat.application.plan_answer import DEFAULT_PLANNER_TIMEOUT_SECONDS
-from tap.modules.chat.application.ports import SkillActivationRuntime
+from tap.modules.chat.application.ports import ChatObservationPort, SkillActivationRuntime
+from tap.modules.chat.application.suggestion_ports import SuggestionObservationPort
 from tap.modules.knowledge.adapters.litellm import KnowledgeModelGateway
 from tap.modules.knowledge.adapters.milvus.audit import (
     SearchAuditSink,
@@ -1047,6 +1048,8 @@ class TapperApiRuntime:
     # `skill.activate` through.
     skill_activation_runtime: SkillActivationRuntime | None = None
     workflow_components: NativeWorkflowComponents | None = None
+    chat_observation: ChatObservationPort | None = None
+    suggestion_observation: SuggestionObservationPort | None = None
 
     async def aclose(self) -> None:
         await self._resources.aclose()
@@ -1072,10 +1075,19 @@ async def create_api_runtime(
         redis_stream_block = _create_redis_stream_block_client(settings)
         resources.push(redis_stream_block)
         failure_controller = _create_stage_controller(settings, redis)
+        from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+        from tap.modules.workflows.adapters.mysql_observations import MysqlAgentObservations
+        from tap.modules.workflows.adapters.observation_bindings import SuggestionObservationBinding
+
+        observation_sessions = async_sessionmaker(engine, expire_on_commit=False)
+        read_workflow_store = MysqlWorkflowStore(observation_sessions)
+        observations = MysqlAgentObservations(observation_sessions, read_workflow_store)
+        suggestion_observation = SuggestionObservationBinding(observations, repository.scope)
         embeddings = _create_embeddings(
             settings,
             max_retries=model_gateway_max_retries,
             recorder=MysqlModelCallRecorder(async_sessionmaker(engine, expire_on_commit=False)),
+            observe_chat_models=True,
         )
         _push_if_owned(resources, embeddings)
         search, reader, target = await _create_search(
@@ -1136,12 +1148,21 @@ async def create_api_runtime(
             planner_timeout_seconds=settings.planner_timeout_seconds,
             event_wakeups=_create_event_wakeups(redis),
             draft_stream=_create_draft_stream(redis, redis_stream_block, settings),
+            suggestion_on_complete=suggestion_observation.accepted_complete,
+            observation_sessions=observation_sessions,
         )
+        from tap.modules.workflows.adapters.observation_bindings import ChatObservationBinding
+
+        if services.conversations is None:
+            raise ValueError("Chat observation source is unavailable")
+        chat_observation = ChatObservationBinding(
+            observations, asset_catalog, services.conversations.repository, repository.scope
+        )
+        services = replace(services, workflow_store=read_workflow_store)
         workflow_components = None
         if settings.workflow_enabled:
             from tap.modules.chat.adapters.mysql_workflow_bridge import MysqlWorkflowChatBridge
             from tap.modules.workflows.adapters.events import RedisWorkflowEvents
-            from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
             from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
 
             workflow_events = RedisWorkflowEvents(
@@ -1150,8 +1171,8 @@ async def create_api_runtime(
                 repository.scope,
                 settings.worker_id + "-workflow",
             )
-            workflow_sessions = async_sessionmaker(engine, expire_on_commit=False)
-            workflow_store = MysqlWorkflowStore(workflow_sessions)
+            workflow_sessions = observation_sessions
+            workflow_store = read_workflow_store
             workflow_chat = MysqlWorkflowChatBridge(
                 workflow_sessions,
                 scope=repository.scope,
@@ -1274,6 +1295,8 @@ async def create_api_runtime(
             skill_authoring=skill_authoring,
             skill_activation_runtime=skill_activation_runtime,
             workflow_components=workflow_components,
+            chat_observation=chat_observation,
+            suggestion_observation=suggestion_observation,
         )
     except BaseException as error:
         await resources.aclose(error)
@@ -1339,13 +1362,43 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
                 policy,
                 scope,
                 "knowledge.answer",
-                ResourceRef(scope.enterprise_id, scope.project_id, "knowledge"),
+                ResourceRef(
+                    enterprise_id=scope.enterprise_id,
+                    project_id=scope.project_id,
+                    kind="knowledge",
+                ),
             )
         except (AuthorizationDenied, PolicyUnavailable):
             return False
         return True
 
-    knowledge_tool = JournaledKnowledgeSearch(store, components.knowledge, policy_for)
+    async def record_actual_tool_step(
+        scope,
+        task_id,
+        token,
+        node_id,
+        attempt,
+        kind,
+        call_id,
+        tool_id,
+        outcome,
+    ):
+        import hashlib
+
+        payload = {"node_id": node_id, "attempt": attempt, "tool_id": tool_id}
+        if outcome is not None:
+            payload["outcome"] = outcome
+        event_id = hashlib.sha256(
+            f"actual-step:{task_id}:{node_id}:{attempt}:{kind}:{call_id}".encode()
+        ).hexdigest()
+        await store.append_event(scope, task_id, token, event_id, kind, payload)
+
+    knowledge_tool = JournaledKnowledgeSearch(
+        store,
+        components.knowledge,
+        policy_for,
+        on_actual_step=record_actual_tool_step,
+    )
 
     async def load_skill(scope, revision_id):
         revision = await components.asset_catalog.resolve_historical_skill(scope, revision_id)
@@ -1383,6 +1436,7 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
             components.gateway, store, task_id, token, node_id, attempt, authorize
         ),
         max_parallel_agents=settings.workflow_max_parallel_agents,
+        model_timeout_seconds=settings.model_timeout_seconds,
         owner=owner,
         chat=chat,
         projection=projection,
@@ -1753,6 +1807,9 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
             MysqlTestPlanRepository,
         )
         from tap.modules.test_management.application.generation import TestDesignWorker
+        from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+        from tap.modules.workflows.adapters.mysql_observations import MysqlAgentObservations
+        from tap.modules.workflows.adapters.observation_bindings import TestDesignObservationBinding
         from tap.platform.messaging.redis_dispatch import AsyncRedisStream
         from tap.platform.messaging.redis_wakeup import RedisWakeupConsumer
 
@@ -1768,17 +1825,25 @@ async def create_test_design_worker_runtime(settings: TapperSettings) -> WorkerR
             )
         )
         worker_id = settings.worker_id + "-test-design"
+        jobs = MysqlTestPlanRepository(
+            sessions,
+            scope=scope,
+            model_alias=settings.default_chat_model,
+            knowledge_requires_publication=False,
+            wakeups=_create_event_wakeups(redis),
+        )
+        observer = TestDesignObservationBinding(
+            MysqlAgentObservations(sessions, MysqlWorkflowStore(sessions)),
+            await _create_asset_catalog(engine, scope),
+            jobs,
+            scope,
+        )
         worker = TestDesignWorker(
-            jobs=MysqlTestPlanRepository(
-                sessions,
-                scope=scope,
-                model_alias=settings.default_chat_model,
-                knowledge_requires_publication=False,
-                wakeups=_create_event_wakeups(redis),
-            ),
+            jobs=jobs,
             generator=generator,
             scope=scope,
             worker_id=worker_id,
+            observation=observer,
         )
         wakeups = RedisWakeupConsumer(
             scope=scope,
@@ -1822,6 +1887,7 @@ async def create_suggestion_worker_runtime(settings: TapperSettings) -> WorkerRu
         worker_id=settings.worker_id + "-suggestions",
         clock=lambda: datetime.now(UTC),
         scope=scope,
+        observation=api_runtime.suggestion_observation,
     )
     # SuggestionRefreshWorker.run_once takes limit as keyword-only, which the
     # BoundedWorker Protocol's positional-or-keyword signature doesn't admit
@@ -2003,6 +2069,7 @@ def _create_embeddings(
     recorder: ModelCallRecorder | None = None,
     timeout_ceiling_seconds: float | None = None,
     max_concurrency: int | None = None,
+    observe_chat_models: bool = False,
 ) -> KnowledgeModelGateway:
     # The gateway rejects any call whose own deadline exceeds this ceiling; long
     # batch callers (graph extraction) raise it without changing interactive
@@ -2029,7 +2096,7 @@ def _create_embeddings(
         # concurrent extraction or its calls would queue against their deadlines.
         max_concurrency=max(4, max_concurrency or 4),
     )
-    gateway: LiteLLMModelGateway
+    gateway: ModelGateway
     if settings.e2e_mode:
         from tap.testing.deterministic_model_gateway import DeterministicModelGateway
 
@@ -2044,6 +2111,10 @@ def _create_embeddings(
             catalog=catalog or _create_model_catalog(settings),
             recorder=recorder,
         )
+    if observe_chat_models:
+        from tap.modules.workflows.application.observations import ObservedModelGateway
+
+        gateway = ObservedModelGateway(gateway)
     return KnowledgeModelGateway(
         gateway,
         scope=VALIDATION_SCOPE,
@@ -2522,6 +2593,8 @@ def _assemble_http_services(
     planner_timeout_seconds: float = DEFAULT_PLANNER_TIMEOUT_SECONDS,
     event_wakeups: EventWakeups | None = None,
     draft_stream: DraftStream | None = None,
+    suggestion_on_complete: object | None = None,
+    observation_sessions: async_sessionmaker[AsyncSession] | None = None,
 ) -> HttpServices:
     """Assemble the one approved Tapper application graph from existing services."""
 
@@ -2617,7 +2690,24 @@ def _assemble_http_services(
                     flowchart_gate=flowchart_gate,
                 )
             )
-            relation_analysis = RegisteredRelationAnalysis(registry, scope=repository.scope)
+            from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+            from tap.modules.workflows.adapters.mysql_observations import MysqlAgentObservations
+            from tap.modules.workflows.adapters.observation_bindings import (
+                RelationObservationBinding,
+            )
+
+            relation_analysis = RegisteredRelationAnalysis(
+                registry,
+                scope=repository.scope,
+                observation=RelationObservationBinding(
+                    MysqlAgentObservations(
+                        observation_sessions, MysqlWorkflowStore(observation_sessions)
+                    ),
+                    repository.scope,
+                )
+                if observation_sessions is not None
+                else None,
+            )
 
     documents = DocumentService(repository=document_repository, artifacts=artifact_store)
     knowledge = KnowledgeAPI(
@@ -2772,6 +2862,7 @@ def _assemble_http_services(
         prompt_suggestion_store = MysqlSuggestionStore(
             conversation_sessions,  # type: ignore[arg-type]
             scope=repository.scope,
+            on_complete=suggestion_on_complete,  # type: ignore[arg-type]
         )
         prompt_suggestions = PromptSuggestionService(
             store=prompt_suggestion_store,

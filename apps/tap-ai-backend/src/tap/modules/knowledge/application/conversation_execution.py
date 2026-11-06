@@ -947,6 +947,7 @@ class ConversationAnswerExecutor:
                 }
 
             # graph.relations
+            operation_identity = answer_plan.turn_id if answer_plan else bundle.plan.query_plan_id
             try:
                 new_bundle, added_relations = await self._answers.relations_frozen(
                     bundle,
@@ -955,6 +956,7 @@ class ConversationAnswerExecutor:
                     policy,
                     authorize=authorize,
                     turn_id=None if answer_plan is None else answer_plan.turn_id,
+                    operation_id=f"relations:{operation_identity}:{call.call_id}",
                     answer_execution=answer_execution,
                 )
             except (RelationAnalysisUnavailable, RelationGraphChanged):

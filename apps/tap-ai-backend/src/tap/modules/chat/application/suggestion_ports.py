@@ -28,6 +28,11 @@ class ClaimedRefresh:
     key: SuggestionKey
     lease_token: str
     attempt_count: int
+    refresh_cycle_id: str | None = None
+
+
+class SuggestionObservationPort(Protocol):
+    async def before_generate(self, claim: ClaimedRefresh) -> None: ...
 
 
 class SuggestionStore(Protocol):

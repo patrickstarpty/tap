@@ -12,6 +12,7 @@ failure hook.
 from __future__ import annotations
 
 import dataclasses
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
@@ -338,6 +339,27 @@ async def test_registered_relation_analysis_passes_the_caller_span_as_parent() -
     assert context.turn_id == "turn-1"
     assert value.query == "健康告知"
     assert value.evidence == ()
+
+
+@pytest.mark.asyncio
+async def test_registered_relation_analysis_observes_only_actual_agent_run() -> None:
+    recording = _RecordingAgent()
+    registry = AgentRegistry()
+    registry.register(recording)
+    entered: list[tuple[str | None, str]] = []
+
+    class Observation:
+        @asynccontextmanager
+        async def bind(self, turn_id: str | None, operation_id: str):
+            entered.append((turn_id, operation_id))
+            yield
+
+    adapter = RegisteredRelationAnalysis(registry, scope=_SCOPE, observation=Observation())
+    await adapter.analyse(
+        "健康告知", (), (), turn_id="turn-1", operation_id="relations:turn-1:call-1"
+    )
+    assert entered == [("turn-1", "relations:turn-1:call-1")]
+    assert len(recording.calls) == 1
 
 
 @pytest.mark.asyncio

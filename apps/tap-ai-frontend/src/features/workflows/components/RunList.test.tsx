@@ -49,6 +49,30 @@ it("shows each parallel profile run and opens the selected node", async () => {
   expect(open).toHaveBeenCalledWith("task-1", "chat-1", "node-2");
 });
 
+it("labels an observed run with no recorded child result", () => {
+  vi.mocked(useWorkflowRuns).mockReturnValue({
+    data: {
+      pages: [
+        {
+          items: [
+            {
+              ...task,
+              matchingRuns: [{ ...task.matchingRuns[0], status: "unknown" }],
+            },
+          ],
+          nextCursor: null,
+        },
+      ],
+    },
+    isPending: false,
+    isError: false,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+  } as never);
+  render(<RunList projectId="project-1" agentId="sdet" onOpen={vi.fn()} />);
+  expect(screen.getByText("Outcome unknown")).toBeVisible();
+});
+
 it("continues pagination until an older status match is visible", async () => {
   const older = {
     ...task,

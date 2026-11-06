@@ -2,6 +2,7 @@ import type { components } from "../../../shared/api/generated/schema";
 import type { RetrievalAnswerResponse } from "../../knowledge/api/types";
 
 export type ChatEventEnvelope = components["schemas"]["ChatEventEnvelope"];
+export type WorkflowResult = components["schemas"]["WorkflowResult"];
 
 /**
  * Mirrors the HTTP `GraphContextSummaryView` status enum (not the broader
@@ -105,6 +106,7 @@ export interface TaskStepView {
 
 export interface StreamTurnState {
   answer: string;
+  workflowResult: WorkflowResult | null;
   error: string | null;
   graphContext: GraphContextSummary | null;
   lastSequence: number;
@@ -150,6 +152,7 @@ export interface ConversationStreamState {
 
 const emptyTurn = (): StreamTurnState => ({
   answer: "",
+  workflowResult: null,
   error: null,
   graphContext: null,
   lastSequence: 0,
@@ -439,6 +442,27 @@ export function reduceStreamEvent(
         draft: null,
         stage: null,
       };
+    } else if (event.type === "turn.completed") {
+      const result = payload.workflowResult;
+      if (
+        typeof result === "object" &&
+        result !== null &&
+        "taskId" in result &&
+        typeof result.taskId === "string" &&
+        result.taskId.length > 0 &&
+        "answer" in result &&
+        typeof result.answer === "string" &&
+        result.answer.trim().length > 0
+      ) {
+        next = {
+          ...current,
+          answer: result.answer,
+          workflowResult: { taskId: result.taskId, answer: result.answer },
+          status: "completed",
+          draft: null,
+          stage: null,
+        };
+      }
     }
   } else if (event.type === "graph.context_ready") {
     const graphContext = parseGraphContextPayload(payload);

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -13,6 +14,7 @@ from tap.modules.ai.domain.assets import SkillRevision
 from tap.modules.ai.domain.skill_activation import PromptSkill
 from tap.modules.ai.domain.skill_metadata import ActivationMode
 from tap.modules.ai.domain.tool_calls import AdmittedToolCall
+from tap.modules.chat.domain.conversations import ConversationTurn
 from tap.modules.chat.domain.models import ChatId, CommandId, Turn, TurnId
 from tap.modules.knowledge.api import AnswerResponse as _AnswerResponse
 from tap.modules.knowledge.api import ConversationAnswerStep as _ConversationAnswerStep
@@ -311,3 +313,26 @@ class ConversationAnswerSteps(Protocol):
         step: ConversationAnswerStep,
         records: Sequence[Mapping[str, object]],
     ) -> tuple[ConversationAnswerStep, list[str]]: ...
+
+
+class ChatObservationPort(Protocol):
+    """Optional source-owned read projection; never claims a Chat Turn."""
+
+    def bind(
+        self,
+        conversation_id: str,
+        turn: ConversationTurn,
+        authorize: Callable[[], Awaitable[None]],
+        *,
+        force_default: bool = False,
+    ) -> AbstractAsyncContextManager[None]: ...
+
+    def bind_relation(
+        self, conversation_id: str, turn_id: str
+    ) -> AbstractAsyncContextManager[None]: ...
+
+    async def finish_source(
+        self, conversation_id: str, turn_id: str, source_state: str
+    ) -> bool: ...
+
+    async def repair(self, limit: int = 50) -> int: ...

@@ -58,6 +58,72 @@ class _Explanation:
 
 
 @pytest.mark.asyncio
+async def test_insights_actual_model_uses_default_observed_identity_even_with_custom_selection(
+    owned_project_mysql,
+) -> None:
+    from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+    from tap.modules.workflows.adapters.mysql_observations import MysqlAgentObservations
+    from tap.modules.workflows.adapters.observation_bindings import ChatObservationBinding
+    from tap.modules.workflows.application.observations import ObservedModelGateway
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        repository = MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE)
+        conversations = ConversationService(repository, scope=VALIDATION_SCOPE)
+        await conversations.create(
+            "insights-observed-chat",
+            "insights-observed-turn",
+            "insights-observed-request",
+            replace(
+                _input("Explain the timeout"),
+                insights_query_id="query-observed",
+                insights_report_refs=("report-1",),
+                agent_revision_id="selected-custom-but-unused",
+            ),
+        )
+        observer = MysqlAgentObservations(sessions, MysqlWorkflowStore(sessions))
+        binding = ChatObservationBinding(observer, object(), repository, VALIDATION_SCOPE)
+
+        class Gateway:
+            calls = 0
+
+            async def generate_structured(self, request):
+                self.calls += 1
+                return request
+
+        gateway = Gateway()
+        observed_gateway = ObservedModelGateway(gateway)
+
+        class ModelExplanation(_Explanation):
+            async def explain(self, scope, query_id, resource_refs, question, **kwargs):
+                await observed_gateway.generate_structured(object())
+                return await super().explain(scope, query_id, resource_refs, question, **kwargs)
+
+        worker = GenerationWorker(
+            conversations,
+            _NoOrdinaryAnswer(),
+            insights_explanation=ModelExplanation(),
+            model_observation=binding,
+        )
+        assert await worker.run_once(limit=1) == 1
+        assert gateway.calls == 1
+        task_id = observer.task_id_for(
+            VALIDATION_SCOPE, "chat", "insights-observed-turn:legacy-default"
+        )
+        snapshot = await observer.snapshot(VALIDATION_SCOPE, task_id)
+        assert snapshot["status"] == "succeeded"
+        assert len(snapshot["nodes"]) == 1
+        assert snapshot["nodes"][0]["role"] == "root"
+        assert snapshot["nodes"][0]["agent_revision_id"] is None
+        assert (
+            await repository.observed_task_id("insights-observed-chat", "insights-observed-turn")
+        ) == task_id
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("interrupt_after_checkpoint", "withdraw_before_reclaim"),
     [(False, False), (True, False), (True, True)],

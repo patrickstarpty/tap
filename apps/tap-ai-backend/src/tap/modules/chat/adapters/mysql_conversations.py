@@ -1704,3 +1704,54 @@ class MysqlConversationRepository:
                 )
             )
         return identity is not None
+
+    async def link_observed_task(self, conversation_id: str, turn_id: str, task_id: str) -> None:
+        """Read-only association; this does not transfer Chat execution ownership."""
+        async with self.sessions.begin() as session:
+            row = (
+                await session.execute(
+                    select(chat_turn.c.workflow_task_id, chat_turn.c.execution_owner)
+                    .where(
+                        *scope_predicates(chat_turn, self.scope),
+                        chat_turn.c.chat_id == conversation_id,
+                        chat_turn.c.turn_id == turn_id,
+                    )
+                    .with_for_update()
+                )
+            ).one_or_none()
+            if row is None or row.execution_owner != "chat":
+                raise ConversationConflict("observed task requires a Chat-owned Turn")
+            if row.workflow_task_id not in (None, task_id):
+                raise ConversationConflict("observed task link conflict")
+            if row.workflow_task_id is None:
+                await session.execute(
+                    update(chat_turn)
+                    .where(
+                        *scope_predicates(chat_turn, self.scope),
+                        chat_turn.c.turn_id == turn_id,
+                    )
+                    .values(workflow_task_id=task_id)
+                )
+
+    async def observed_task_id(self, conversation_id: str, turn_id: str) -> str | None:
+        async with self.sessions() as session:
+            return await session.scalar(
+                select(chat_turn.c.workflow_task_id).where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    chat_turn.c.turn_id == turn_id,
+                    chat_turn.c.execution_owner == "chat",
+                )
+            )
+
+    async def observation_turn_state(self, conversation_id: str, turn_id: str) -> str | None:
+        """Durable Chat source fact, including soft-deleted conversation Turns."""
+        async with self.sessions() as session:
+            return await session.scalar(
+                select(chat_turn.c.state).where(
+                    *scope_predicates(chat_turn, self.scope),
+                    chat_turn.c.chat_id == conversation_id,
+                    chat_turn.c.turn_id == turn_id,
+                    chat_turn.c.execution_owner == "chat",
+                )
+            )

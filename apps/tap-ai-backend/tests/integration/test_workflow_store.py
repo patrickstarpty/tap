@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
 from tap.modules.workflows.adapters.schema import workflow_event, workflow_task
+from tap.modules.workflows.domain.commands import ControlCommand
 from tests.owned_mysql import owned_project_database_url
 
 
@@ -341,3 +342,22 @@ async def test_dependency_edges_stay_within_task_and_acyclic(workflow_db) -> Non
     with pytest.raises(ValueError):
         await store.add_dependency(VALIDATION_SCOPE, task.task_id, "fence-1", "a", "foreign", 1)
     assert (await store.snapshot(VALIDATION_SCOPE, task.task_id))["last_sequence"] == 3
+
+
+@pytest.mark.asyncio
+async def test_observed_task_is_read_only_and_never_native_claimed(workflow_db) -> None:
+    _, store = workflow_db
+    task = await store.create_task(
+        VALIDATION_SCOPE,
+        {"origin": "observed", "goal": "legacy chat turn"},
+        "observed-never-claim",
+    )
+    assert (task.task_id, "queued") not in await store.scan_work(VALIDATION_SCOPE, 10)
+    assert await store.claim_task(VALIDATION_SCOPE, task.task_id, "native-worker") is None
+    with pytest.raises(ValueError, match="observed"):
+        await store.submit_command(
+            VALIDATION_SCOPE,
+            ControlCommand("observed-command", task.task_id, None, "cancel", 1, None),
+        )
+    with pytest.raises(ValueError, match="observed"):
+        await store.rerun_task(VALIDATION_SCOPE, task.task_id, "observed-rerun")

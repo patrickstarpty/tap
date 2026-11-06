@@ -444,8 +444,24 @@ def _workflow_script_body(request: ModelRequest) -> dict[str, Any] | None:
     script = marker.group(1).split(":")
     prior_tools = sum(message.role == "tool" for message in request.messages)
     if "Fulfill only the delegated objective" in request.prompt:
-        content = "Specialist deterministic finding"
-        calls: list[ModelToolCall] = []
+        if prior_tools:
+            guidance = request.context.split("已应用的新要求：", 1)
+            content = "Specialist deterministic finding"
+            if len(guidance) == 2:
+                content += f"; applied: {guidance[1].strip()}"
+            calls = []
+        elif "knowledge.search" in {tool.tool_id for tool in request.tools}:
+            content = "Checking deterministic evidence"
+            calls = [
+                ModelToolCall(
+                    "fixture-child-search",
+                    "knowledge_search",
+                    json.dumps({"query": "deterministic query"}),
+                )
+            ]
+        else:
+            content = "Specialist deterministic finding"
+            calls = []
     elif prior_tools:
         content = json.dumps({"answer": "Merged deterministic workflow answer"})
         calls = []
@@ -478,7 +494,7 @@ def _workflow_script_body(request: ModelRequest) -> dict[str, Any] | None:
                     json.dumps(
                         {
                             "agentId": agent_id,
-                            "objective": "Review deterministic case",
+                            "objective": f"Review deterministic case {marker.group(0)}",
                             "inputRefs": [],
                             "expectedOutput": "finding",
                             "dependsOn": [],
@@ -582,6 +598,10 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         attempts.count = 1
         scripted = _workflow_script_body(request)
         if scripted is not None:
+            if "Fulfill only the delegated objective" in request.prompt and not any(
+                message.role == "tool" for message in request.messages
+            ):
+                await asyncio.sleep(5)
             return scripted, httpx.Headers()
         if request.operation is ModelOperation.EMBED:
             vector = (

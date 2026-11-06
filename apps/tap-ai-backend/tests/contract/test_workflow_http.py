@@ -1,6 +1,6 @@
 """Workflow HTTP routes and public DTO shape."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -21,6 +21,96 @@ def test_seven_workflow_operations_are_registered() -> None:
     assert "get" in paths[f"{base}/{{task_id}}/nodes/{{node_id}}/logs"]
 
 
+def test_workflow_public_times_use_utc_for_mysql_naive_and_offset_values() -> None:
+    from tap.modules.workflows.application.queries import _node, _task_view
+
+    naive_utc = datetime(2026, 11, 6, 0, 0)
+    offset_time = datetime(2026, 11, 6, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+    node = {
+        "node_id": "node-1",
+        "parent_node_id": None,
+        "role": "qae",
+        "kind": "agent",
+        "agent_revision_id": "rev-1",
+        "status": "running",
+        "attempt": 1,
+        "plan_revision": 1,
+        "runtime": "native",
+        "created_at": offset_time,
+    }
+    task = _task_view(
+        {
+            "task_id": "task-1",
+            "project_id": "project-1",
+            "conversation_id": None,
+            "status": "running",
+            "plan_revision": 1,
+            "request_json": {},
+            "created_at": naive_utc,
+            "recent_event": {"kind": "node.started", "occurred_at": offset_time},
+        },
+        (node,),
+    )
+    detail = _node(
+        node,
+        {},
+        ({"node_id": "node-1", "attempt": 1, "status": "running", "created_at": naive_utc},),
+    )
+    assert task["createdAt"].isoformat() == "2026-11-06T00:00:00+00:00"
+    assert task["recentEvent"]["occurredAt"].isoformat() == "2026-11-06T00:00:00+00:00"
+    assert task["matchingRuns"][0]["createdAt"].isoformat() == "2026-11-06T00:00:00+00:00"
+    assert detail["attempts"][0]["createdAt"].isoformat() == "2026-11-06T00:00:00+00:00"
+
+
+def test_observed_child_unknown_is_a_node_read_status_only() -> None:
+    from pydantic import ValidationError
+
+    from tap.contracts.workflows import WorkflowMatchingRun, WorkflowNodeView, WorkflowTaskView
+
+    node = WorkflowNodeView.model_validate(
+        {
+            "nodeId": "child",
+            "parentNodeId": "root",
+            "agentId": "relation-analysis",
+            "agentRevisionId": None,
+            "displayName": "Relation analysis",
+            "kind": "agent",
+            "status": "unknown",
+            "attempt": 1,
+            "planRevision": 1,
+            "sourceRuntime": "relation_analysis",
+            "attempts": [],
+        }
+    )
+    run = WorkflowMatchingRun.model_validate(
+        {
+            "nodeId": "child",
+            "agentId": "relation-analysis",
+            "agentRevisionId": None,
+            "attempt": 1,
+            "status": "unknown",
+            "createdAt": "2026-11-06T00:00:00Z",
+        }
+    )
+    assert node.status == run.status == "unknown"
+    with pytest.raises(ValidationError):
+        WorkflowTaskView.model_validate(
+            {
+                "taskId": "task",
+                "projectId": "project",
+                "conversationId": None,
+                "status": "unknown",
+                "planRevision": 1,
+                "lastSequence": 1,
+                "origin": "observed",
+                "availableActions": [],
+                "displayName": "Agent",
+                "goalSummary": "",
+                "createdAt": "2026-11-06T00:00:00Z",
+            }
+        )
+
+
 def test_runtime_mode_contract_exposes_default_false_workflow_capability() -> None:
     from tap.contracts.http import RuntimeMode
 
@@ -31,7 +121,11 @@ def test_runtime_mode_contract_exposes_default_false_workflow_capability() -> No
 
 
 async def _snapshot_view(
-    *, origin="native", task_status="waiting_dependency", node_status="paused"
+    *,
+    origin="native",
+    task_status="waiting_dependency",
+    node_status="paused",
+    native_controls_enabled=True,
 ):
     now = datetime(2026, 11, 6, tzinfo=UTC)
 
@@ -122,7 +216,9 @@ async def _snapshot_view(
                 ),
             }
 
-    return await WorkflowQueries(Store()).snapshot(None, "task-1")
+    return await WorkflowQueries(Store(), native_controls_enabled=native_controls_enabled).snapshot(
+        None, "task-1"
+    )
 
 
 @pytest.mark.asyncio
@@ -144,6 +240,37 @@ async def test_paused_child_can_resume_while_task_waits_and_observed_has_no_cont
     observed = await _snapshot_view(origin="observed")
     assert "resume" in native["availableActions"]
     assert observed["availableActions"] == []
+
+
+@pytest.mark.asyncio
+async def test_flag_off_reads_both_origins_without_offering_unavailable_controls() -> None:
+    native = await _snapshot_view(native_controls_enabled=False)
+    observed = await _snapshot_view(origin="observed", native_controls_enabled=False)
+    assert native["origin"] == "native"
+    assert observed["origin"] == "observed"
+    assert native["availableActions"] == observed["availableActions"] == []
+
+
+@pytest.mark.asyncio
+async def test_flag_off_command_rejects_before_store_receipt() -> None:
+    from types import SimpleNamespace
+
+    from tap.contracts.workflows import WorkflowCommandRequest
+    from tap.interfaces.http.workflow_service import WorkflowControlUnavailable, WorkflowHttpService
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    class Store:
+        async def submit_command(self, *_args):
+            pytest.fail("flag-off control must not reach the store")
+
+    service = WorkflowHttpService(SimpleNamespace(workflow_enabled=False), Store(), None, None)
+    with pytest.raises(WorkflowControlUnavailable):
+        await service.command(
+            VALIDATION_SCOPE,
+            "native-task",
+            WorkflowCommandRequest(kind="pause", expectedPlanRevision=1),
+            "cmd-flag-off",
+        )
 
 
 @pytest.mark.asyncio
@@ -294,6 +421,38 @@ def test_public_node_summary_requires_matching_finished_attempt() -> None:
         {"kind": "node.finished", "nodeId": "child", "attempt": 2, "payload": {"summary": "safe"}}
     )
     assert attach_node_summaries(nodes, events)[0]["publicSummary"] == "safe"
+
+
+def test_real_tool_step_projection_exposes_only_safe_execution_fields() -> None:
+    from tap.modules.workflows.application.queries import project_event
+
+    now = datetime(2026, 11, 6, tzinfo=UTC)
+    event = WorkflowEvent(
+        "tool-event",
+        "task-1",
+        4,
+        "node-1",
+        2,
+        "node.tool_finished",
+        {
+            "node_id": "node-1",
+            "attempt": 2,
+            "tool_id": "knowledge.search",
+            "outcome": "succeeded",
+            "arguments": {"query": "private"},
+            "private_result": "secret",
+            "action_id": "reservation",
+        },
+        now,
+    )
+    projected = project_event(event)
+    assert projected["payload"] == {
+        "node_id": "node-1",
+        "attempt": 2,
+        "tool_id": "knowledge.search",
+        "outcome": "succeeded",
+    }
+    assert "private" not in str(projected)
 
 
 @pytest.mark.asyncio

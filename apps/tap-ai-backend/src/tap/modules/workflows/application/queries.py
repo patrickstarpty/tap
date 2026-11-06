@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 from tap.modules.workflows.domain.models import WorkflowEvent
@@ -10,6 +11,11 @@ from tap.modules.workflows.domain.models import WorkflowEvent
 
 class SnapshotRequired(ValueError):
     """A replay cursor cannot be reconciled with the current task snapshot."""
+
+
+def _public_time(value: datetime) -> datetime:
+    """MySQL returns UTC DATETIME values without tzinfo; emit explicit UTC."""
+    return value.replace(tzinfo=UTC) if value.utcoffset() is None else value.astimezone(UTC)
 
 
 def replay_from(*, snapshot_sequence: int, client_sequence: int | None) -> int:
@@ -41,7 +47,12 @@ _PUBLIC_FIELDS: dict[str, tuple[str, ...]] = {
     "node.unblocked": ("node_ids",),
     "node.finished": ("node_id",),
     "node.failed": ("node_id",),
+    "node.outcome_unknown": ("node_id",),
     "node.canceled": ("node_id",),
+    "node.tool_started": ("node_id", "attempt", "tool_id"),
+    "node.tool_finished": ("node_id", "attempt", "tool_id", "outcome"),
+    "node.skill_started": ("node_id", "attempt", "skill_id"),
+    "node.skill_finished": ("node_id", "attempt", "skill_id", "outcome"),
     "command.received": ("command_id", "status"),
     "command.receipted": ("command_id",),
 }
@@ -94,6 +105,7 @@ def project_event(
         "node.started": "running",
         "node.finished": "succeeded",
         "node.failed": "failed",
+        "node.outcome_unknown": "unknown",
         "node.canceled": "canceled",
         "node.waiting": "waiting_dependency",
     }
@@ -110,7 +122,7 @@ def project_event(
         if event.kind in _PUBLIC_FIELDS or event.kind in _TEXT_FIELDS
         else "activity",
         "payload": payload,
-        "occurredAt": event.occurred_at.isoformat(),
+        "occurredAt": _public_time(event.occurred_at).isoformat(),
         "projectId": project_id,
         "sourceRuntime": source_runtime,
         "parentNodeId": parent_node_id,
@@ -171,6 +183,7 @@ def _task_view(
     row: Mapping[str, Any],
     nodes: tuple[dict[str, Any], ...] = (),
     matching_agent_id: str | None = None,
+    native_controls_enabled: bool = True,
 ) -> dict[str, Any]:
     request = row["request_json"]
     origin = _origin(request)
@@ -182,7 +195,9 @@ def _task_view(
         "planRevision": row["plan_revision"],
         "lastSequence": row.get("last_sequence", row.get("next_sequence", 1) - 1),
         "origin": origin,
-        "availableActions": _actions(row["status"], origin, nodes),
+        "availableActions": _actions(row["status"], origin, nodes)
+        if native_controls_enabled
+        else [],
         "displayName": "Tapper"
         if origin == "native"
         else str(request.get("display_name") or "Agent"),
@@ -194,9 +209,9 @@ def _task_view(
             if row["recent_event"]["kind"] in _PUBLIC_FIELDS
             or row["recent_event"]["kind"] in _TEXT_FIELDS
             else "activity",
-            "occurredAt": row["recent_event"]["occurred_at"],
+            "occurredAt": _public_time(row["recent_event"]["occurred_at"]),
         },
-        "createdAt": row["created_at"],
+        "createdAt": _public_time(row["created_at"]),
         "matchingRuns": [
             {
                 "nodeId": node["node_id"],
@@ -204,7 +219,7 @@ def _task_view(
                 "agentRevisionId": node["agent_revision_id"],
                 "attempt": node["attempt"],
                 "status": node["status"],
-                "createdAt": node["created_at"],
+                "createdAt": _public_time(node["created_at"]),
             }
             for node in nodes
             if node.get("kind") == "agent"
@@ -281,7 +296,7 @@ def _node(
             {
                 "attempt": value["attempt"],
                 "status": value["status"],
-                "createdAt": value["created_at"],
+                "createdAt": _public_time(value["created_at"]),
             }
             for value in attempts
             if value["node_id"] == item["node_id"]
@@ -311,9 +326,16 @@ class TextRedactor(Protocol):
 
 
 class WorkflowQueries:
-    def __init__(self, store: WorkflowReadStore, *, redactor: TextRedactor | None = None) -> None:
+    def __init__(
+        self,
+        store: WorkflowReadStore,
+        *,
+        redactor: TextRedactor | None = None,
+        native_controls_enabled: bool = True,
+    ) -> None:
         self._store = store
         self._redactor = redactor
+        self._native_controls_enabled = native_controls_enabled
 
     async def _public_event(
         self, event: WorkflowEvent, *, snapshot: Mapping[str, Any]
@@ -350,7 +372,7 @@ class WorkflowQueries:
         items = []
         for row in rows:
             nodes = tuple(row.get("nodes", ()))
-            item = _task_view(row, nodes, agent_id)
+            item = _task_view(row, nodes, agent_id, self._native_controls_enabled)
             item["goalSummary"] = await self._goal_summary(row["request_json"].get("goal"))
             items.append(item)
         return {"items": items, "nextCursor": next_cursor}
@@ -364,7 +386,7 @@ class WorkflowQueries:
             await self._public_event(event, snapshot=value) for event in value["events"]
         ]
         return {
-            **_task_view(value, nodes),
+            **_task_view(value, nodes, native_controls_enabled=self._native_controls_enabled),
             "goalSummary": await self._goal_summary(value["request_json"].get("goal")),
             "nodes": attach_node_summaries(
                 [_node(item, request, attempts) for item in nodes], public_events

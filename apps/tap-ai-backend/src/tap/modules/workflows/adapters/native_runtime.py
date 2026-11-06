@@ -211,7 +211,15 @@ class JournaledModelGateway:
             if remaining is not None
             else request.timeout_seconds
         )
-        bounded = replace(request, timeout_seconds=timeout, allow_retries=False)
+        # Keep the full graph lineage key for the private action journal and
+        # checkpoint replay. The provider gateway accepts at most 128 chars.
+        provider_key = "workflow:" + hashlib.sha256(request.idempotency_key.encode()).hexdigest()
+        bounded = replace(
+            request,
+            timeout_seconds=timeout,
+            allow_retries=False,
+            idempotency_key=provider_key,
+        )
         response = await asyncio.wait_for(self._gateway.chat(bounded), timeout=timeout)
         data = await self._store.settle_action(
             request.scope,
@@ -238,10 +246,13 @@ class JournaledKnowledgeSearch:
         store: MysqlWorkflowStore,
         knowledge: KnowledgeAPI,
         policy_for: Callable[[tuple[dict[str, object], ...]], Awaitable[RetrievalPolicyContext]],
+        *,
+        on_actual_step: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
         self._knowledge = knowledge
         self._policy_for = policy_for
+        self._on_actual_step = on_actual_step
 
     @staticmethod
     def _action_id(
@@ -361,29 +372,68 @@ class JournaledKnowledgeSearch:
                 attempt=attempt,
             )
             raise WorkflowLimitExceeded("workflow deadline exceeded")
-        search = self._knowledge.search(search_request, policy)
-        response = (
-            await asyncio.wait_for(search, timeout=remaining)
-            if remaining is not None
-            else await search
-        )
-        evidence = tuple(response.evidence[:10])
-        summary = json.dumps(
-            {
-                "evidence": [
-                    {"citationId": str(item.citation_id), "excerpt": str(item.content)[:500]}
-                    for item in evidence
-                ]
-            },
-            ensure_ascii=False,
-        )
-        saved = await self._store.settle_action(
-            scope,
-            task_id,
-            token,
-            action_id,
-            {"summary": summary, "private_replay": True, "evidence_count": len(evidence)},
-            node_id=node_id,
-            attempt=attempt,
-        )
+        if self._on_actual_step is not None:
+            await self._on_actual_step(
+                scope,
+                task_id,
+                token,
+                node_id,
+                attempt,
+                "node.tool_started",
+                call_id,
+                "knowledge.search",
+                None,
+            )
+        try:
+            search = self._knowledge.search(search_request, policy)
+            response = (
+                await asyncio.wait_for(search, timeout=remaining)
+                if remaining is not None
+                else await search
+            )
+            evidence = tuple(response.evidence[:10])
+            summary = json.dumps(
+                {
+                    "evidence": [
+                        {"citationId": str(item.citation_id), "excerpt": str(item.content)[:500]}
+                        for item in evidence
+                    ]
+                },
+                ensure_ascii=False,
+            )
+            saved = await self._store.settle_action(
+                scope,
+                task_id,
+                token,
+                action_id,
+                {"summary": summary, "private_replay": True, "evidence_count": len(evidence)},
+                node_id=node_id,
+                attempt=attempt,
+            )
+        except Exception:
+            if self._on_actual_step is not None:
+                await self._on_actual_step(
+                    scope,
+                    task_id,
+                    token,
+                    node_id,
+                    attempt,
+                    "node.tool_finished",
+                    call_id,
+                    "knowledge.search",
+                    "unknown",
+                )
+            raise
+        if self._on_actual_step is not None:
+            await self._on_actual_step(
+                scope,
+                task_id,
+                token,
+                node_id,
+                attempt,
+                "node.tool_finished",
+                call_id,
+                "knowledge.search",
+                "succeeded",
+            )
         return str(saved["summary"])

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
@@ -13,6 +13,7 @@ from tap.modules.chat.application.suggestion_ports import (
     GroundingCheck,
     SuggestionGenerator,
     SuggestionKnowledge,
+    SuggestionObservationPort,
     SuggestionStore,
     SuggestionUsage,
 )
@@ -107,7 +108,9 @@ class PromptSuggestionService:
 
         return tuple(kept)
 
-    async def refresh(self, key: SuggestionKey) -> tuple[PromptSuggestion, ...]:
+    async def refresh(
+        self, key: SuggestionKey, *, before_generate: Callable[[], Awaitable[None]] | None = None
+    ) -> tuple[PromptSuggestion, ...]:
         topics = await self._knowledge.topics(key.actor_id)
         if not topics:
             return ()
@@ -128,6 +131,8 @@ class PromptSuggestionService:
             popular_sources=popular_sources,
             relations=relations,
         )
+        if before_generate is not None:
+            await before_generate()
         candidates = await self._generator.generate(inputs, key.locale)
 
         topic_versions = {topic.source_id: topic.version for topic in topics}
@@ -185,6 +190,7 @@ class SuggestionRefreshWorker:
         clock: Callable[[], datetime],
         scope: ProjectScopeContext,
         lease_duration: timedelta = timedelta(minutes=5),
+        observation: SuggestionObservationPort | None = None,
     ) -> None:
         self._store = store
         self._service = service
@@ -192,6 +198,7 @@ class SuggestionRefreshWorker:
         self._worker_id = worker_id
         self._clock = clock
         self._lease_duration = lease_duration
+        self._observation = observation
 
     async def run_once(self, *, limit: int) -> int:
         now = self._clock()
@@ -220,7 +227,12 @@ class SuggestionRefreshWorker:
 
     async def _process(self, claim: ClaimedRefresh) -> int:
         try:
-            suggestions = await self._service.refresh(claim.key)
+            before_generate = (
+                None
+                if self._observation is None
+                else lambda: self._observation.before_generate(claim)
+            )
+            suggestions = await self._service.refresh(claim.key, before_generate=before_generate)
         except NoGroundedCandidates:
             previous = await self._store.load(claim.key)
             if previous:

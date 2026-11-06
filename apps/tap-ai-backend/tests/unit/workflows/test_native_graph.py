@@ -285,6 +285,7 @@ async def test_frozen_specialist_configuration_limits_actual_model_tools():
         skill_instructions=("Cite the source",),
         allowed_tool_ids=("knowledge.search",),
         governance_digests=("sha256:" + "a" * 64,),
+        model_timeout_seconds=3,
     )
     await graph.run(VALIDATION_SCOPE, "task-config", "specialist", "Review login", "qwen-plus")
     request = gateway.calls[0]
@@ -293,6 +294,7 @@ async def test_frozen_specialist_configuration_limits_actual_model_tools():
     assert "route object" not in request.prompt
     assert {tool.tool_id for tool in request.tools} == {"knowledge.search"}
     assert request.tool_allowlist == frozenset({"knowledge.search", "knowledge.answer"})
+    assert request.timeout_seconds == 3
 
 
 @pytest.mark.asyncio
@@ -365,8 +367,8 @@ async def test_native_skill_activation_uses_frozen_revision_and_next_prompt():
     )
     loaded = []
 
-    async def activate(name, prior):
-        loaded.append((name, tuple(prior)))
+    async def activate(name, prior, call_id):
+        loaded.append((name, tuple(prior), call_id))
         return {
             "skillId": "login-review",
             "revisionId": "skill-rev-1",
@@ -402,7 +404,7 @@ async def test_native_skill_activation_uses_frozen_revision_and_next_prompt():
     )
     result = await graph.run(VALIDATION_SCOPE, "task-skill", "root", "Review login", "qwen-plus")
     assert result["result"]["answer"] == "Login review complete"
-    assert loaded == [("Login Review", ())]
+    assert loaded == [("Login Review", (), "skill-call")]
     assert "CHECK LOGIN EDGE CASES" in gateway.calls[1].prompt
     assert "skill_activate" in [tool.wire_name for tool in gateway.calls[0].tools]
 

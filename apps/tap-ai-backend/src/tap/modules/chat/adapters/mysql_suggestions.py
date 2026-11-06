@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import cast
@@ -73,6 +74,7 @@ prompt_suggestion_refresh = Table(
     Column("lease_token", CHAR(32), nullable=True),
     Column("lease_expires_at", DATETIME(fsp=6), nullable=True),
     Column("claimed_due_at", DATETIME(fsp=6), nullable=True),
+    Column("refresh_cycle_id", CHAR(32), nullable=True),
     Column("attempt_count", Integer, nullable=False, server_default="0"),
     Column("failure_code", String(64), nullable=True),
     Column("created_at", DATETIME(fsp=6), nullable=False),
@@ -153,9 +155,11 @@ class MysqlSuggestionStore:
         sessions: async_sessionmaker[AsyncSession],
         *,
         scope: ProjectScopeContext,
+        on_complete: Callable[[AsyncSession, ClaimedRefresh], Awaitable[None]] | None = None,
     ) -> None:
         self._sessions = sessions
         self._scope = require_project_scope(scope)
+        self._on_complete = on_complete
 
     async def load(self, key: SuggestionKey) -> tuple[PromptSuggestion, ...] | None:
         async with self._sessions() as session:
@@ -464,6 +468,7 @@ class MysqlSuggestionStore:
                             prompt_suggestion_refresh.c.locale,
                             prompt_suggestion_refresh.c.due_at,
                             prompt_suggestion_refresh.c.attempt_count,
+                            prompt_suggestion_refresh.c.refresh_cycle_id,
                         )
                         .where(
                             *scope_predicates(prompt_suggestion_refresh, self._scope),
@@ -482,6 +487,7 @@ class MysqlSuggestionStore:
             )
             for row in rows:
                 token = uuid4().hex
+                cycle_id = row["refresh_cycle_id"] or uuid4().hex
                 expires = now + lease_duration
                 await session.execute(
                     update(prompt_suggestion_refresh)
@@ -495,6 +501,7 @@ class MysqlSuggestionStore:
                         lease_token=token,
                         lease_expires_at=expires,
                         claimed_due_at=row["due_at"],
+                        refresh_cycle_id=cycle_id,
                         updated_at=now,
                     )
                 )
@@ -503,6 +510,7 @@ class MysqlSuggestionStore:
                         key=SuggestionKey(actor_id=row["actor_id"], locale=row["locale"]),
                         lease_token=token,
                         attempt_count=row["attempt_count"],
+                        refresh_cycle_id=cycle_id,
                     )
                 )
         return tuple(claims)
@@ -522,12 +530,14 @@ class MysqlSuggestionStore:
                         select(
                             prompt_suggestion_refresh.c.due_at,
                             prompt_suggestion_refresh.c.claimed_due_at,
+                            prompt_suggestion_refresh.c.refresh_cycle_id,
                         )
                         .where(
                             *scope_predicates(prompt_suggestion_refresh, self._scope),
                             prompt_suggestion_refresh.c.actor_id == claim.key.actor_id,
                             prompt_suggestion_refresh.c.locale == claim.key.locale,
                             prompt_suggestion_refresh.c.lease_token == claim.lease_token,
+                            prompt_suggestion_refresh.c.refresh_cycle_id == claim.refresh_cycle_id,
                         )
                         .with_for_update()
                     )
@@ -564,6 +574,7 @@ class MysqlSuggestionStore:
                     prompt_suggestion_refresh.c.actor_id == claim.key.actor_id,
                     prompt_suggestion_refresh.c.locale == claim.key.locale,
                     prompt_suggestion_refresh.c.lease_token == claim.lease_token,
+                    prompt_suggestion_refresh.c.refresh_cycle_id == claim.refresh_cycle_id,
                 )
                 .values(
                     last_refreshed_at=now,
@@ -571,6 +582,7 @@ class MysqlSuggestionStore:
                     lease_token=None,
                     lease_expires_at=None,
                     claimed_due_at=None,
+                    refresh_cycle_id=None,
                     failure_code=None,
                     due_at=next_due_at_value,
                     updated_at=now,
@@ -578,6 +590,8 @@ class MysqlSuggestionStore:
             )
             if result.rowcount != 1:
                 return False
+            if self._on_complete is not None:
+                await self._on_complete(session, claim)
         return True
 
     async def fail_refresh(
@@ -594,6 +608,7 @@ class MysqlSuggestionStore:
                         prompt_suggestion_refresh.c.actor_id == claim.key.actor_id,
                         prompt_suggestion_refresh.c.locale == claim.key.locale,
                         prompt_suggestion_refresh.c.lease_token == claim.lease_token,
+                        prompt_suggestion_refresh.c.refresh_cycle_id == claim.refresh_cycle_id,
                     )
                 )
             ).scalar_one_or_none()
@@ -606,6 +621,7 @@ class MysqlSuggestionStore:
                     prompt_suggestion_refresh.c.actor_id == claim.key.actor_id,
                     prompt_suggestion_refresh.c.locale == claim.key.locale,
                     prompt_suggestion_refresh.c.lease_token == claim.lease_token,
+                    prompt_suggestion_refresh.c.refresh_cycle_id == claim.refresh_cycle_id,
                 )
                 .values(
                     lease_owner=None,

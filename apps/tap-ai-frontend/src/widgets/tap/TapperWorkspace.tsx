@@ -1151,6 +1151,19 @@ export function AssistantResponse({
       );
     }
     if (turn.response === null) {
+      if (turn.workflowResult != null) {
+        return (
+          <>
+            <p className="tap-workflow-answer">{turn.workflowResult.answer}</p>
+            <TurnContext
+              copy={contentCopy}
+              turn={turn}
+              onOpenAgentRevision={onOpenAgentRevision}
+              onOpenSkillRevision={onOpenSkillRevision}
+            />
+          </>
+        );
+      }
       if (turn.evidenceStatus === "loading") {
         return <p role="status">Loading answer evidence…</p>;
       }
@@ -1869,6 +1882,7 @@ export function TapperWorkspace() {
             origin: "knowledge-base" as const,
           })),
           response: facts.response,
+          workflowResult: facts.workflowResult,
           graphContext: facts.graphContext,
           draft: facts.draft,
           citationLabels: facts.citationLabels,

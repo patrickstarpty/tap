@@ -61,6 +61,8 @@ describe("Tapper workspace model", () => {
       turns: [turn],
       selectedSourceIds: [],
       selectedAgentIds: [],
+      agentSelectionTurnId: undefined,
+      agentSelectionTouched: false,
       selectedSkillIds: [],
     });
     expect(nextConversation).not.toBe(conversation);

@@ -85,3 +85,44 @@ it("keeps failed attempts available, pages public logs, and reports a steer rece
     "Request accepted",
   );
 });
+
+it("shows only safe actual tool identity and outcome in node logs", () => {
+  vi.mocked(useWorkflowNode).mockReturnValue({
+    data: null,
+    isPending: false,
+  } as never);
+  vi.mocked(useWorkflowLogs).mockReturnValue({
+    data: {
+      pages: [
+        {
+          items: [
+            {
+              eventId: "event-tool",
+              kind: "node.tool_finished",
+              occurredAt: "2026-11-06T00:00:00Z",
+              payload: {
+                tool_id: "knowledge.search",
+                outcome: "succeeded",
+                secret: "private-query",
+              },
+            },
+          ],
+          nextCursor: null,
+        },
+      ],
+    },
+    isPending: false,
+    isError: false,
+    hasNextPage: false,
+  } as never);
+  render(
+    <NodeDetails
+      projectId="project-1"
+      snapshot={snapshot}
+      node={node}
+      onBack={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Tool succeeded: knowledge.search")).toBeVisible();
+  expect(screen.queryByText("private-query")).toBeNull();
+});

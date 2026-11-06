@@ -162,7 +162,7 @@ TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap
 
 **Interfaces:** 路由前缀 `/api/v1/projects/{project_id}/workflows`：POST 创建、GET 列表、GET `/{task_id}` 快照、GET `/{task_id}/events` SSE、POST `/{task_id}/commands`、GET `/{task_id}/nodes/{node_id}`、GET `/{task_id}/nodes/{node_id}/logs` 分页。快照包含 `lastSequence/nodes/edges/planRevision/commands/artifacts`；事件包含 `eventId/taskId/sequence/nodeId/attempt/kind/payload/occurredAt`。POST 使用 Idempotency-Key，过期计划 409；跨项目/不可见对象统一现有授权错误，不泄露存在性。
 
-- [ ] 写失败契约测试：快照拿到序号 N 后写 N+1，重连只回 N+1；重复 event 不重复节点；过期游标返回 `snapshot_required`；未提交事务不推送；节点和产物访问逐个校验 scope。快照、日志与回放查询归 workflows 应用层，HTTP 只转换响应与输出 SSE。纯游标函数位于 application/queries.py：
+- [x] 写失败契约测试：快照拿到序号 N 后写 N+1，重连只回 N+1；重复 event 不重复节点；过期游标返回 `snapshot_required`；未提交事务不推送；节点和产物访问逐个校验 scope。快照、日志与回放查询归 workflows 应用层，HTTP 只转换响应与输出 SSE。纯游标函数位于 application/queries.py：
 
 ```python
 from tap.modules.workflows.application.queries import replay_from
@@ -172,10 +172,10 @@ def test_snapshot_cursor_and_client_cursor_do_not_skip_events():
     assert replay_from(snapshot_sequence=10, client_sequence=None) == 10
 ```
 
-- [ ] `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/test_workflow_http.py apps/tap-ai-backend/tests/contract/test_workflow_stream.py -q` 先失败；实现路由、snapshot+cursor 和分页日志。`replay_from` 不接受大于当前高水位的游标，返回 409 要求重取快照。
-- [ ] SSE 从 MySQL 回放，Redis 仅唤醒；快照使用一致性读；日志读取脱敏并限制单页，返回对象摘要引用而非本机任意路径。
-- [ ] 执行 `make contracts`，再运行窄测与既有 generated-contract 测试；不得手写前端后端各一套事件类型。
-- [ ] 提交 `feat: expose workflow snapshots streams and commands`。
+- [x] `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/contract/test_workflow_http.py apps/tap-ai-backend/tests/contract/test_workflow_stream.py -q` 先失败；实现路由、snapshot+cursor 和分页日志。`replay_from` 不接受大于当前高水位的游标，返回 409 要求重取快照。
+- [x] SSE 从 MySQL 回放，Redis 仅唤醒；快照使用一致性读；日志读取脱敏并限制单页，返回对象摘要引用而非本机任意路径。
+- [x] 执行 `make contracts`，再运行窄测与既有 generated-contract 测试；不得手写前端后端各一套事件类型。
+- [x] 提交 `feat: expose workflow snapshots streams and commands`。
 
 ### Task 1.6：Agents 运行视图与 Tapper 交互
 
@@ -183,7 +183,7 @@ def test_snapshot_cursor_and_client_cursor_do_not_skip_events():
 
 **Interfaces:** API types 引用生成 schema。`advanceCursor(current: number, incoming: number): "ignore" | "apply" | "resync"`；`applyWorkflowEvent(snapshot, event)` 按 sequence/attempt 幂等投影，缺口请求快照。`layoutWorkflow(nodes, edges)` 使用有向分层布局，同层平行、父层折叠，拒绝环并显示数据异常，不用 force graph 表示执行依赖。
 
-- [ ] 写失败测试：
+- [x] 写失败测试：
 
 ```typescript
 import { expect, it } from "vitest";
@@ -196,12 +196,12 @@ it("requests a snapshot when an event gap appears", () => {
 });
 ```
 
-- [ ] `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/workflows` 先失败；实现 API hooks/reducer，然后实现 UI。中间对话仅显示简短进度与 RunStatusLink；用户点击才打开右侧 WorkflowSidebar，复杂任务也不自动展开。侧栏顶层“任务进度”显示 Tapper 当前活动、等待原因与统筹记录，关联内部 Orchestrator 根运行但不显示可调用的根 Agent 卡片；内部呈现工作流/时间线；点击节点在同一侧栏切换 NodeDetails，保留返回概览入口；服务/审批节点明确不同类型。
-- [ ] Agents 增加运行页签，专业 Agent 档案能看本 Agent 多个并行实例；目录、搜索和 picker/@ 排除系统 Tapper/Orchestrator。直接输入默认由 Tapper 执行，无须选择助手；picker/@ 仅将可委派专业 Agent 解析成稳定 ID，重名时要求选择具体档案；去除现有单项 `.find()`，映射 Task 1.3 的 `requestedAgentIds` 并发送全部显式选择。定向输入展示 accepted/pending/applied/stale，暂停中不显示已暂停。
-- [ ] `TapperWorkspace` 继续使用 `useConversationRuntime` 的 send/cancel/selectConversation/reset，不复制 SSE 合并、轮询、幂等键或恢复逻辑。widget 负责把 Agent 选择映射为发送字段、关联 taskId 和打开侧栏；workflow 订阅独立于侧栏展开状态，关闭面板不能取消运行。保留会话切换屏蔽迟到响应、失败重试复用幂等键、重复发送合并和 Insights 发送契约测试；运行 `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations/model/useConversationRuntime.test.tsx src/widgets/tap/TapperWorkspace.conversations.test.tsx`。
-- [ ] 组件测试覆盖默认助手在对话、进度、通知和错误提示中统一显示 Tapper（不泄漏内部角色名）、目录/搜索/@ 无系统 Tapper 或 Orchestrator、未选 Agent 可直接发送、选择 SDET 不替换默认助手、简单问答只显示任务活动而无多余根 Agent 卡片；并覆盖默认收起、点击打开右侧、对话中无展开流水线、关闭侧栏任务仍继续、新事件/失败不强制重开、节点详情不叠第二层侧栏、再次打开同步最新快照；同时覆盖重连提示、失败 attempt 保留、更新不抢滚动/选择、日志分页、节点补充要求、取消状态竞态、键盘焦点、窄屏覆盖面板和 reduced-motion。检查实际视觉，沿用现有浅色/橙色，不加入装饰性虚假工作动画。
-- [ ] 浏览器场景：原生单问答→点击入口打开右侧→两个专业节点并行→指定节点补充→关闭侧栏后继续收到简短进度→重开/刷新/重连→从 Agent 档案打开同一 task 的侧栏；运行环境由阶段 1.7 专属脚本创建，不能连共享 Demo。
-- [ ] 窄测与 UI 验收通过后，提交 `feat: show interactive agent workflow runs`。
+- [x] `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/workflows` 先失败；实现 API hooks/reducer，然后实现 UI。中间对话仅显示简短进度与 RunStatusLink；用户点击才打开右侧 WorkflowSidebar，复杂任务也不自动展开。侧栏顶层“任务进度”显示 Tapper 当前活动、等待原因与统筹记录，关联内部 Orchestrator 根运行但不显示可调用的根 Agent 卡片；内部呈现工作流/时间线；点击节点在同一侧栏切换 NodeDetails，保留返回概览入口；服务/审批节点明确不同类型。
+- [x] Agents 增加运行页签，专业 Agent 档案能看本 Agent 多个并行实例；目录、搜索和 picker/@ 排除系统 Tapper/Orchestrator。直接输入默认由 Tapper 执行，无须选择助手；picker/@ 仅将可委派专业 Agent 解析成稳定 ID，重名时要求选择具体档案；去除现有单项 `.find()`，映射 Task 1.3 的 `requestedAgentIds` 并发送全部显式选择。定向输入展示 accepted/pending/applied/stale，暂停中不显示已暂停。
+- [x] `TapperWorkspace` 继续使用 `useConversationRuntime` 的 send/cancel/selectConversation/reset，不复制 SSE 合并、轮询、幂等键或恢复逻辑。widget 负责把 Agent 选择映射为发送字段、关联 taskId 和打开侧栏；workflow 订阅独立于侧栏展开状态，关闭面板不能取消运行。保留会话切换屏蔽迟到响应、失败重试复用幂等键、重复发送合并和 Insights 发送契约测试；运行 `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations/model/useConversationRuntime.test.tsx src/widgets/tap/TapperWorkspace.conversations.test.tsx`。
+- [x] 组件测试覆盖默认助手在对话、进度、通知和错误提示中统一显示 Tapper（不泄漏内部角色名）、目录/搜索/@ 无系统 Tapper 或 Orchestrator、未选 Agent 可直接发送、选择 SDET 不替换默认助手、简单问答只显示任务活动而无多余根 Agent 卡片；并覆盖默认收起、点击打开右侧、对话中无展开流水线、关闭侧栏任务仍继续、新事件/失败不强制重开、节点详情不叠第二层侧栏、再次打开同步最新快照；同时覆盖重连提示、失败 attempt 保留、更新不抢滚动/选择、日志分页、节点补充要求、取消状态竞态、键盘焦点、窄屏覆盖面板和 reduced-motion。检查实际视觉，沿用现有浅色/橙色，不加入装饰性虚假工作动画。
+- [x] 浏览器场景：原生单问答→点击入口打开右侧→两个专业节点并行→指定节点补充→关闭侧栏后继续收到简短进度→重开/刷新/重连→从 Agent 档案打开同一 task 的侧栏；运行环境由阶段 1.7 专属脚本创建，不能连共享 Demo。
+- [x] 窄测与 UI 验收通过后，提交 `feat: show interactive agent workflow runs`。
 
 ### Task 1.7：现有 Agent 全覆盖与阶段验收
 
@@ -209,8 +209,10 @@ it("requests a snapshot when an event gap appears", () => {
 
 **Interfaces:** `record_agent_invocation(scope, task_id, agent_key, parent_node_id, invocation_key)` async context manager：实际进入/退出才发事件；同 invocation_key 重试去重，内部工具步骤不是额外 Agent。现有默认统筹、内置专业、自定义、后台 Agent 的观测清单写入 guide，明确系统根身份不进入可调用目录，包含对应调用入口和集成测试；纯解析/摄取作业保持 service 类型。
 
-- [ ] 写失败覆盖测试：运行普通问答、自定义 Agent、推荐问题生成、关系分析、测试方案生成，断言每个实际 Agent invocation 有且只有一个可查询实例；平台可创建任务父层归属，但不能凭空记录 Orchestrator 模型调用。通过受控入口逐步统一到原生 Orchestrator，不重复执行既有模型工作。
-- [ ] 实现观察适配与目录映射；历史统计仍按原口径，实时视图查新库；Agent 停用/改名不改变旧实例。Chat 通过应用端口接收观察能力，由组合根注入 workflows 适配；不重新创建已迁走的 `entrypoints/tapper_chat_turn.py`，不让 worker 导入 HTTP 执行服务。以依赖检查和负向样例保护模块归属，运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_module_boundaries.py apps/tap-ai-backend/tests/architecture/test_ai_maintenance_ownership.py apps/tap-ai-backend/tests/unit/entrypoints/test_chat_turn_graph.py apps/tap-ai-backend/tests/unit/knowledge/test_conversation_answer_steps.py -q`；测试目录中的历史 entrypoints 名称无需重命名。
-- [ ] 实现 `scripts/run-workflow-e2e.py`：新建带唯一标签的本机容器/项目/临时目录，显式注入确定性模型；启动 API/Relay/workflow worker/Web，调用指定 Playwright spec，finally 仅删除自己标签资源。新增 `make workflow-e2e` 指向该脚本。
-- [ ] `make workflow-e2e`；原生真实模型验收另以 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 调用 smoke，记录模型来源与结果，不用模拟场景代替。
-- [ ] 运行总计划合入检查，更新现状架构和 guide，仅将阶段 1 标工程完成；提交 `feat: integrate native workflow coverage and acceptance`。
+- [x] 写失败覆盖测试：运行普通问答、自定义 Agent、推荐问题生成、关系分析、测试方案生成，断言每个实际 Agent invocation 有且只有一个可查询实例；平台可创建任务父层归属，但不能凭空记录 Orchestrator 模型调用。通过受控入口逐步统一到原生 Orchestrator，不重复执行既有模型工作。
+- [x] 实现观察适配与目录映射；历史统计仍按原口径，实时视图查新库；Agent 停用/改名不改变旧实例。Chat 通过应用端口接收观察能力，由组合根注入 workflows 适配；不重新创建已迁走的 `entrypoints/tapper_chat_turn.py`，不让 worker 导入 HTTP 执行服务。以依赖检查和负向样例保护模块归属，运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/architecture/test_module_boundaries.py apps/tap-ai-backend/tests/architecture/test_ai_maintenance_ownership.py apps/tap-ai-backend/tests/unit/entrypoints/test_chat_turn_graph.py apps/tap-ai-backend/tests/unit/knowledge/test_conversation_answer_steps.py -q`；测试目录中的历史 entrypoints 名称无需重命名。
+- [x] 实现 `scripts/run-workflow-e2e.py`：新建带唯一标签的本机容器/项目/临时目录，显式注入确定性模型；启动 API/Relay/workflow worker/Web，调用指定 Playwright spec，finally 仅删除自己标签资源。新增 `make workflow-e2e` 指向该脚本。
+- [x] `make workflow-e2e` 通过真实 API、Relay、worker、Web 与隔离中间件的确定性浏览器旅程。
+- [ ] 原生真实模型验收以 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 显式启用；用户要求暂缓，本阶段未运行，确定性旅程不替代它。
+- [x] 运行总计划工程门禁，更新现状架构和 guide，仅将阶段 1 标为确定性工程完成；独立评审与合入另行进行。
+- [x] 提交 `feat: integrate native workflow coverage and acceptance`。

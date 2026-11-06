@@ -76,7 +76,18 @@ def _docker_output(arguments: list[str]) -> str:
     return result.stdout
 
 
-def _require_compose_mysql(receipt: dict[str, object], port: int) -> None:
+def _owned_project() -> str | None:
+    project = os.environ.get("TAP_TAPPER_COMPOSE_PROJECT", "")
+    if os.environ.get("TAP_DEMO_MODE") != "e2e":
+        return None
+    if os.environ.get("TAPPER_WORKFLOW_E2E") == "1":
+        return (
+            project if re.fullmatch(r"tap-workflow-e2e-[0-9a-f]{12}", project) else None
+        )
+    return project if project == "tap-tapper-e2e" else None
+
+
+def _require_compose_mysql(receipt: dict[str, object], port: int, project: str) -> None:
     context = receipt.get("dockerContext")
     container_id = receipt.get("mysqlContainerId")
     if (
@@ -104,7 +115,7 @@ def _require_compose_mysql(receipt: dict[str, object], port: int) -> None:
         or len(containers) != 1
         or container.get("Id") != container_id
         or container.get("State", {}).get("Running") is not True
-        or labels.get("com.docker.compose.project") != "tap-tapper-e2e"
+        or labels.get("com.docker.compose.project") != project
         or labels.get("com.docker.compose.service") != "mysql"
         or bindings != [{"HostIp": "127.0.0.1", "HostPort": str(port)}]
     ):
@@ -112,6 +123,7 @@ def _require_compose_mysql(receipt: dict[str, object], port: int) -> None:
 
 
 def _require_owned_database(database_url: str) -> None:
+    project = _owned_project()
     marker_name = os.environ.get("TAPPER_E2E_OWNERSHIP_FILE", "")
     marker = Path(marker_name) if marker_name else None
     url = make_url(database_url)
@@ -120,7 +132,12 @@ def _require_owned_database(database_url: str) -> None:
         or marker.is_symlink()
         or not marker.is_file()
         or marker.parent.is_symlink()
-        or not marker.parent.name.startswith("tap-tapper-e2e.")
+        or project is None
+        or not marker.parent.name.startswith(
+            "tap-workflow-e2e-"
+            if os.environ.get("TAPPER_WORKFLOW_E2E") == "1"
+            else "tap-tapper-e2e."
+        )
         or url.drivername != "mysql+asyncmy"
         or url.host != "127.0.0.1"
         or url.port is None
@@ -141,7 +158,7 @@ def _require_owned_database(database_url: str) -> None:
     try:
         receipt = json.loads(marker.read_text(encoding="utf-8"))
         if (
-            receipt["project"] != "tap-tapper-e2e"
+            receipt["project"] != project
             or receipt["databaseUrlSha256"]
             != hashlib.sha256(database_url.encode()).hexdigest()
             or receipt["hostPort"] != url.port
@@ -152,14 +169,11 @@ def _require_owned_database(database_url: str) -> None:
         os.kill(receipt["runnerPid"], 0)
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
         raise ValueError("owned E2E database marker is invalid") from error
-    _require_compose_mysql(receipt, url.port)
+    _require_compose_mysql(receipt, url.port, project)
 
 
 async def prepare(revision_ids: tuple[str, ...]) -> dict[str, object]:
-    if (
-        os.environ.get("TAP_DEMO_MODE") != "e2e"
-        or os.environ.get("TAP_TAPPER_COMPOSE_PROJECT") != "tap-tapper-e2e"
-    ):
+    if _owned_project() is None:
         raise ValueError("publication fixture requires the owned E2E project")
     settings = TapperSettings.from_mapping(dict(os.environ))
     if settings.project_id != VALIDATION_SCOPE.project_id or not revision_ids:
@@ -283,7 +297,7 @@ async def _prepare_locked(
                 select(knowledge_projection_state.c.physical_collection).where(
                     *scope_predicates(knowledge_projection_state, VALIDATION_SCOPE),
                     knowledge_projection_state.c.alias_name
-                    == f"tap-tapper-e2e:{settings.alias}",
+                    == f"{settings.compose_project}:{settings.alias}",
                 )
             )
             if not generation:

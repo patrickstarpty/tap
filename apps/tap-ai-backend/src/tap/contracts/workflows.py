@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from tap.modules.workflows.domain.models import WorkflowStatus
+from tap.modules.workflows.domain.models import WorkflowNodeStatus, WorkflowStatus
 
 
 class WorkflowContract(BaseModel):
@@ -73,7 +73,7 @@ class WorkflowNodeView(WorkflowContract):
     agent_revision_id: str | None
     display_name: str
     kind: Literal["agent", "service", "approval"]
-    status: WorkflowStatus
+    status: WorkflowNodeStatus
     attempt: int
     plan_revision: int
     attempts: list[WorkflowAttemptView] = Field(default_factory=list)
@@ -102,7 +102,7 @@ class WorkflowMatchingRun(WorkflowContract):
     agent_id: str
     agent_revision_id: str | None
     attempt: int
-    status: WorkflowStatus
+    status: WorkflowNodeStatus
     created_at: datetime
 
 

@@ -115,6 +115,10 @@ export function WorkflowGraph({
             const dependencyLabel = dependencies.length
               ? `Depends on ${dependencies.join(", ")}`
               : null;
+            const statusLabel =
+              node.status === "unknown"
+                ? "Outcome unknown"
+                : node.status.replaceAll("_", " ");
             return (
               <div
                 className="tap-workflow-node"
@@ -124,7 +128,7 @@ export function WorkflowGraph({
                 <button
                   type="button"
                   onClick={() => onSelect(id)}
-                  aria-label={`${node.displayName} ${kindName[node.kind]} ${node.status}${dependencyLabel ? ` · ${dependencyLabel}` : ""}`}
+                  aria-label={`${node.displayName} ${kindName[node.kind]} ${statusLabel}${dependencyLabel ? ` · ${dependencyLabel}` : ""}`}
                 >
                   <span className="tap-workflow-kind">
                     {kindName[node.kind]}
@@ -134,7 +138,7 @@ export function WorkflowGraph({
                     className="tap-workflow-status"
                     data-status={node.status}
                   >
-                    {node.status.replaceAll("_", " ")}
+                    {statusLabel}
                   </span>
                   {dependencyLabel ? (
                     <small className="tap-workflow-dependency">

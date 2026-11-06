@@ -106,7 +106,9 @@ export function RunList({
                   </small>
                 ) : null}
                 <span>
-                  {(node?.status ?? task.status).replaceAll("_", " ")}
+                  {node?.status === "unknown"
+                    ? "Outcome unknown"
+                    : (node?.status ?? task.status).replaceAll("_", " ")}
                 </span>
                 {task.recentEvent ? (
                   <small>

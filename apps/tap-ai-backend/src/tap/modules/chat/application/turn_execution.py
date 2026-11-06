@@ -16,6 +16,7 @@ import dataclasses
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -49,6 +50,7 @@ from tap.modules.ai.ports.insights import InsightsAuthorizationChanged, Insights
 from tap.modules.chat.application.draft_batcher import DraftBatcher
 from tap.modules.chat.application.plan_answer import planning_input
 from tap.modules.chat.application.ports import (
+    ChatObservationPort,
     ConversationAnswerStep,
     ConversationAnswerSteps,
     SkillActivationRuntime,
@@ -395,11 +397,13 @@ class ChatTurnNodes:
         drafts: Any | None = None,
         redact: Callable[[str], Awaitable[str]] | None = None,
         skills: SkillActivationRuntime | None = None,
+        model_observation: ChatObservationPort | None = None,
     ) -> None:
         self._conversation_id = conversation_id
         # Skill Hub: loads and records `skill.activate` calls; `None` (no
         # Skill catalog store wired) never offers the tool.
         self._skills = skills
+        self._model_observation = model_observation
         self._turn = turn
         self._conversations = conversations
         self._steps = steps
@@ -595,11 +599,18 @@ class ChatTurnNodes:
         # `durationMs` (matching the old code, which timed the whole
         # `TurnProcessor.process` call).
         started_at_ms = int(time.time() * 1000)
-        step = await self._steps.prepare_conversation_answer(
-            request,
-            context,
-            include_relations=False,
-        )
+        async with (
+            self._model_observation.bind(
+                self._conversation_id, self._turn, self._require_authorized
+            )
+            if self._model_observation is not None
+            else nullcontext()
+        ):
+            step = await self._steps.prepare_conversation_answer(
+                request,
+                context,
+                include_relations=False,
+            )
         result: dict[str, object] = {"step": _encode_step(step), "started_at_ms": started_at_ms}
         retrieval_hits = step.get("retrieval_hits") if step["kind"] == "prepared" else None
         committed = await self._emit_committed(
@@ -734,15 +745,22 @@ class ChatTurnNodes:
             )
             for item in state.get("activated_skills") or ()
         )
-        step = await self._steps.generate_conversation_answer(
-            _require_step(state),
-            _ConversationExecutionContext(
-                self._turn.input_snapshot.value, active_plan, self._require_authorized
-            ),
-            on_text=batcher.push,
-            tools=offered,
-            activated_skills=activated_skills,
-        )
+        async with (
+            self._model_observation.bind(
+                self._conversation_id, self._turn, self._require_authorized
+            )
+            if self._model_observation is not None
+            else nullcontext()
+        ):
+            step = await self._steps.generate_conversation_answer(
+                _require_step(state),
+                _ConversationExecutionContext(
+                    self._turn.input_snapshot.value, active_plan, self._require_authorized
+                ),
+                on_text=batcher.push,
+                tools=offered,
+                activated_skills=activated_skills,
+            )
         if step.get("kind") == "tool_calls":
             await batcher.discard()
             if not offered:
@@ -1047,11 +1065,16 @@ class ChatTurnNodes:
                 continue
 
             with span(f"tool.{call.tool_id}", {"tap.tool.step_id": this_step_id}):
-                tool_result = await self._steps.run_conversation_tool(
-                    cast(ConversationAnswerStep, current_step),
-                    _ConversationExecutionContext(value, active_plan, self._require_authorized),
-                    call,
-                )
+                async with (
+                    self._model_observation.bind_relation(self._conversation_id, self._turn.turn_id)
+                    if call.tool_id == "graph.relations" and self._model_observation is not None
+                    else nullcontext()
+                ):
+                    tool_result = await self._steps.run_conversation_tool(
+                        cast(ConversationAnswerStep, current_step),
+                        _ConversationExecutionContext(value, active_plan, self._require_authorized),
+                        call,
+                    )
             current_step = dict(tool_result["step"])
             duration_ms = int((time.monotonic() - started_at) * 1000)
             status = tool_result["status"]
@@ -1177,15 +1200,25 @@ class ChatTurnNodes:
             raise RuntimeError("Insights explanation runtime is unavailable")
         turn = self._turn
         explanation_started = time.monotonic()
-        result = await self._insights_explanation.explain(
-            self._conversations.scope,
-            self._insights_query_id,
-            turn.input_snapshot.value.insights_report_refs,
-            turn.input_snapshot.value.message,
-            conversation_id=self._conversation_id,
-            turn_id=turn.turn_id,
-            selected_knowledge=turn.input_snapshot.value.resolved_resources,
-        )
+        async with (
+            self._model_observation.bind(
+                self._conversation_id,
+                turn,
+                self._require_authorized,
+                force_default=True,
+            )
+            if self._model_observation is not None
+            else nullcontext()
+        ):
+            result = await self._insights_explanation.explain(
+                self._conversations.scope,
+                self._insights_query_id,
+                turn.input_snapshot.value.insights_report_refs,
+                turn.input_snapshot.value.message,
+                conversation_id=self._conversation_id,
+                turn_id=turn.turn_id,
+                selected_knowledge=turn.input_snapshot.value.resolved_resources,
+            )
         explanation_duration_ms = int((time.monotonic() - explanation_started) * 1000)
         if result.get("queryId") != self._insights_query_id:
             raise InsightsQueryUnavailable("Insights result changed the historical query ID")

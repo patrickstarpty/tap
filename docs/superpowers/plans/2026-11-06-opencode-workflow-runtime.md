@@ -82,7 +82,7 @@ def test_stable_agent_filename_cannot_escape_workspace():
 
 ### Task 2.2：进程、真实事件与持久 session
 
-**Files:** Create `opencode_process.py/opencode_events.py/opencode_runtime.py`、AI migration `0040_coding_sessions.py`、coding Dockerfile/build-inputs；Modify workflows schema/mysql、runtime composition、`.env.example`；Create `BT/unit/workflows/test_opencode_events.py`、`BT/integration/test_opencode_process.py`。
+**Files:** Create `opencode_process.py/opencode_events.py/opencode_runtime.py`、AI migration `0042_coding_sessions.py`（阶段 2 开始前重查实际 head）、coding Dockerfile/build-inputs；Modify workflows schema/mysql、runtime composition、`.env.example`；Create `BT/unit/workflows/test_opencode_events.py`、`BT/integration/test_opencode_process.py`。
 
 **Interfaces:** `coding_session` 保存 task/node/attempt、provider session ID、CLI/模型/manifest 版本、工作区引用、启动幂等键、最后事件游标、进程/容器标识。`ProviderEventKey(session_id, provider_event_id)` 唯一；无稳定 provider event ID 时使用阶段 0 已验证的源游标构造，不能哈希自然语言文本误合并不同调用。`normalize_event(raw: dict[str, object], context: CodingHandle) -> tuple[dict[str, object], ...]` 输出阶段 1 契约。
 

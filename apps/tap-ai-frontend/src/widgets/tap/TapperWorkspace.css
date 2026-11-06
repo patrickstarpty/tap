@@ -1426,6 +1426,11 @@
   min-width: 0;
 }
 
+.tap-workflow-answer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .tap-context-notice {
   color: var(--tap-muted);
   font-size: 11px;

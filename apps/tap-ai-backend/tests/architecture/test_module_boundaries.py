@@ -13,6 +13,7 @@ BACKEND_SOURCE = Path(__file__).resolve().parents[2] / "src" / "tap"
 KNOWLEDGE = BACKEND_SOURCE / "modules" / "knowledge"
 ACCESS = BACKEND_SOURCE / "modules" / "access"
 TEST_MANAGEMENT = BACKEND_SOURCE / "modules" / "test_management"
+WORKFLOWS = BACKEND_SOURCE / "modules" / "workflows"
 CHAT_API_SYMBOLS = {
     "AbstentionReason",
     "DirectAnswer",
@@ -332,8 +333,49 @@ def _canonical_import_from(node: ast.ImportFrom, *, package: str) -> str:
     return ".".join(base)
 
 
+def observation_import_is_forbidden(reference: ImportReference) -> bool:
+    """Chat and Knowledge use their own ports, never observation implementation."""
+    module = reference.module
+    if module == "tap.modules.workflows.adapters" or module.startswith(
+        "tap.modules.workflows.adapters."
+    ):
+        return True
+    if module == "tap.modules.workflows.application.observations" or module.startswith(
+        "tap.modules.workflows.application.observations."
+    ):
+        return True
+    if module == "tap.modules.workflows.application":
+        return reference.symbol in {None, "*", "observations"}
+    if module == "tap.modules.workflows":
+        return reference.symbol in {None, "*", "adapters", "application"}
+    return module == "tap.modules" and reference.symbol == "workflows"
+
+
+def workflow_application_sql_import_is_forbidden(reference: ImportReference) -> bool:
+    return reference.module == "tap.modules.workflows.adapters" or reference.module.startswith(
+        "tap.modules.workflows.adapters."
+    )
+
+
+def concrete_observation_import_is_forbidden(reference: ImportReference) -> bool:
+    if reference.module in {
+        "tap.modules.workflows.adapters.mysql_observations",
+        "tap.modules.workflows.adapters.observation_bindings",
+        "tap.modules.workflows.application.observations",
+    }:
+        return True
+    if reference.module == "tap.modules.workflows.adapters":
+        return reference.symbol in {None, "*", "mysql_observations", "observation_bindings"}
+    return reference.module == "tap.modules.workflows.application" and reference.symbol in {
+        "observations",
+        "*",
+    }
+
+
 def chat_import_is_forbidden(reference: ImportReference) -> bool:
     """Require Chat to import Knowledge only through private, allowlisted API names."""
+    if observation_import_is_forbidden(reference):
+        return True
     if reference.module == _UNRESOLVED_DYNAMIC_IMPORT:
         return True
     if reference.module == "tap.modules.knowledge.api":
@@ -562,6 +604,49 @@ def test_knowledge_adapters_never_import_chat_and_chat_uses_only_knowledge_api()
         assert not forbidden_imports, (path, forbidden_imports)
 
 
+def test_knowledge_uses_no_workflow_observation_implementation() -> None:
+    for path in recursive_python_files(KNOWLEDGE):
+        assert not any(observation_import_is_forbidden(ref) for ref in _imports(path)), path
+
+
+def test_workflow_application_does_not_import_its_sql_adapters() -> None:
+    for path in recursive_python_files(WORKFLOWS / "application"):
+        assert not any(
+            workflow_application_sql_import_is_forbidden(ref) for ref in _imports(path)
+        ), path
+
+
+def test_concrete_observation_adapters_are_composed_only_in_runtime() -> None:
+    runtime = BACKEND_SOURCE / "entrypoints" / "tapper_runtime.py"
+    adapter_root = WORKFLOWS / "adapters"
+    for path in recursive_python_files(BACKEND_SOURCE):
+        if (
+            path == runtime
+            or path.is_relative_to(adapter_root)
+            or path == WORKFLOWS / "application" / "observations.py"
+        ):
+            continue
+        assert not any(concrete_observation_import_is_forbidden(ref) for ref in _imports(path)), (
+            path
+        )
+
+
+def test_observation_persistence_stays_out_of_reporting_adapters() -> None:
+    paths = (
+        WORKFLOWS / "application" / "observations.py",
+        WORKFLOWS / "adapters" / "mysql_observations.py",
+        WORKFLOWS / "adapters" / "observation_bindings.py",
+    )
+    for path in paths:
+        assert path.exists(), path
+        assert not any(
+            ref.module.startswith(
+                ("tap.modules.agent_team.adapters", "tap.modules.skill_hub.adapters")
+            )
+            for ref in _imports(path)
+        ), path
+
+
 def test_chat_and_knowledge_register_tables_in_the_shared_platform_metadata() -> None:
     """Extracting Outbox must leave both adapters importable in one metadata registry."""
     from tap.modules.chat.adapters import mysql as chat_mysql
@@ -659,6 +744,39 @@ def test_chat_exact_private_api_imports_and_unrelated_modules_remain_allowed(
     reference: ImportReference,
 ) -> None:
     assert chat_import_is_forbidden(reference) is False
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        "from tap.modules.workflows.adapters.observation_bindings import ChatObservationBinding\n",
+        "from tap.modules.workflows.adapters.mysql_observations import MysqlAgentObservations\n",
+        "from tap.modules.workflows.application.observations import ObservedModelGateway\n",
+    ],
+)
+def test_chat_observation_imports_must_use_own_application_port(tmp_path, source_text):
+    assert any(chat_import_is_forbidden(ref) for ref in _parsed_source(tmp_path, source_text))
+
+
+@pytest.mark.parametrize(
+    ("source_text", "guard"),
+    [
+        (
+            "from tap.modules.workflows.application import observations\n",
+            observation_import_is_forbidden,
+        ),
+        (
+            "from tap.modules.workflows.adapters import mysql_observations\n",
+            workflow_application_sql_import_is_forbidden,
+        ),
+        (
+            "from tap.modules.workflows.adapters import observation_bindings\n",
+            concrete_observation_import_is_forbidden,
+        ),
+    ],
+)
+def test_observation_ownership_guards_reject_parent_imports(tmp_path, source_text, guard):
+    assert any(guard(ref) for ref in _parsed_source(tmp_path, source_text))
 
 
 @pytest.mark.parametrize(
@@ -997,6 +1115,7 @@ def test_answer_execution_is_owned_by_applications():
         assert not any(execution_import_is_forbidden(ref) for ref in _imports(path)), path
     failures = BACKEND_SOURCE / "entrypoints/tapper_turn_failures.py"
     assert not any(ref.module.startswith("tap.interfaces.") for ref in _imports(failures))
+    assert not (BACKEND_SOURCE / "entrypoints/tapper_chat_turn.py").exists()
 
 
 def uses_http_answer_runtime(source: str) -> bool:
@@ -1012,6 +1131,7 @@ def uses_http_answer_runtime(source: str) -> bool:
 def test_worker_uses_application_answer_runtime():
     worker = BACKEND_SOURCE / "entrypoints/tapper_generation_worker.py"
     assert not uses_http_answer_runtime(worker.read_text())
+    assert not any(ref.module.startswith("tap.interfaces.http.") for ref in _imports(worker))
 
 
 def test_worker_answer_runtime_guard_rejects_http_service_lookup():

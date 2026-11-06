@@ -178,3 +178,59 @@ def test_publish_generate_verify_and_read(owned_project_mysql):
         assert fourth == ()
 
     _run(owned_project_mysql, scenario)
+
+
+def test_refresh_cycle_identity_survives_backoff_and_lease_reclaim(owned_project_mysql):
+    from datetime import timedelta
+
+    async def scenario(sessions, _engine):
+        store = MysqlSuggestionStore(sessions, scope=VALIDATION_SCOPE)
+        key = SuggestionKey(actor_id=VALIDATION_SCOPE.actor_id, locale="en")
+        await store.request_refresh(key, RefreshReason.MISSING, now=NOW)
+        first = (
+            await store.claim_due(
+                worker_id="first",
+                now=NOW + timedelta(days=1),
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+            )
+        )[0]
+        assert first.refresh_cycle_id
+        reclaimed = (
+            await store.claim_due(
+                worker_id="second",
+                now=NOW + timedelta(days=1, minutes=2),
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+            )
+        )[0]
+        assert reclaimed.refresh_cycle_id == first.refresh_cycle_id
+        assert (
+            await store.complete_refresh(first, (), now=NOW + timedelta(days=1, minutes=2)) is False
+        )
+        assert (
+            await store.fail_refresh(reclaimed, "transient", now=NOW + timedelta(days=1, minutes=3))
+            is True
+        )
+        retry = (
+            await store.claim_due(
+                worker_id="third",
+                now=NOW + timedelta(days=2),
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+            )
+        )[0]
+        assert retry.refresh_cycle_id == first.refresh_cycle_id
+        assert await store.complete_refresh(retry, (), now=NOW + timedelta(days=2)) is True
+        await store.request_refresh(key, RefreshReason.MISSING, now=NOW + timedelta(days=3))
+        next_cycle = (
+            await store.claim_due(
+                worker_id="fourth",
+                now=NOW + timedelta(days=4),
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+            )
+        )[0]
+        assert next_cycle.refresh_cycle_id != first.refresh_cycle_id
+
+    _run(owned_project_mysql, scenario)

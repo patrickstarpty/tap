@@ -351,14 +351,22 @@ class CitationResolvedEvent(StreamContractModel):
     payload: CitationResolvedPayload
 
 
+class WorkflowResult(StreamContractModel):
+    """Native workflow output, without retrieval evidence or corpus provenance."""
+
+    task_id: str = Field(min_length=1)
+    answer: str = Field(min_length=1)
+
+
 class TurnCompletedPayload(StreamContractModel):
     answer: RetrievalAnswerResponse | None = None
     state: Literal["completed"] | None = None
+    workflow_result: WorkflowResult | None = None
 
     @model_validator(mode="after")
     def one_current_or_legacy_fact(self):
-        if (self.answer is None) == (self.state is None):
-            raise ValueError("turn completion must contain one current or legacy fact")
+        if sum(value is not None for value in (self.answer, self.state, self.workflow_result)) != 1:
+            raise ValueError("turn completion must contain exactly one answer fact")
         return self
 
 

@@ -596,7 +596,9 @@ class _CountingRelationAnalysis:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def analyse(self, query, evidence, source_revision_ids, *, turn_id=None):
+    async def analyse(
+        self, query, evidence, source_revision_ids, *, turn_id=None, operation_id=None
+    ):
         self.calls += 1
         from tap.modules.knowledge.application.relation_analysis import (
             RelationContext,

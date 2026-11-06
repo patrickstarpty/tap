@@ -12,11 +12,45 @@ const labels: Record<string, string> = {
   "node.started": "Node started",
   "node.finished": "Node finished",
   "node.failed": "Node failed",
+  "node.outcome_unknown": "Node outcome unknown",
   "node.waiting": "Waiting for dependency",
   "command.received": "Request accepted",
   "command.receipted": "Request updated",
   "plan.dependency_added": "Plan updated",
 };
+
+export function workflowEventLabel(
+  kind: string,
+  payload: Record<string, unknown>,
+): string {
+  const identifierField = kind.startsWith("node.skill_")
+    ? "skill_id"
+    : "tool_id";
+  const identifier = payload[identifierField];
+  if (
+    [
+      "node.tool_started",
+      "node.tool_finished",
+      "node.skill_started",
+      "node.skill_finished",
+    ].includes(kind) &&
+    typeof identifier === "string" &&
+    /^[A-Za-z0-9._:-]{1,128}$/u.test(identifier)
+  ) {
+    const subject = kind.startsWith("node.skill_") ? "Skill" : "Tool";
+    if (kind.endsWith("_started")) return `${subject} started: ${identifier}`;
+    const outcome = payload.outcome;
+    if (
+      typeof outcome === "string" &&
+      ["succeeded", "failed", "unknown", "rejected", "activated"].includes(
+        outcome,
+      )
+    )
+      return `${subject} ${outcome}: ${identifier}`;
+    return `${subject} finished: ${identifier}`;
+  }
+  return labels[kind] ?? "Activity recorded";
+}
 export function ActivityTimeline({
   events,
   limit = 20,
@@ -41,7 +75,7 @@ export function ActivityTimeline({
                   : null;
             return (
               <li key={event.eventId}>
-                <span>{labels[event.kind] ?? "Activity recorded"}</span>
+                <span>{workflowEventLabel(event.kind, event.payload)}</span>
                 <time dateTime={event.occurredAt}>
                   {new Date(event.occurredAt).toLocaleTimeString()}
                 </time>

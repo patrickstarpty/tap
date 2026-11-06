@@ -27,6 +27,36 @@ def _envelope(*, sequence: int, event_type: str, payload: dict[str, object]) -> 
     }
 
 
+def test_workflow_completion_has_distinct_result_without_retrieval_provenance() -> None:
+    event = ChatEventEnvelope.model_validate(
+        _envelope(
+            sequence=1,
+            event_type="turn.completed",
+            payload={"workflowResult": {"taskId": "task-1", "answer": "An answer"}},
+        )
+    )
+    assert event.event.payload.workflow_result.task_id == "task-1"
+    with pytest.raises(ValueError):
+        ChatEventEnvelope.model_validate(
+            _envelope(
+                sequence=2,
+                event_type="turn.completed",
+                payload={
+                    "state": "completed",
+                    "workflowResult": {"taskId": "task-1", "answer": "An answer"},
+                },
+            )
+        )
+    with pytest.raises(ValueError):
+        ChatEventEnvelope.model_validate(
+            _envelope(
+                sequence=3,
+                event_type="turn.completed",
+                payload={"workflowResult": {"taskId": "task-1", "answer": ""}},
+            )
+        )
+
+
 class _KnowledgeRepository:
     async def claim_queued(self, *, limit):
         return ClaimBatch(

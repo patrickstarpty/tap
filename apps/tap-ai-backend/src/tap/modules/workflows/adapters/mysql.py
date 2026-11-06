@@ -41,6 +41,15 @@ from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 
 
+def _native_request(request: Mapping[str, object]) -> bool:
+    return request.get("origin", "native") == "native"
+
+
+def _native_sql():
+    origin = workflow_task.c.request_json["origin"].as_string()
+    return or_(origin.is_(None), origin == "native")
+
+
 def _canonical(value: Mapping[str, object]) -> str:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
@@ -780,6 +789,8 @@ class MysqlWorkflowStore:
             if row is None:
                 raise LookupError("workflow task not found")
             task = row._mapping
+            if not _native_request(task["request_json"]):
+                raise ValueError("observed workflow task has no native controls")
             previous = (
                 await session.execute(
                     select(workflow_command).where(
@@ -955,6 +966,8 @@ class MysqlWorkflowStore:
             )
             if row is None:
                 raise LookupError("workflow task not found")
+            if not _native_request(row["request_json"]):
+                return False
             deadline = row["request_json"].get("deadline_at")
             if not isinstance(deadline, str):
                 return False
@@ -1060,6 +1073,8 @@ class MysqlWorkflowStore:
                 if row is None:
                     raise LookupError("workflow task not found")
                 task = row._mapping
+                if not _native_request(task["request_json"]):
+                    return None
                 now = datetime.now(UTC).replace(tzinfo=None)
                 if (
                     task["status"] not in ("queued", "waiting_dependency")
@@ -1453,7 +1468,11 @@ class MysqlWorkflowStore:
                 .mappings()
                 .one_or_none()
             )
-            if row is None or row["request_json"].get("origin_turn_id") != origin_turn_id:
+            if (
+                row is None
+                or not _native_request(row["request_json"])
+                or row["request_json"].get("origin_turn_id") != origin_turn_id
+            ):
                 raise ValueError("workflow origin mismatch")
             if row["status"] != "queued":
                 return
@@ -2013,6 +2032,8 @@ class MysqlWorkflowStore:
             if row is None:
                 raise LookupError("workflow task not found")
             task = row._mapping
+            if not _native_request(task["request_json"]):
+                return task["status"]
             if task["status"] == "recovering":
                 token = task["lease_token"]
                 return RecoveryEpisode(task_id, token) if token else "recovering"
@@ -2299,6 +2320,8 @@ class MysqlWorkflowStore:
                 if row is None:
                     raise LookupError("workflow task not found")
                 task = row._mapping
+                if not _native_request(task["request_json"]):
+                    return None
                 if task["status"] not in (
                     "queued",
                     "paused",
@@ -2827,6 +2850,7 @@ class MysqlWorkflowStore:
         cursor = self._scan_cursors.get(key)
         eligible = select(workflow_task.c.task_id, workflow_task.c.status).where(
             *scope_predicates(workflow_task, scope),
+            _native_sql(),
             workflow_task.c.status.in_(
                 (
                     "queued",
@@ -2915,6 +2939,8 @@ class MysqlWorkflowStore:
             ).first()
         if row is None:
             raise LookupError("workflow task not found")
+        if not _native_request(row.request_json):
+            raise ValueError("observed workflow task cannot be rerun")
         if row.status not in ("succeeded", "failed", "canceled", "skipped"):
             raise ValueError("rerun requires a terminal task")
         request = dict(row.request_json)

@@ -338,6 +338,7 @@ class KnowledgeAPI:
         policy,
         *,
         turn_id=None,
+        operation_id=None,
         answer_execution=None,
         authorize=None,
     ):
@@ -352,6 +353,7 @@ class KnowledgeAPI:
                 query,
                 authorize=authorize,
                 turn_id=turn_id,
+                operation_id=operation_id,
                 policy=policy,
                 frozen_policy=True,
             )

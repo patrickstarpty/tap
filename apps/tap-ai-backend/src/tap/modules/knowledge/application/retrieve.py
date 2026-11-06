@@ -8,6 +8,7 @@ import json
 import math
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -139,16 +140,28 @@ class RelationAnalysis(Protocol):
         source_revision_ids: tuple[str, ...],
         *,
         turn_id: str | None = None,
+        operation_id: str | None = None,
     ) -> RelationContext: ...
+
+
+class RelationObservationPort(Protocol):
+    def bind(self, turn_id: str | None, operation_id: str) -> AbstractAsyncContextManager[None]: ...
 
 
 class RegisteredRelationAnalysis:
     """Adapts the retrieval-facing `RelationAnalysis` port onto the
     `"relation-analysis"` agent subgraph resolved from an `AgentRegistry`."""
 
-    def __init__(self, registry: AgentRegistry, *, scope: ProjectScopeContext) -> None:
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        *,
+        scope: ProjectScopeContext,
+        observation: RelationObservationPort | None = None,
+    ) -> None:
         self._agent = registry.get("relation-analysis")
         self._scope = scope
+        self._observation = observation
 
     async def analyse(
         self,
@@ -157,6 +170,7 @@ class RegisteredRelationAnalysis:
         source_revision_ids: tuple[str, ...],
         *,
         turn_id: str | None = None,
+        operation_id: str | None = None,
     ) -> RelationContext:
         context = AgentContext(
             scope=self._scope,
@@ -169,7 +183,12 @@ class RegisteredRelationAnalysis:
             query=query,
             evidence=tuple(_evidence_ref(item) for item in evidence),
         )
-        return cast(RelationContext, await self._agent.run(context, value))
+        async with (
+            self._observation.bind(turn_id, operation_id)
+            if self._observation is not None and operation_id is not None
+            else nullcontext()
+        ):
+            return cast(RelationContext, await self._agent.run(context, value))
 
 
 def _evidence_ref(item: Evidence) -> EvidenceRef:
@@ -609,6 +628,7 @@ class AuthorizedRetrieval:
                 run.response.evidence,
                 tuple(sorted({resource.revision for resource in run.plan.resources})),
                 turn_id=None if answer_execution is None else answer_execution.plan_id,
+                operation_id=f"relations:{run.plan.query_plan_id}",
             )
         # Checked after relation analysis so the abstention still reports the
         # project graph status instead of UNAVAILABLE (reasoning disabled).
@@ -758,6 +778,7 @@ class AuthorizedRetrieval:
         *,
         authorize=None,
         turn_id: str | None = None,
+        operation_id: str | None = None,
         policy: RetrievalPolicyContext | None = None,
         frozen_policy: bool = False,
     ) -> tuple[EvidenceBundle, tuple[RelationEvidence, ...]]:
@@ -781,6 +802,7 @@ class AuthorizedRetrieval:
             bundle.response.evidence,
             tuple(sorted({resource.revision for resource in bundle.plan.resources})),
             turn_id=turn_id,
+            operation_id=operation_id or f"relations:{bundle.plan.query_plan_id}",
         )
         merged = merge_relation_contexts(bundle.relation, new_context)
         existing_labels = (

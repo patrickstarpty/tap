@@ -31,6 +31,7 @@ async def test_suggestion_worker_runtime_uses_idle_wakeups(monkeypatch) -> None:
     class FakeApiRuntime:
         def __init__(self) -> None:
             self.http_services = FakeHttpServices()
+            self.suggestion_observation = None
             self.closed = False
 
         async def aclose(self) -> None:

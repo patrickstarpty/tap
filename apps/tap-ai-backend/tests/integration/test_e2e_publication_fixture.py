@@ -81,6 +81,77 @@ def _owned_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, url: str
     )
 
 
+def test_workflow_fixture_accepts_only_verified_uuid_owned_mysql(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = "tap-workflow-e2e-abc123def456"
+    url = "mysql+asyncmy://tap:owned@127.0.0.1:13307/tap?charset=utf8mb4"
+    state = tmp_path / f"{project}.private"
+    state.mkdir(mode=0o700)
+    marker = state / "database-owner.json"
+    receipt = {
+        "project": project,
+        "databaseUrlSha256": hashlib.sha256(url.encode()).hexdigest(),
+        "hostPort": 13307,
+        "runnerPid": os.getpid(),
+        "mysqlContainerId": MYSQL_CONTAINER_ID,
+        "dockerContext": "default",
+    }
+    marker.write_text(json.dumps(receipt))
+    marker.chmod(0o600)
+    monkeypatch.setenv("TAP_DEMO_MODE", "e2e")
+    monkeypatch.setenv("TAP_TAPPER_COMPOSE_PROJECT", project)
+    monkeypatch.setenv("TAPPER_WORKFLOW_E2E", "1")
+    monkeypatch.setenv("TAPPER_E2E_OWNERSHIP_FILE", str(marker))
+    docker_project = [project]
+
+    def docker_output(arguments: list[str]) -> str:
+        if arguments == ["context", "show"]:
+            return "default\n"
+        if arguments == ["context", "inspect", "default"]:
+            return json.dumps([{"Endpoints": {"docker": {"Host": "unix:///var/run/docker.sock"}}}])
+        assert arguments == ["--context", "default", "container", "inspect", MYSQL_CONTAINER_ID]
+        return json.dumps(
+            [
+                {
+                    "Id": MYSQL_CONTAINER_ID,
+                    "State": {"Running": True},
+                    "Config": {
+                        "Labels": {
+                            "com.docker.compose.project": docker_project[0],
+                            "com.docker.compose.service": "mysql",
+                        }
+                    },
+                    "NetworkSettings": {
+                        "Ports": {"3306/tcp": [{"HostIp": "127.0.0.1", "HostPort": "13307"}]}
+                    },
+                }
+            ]
+        )
+
+    monkeypatch.setitem(PREPARE.__globals__, "_docker_output", docker_output)
+    require_owned = PREPARE.__globals__["_require_owned_database"]
+    require_owned(url)
+    marker.write_text(json.dumps(receipt | {"project": "tap-tapper-demo"}))
+    with pytest.raises(ValueError, match="owned E2E database"):
+        require_owned(url)
+    marker.write_text(json.dumps(receipt | {"databaseUrlSha256": "0" * 64}))
+    with pytest.raises(ValueError, match="owned E2E database"):
+        require_owned(url)
+    marker.write_text(json.dumps(receipt))
+    marker.chmod(0o644)
+    with pytest.raises(ValueError, match="owned E2E database"):
+        require_owned(url)
+    marker.chmod(0o600)
+    docker_project[0] = "tap-tapper-demo"
+    with pytest.raises(ValueError, match="owned Compose MySQL"):
+        require_owned(url)
+    docker_project[0] = project
+    monkeypatch.setenv("TAP_TAPPER_COMPOSE_PROJECT", "tap-workflow-e2e-nothex")
+    with pytest.raises(ValueError, match="owned E2E database"):
+        require_owned(url)
+
+
 def test_fixture_rejects_shared_loopback_database_before_connection(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -21,6 +21,9 @@ class WorkflowStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+type WorkflowNodeStatus = WorkflowStatus | Literal["unknown"]
+
+
 @dataclass(frozen=True, slots=True)
 class TaskSnapshot:
     task_id: str
@@ -38,7 +41,7 @@ class NodeSnapshot:
     parent_node_id: str | None
     agent_revision_id: str | None
     kind: Literal["agent", "service", "approval"]
-    status: WorkflowStatus
+    status: WorkflowNodeStatus
     attempt: int
 
 

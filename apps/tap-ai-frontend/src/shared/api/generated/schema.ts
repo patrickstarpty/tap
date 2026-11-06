@@ -6894,6 +6894,7 @@ export interface components {
             answer?: components["schemas"]["tap__contracts__chat_stream__RetrievalAnswerResponse"] | null;
             /** State */
             state?: "completed" | null;
+            workflowResult?: components["schemas"]["WorkflowResult"] | null;
         };
         /** TurnDegradedEvent */
         TurnDegradedEvent: {
@@ -7132,7 +7133,7 @@ export interface components {
             createdAt: string;
             /** Nodeid */
             nodeId: string;
-            status: components["schemas"]["WorkflowStatus"];
+            status: components["schemas"]["WorkflowNodeStatus"];
         };
         /** WorkflowNodeDetail */
         WorkflowNodeDetail: {
@@ -7165,8 +7166,9 @@ export interface components {
             publicSummary?: string | null;
             /** Sourceruntime */
             sourceRuntime: string;
-            status: components["schemas"]["WorkflowStatus"];
+            status: components["schemas"]["WorkflowNodeStatus"];
         };
+        WorkflowNodeStatus: components["schemas"]["WorkflowStatus"] | "unknown";
         /** WorkflowNodeView */
         WorkflowNodeView: {
             /** Agentid */
@@ -7196,7 +7198,7 @@ export interface components {
             publicSummary?: string | null;
             /** Sourceruntime */
             sourceRuntime: string;
-            status: components["schemas"]["WorkflowStatus"];
+            status: components["schemas"]["WorkflowNodeStatus"];
         };
         /** WorkflowRecentEvent */
         WorkflowRecentEvent: {
@@ -7207,6 +7209,16 @@ export interface components {
              * Format: date-time
              */
             occurredAt: string;
+        };
+        /**
+         * WorkflowResult
+         * @description Native workflow output, without retrieval evidence or corpus provenance.
+         */
+        WorkflowResult: {
+            /** Answer */
+            answer: string;
+            /** Taskid */
+            taskId: string;
         };
         /**
          * WorkflowStatus

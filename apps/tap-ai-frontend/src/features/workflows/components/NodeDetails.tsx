@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { components } from "../../../shared/api/generated/schema";
 import { useWorkflowLogs, useWorkflowNode } from "../api/queries";
 import type { WorkflowCommandView, WorkflowTaskSnapshot } from "../api/client";
+import { workflowEventLabel } from "./ActivityTimeline";
 
 type Node = components["schemas"]["WorkflowNodeView"];
 export function NodeDetails({
@@ -80,8 +81,14 @@ export function NodeDetails({
       </button>
       <h2 tabIndex={-1}>{value.displayName}</h2>
       <p className="tap-workflow-status" data-status={value.status}>
-        {value.kind} · {value.status.replaceAll("_", " ")}
+        {value.kind} ·{" "}
+        {value.status === "unknown"
+          ? "Outcome unknown"
+          : value.status.replaceAll("_", " ")}
       </p>
+      {value.status === "unknown" ? (
+        <p>The source finished without a recorded result for this operation.</p>
+      ) : null}
       {value.publicSummary ? <p>{value.publicSummary}</p> : null}
       {attempts.length > 1 ? (
         <label>
@@ -181,7 +188,7 @@ export function NodeDetails({
                 <time dateTime={item.occurredAt}>
                   {new Date(item.occurredAt).toLocaleTimeString()}
                 </time>
-                <span>{item.kind.replaceAll(".", " ")}</span>
+                <span>{workflowEventLabel(item.kind, item.payload)}</span>
                 {typeof item.payload.summary === "string" ? (
                   <p>{item.payload.summary}</p>
                 ) : null}

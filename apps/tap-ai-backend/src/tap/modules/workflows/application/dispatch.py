@@ -62,6 +62,7 @@ class NativeWorkflowRuntime:
         checkpointer_factory: CheckpointerFactory,
         action_gateway_factory: GatewayFactory,
         max_parallel_agents: int = 3,
+        model_timeout_seconds: float = 15.0,
         owner: str,
         chat: WorkflowChatPort | None = None,
         ordinary_tool: OrdinaryTool | None = None,
@@ -78,6 +79,7 @@ class NativeWorkflowRuntime:
         self._checkpointer_factory = checkpointer_factory
         self._action_gateway_factory = action_gateway_factory
         self._max_parallel_agents = max_parallel_agents
+        self._model_timeout_seconds = model_timeout_seconds
         self._owner = owner
         self._chat = chat
         self._ordinary_tool = ordinary_tool
@@ -114,6 +116,8 @@ class NativeWorkflowRuntime:
         )
 
     async def start(self, scope: ProjectScopeContext, task_id: str) -> None:
+        if (await self._store.task_request(scope, task_id)).get("origin", "native") != "native":
+            raise ValueError("observed workflow task has no native runtime")
         if await self._store.expire_idle_task(scope, task_id):
             await self._project_task(scope, task_id)
             return
@@ -234,6 +238,8 @@ class NativeWorkflowRuntime:
             await self._state.renew_task(scope, task_id, token)
 
     async def advance(self, scope: ProjectScopeContext, task_id: str, lease_token: str) -> None:
+        if (await self._store.task_request(scope, task_id)).get("origin", "native") != "native":
+            raise ValueError("observed workflow task has no native runtime")
         heartbeat = asyncio.create_task(self._heartbeat(scope, task_id, lease_token))
         try:
             if not await self._reconcile_stopped(scope, task_id, lease_token):
@@ -442,8 +448,28 @@ class NativeWorkflowRuntime:
         )
         loaded_skill_ids = tuple(str(item) for item in request.get("skill_revision_ids", ()))
 
+        async def public_step(
+            kind: str,
+            call_id: str,
+            identifier: str,
+            outcome: str | None = None,
+        ) -> None:
+            payload: dict[str, object] = {
+                "node_id": node_id,
+                "attempt": attempt,
+                "skill_id" if kind.startswith("node.skill_") else "tool_id": identifier,
+            }
+            if outcome is not None:
+                payload["outcome"] = outcome
+            event_id = hashlib.sha256(
+                f"actual-step:{task_id}:{node_id}:{attempt}:{kind}:{call_id}".encode()
+            ).hexdigest()
+            await self._store.append_event(scope, task_id, token, event_id, kind, payload)
+
         async def activate_skill(
-            name: str, prior: tuple[dict[str, object], ...]
+            name: str,
+            prior: tuple[dict[str, object], ...],
+            call_id: str,
         ) -> dict[str, object]:
             if not await self._apply_controls(scope, task_id, token, node_id):
                 raise WorkflowStopped("workflow control stopped dispatch")
@@ -452,14 +478,20 @@ class NativeWorkflowRuntime:
             entry = catalog_entry(name, skill_catalog)
             if entry is None or self._skill_loader is None:
                 return {"rejection": "not_in_catalog"}
+            await public_step("node.skill_started", call_id, entry.skill_id)
             try:
                 instruction = await self._skill_loader(scope, entry.revision_id)
             except ValueError:
+                await public_step("node.skill_finished", call_id, entry.skill_id, "rejected")
                 return {
                     "skillId": entry.skill_id,
                     "revisionId": entry.revision_id,
                     "rejection": "skill_disabled",
                 }
+            except Exception:
+                await public_step("node.skill_finished", call_id, entry.skill_id, "failed")
+                raise
+            await public_step("node.skill_finished", call_id, entry.skill_id, "activated")
             return {
                 "skillId": entry.skill_id,
                 "revisionId": entry.revision_id,
@@ -529,6 +561,7 @@ class NativeWorkflowRuntime:
             skill_catalog=skill_catalog,
             skill_activation=activate_skill if self._skill_loader is not None else None,
             loaded_skill_ids=loaded_skill_ids,
+            model_timeout_seconds=self._model_timeout_seconds,
         )
         try:
             result = await graph.run(

@@ -792,16 +792,20 @@ async def test_committed_workflow_facts_project_one_terminal_chat_answer(owned_p
                 == (await store.snapshot(VALIDATION_SCOPE, task_id))["last_sequence"]
             )
             assert len((await session.execute(select(turn_answer_evidence_snapshot))).all()) == 1
-            assert (
-                len(
-                    (
-                        await session.execute(
-                            select(chat_event).where(chat_event.c.event_type == "turn.completed")
-                        )
-                    ).all()
+            completed_events = (
+                (
+                    await session.execute(
+                        select(chat_event).where(chat_event.c.event_type == "turn.completed")
+                    )
                 )
-                == 1
+                .mappings()
+                .all()
             )
+            assert len(completed_events) == 1
+            assert completed_events[0]["payload"]["workflowResult"] == {
+                "taskId": task_id,
+                "answer": "An answer",
+            }
     finally:
         await engine.dispose()
 
