@@ -288,3 +288,88 @@ def test_public_node_summary_requires_matching_finished_attempt() -> None:
         {"kind": "node.finished", "nodeId": "child", "attempt": 2, "payload": {"summary": "safe"}}
     )
     assert attach_node_summaries(nodes, events)[0]["publicSummary"] == "safe"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_body", [True, False])
+async def test_concurrent_standalone_create_reconciles_only_same_public_request(same_body):
+    import asyncio
+    from types import SimpleNamespace
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
+    from tap.modules.workflows.domain.models import TaskSnapshot, WorkflowStatus
+
+    class RacingStore:
+        def __init__(self):
+            self.lookups = 0
+            self.ready = asyncio.Event()
+            self.winner = None
+            self.winner_request = None
+            self.insert_requests = []
+            self.lock = asyncio.Lock()
+
+        async def task_by_key(self, _scope, _key):
+            self.lookups += 1
+            if self.lookups <= 2:
+                if self.lookups == 2:
+                    self.ready.set()
+                await self.ready.wait()
+                return None
+            return self.winner
+
+        async def task_request(self, _scope, _task_id):
+            return self.winner_request
+
+        async def create_task(self, _scope, request, _key):
+            async with self.lock:
+                self.insert_requests.append(request)
+                if self.winner is not None:
+                    raise ValueError("idempotency key payload conflict")
+                self.winner_request = request
+                self.winner = TaskSnapshot(
+                    "winner",
+                    VALIDATION_SCOPE.project_id,
+                    None,
+                    1,
+                    WorkflowStatus.QUEUED,
+                    1,
+                )
+                return self.winner
+
+    store = RacingStore()
+    admission = WorkflowAdmissionCoordinator(SimpleNamespace(scope=VALIDATION_SCOPE), None, store)
+    counter = 0
+
+    def different_limits(_now):
+        nonlocal counter
+        counter += 1
+        return {"deadline_at": f"deadline-{counter}", "budget_limit": {"model_calls": counter}}
+
+    admission._limits = different_limits
+    first = {
+        "origin": "native",
+        "goal": "Review",
+        "root": {"revision_id": "root-v1"},
+        "public_request": {"goal": "Review"},
+    }
+    second = {
+        "origin": "native",
+        "goal": "Review",
+        "root": {"revision_id": "root-v2"},
+        "public_request": {"goal": "Review" if same_body else "Changed"},
+    }
+    results = await asyncio.gather(
+        admission.create_standalone(VALIDATION_SCOPE, first, "same-key"),
+        admission.create_standalone(VALIDATION_SCOPE, second, "same-key"),
+        return_exceptions=True,
+    )
+    successes = [item for item in results if isinstance(item, TaskSnapshot)]
+    conflicts = [item for item in results if isinstance(item, ValueError)]
+    assert all(item.task_id == "winner" for item in successes)
+    assert len(successes) == (2 if same_body else 1)
+    assert len(conflicts) == (0 if same_body else 1)
+    assert store.winner_request == store.insert_requests[0]
+    assert store.winner_request["deadline_at"] in ("deadline-1", "deadline-2")
+    assert store.winner_request["root"] in (first["root"], second["root"])
+    assert len(store.insert_requests) == 2

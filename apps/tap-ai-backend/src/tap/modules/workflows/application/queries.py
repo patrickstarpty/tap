@@ -431,7 +431,10 @@ class WorkflowQueries:
         snapshot = await self._store.snapshot(scope, task_id)
         if sequence > snapshot["last_sequence"]:
             raise SnapshotRequired("future workflow cursor requires a new snapshot")
-        events = await self._store.events_after(scope, task_id, sequence, limit)
+        fetched = await self._store.events_after(scope, task_id, sequence, limit)
+        # Metadata and events are separate reads. A new node can commit between
+        # them; defer its event until the next snapshot includes that node.
+        events = tuple(event for event in fetched if event.sequence <= snapshot["last_sequence"])
         if sequence < snapshot["last_sequence"] and (
             not events or events[0].sequence != sequence + 1
         ):

@@ -178,9 +178,21 @@ class WorkflowAdmissionCoordinator:
         if existing is not None:
             return existing
         request = {**frozen, **self._limits(datetime.now(UTC))}
-        return await self._store.create_task(
-            scope, request, self._standalone_key(scope, idempotency_key)
-        )
+        try:
+            return await self._store.create_task(
+                scope, request, self._standalone_key(scope, idempotency_key)
+            )
+        except ValueError as error:
+            if str(error) != "idempotency key payload conflict":
+                raise
+            # A concurrent winner may have frozen a different deadline/catalog.
+            # Compare only the caller-owned input; keep the winner's full digest strict.
+            existing = await self.existing_standalone(
+                scope, cast(dict[str, object], frozen["public_request"]), idempotency_key
+            )
+            if existing is None:
+                raise
+            return existing
 
     async def create(
         self, conversation_id: str, turn_id: str, idempotency_key: str, frozen: TurnInput

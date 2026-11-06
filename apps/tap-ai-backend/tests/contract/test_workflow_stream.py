@@ -87,3 +87,55 @@ def test_node_failure_is_a_safe_lifecycle_signal() -> None:
     assert value["kind"] == "node.failed"
     assert value["status"] == "failed"
     assert "secret" not in str(value)
+
+
+@pytest.mark.asyncio
+async def test_new_child_after_snapshot_waits_for_matching_metadata_view() -> None:
+    from tap.modules.workflows.application.queries import WorkflowQueries
+
+    now = datetime(2026, 11, 6, tzinfo=UTC)
+    delegated = WorkflowEvent(
+        "child-event",
+        "task-1",
+        2,
+        "child",
+        1,
+        "node.delegated",
+        {"node_id": "child", "parent_node_id": "root", "agent_id": "qae"},
+        now,
+    )
+
+    class Store:
+        def __init__(self):
+            self.reads = 0
+
+        async def snapshot(self, _scope, _task_id):
+            self.reads += 1
+            return {
+                "project_id": "tapper-demo",
+                "last_sequence": 1 if self.reads == 1 else 2,
+                "request_json": {"origin": "native"},
+                "nodes": ()
+                if self.reads == 1
+                else (
+                    {
+                        "node_id": "child",
+                        "parent_node_id": "root",
+                        "runtime": "observed",
+                    },
+                ),
+            }
+
+        async def events_after(self, _scope, _task_id, sequence, _limit):
+            return (delegated,) if sequence < 2 else ()
+
+    queries = WorkflowQueries(Store())
+    assert await queries.events(None, "task-1", 1) == ()
+    replay = await queries.events(None, "task-1", 1)
+    assert len(replay) == 1
+    assert (replay[0]["sequence"], replay[0]["parentNodeId"], replay[0]["sourceRuntime"]) == (
+        2,
+        "root",
+        "observed",
+    )
+    assert await queries.events(None, "task-1", 2) == ()
