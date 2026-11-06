@@ -35,7 +35,7 @@ OWNED_DATA_MOUNTS = {
 
 def write_owned_data_override(state: Path) -> Path:
     """Put only this run's durable middleware data on the host-backed private path."""
-    services: dict[str, dict[str, list[dict[str, str]]]] = {}
+    services: dict[str, dict[str, object]] = {}
     for service, target in OWNED_DATA_MOUNTS.items():
         directory = state / service
         directory.mkdir(mode=0o700)
@@ -45,6 +45,9 @@ def write_owned_data_override(state: Path) -> Path:
         services[service] = {
             "volumes": [{"type": "bind", "source": str(directory), "target": target}]
         }
+    # MinIO also writes its legacy config under HOME. Keep that on this run's
+    # already verified private /data bind, not the Docker VM overlay.
+    services["tap-minio"]["environment"] = {"HOME": "/data"}
     override = state / "owned-data.compose.json"
     override.write_text(json.dumps({"services": services}), encoding="utf-8")
     return override
@@ -78,6 +81,12 @@ def verify_owned_data_mounts(effective_json: str, state: Path) -> None:
             or Path(matches[0]["source"]).resolve() != expected
         ):
             raise RuntimeError(f"workflow {service} data mount is not owned")
+    minio = services["tap-minio"]
+    minio_env = minio.get("environment") if isinstance(minio, dict) else None
+    if not isinstance(minio_env, dict) or minio_env.get("HOME") != "/data":
+        raise RuntimeError("workflow tap-minio HOME is not on owned data")
+    if minio.get("user") != "65532:65532":
+        raise RuntimeError("workflow tap-minio container UID changed")
 
 
 def write_owned_database_marker(

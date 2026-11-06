@@ -53,6 +53,7 @@ def test_owned_data_override_binds_only_six_expected_targets(tmp_path: Path) -> 
         "milvus-minio",
         "milvus",
     }
+    assert payload["services"]["tap-minio"]["environment"] == {"HOME": "/data"}
     for service, target in runner.OWNED_DATA_MOUNTS.items():
         mount = payload["services"][service]["volumes"][0]
         assert mount == {
@@ -67,7 +68,25 @@ def test_owned_data_override_binds_only_six_expected_targets(tmp_path: Path) -> 
             for service in runner.OWNED_DATA_MOUNTS
         }
     }
+    effective["services"]["tap-minio"]["environment"] = {"HOME": "/data"}
+    effective["services"]["tap-minio"]["user"] = "65532:65532"
     runner.verify_owned_data_mounts(json.dumps(effective), tmp_path)
+    effective["services"]["tap-minio"]["environment"]["HOME"] = "/home/nonroot"
+    try:
+        runner.verify_owned_data_mounts(json.dumps(effective), tmp_path)
+    except RuntimeError as error:
+        assert "HOME" in str(error)
+    else:
+        raise AssertionError("container-overlay MinIO config home was accepted")
+    effective["services"]["tap-minio"]["environment"]["HOME"] = "/data"
+    effective["services"]["tap-minio"]["user"] = "root"
+    try:
+        runner.verify_owned_data_mounts(json.dumps(effective), tmp_path)
+    except RuntimeError as error:
+        assert "UID" in str(error)
+    else:
+        raise AssertionError("changed MinIO container UID was accepted")
+    effective["services"]["tap-minio"]["user"] = "65532:65532"
     effective["services"]["tap-minio"]["volumes"][0]["source"] = "shared-volume"
     try:
         runner.verify_owned_data_mounts(json.dumps(effective), tmp_path)
