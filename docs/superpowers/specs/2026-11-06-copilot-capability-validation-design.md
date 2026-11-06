@@ -1,6 +1,6 @@
 # Copilot 独立能力验证阶段设计
 
-日期：2026-11-06。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径证据门禁与[阶段 0 计划](../plans/2026-11-06-copilot-capability-validation.md)。这是不接入产品入口或共享 Demo 数据的独立探针设计。当前只完成 0.1 的配置导出；下述进程、事件、模型和恢复能力均未实测，不能视为已交付。
+日期：2026-11-06。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径证据门禁与[阶段 0 计划](../plans/2026-11-06-copilot-capability-validation.md)。这是不接入产品入口或共享 Demo 数据的独立探针设计。当前完成 0.1 配置导出及 0.2 确定性进程采集；真实事件、模型和恢复能力均未实测，不能视为已交付。
 
 ## 1. 边界与冻结输入
 
@@ -10,11 +10,11 @@
 
 Frontmatter 仅写 `name`、`description`、`tools`、`strict-tools-list`；修订写为 YAML 注释，正文写指令。描述和修订以带转义的双引号编码，正文保留换行。工具组只允许官方 Copilot CLI 自定义 Agent 文档中列出的 `read`、`grep`、`glob`、`edit`、`execute`；空列表必须写 `tools: []` 和 `strict-tools-list: true`，不能省略后落入全工具默认值。是否足以形成执行端权限边界仍由 0.3 实测，文件内容本身不证明权限生效。生成阶段先完整验证并写暂存目录，再原子放入尚不存在的快照目录；恢复遇已有目录必须逐文件核对内容及摘要，不重写、不覆盖。配置变更须建立新任务快照，不能依赖热加载。
 
-## 2. 进程与事件证据合同（0.2，待实现）
+## 2. 进程与事件证据合同（0.2，确定性部分已实现）
 
-`ProbeRun(argv, cwd, env, timeout_seconds)` 使用显式参数和环境启动 CLI，不经 shell；`run_probe` 返回退出码、stdout/stderr 行与超时标志。两路输出并行读取并设每行上限；超时或取消停止整个进程组并等待回收。原始数据只留在受限临时目录，脱敏后才可保存证据。`classify_capture(exit_code, timed_out, terminal_seen)` 只有零退出且观察到协议终态才为 `complete`；EOF、非零退出、超时和不完整 JSON 均不能推断成功。
+`ProbeRun(argv, cwd, env, timeout_seconds)` 使用显式参数和环境启动 CLI，不经 shell；`run_probe` 返回退出码、stdout/stderr 行与超时标志。两路输出并行读取并设每行上限；超时或取消停止整个进程组并等待回收。确定性采集的原始数据只保留在有界内存；真实采集若写入临时文件，必须使用受限临时目录，脱敏后才可保存证据。`classify_capture(exit_code, timed_out, terminal_seen)` 只有零退出且观察到协议终态才为 `complete`；EOF、非零退出、超时和不完整 JSON 均不能推断成功。
 
-先用标准库 stub 覆盖交错输出、拆包 JSON、坏 JSON、超长行、非零退出、派生长活进程与取消清理。命令入口限定 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`，只提供预设无敏感样本，达到预算就停止后续调用。真正的事件字段、父子关联、终态及受控输入通道只能记录 CLI 实测值；日志 EOF、命令帮助和模拟 fixture 都不构成真实能力证据。
+先用标准库 stub 覆盖交错输出、拆包 JSON、坏 JSON、超长行、非零退出、派生长活进程与取消清理。命令入口限定 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`，只提供预设无敏感样本，达到预算就停止后续调用。真正的事件字段、父子关联、终态及受控输入通道只能记录 CLI 实测值；日志 EOF、命令帮助和模拟 fixture 都不构成真实能力证据。目前 `process.py` 以独立进程组和有界内存捕获输出，`parse_jsonl` 只验证 JSON 对象语法，`classify_capture` 要求外部确认的终态。`cli.py` 已限定预设场景和参数；由于模型调用计数与终态 schema 未实测，它在 opt-in 下仍拒绝启动真实调用，输出 `unverified`，不把预算参数当作已执行的硬限制。真实采集与额度执行仍待 0.3。
 
 ## 3. 能力场景与判定（0.3，待实测）
 

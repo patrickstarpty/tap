@@ -1,10 +1,16 @@
 """Frozen, permission-bounded Copilot profile export."""
 
+import asyncio
 import hashlib
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from scripts.copilot_probe.models import ProbeAgent
+from scripts.copilot_probe.process import ProbeRun, classify_capture, parse_jsonl, run_probe
 from scripts.copilot_probe.profiles import export_profiles
 
 
@@ -123,3 +129,133 @@ def test_symlinked_root_cannot_export_outside_workspace(tmp_path: Path) -> None:
         export_profiles(root, (agent("qae"),), frozenset({"qae"}))
 
     assert list(outside.iterdir()) == []
+
+
+STUB = Path(__file__).resolve().parents[2] / "fixtures/copilot/stub_cli.py"
+
+
+def stub_spec(mode: str, tmp_path: Path, *, seconds: int = 2) -> ProbeRun:
+    return ProbeRun((sys.executable, str(STUB), mode), tmp_path, dict(os.environ), seconds)
+
+
+def test_zero_exit_without_terminal_is_incomplete() -> None:
+    assert classify_capture(0, False, False) == "incomplete"
+    assert classify_capture(None, True, False) == "timed_out"
+    assert classify_capture(0, False, True) == "complete"
+    assert classify_capture(2, False, True) == "failed"
+
+
+def test_interleaved_streams_and_fragmented_json_are_captured(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("interleaved", tmp_path)))
+    assert capture.exit_code == 0
+    assert capture.stdout_lines == ('{"event":"first"}', '{"event":"second"}')
+    assert capture.stderr_lines == ("warning one", "warning two")
+    assert parse_jsonl(capture.stdout_lines) == (({"event": "first"}, {"event": "second"}), ())
+    assert classify_capture(capture.exit_code, capture.timed_out, False) == "incomplete"
+
+
+def test_invalid_json_is_reported_without_inventing_event(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("invalid", tmp_path)))
+    assert parse_jsonl(capture.stdout_lines) == ((), (1,))
+
+
+def test_long_line_has_bounded_capture(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("long", tmp_path)))
+    assert capture.exit_code == 0
+    assert len(capture.stdout_lines) == 1
+    assert len(capture.stdout_lines[0].encode()) <= 16384
+    assert capture.truncated
+
+
+def test_total_capture_is_bounded(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("many", tmp_path)))
+    assert capture.exit_code == 0
+    assert sum(len(x.encode()) for x in (*capture.stdout_lines, *capture.stderr_lines)) <= 65536
+    assert capture.truncated
+
+
+def test_nonzero_exit_is_failure(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("nonzero", tmp_path)))
+    assert capture.exit_code == 7
+    assert classify_capture(capture.exit_code, capture.timed_out, True) == "failed"
+
+
+def test_timeout_kills_parent_and_descendant(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("wait", tmp_path, seconds=1)))
+    assert capture.timed_out
+    assert classify_capture(capture.exit_code, capture.timed_out, False) == "timed_out"
+    pid = int((tmp_path / "child.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_parent_exit_still_kills_descendant(tmp_path: Path) -> None:
+    capture = asyncio.run(run_probe(stub_spec("orphan", tmp_path, seconds=1)))
+    assert capture.exit_code == 0
+    pid = int((tmp_path / "child.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_cancel_kills_descendant(tmp_path: Path) -> None:
+    async def invoke() -> None:
+        task = asyncio.create_task(run_probe(stub_spec("wait", tmp_path, seconds=10)))
+        for _ in range(100):
+            if (tmp_path / "child.pid").exists():
+                break
+            await asyncio.sleep(0.01)
+        assert (tmp_path / "child.pid").exists()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(invoke())
+    pid = int((tmp_path / "child.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_cli_without_verified_meter_skips_and_records_unverified(tmp_path: Path) -> None:
+    output = tmp_path / "result.json"
+    run = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "scripts.copilot_probe.cli",
+            "--scenario",
+            "simple",
+            "--output",
+            str(output),
+            "--max-seconds",
+            "5",
+            "--max-model-calls",
+            "1",
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0
+    report = json.loads(output.read_text())
+    assert report["status"] == "unverified"
+    assert report["budget_enforced"] is False
+    assert report["model_calls_used"] is None
+
+
+def test_cli_rejects_unknown_scenario(tmp_path: Path) -> None:
+    run = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "scripts.copilot_probe.cli",
+            "--scenario",
+            "private-data",
+            "--output",
+            str(tmp_path / "result.json"),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode != 0
+    assert not (tmp_path / "result.json").exists()

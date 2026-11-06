@@ -61,9 +61,9 @@ def test_profiles_include_all_allowed_agents_without_prefix(tmp_path):
 
 **Files:** Create `process.py`、`cli.py`；Modify 单测；Create `BT/fixtures/copilot/stub_cli.py`。
 
-**Interfaces:** `ProbeRun(argv: tuple[str, ...], cwd: Path, env: dict[str, str], timeout_seconds: int)`；`run_probe(spec: ProbeRun) -> ProbeCapture`（async），`ProbeCapture` 含 `exit_code: int | None`、`stdout_lines: tuple[str, ...]`、`stderr_lines: tuple[str, ...]`、`timed_out: bool`。调用使用 argv 和显式 env，不使用 shell。stdout/stderr 并行读取，按行限额，超时先停止进程组再等待回收；原始数据仅在临时受限目录，脱敏后才写证据。
+**Interfaces:** `ProbeRun(argv: tuple[str, ...], cwd: Path, env: dict[str, str], timeout_seconds: int)`；`run_probe(spec: ProbeRun) -> ProbeCapture`（async），`ProbeCapture` 含 `exit_code: int | None`、`stdout_lines: tuple[str, ...]`、`stderr_lines: tuple[str, ...]`、`timed_out: bool`。调用使用 argv 和显式 env，不使用 shell。stdout/stderr 并行读取，按行限额，超时先停止进程组再等待回收；原始数据仅在有界内存或临时受限目录，脱敏后才写证据。
 
-- [ ] 写失败测试：stub 分别输出交错 stdout/stderr、拆包 JSON、无效 JSON、超长行、非零退出及派生长活进程；确认不死锁、不把 EOF 视为成功、取消后无存活子进程。代表性分类函数定义为 `classify_capture(exit_code: int | None, timed_out: bool, terminal_seen: bool) -> str`：
+- [x] 写失败测试：stub 分别输出交错 stdout/stderr、拆包 JSON、无效 JSON、超长行、非零退出及派生长活进程；确认不死锁、不把 EOF 视为成功、取消后无存活子进程。代表性分类函数定义为 `classify_capture(exit_code: int | None, timed_out: bool, terminal_seen: bool) -> str`：
 
 ```python
 from scripts.copilot_probe.process import classify_capture
@@ -74,10 +74,10 @@ def test_zero_exit_without_terminal_is_incomplete():
     assert classify_capture(0, False, True) == "complete"
 ```
 
-- [ ] 运行 0.1 单测命令，确认新增断言失败；实现进程封装，stub 用标准库生成这些行为。
-- [ ] CLI 实现 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`；每个场景只使用预定义无敏感样本；额度达到后停止后续调用并记录预算超限。
-- [ ] 帮助输出与单测通过。仅在 opt-in 下采集一个真实任务的 JSONL/可用监控事件，记录启动模式、CLI 版本、事件名称、字段及父子关联来源，不先假定 JSONL 含完整子 Agent 生命周期。
-- [ ] 提交 `test: capture copilot lifecycle evidence`。
+- [x] 运行 0.1 单测命令，确认新增断言失败；实现进程封装，stub 用标准库生成这些行为。
+- [ ] CLI 实现 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`；每个场景只使用预定义无敏感样本；额度达到后停止后续调用并记录预算超限。已实现参数与预设场景边界；没有实测模型调用计数器时拒绝启动，预算执行留待 0.3。
+- [ ] 帮助输出与单测通过。仅在 opt-in 下采集一个真实任务的 JSONL/可用监控事件，记录启动模式、CLI 版本、事件名称、字段及父子关联来源，不先假定 JSONL 含完整子 Agent 生命周期。确定性帮助与单测已通过；用户选择暂不运行真实采集，实际字段和关联仍未验证。
+- [x] 提交 `test: capture copilot lifecycle evidence`。
 
 ### Task 0.3：能力矩阵与真实场景
 

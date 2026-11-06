@@ -1,0 +1,1 @@
+"""Deterministic Copilot probe fixtures."""
