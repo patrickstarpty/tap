@@ -1,5 +1,7 @@
 # Copilot 能力验证指南与矩阵
 
+> 2026-11-06 provider 变更：用户已取消 Copilot 订阅，首版改用 OpenCode + LiteLLM。本文仅保留原 Copilot 方案和历史验证记录，不再作为当前执行入口；后续使用 [OpenCode 计划](../superpowers/plans/2026-11-06-opencode-capability-validation.md)。旧测试、勾选项和能力结果不得转记为 OpenCode 验收。
+
 阶段 0.3 当前只完成可重跑的确定性门禁。真实 Copilot CLI、LiteLLM、模型调用和子实例事件均未运行；本页所有真实能力保持 `unverified`。这不阻止阶段 1 的原生工作流开发，但阶段 2 的 Copilot runtime 门禁仍关闭。
 
 ## 运行确定性检查

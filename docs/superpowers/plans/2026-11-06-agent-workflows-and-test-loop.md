@@ -4,11 +4,11 @@
 
 **Goal:** 交付可观察、可补充要求、可暂停恢复的双路径 Agent 工作流，并以版本化测试资产、真实自动化执行和证据回写完成首版验收。
 
-**Architecture:** 非编码工作由 LangGraph Orchestrator 的模型—工具循环执行；编码工作整体交给 Copilot CLI，包括其 Orchestrator 与专业 Agent。MySQL 保存任务和事件，MinIO 保存版本化产物，Redis 只负责通知；测试业务资产通过正式跨应用合同保持单一权威。
+**Architecture:** 非编码工作由 LangGraph Orchestrator 的模型—工具循环执行；编码工作整体交给 OpenCode CLI，包括其 Orchestrator 与专业 Agent。MySQL 保存任务和事件，MinIO 保存版本化产物，Redis 只负责通知；测试业务资产通过正式跨应用合同保持单一权威。
 
-**Tech Stack:** Python 3.13.12、FastAPI、LangGraph 1.2.12、SQLAlchemy/MySQL、Redis、MinIO、LiteLLM、Copilot CLI、React 19、TypeScript、Playwright 1.62.1。
+**Tech Stack:** Python 3.13.12、FastAPI、LangGraph 1.2.12、SQLAlchemy/MySQL、Redis、MinIO、LiteLLM、OpenCode CLI、React 19、TypeScript、Playwright 1.62.1。
 
-**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。本计划只授权规划；复选框表示实际执行进度，当前全部未执行。
+**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。本计划只授权规划；2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。OpenCode 阶段 0 与阶段 1–3 未实施；旧 Copilot 确定性探针不计入新 provider 进度。
 
 ## Global Constraints
 
@@ -16,7 +16,7 @@
 - Tapper 是默认智能助手，Orchestrator 是内部调度角色，不作为 Agents 档案、搜索或选择 / @ 候选。专业岗位使用 BA、SDE、QAE、SDET 并显示中文；自定义 Agent 保留自身名称。
 - 首版编码任务启动前生成内部 Orchestrator 配置及当前项目已启用且该任务获准使用的全部专业 Agent 配置，文件名无 `tap-` 前缀；固定版本，不依赖热加载。配置存在不意味着实例启动。
 - 简单问答由 Orchestrator 直接处理；按职责描述或用户显式指定委派；独立任务可并行，依赖任务串行。用户追加需求由原 Orchestrator 协调。
-- 编码路径中的全部模型调用通过 Copilot BYOK → LiteLLM；非编码路径通过 ModelGateway → LiteLLM。不静默换 provider；保留 Claude Code、Codex 接口但不实现适配器。
+- 编码路径中的全部模型调用通过 OpenCode → LiteLLM；非编码路径通过 ModelGateway → LiteLLM。不静默换 provider；保留 Claude Code、Codex 接口但不实现适配器。
 - 测试计划、用例始终由 TAP 管理且分别版本化；代码首版由 TAP 管理。用户可见术语为“自动化测试步骤”。
 - 发布沿用人工确认；代码执行在 TAP 管理的本机隔离容器内。外部 Git/CI、桌面 RPA、移动端、多人生产化不在本计划内。
 - 所有实际运行可追溯：专业 Agent 的档案与实例在 Agents 模块，Tapper 的内部 Orchestrator 根运行在任务详情；真实事件驱动流水线、活动时间线和节点详情。执行详情位于默认收起的右侧栏，用户点击打开；中间对话只显示简短进度与入口，不嵌入工作流。
@@ -29,12 +29,12 @@
 
 | 阶段 | 计划 | 独立交付物 | 执行条件 |
 | --- | --- | --- | --- |
-| 0 | [Copilot 能力验证](2026-11-06-copilot-capability-validation.md) | 可重跑探针、真实事件样本、能力矩阵 | 可先执行；真实模型需显式 opt-in |
+| 0 | [OpenCode 能力验证](2026-11-06-opencode-capability-validation.md) | 可重跑探针、真实事件样本、能力矩阵 | 可先执行；真实模型需显式 opt-in |
 | 1 | [通用任务与原生工作流](2026-11-06-native-agent-workflows.md) | 原生单/多 Agent、持久状态、控制和实时界面 | 可与阶段 0 的调研并行；接口开发统一以本计划定义为准 |
-| 2 | [Copilot 编码运行接入](2026-11-06-copilot-workflow-runtime.md) | 编码路径、任务级隔离、原生交接、恢复与统一视图 | 阶段 0 核心门禁全部通过、阶段 1 运行契约就绪 |
+| 2 | [OpenCode 编码运行接入](2026-11-06-opencode-workflow-runtime.md) | 编码路径、任务级隔离、原生交接、恢复与统一视图 | 阶段 0 核心门禁全部通过、阶段 1 运行契约就绪 |
 | 3 | [版本化测试执行闭环](2026-11-06-versioned-test-automation-loop.md) | 计划/用例独立版本、制品发布、容器运行和证据回写 | 领域归属 ADR 明确；最终验收依赖阶段 2 |
 
-不得把阶段 0 的 stub/replay 成功当作 Copilot 实测。能力验证失败时，阶段 1 仍可独立推进，但阶段 2 和最终编码闭环不能宣布可交付。每阶段首个任务把本阶段接口及实测结论固化到独立设计文件；这里只安排该工作，不提前声称阶段设计与实测完成。
+不得把阶段 0 的 stub/replay 成功当作 OpenCode 实测。能力验证失败时，阶段 1 仍可独立推进，但阶段 2 和最终编码闭环不能宣布可交付。每阶段首个任务把本阶段接口及实测结论固化到独立设计文件；这里只安排该工作，不提前声称阶段设计与实测完成。
 
 ## 2. 已检查的代码事实
 
@@ -106,7 +106,7 @@ git diff -- README.md docs/ AGENTS.md
 
 - [ ] 阶段 0：实测能力矩阵通过，固定 CLI/模型组合。
 - [ ] 阶段 1：原生任务、控制与 Agents 实时视图通过验收。
-- [ ] 阶段 2：Copilot 全链路 BYOK、事件与恢复通过验收。
+- [ ] 阶段 2：OpenCode 全链路 BYOK、事件与恢复通过验收。
 - [ ] 阶段 3：版本化测试闭环及跨应用切换通过验收。
 
 当前只完成计划编写，不代表上述能力已经实现、测试通过或具备生产运行条件。

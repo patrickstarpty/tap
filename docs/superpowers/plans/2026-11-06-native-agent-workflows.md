@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 使用总计划全部约束；本阶段不实现 Copilot 运行，不把编码请求静默改为原生编码。
+- 使用总计划全部约束；本阶段不实现 OpenCode 运行，不把编码请求静默改为原生编码。
 - 原生路径只通过现有 `B/modules/ai/ports/gateway.py::ModelGateway` 调用模型。
 - 不修改既有 `tapper-chat-v2` 检查点含义；新图使用 `agent-workflow-v1` 与 state schema 1。旧 Turn 能继续恢复。
 - 用户界面统一称默认助手为 Tapper，内部 Orchestrator 标识不得直接用作助手显示名；专业 Agent 继续显示其岗位名称。

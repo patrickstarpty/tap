@@ -1,15 +1,15 @@
 # Tapper 双路径 Agent 工作流与测试闭环设计
 
-日期：2026-11-06。本文汇总产品负责人在 2026-11-05 至 2026-11-06 确认的整体设计；用户已同意进入实施规划，见[实施总计划](../plans/2026-11-06-agent-workflows-and-test-loop.md)。本文不是已交付能力或实施完成记录。归属[产品路线图](../plans/2026-10-01-product-roadmap.md)的通用任务底座与测试闭环增量。现状以[现状架构](../../architecture.md)为准。
+日期：2026-11-06。本文汇总产品负责人在 2026-11-05 至 2026-11-06 确认的整体设计；用户已同意进入实施规划，见[实施总计划](../plans/2026-11-06-agent-workflows-and-test-loop.md)。2026-11-06 provider 修订：用户取消 Copilot 订阅后，最终明确使用 OpenCode 并继续接入 LiteLLM；先前 Codex 替换提议不再执行。本文不是已交付能力或实施完成记录。归属[产品路线图](../plans/2026-10-01-product-roadmap.md)的通用任务底座与测试闭环增量。现状以[现状架构](../../architecture.md)为准。
 
 ## 1. 已确认的产品决定
 
 | 决定 | 约束 |
 | --- | --- |
 | 通用任务底座，测试闭环先验收 | 底座支持测试、软件开发及财务、项目管理等业务自动化；首版验收集中于测试闭环，其他领域后续交付 |
-| 意图识别后分两条执行路径 | 编码任务整体交给 Copilot CLI 内的 Orchestrator 与专业 Agent；非编码任务由原生 LangGraph Orchestrator 编排 |
-| 模型接入 | Copilot CLI 使用 BYOK，首版接现有 LiteLLM；非编码路径通过现有 ModelGateway / LiteLLM 调用模型 |
-| Coding provider | Copilot CLI 为首个实现；保留 Claude Code、Codex 适配接口，不把它们当首版运行依赖 |
+| 意图识别后分两条执行路径 | 编码任务整体交给 OpenCode CLI 内的 Orchestrator 与专业 Agent；非编码任务由原生 LangGraph Orchestrator 编排 |
+| 模型接入 | OpenCode CLI 使用 BYOK，首版接现有 LiteLLM；非编码路径通过现有 ModelGateway / LiteLLM 调用模型 |
+| Coding provider | OpenCode CLI 为首个实现；保留 Claude Code、Codex 适配接口，不把它们当首版运行依赖 |
 | 对外身份与岗位名称 | 默认助手统一称为 Tapper；Orchestrator 仅为内部技术角色。专业 Agent 使用 BA、SDE、QAE、SDET 等亚马逊风格岗位名称，并显示中文 |
 | 调用机制 | 参考 Claude Code 的主 Agent loop 与按需子 Agent 委派；Orchestrator 可直接回答、使用工具或按职责描述选择 Agent，也支持用户显式指定；不固定岗位流水线 |
 | 统一入口与名册 | Tapper 是默认智能助手，发送消息即由它处理和调度；Agents 目录与选择 / @ 只提供可委派的专业 Agent，不单列 Tapper 或系统 Orchestrator。全部实际运行仍可追溯，统筹记录归任务详情 |
@@ -49,7 +49,7 @@ Tapper 是面向用户的默认助手，Orchestrator 是它在两条运行路径
 
 Agent 定义与 Agent 工作实例分开：前者具有提示词、模型和 Skill 修订；后者属于具体任务，冻结所用配置和输入。一个 SDET 可产生多个独立实例。现有用户 Agent 保留其名字和配置，不强制改成内置岗位；停用、修订不改写历史实例。
 
-两条路径使用同一份 TAP 管理的岗位与 Agent 修订。Copilot 适配器将获准指令映射成任务专属 custom agent profiles，并显式传递任务范围与权限；不依赖子 Agent 自动继承本地仓库指令，不加载用户机器中无关的个人 Agent 配置。
+两条路径使用同一份 TAP 管理的岗位与 Agent 修订。OpenCode 适配器将获准指令映射成任务专属 custom agent profiles，并显式传递任务范围与权限；不依赖子 Agent 自动继承本地仓库指令，不加载用户机器中无关的个人 Agent 配置。
 
 ### 3.1 按需调用与 Agent loop
 
@@ -63,24 +63,28 @@ Orchestrator 根据可用 Agent 的简短职责描述与任务目标选择执行
 
 ### 3.2 首版在启动前生成配置
 
-Copilot Agent 文件使用 `orchestrator.agent.md`、`ba.agent.md`、`qae.agent.md`、`sde.agent.md`、`sdet.agent.md`，不加 `tap-` 前缀。`orchestrator.agent.md` 仅用于启动 Tapper 的内部统筹运行，不因此生成用户可选档案或 @ 候选。自定义 Agent 使用任务内唯一、稳定的 ID 映射文件名，与显示名称分开管理。
+每个编码任务启动前，在隔离工作区生成 OpenCode 配置快照。内部统筹配置为 `.opencode/agents/orchestrator.md`（`mode: primary`），专业配置为 `.opencode/agents/<agent_id>.md`（`mode: subagent`），不加 `tap-` 前缀。只导出已启用且任务获准使用的配置；稳定 ID 与显示名称分开，禁止路径逃逸与同名覆盖。根配置是内部启动入口，不加入 TAP 用户目录、@ 候选或可委派专业名册。
 
-首版采用用户认可的简化方案：每个编码任务启动 Copilot 前，在隔离工作区的 `.github/agents/` 一次性生成 Orchestrator 与当前项目已启用、且该任务获准使用的全部 Agent 配置。无权限或已停用的 Agent 不导出。配置可用不代表实例已启动，Orchestrator 仍根据描述和任务按需调用，不要求所有岗位参与。非编码路径直接读取结构化配置，不生成 Copilot 文件。
+Agent 文件采用 OpenCode Markdown frontmatter 与正文，使用其 `permission` 配置，不复制 Copilot 的 `strict-tools-list` 或 Codex TOML。primary/subagent 模式、工具限制、task 委派规则和内置 Agent 的禁用/覆盖在阶段 0 实测。仅隐藏 UI 名称不能证明不可调用；TAP 服务端仍校验显式 Agent 选择，不能依赖 OpenCode 自身 @ 菜单提供授权边界。
 
-任务冻结导出目录和 Agent 修订，新建或修改的配置默认对新任务生效；权限撤销仍即时约束后续执行。当前长任务确需新增 Agent 时，明确记录配置变更，在安全边界保存进度并通过后续执行阶段加载，不假定写入文件或恢复旧会话会刷新目录。已有产物与运行记录保持可追溯，不要求用户重做整个任务。
+任务冻结 Agent/Skill 修订、provider 配置及权限。配置存在不代表实例启动；非编码路径直接读取结构化配置。新修订默认用于新任务，长任务新增能力需在安全边界进入新运行阶段，不依赖热加载。配置发现和全局配置合并须在隔离环境核验，不加载无关个人历史、插件或凭据。
 
-官方 CLI 提供 `/add-dir` 加载目录中的 Agent，但尚未验证它在选定无人值守模式中的可调用性与配置更新语义，首版不依赖运行中热加载。后续若实测 Agent 数量导致启动、上下文或选择质量问题，再引入按任务筛选及动态发现。验证需分别记录配置发现开销、模型输入用量和委派准确性，不将文件数等同于启动实例数，也不在未测量前承诺大量配置没有影响。
+### 3.3 LiteLLM 路由与接口选择
+
+编码路径固定为 OpenCode → LiteLLM，非编码路径继续为 ModelGateway → LiteLLM。OpenCode 自定义 provider 指向现有网关，冻结模型别名和协议；主模型、子 Agent 模型以及 small_model/标题/摘要/压缩等辅助调用均须核对实际路由。不默默使用内置云服务或订阅 provider，也不把配置文件存在当作全调用覆盖证据。按实际模型协议选择 Chat Completions 或 Responses 的适配方式，不假设所有 LiteLLM 模型行为一致。
+
+最小批处理候选为 `opencode run --format json`；实时控制候选为 `opencode serve` 的本地 HTTP/SSE 接口。后者只绑定回环，使用任务专属认证与受控网络，不暴露到局域网。阶段 0 在安装固定版本后核对帮助、OpenAPI 和真实会话行为，再决定生产适配接口。事件、输入应用、取消后停止及恢复语义都需实测，不能从 API 名称推断。
 
 ## 4. 两条执行路径
 
 ```mermaid
 flowchart TD
   Request[用户请求] --> Classify[意图识别与范围校验]
-  Classify -->|编码任务| Coding[Copilot CLI Orchestrator]
+  Classify -->|编码任务| Coding[OpenCode CLI Orchestrator]
   Classify -->|非编码任务| Native[LangGraph Orchestrator]
   Native -->|执行已发布制品| Execute[TAP 隔离执行器]
   Coding --> CodingAgents[按需委派 BA / SDE / QAE / SDET]
-  CodingAgents --> CodingModels[Copilot BYOK → LiteLLM]
+  CodingAgents --> CodingModels[OpenCode → LiteLLM]
   Coding --> CodingModels
   Native --> NativeAgents[按需委派原生专业 Agent]
   NativeAgents --> NativeModels[ModelGateway → LiteLLM]
@@ -93,25 +97,25 @@ flowchart TD
 
 ### 4.1 意图与交接
 
-意图识别使用现有模型网关，不以启动 Copilot 作为分类前提，可融入入口处理而不强制增加独立模型调用。分类依据任务目标和所需能力：生成或修改可执行代码、定位器、测试脚本及代码调试走编码路径；问答、需求分析、测试用例设计和报告归纳走非编码路径。运行已发布制品由 Orchestrator 调用确定性执行服务处理，不启动新的编码过程。解释一段代码不自动触发编码环境。
+意图识别使用现有模型网关，不以启动 OpenCode 作为分类前提，可融入入口处理而不强制增加独立模型调用。分类依据任务目标和所需能力：生成或修改可执行代码、定位器、测试脚本及代码调试走编码路径；问答、需求分析、测试用例设计和报告归纳走非编码路径。运行已发布制品由 Orchestrator 调用确定性执行服务处理，不启动新的编码过程。解释一段代码不自动触发编码环境。
 
 现有 planner 的 `agent_intent` 主要用于问答观测与范围拒答，不能直接视为新的任务路由器。新增路由决定必须记录原因、所需能力和输入版本，经服务端校验后生效；低置信度且会改变执行权限的分类进入澄清。
 
-编码路径启动后，参与该任务的 Orchestrator 与专业 Agent 均由 Copilot runtime 承载并通过 BYOK 调用 LiteLLM。外层 LangGraph 负责父任务生命周期、交接、等待与产物接收，不同时调度 Copilot 内部同一批子任务。
+编码路径启动后，参与该任务的 Orchestrator 与专业 Agent 均由 OpenCode runtime 承载并通过 BYOK 调用 LiteLLM。外层 LangGraph 负责父任务生命周期、交接、等待与产物接收，不同时调度 OpenCode 内部同一批子任务。
 
-同一任务的后续问答由当前 Orchestrator 结合已有上下文处理，不因一句简单问题在两条路径之间来回迁移。非编码路径实现上述按需 agent loop；编码路径使用 Copilot 提供的循环与委派能力，通过 profile 和适配边界落实统一产品策略。参考 Claude Code 的执行循环和委派机制不代表改用 Claude Code 运行，也不代表 Copilot 已通过相应能力验证。
+同一任务的后续问答由当前 Orchestrator 结合已有上下文处理，不因一句简单问题在两条路径之间来回迁移。非编码路径实现上述按需 agent loop；编码路径使用 OpenCode 提供的循环与委派能力，通过 profile 和适配边界落实统一产品策略。参考 Claude Code 的执行循环和委派机制不代表改用 Claude Code 运行，也不代表 OpenCode 已通过相应能力验证。
 
-非编码任务后来需要编码时，Orchestrator 提交交接计划：保持父任务身份，冻结已确认资产与证据，终止原分支的调度所有权，再建立编码子运行。已确认需要编码的完整任务可直接进入 Copilot，由其中的 BA/QAE/SDET 协作。交接不能隐式扩大工具权限或覆盖已有资产。
+非编码任务后来需要编码时，Orchestrator 提交交接计划：保持父任务身份，冻结已确认资产与证据，终止原分支的调度所有权，再建立编码子运行。已确认需要编码的完整任务可直接进入 OpenCode，由其中的 BA/QAE/SDET 协作。交接不能隐式扩大工具权限或覆盖已有资产。
 
 ### 4.2 适配与能力验证
 
-Coding provider 适配接口覆盖启动、事件读取、输入提交、中断、恢复、状态核对和产物导出，报告实际支持的能力及版本。Copilot、Claude Code、Codex 可以有不同恢复粒度；公共接口不承诺它们支持完全相同的行为。
+Coding provider 适配接口覆盖启动、事件读取、输入提交、中断、恢复、状态核对和产物导出，报告实际支持的能力及版本。OpenCode、Claude Code、Codex 可以有不同恢复粒度；公共接口不承诺它们支持完全相同的行为。
 
-本机已核对 Copilot CLI `1.0.105` 的版本和 `help providers`，确认帮助中提供 BYOK 配置。尚未运行真实模型、多 Agent、事件完整性或中断恢复组合验证；最终固定版本以验证结果为准，不自动升级用户 CLI。
+当前 shell PATH 未找到 `opencode`，因此尚未核对本机版本或运行真实模型。阶段 0 先在隔离工具目录安装并固定版本，记录分发来源、版本及依赖，再验证 LiteLLM 组合；不修改用户全局配置。
 
-实现前必须验证：Copilot → LiteLLM 的工具调用/流式兼容性；主 Agent、子 Agent 及辅助模型调用的实际模型路由；专业 Agent profile 的权限和上下文；可关联的子任务事件；暂停后的状态核对与恢复；定向补充指令的交付和确认。模型不兼容或能力缺失时报告具体阻塞，不静默切换到其他 provider 或伪造子节点。
+实现前必须验证：OpenCode → LiteLLM 的工具调用/流式兼容与主/子/辅助调用覆盖；专业 Agent 与工具权限；可关联的子实例事件；并行；定向输入接收和应用；停止、恢复及失联核对；执行端调用/时间/费用预算。八项 required 门禁以新 OpenCode 计划为准。旧 Copilot 探针不能转记为 OpenCode 通过；失败时保留具体阻塞，不静默换 provider。
 
-LiteLLM 仍是模型接入网关，但编码请求由 Copilot 发起，不经过 Python ModelGateway 的提示词与响应校验实现。相应范围校验、运行事件、产物校验和费用关联在 TAP 适配边界补齐。缺失的用量数据标记未知，不能计作零或与网关统计重复累加。
+LiteLLM 仍是模型网关，但编码调用由 OpenCode 发起，不经过 Python ModelGateway 的提示词与响应校验。范围、事件、产物及费用关联在 TAP 适配边界补齐。未知用量不能写零，父子不重复计费；无法获得可信调用计数或执行端限额时不解锁阶段 2。
 
 ## 5. 通用任务、状态与恢复
 
@@ -140,9 +144,9 @@ MySQL 保存任务、节点、依赖、控制指令、版本引用、事件序�
 ### 5.3 暂停、崩溃与不确定结果
 
 - 原生 LangGraph 在可持久化节点边界或等待用户处保存 checkpoint 并释放租约；恢复重新校验授权和任务版本。
-- Copilot 路径同时保存 provider session 引用、适配器/CLI 版本、工作区快照和已确认产物。会话恢复与工作区恢复共同完成后才能继续；会话记录本身不能证明文件和进程已恢复。
+- OpenCode 路径同时保存 provider session 引用、适配器/CLI 版本、工作区快照和已确认产物。会话恢复与工作区恢复共同完成后才能继续；会话记录本身不能证明文件和进程已恢复。
 - 暂停请求停止新委派；正在执行的动作在可中断处停止，或完成当前不可安全打断的步骤。界面在收到执行端确认前保持“暂停中”。
-- worker 崩溃后，租约和 fencing 防止两个 worker 同时推进同一任务；恢复先核对仍存活的 Copilot 进程及执行容器，不能盲目重新启动。
+- worker 崩溃后，租约和 fencing 防止两个 worker 同时推进同一任务；恢复先核对仍存活的 OpenCode 进程及执行容器，不能盲目重新启动。
 - 浏览器退出后，不承诺从某次点击原地续跑。保存已有证据，在环境与数据恢复到可复现前置条件后，为当前用例建立新 attempt；无法保证前置条件时等待人工处理。
 - 发布、执行提交和结果写入使用幂等键与状态核对。响应丢失进入 recovering，先查既有作业；重复事件与重复回调不产生第二次发布或重复运行记录。
 - 用户取消后不自动续跑。运行失联与已停止分开呈现；在确认进程终止前不报告已暂停或已取消。
@@ -205,7 +209,7 @@ flowchart LR
 
 显示可公开的工作摘要、动作、证据与产物；不把模型内部推理当成可验证执行日志。日志按需分页读取并脱敏。运行模型的身份与统计 Agent 的身份分别关联，避免同一父子运行重复计入团队工作量。实时运行视图读取 TAP 权威记录，现有周期报表保留独立统计语义。
 
-Copilot 子节点身份、开始/结束、委派和工具归属需要可关联的真实事件。仅有一段“已调用子 Agent”的文本不足以验收完整实时工作流；能力验证必须覆盖单 Agent、并行多 Agent、重试与断线恢复。
+OpenCode 子节点身份、开始/结束、委派和工具归属需要可关联的真实事件。仅有一段“已调用子 Agent”的文本不足以验收完整实时工作流；能力验证必须覆盖单 Agent、并行多 Agent、重试与断线恢复。
 
 ## 8. 版本化测试资产与代码
 
@@ -235,26 +239,26 @@ Agent 生成的代码首先是候选。编译、静态检查、测试结果和�
 
 | 子项目 | 交付重点 | 退出条件 |
 | --- | --- | --- |
-| 0. Copilot 能力验证 | 固定 CLI / 模型组合、BYOK、专业 Agent、多 Agent 事件、指令、中断恢复和工作区恢复 | 有真实验证记录与能力矩阵；任何核心缺口先反馈，不用模拟结果代替 |
+| 0. OpenCode 能力验证 | 固定 CLI / 模型组合、BYOK、专业 Agent、多 Agent 事件、指令、中断恢复和工作区恢复 | 有真实验证记录与能力矩阵；任何核心缺口先反馈，不用模拟结果代替 |
 | 1. 通用任务与原生运行流水线 | 任务/节点/事件/指令、原生 Orchestrator、现有 Agent 运行登记、快照与实时 UI、暂停恢复 | 单 Agent 与并行工作均能真实展示、定向补充、断线恢复和审计 |
-| 2. 编码路径接入 | Copilot 内 Orchestrator 与专业 Agent、LiteLLM BYOK、隔离工作区、跨路径交接、统一运行视图 | 编码任务完成并产生可验证产物，用户指令有执行确认，崩溃恢复不重复副作用 |
+| 2. 编码路径接入 | OpenCode 内 Orchestrator 与专业 Agent、LiteLLM BYOK、隔离工作区、跨路径交接、统一运行视图 | 编码任务完成并产生可验证产物，用户指令有执行确认，崩溃恢复不重复副作用 |
 | 3. 版本化测试闭环 | 测试计划/用例版本、自动化步骤与制品、发布、本机执行和证据回写 | 完成下面的首版端到端验收 |
 
 Jenkins 首个执行器的旧方向由本次本机执行器决定替代；既有 LangGraph 文档分析长任务纳入通用任务底座的兼容设计；可信知识校验、主动发现问题及企业生产化仍分别保留其验收项，不以本次测试闭环宣布它们完成。跨模块 ADR 在相关子项目定稿时更新，现状架构随实现更新。
 
 ## 11. 首版验收
 
-1. 同一项目中，需求分析走原生路径，生成自动化代码走 Copilot 路径；编码路径的 Orchestrator 和子 Agent 实际经 LiteLLM BYOK 调用模型，路由与产物可核对。
+1. 同一项目中，需求分析走原生路径，生成自动化代码走 OpenCode 路径；编码路径的 Orchestrator 和子 Agent 实际经 LiteLLM BYOK 调用模型，路由与产物可核对。
 2. 一份可复现的 Web 示例需求产生带独立版本的测试计划和用例；计划固定用例版本，修改最新用例不改变旧计划和旧执行记录。
 3. 运行详情呈现单 Agent 及至少两个有真实重叠执行时段的 Agent 分支；节点、依赖、日志和产物与持久化事件一致，服务步骤与 Agent 有明确区分。
    简单问答仅运行 Orchestrator，工具查询不强制委派；专业任务可按描述自动委派，也可显式指定 Agent。专业 Agent 实例可在 Agents 模块追溯，Tapper 的统筹记录可在任务详情追溯；目录、搜索和 @ 候选无系统 Tapper/Orchestrator，直接发送无需选 Agent；有依赖的任务不提前并行，角色不会因预设图而无条件启动。
    中间对话不显示展开的工作流；点击入口才打开右侧执行侧栏，关闭后任务继续，新事件不强制重开；节点详情在同一侧栏内查看。
 4. 用户对指定 SDET 补充“只处理登录场景”，Orchestrator 记录接收、影响和应用结果；受影响的未执行分支暂停或调整，既有产物保持可追溯。
-5. 两条路径均能暂停后恢复；关闭页面、SSE 断线和 worker 重启后恢复正确状态。Copilot 失联、已执行但回执丢失、恢复旧工作区均有明确核对流程。
+5. 两条路径均能暂停后恢复；关闭页面、SSE 断线和 worker 重启后恢复正确状态。OpenCode 失联、已执行但回执丢失、恢复旧工作区均有明确核对流程。
 6. 隔离调试后发布，固定制品在独立容器实际执行，测试结果、失败步骤、日志、截图和 trace 回写到正确的计划/用例/代码版本。
 7. 重复事件、重复结果、重复控制指令不会重复发布或创建第二个正式 Run；取消、失败和未知状态不被显示为成功。
 8. 一个脚本问题经分析、修复、新版本发布和重跑形成完整链路，原失败记录仍可查看；产品缺陷或证据不足不会自动改成脚本修复成功。
-9. 确定性测试验证状态机、契约、版本和幂等；真实 Copilot/BYOK 与真实浏览器执行分别留下证据。前者不能替代后者，真实模型测试使用显式 opt-in 与脱敏样本。
+9. 确定性测试验证状态机、契约、版本和幂等；真实 OpenCode/BYOK 与真实浏览器执行分别留下证据。前者不能替代后者，真实模型测试使用显式 opt-in 与脱敏样本。
 
 ## 12. 设计依据与待验证边界
 
@@ -270,9 +274,10 @@ Jenkins 首个执行器的旧方向由本次本机执行器决定替代；既有
 
 官方能力依据（2026-11-05 至 2026-11-06 查阅，不代表本项目已实测）：
 
-- [Copilot CLI BYOK](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-llm-models)：外部模型配置，工具调用与流式能力要求。
-- [Copilot 自定义 Agent](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli)：专业 Agent 与独立子任务上下文。
-- [Copilot fleet](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/speed-up-task-completion)：子任务并行及非交互入口；不能据此推断全部细粒度控制都可用。
+- [OpenCode provider](https://opencode.ai/docs/providers/)：自定义网关与模型协议配置。
+- [OpenCode Agent](https://opencode.ai/docs/agents/)：primary/subagent、Markdown 配置与权限。
+- [OpenCode Server](https://opencode.ai/docs/server/)与[CLI](https://opencode.ai/docs/cli/)：批处理和实时接入候选。
+
 - [Azure Pipelines 运行详情](https://learn.microsoft.com/en-us/azure/devops/pipelines/create-first-pipeline?view=azure-devops)：阶段/作业概览、步骤日志、测试结果与产物的展示参考；首版不接入 Azure Pipelines 执行。
 - [Claude App / Cowork 任务体验](https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork)：任务计划、逐步进度、执行中补充要求与结果预览；GUI 参考，不推断其具有全部子 Agent 节点图。
 - [Claude Code 执行循环](https://code.claude.com/docs/en/how-claude-code-works)：根据任务获取上下文、采取行动和验证结果，简单问题与复杂任务共用循环机制。

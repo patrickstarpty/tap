@@ -210,7 +210,7 @@ it("does not present debug success as a published pass", () => {
 - [ ] 定义 `runLabel(mode: "debug" | "published", status: string): string`，其余状态按明确中文字典展示。`corepack pnpm --filter @tap/web exec vitest run src/features/testManagement src/features/automation` 先失败；实现正式 API 与页面，不再用 localStorage/simulatedRun 承担正式功能。
 - [ ] `make contracts` 同时生成两侧 API 客户端；检查跨应用 import 禁令、旧计划兼容门面和正式资产链接；测试计划/用例版本界面覆盖查看、比较、草稿修订、发布引用和执行历史。
 - [ ] E2E 脚本创建独立数据库、MinIO、测试应用、浏览器容器和项目，注入确定性模型走完整生产控制流。新增 `make automation-loop-e2e`；不使用现有共享 Demo 数据。用例从登录/错误密码/锁定场景生成计划与用例，SDET 输出自动化候选，人工确认发布，执行产生真实失败、截图和 trace，修复 helper 新版后重跑，旧失败仍可查。
-- [ ] 再用真实 Copilot/BYOK 走同场景，需 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 和 `TAP_RUN_COPILOT_PROBE=1`，报告独立列出真实模型、真实执行、恢复/重复回调证据；未跑不能计最终验收通过。
+- [ ] 再用真实 OpenCode/BYOK 走同场景，需 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 和 `TAP_RUN_OPENCODE_PROBE=1`，报告独立列出真实模型、真实执行、恢复/重复回调证据；未跑不能计最终验收通过。
 - [ ] 运行总计划检查与 `make automation-loop-e2e`，预览 UI/文档，更新架构、指南及产品路线图，提交 `feat: complete versioned automation execution journey`。
 
 ## 本阶段退出条件

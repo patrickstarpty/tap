@@ -1,5 +1,7 @@
 # Copilot 编码工作流接入实施计划
 
+> 2026-11-06 provider 变更：用户已取消 Copilot 订阅，首版改用 OpenCode + LiteLLM。本文仅保留原 Copilot 方案和历史验证记录，不再作为当前执行入口；后续使用 [OpenCode 计划](2026-11-06-opencode-workflow-runtime.md)。旧测试、勾选项和能力结果不得转记为 OpenCode 验收。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将整个编码任务交给 Copilot CLI 的 Orchestrator 与专业 Agent，同时保留 TAP 的版本、控制、恢复和实时运行记录。
