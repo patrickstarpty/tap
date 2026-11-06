@@ -1330,7 +1330,6 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         request = snapshot["request_json"]
         if (
             request.get("origin", "native") != "native"
-            or not request.get("standalone_http")
             or snapshot["actor_id"] != scope.actor_id
             or snapshot["identity_mode"] != scope.identity_mode.value
         ):

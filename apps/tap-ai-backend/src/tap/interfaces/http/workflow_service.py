@@ -74,7 +74,6 @@ class WorkflowHttpService:
         )
         frozen: dict[str, object] = {
             "origin": "native",
-            "standalone_http": True,
             "goal": body.goal,
             "model_alias": body.model_alias,
             "root": asdict(catalog.root),

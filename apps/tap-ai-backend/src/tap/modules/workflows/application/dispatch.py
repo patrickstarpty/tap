@@ -361,12 +361,10 @@ class NativeWorkflowRuntime:
 
         async def authorize() -> bool:
             if origin_turn_id is None:
-                if request.get("standalone_http"):
-                    return bool(
-                        self._standalone_authorize is not None
-                        and await self._standalone_authorize(scope, task_id)
-                    )
-                return True
+                return bool(
+                    self._standalone_authorize is not None
+                    and await self._standalone_authorize(scope, task_id)
+                )
             return bool(
                 self._chat is not None
                 and isinstance(conversation_id, str)
@@ -474,6 +472,8 @@ class NativeWorkflowRuntime:
         async def before_model() -> str:
             if not await self._apply_controls(scope, task_id, token, node_id):
                 raise WorkflowStopped("workflow control stopped dispatch")
+            if origin_turn_id is None and not await authorize():
+                raise PermissionError("workflow dispatch is no longer authorized")
             return "\n".join(await self._store.applied_steers(scope, task_id, node_id))
 
         async def delegate(child: DelegationRequest, call_id: str) -> str:

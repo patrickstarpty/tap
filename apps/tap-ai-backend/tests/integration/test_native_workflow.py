@@ -8,6 +8,12 @@ from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
 from tests.owned_mysql import owned_project_database_url
 
 
+async def _trusted_test_authorize(scope, task_id):
+    """Direct native-runtime fixtures explicitly authorize their owned task."""
+    assert scope == VALIDATION_SCOPE and task_id
+    return True
+
+
 @pytest.mark.asyncio
 async def test_chat_origin_task_cannot_be_claimed_before_link_activation(owned_project_mysql):
     engine = create_async_engine(owned_project_database_url(owned_project_mysql))
@@ -542,6 +548,7 @@ async def test_native_runtime_runs_two_children_at_a_real_async_barrier(owned_pr
             ),
             max_parallel_agents=2,
             owner="test-worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         task = await store.create_task(
             VALIDATION_SCOPE,
@@ -674,6 +681,7 @@ async def test_native_runtime_respects_frozen_parallel_limit_after_worker_rebuil
             ),
             max_parallel_agents=3,
             owner="test-worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         task = await store.create_task(
             VALIDATION_SCOPE,
@@ -867,6 +875,7 @@ async def test_cancel_pending_after_link_is_acknowledged_before_any_model(owned_
             attempt,
             authorize: gateway,
             owner="test-worker",
+            standalone_authorize=_trusted_test_authorize,
             chat=bridge,
             projection=projection,
         )
@@ -1187,6 +1196,7 @@ async def test_running_specialist_steer_is_in_next_model_request(owned_project_m
             ),
             ordinary_tool=ordinary_tool,
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.advance(VALIDATION_SCOPE, task.task_id, token)
         assert len(gateway.calls) == 2
@@ -1320,6 +1330,7 @@ async def test_pause_at_tool_boundary_preserves_attempt_for_resume(owned_project
             ),
             ordinary_tool=ordinary_tool,
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         assert len(gateway.calls) == 1
@@ -1397,6 +1408,7 @@ async def test_exact_old_epoch_recovery_requires_checkpoint_and_no_unsettled_act
             checkpointer_factory=lambda *_: None,
             action_gateway_factory=lambda *_: None,
             owner="recovery-worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         episode = await store.mark_lease_lost(VALIDATION_SCOPE, task.task_id)
         assert isinstance(episode, RecoveryEpisode) and episode.execution_token == token
@@ -1539,6 +1551,7 @@ async def test_old_epoch_with_unsettled_action_remains_recovering(owned_project_
             checkpointer_factory=lambda *_: None,
             action_gateway_factory=lambda *_: None,
             owner="recovery-worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         inspection = await runtime.inspect(VALIDATION_SCOPE, episode)
         assert inspection.side_effects != "clear"
@@ -1660,6 +1673,7 @@ async def test_clarification_wait_is_durable_and_resume_reuses_attempt(owned_pro
                 gateway, store, task_id, token, node_id, attempt, authorize
             ),
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
@@ -1712,6 +1726,7 @@ async def test_expired_queued_workflow_fails_without_model_dispatch(owned_projec
             checkpointer_factory=lambda *_: None,
             action_gateway_factory=lambda *_: None,
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
@@ -1768,6 +1783,7 @@ async def test_exhausted_model_budget_fails_with_committed_reason(owned_project_
                 gateway, store, task_id, token, node_id, attempt, authorize
             ),
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
@@ -1899,6 +1915,7 @@ async def test_settled_before_checkpoint_real_restart_replays_without_new_model_
                     gateway, store, task_id, token, node_id, attempt, authorize
                 ),
                 owner=owner,
+                standalone_authorize=_trusted_test_authorize,
             )
 
         old = runtime(old_owner, CrashAfterSettle)
@@ -2042,6 +2059,7 @@ async def test_failed_specialist_explicit_retry_starts_new_graph_lineage(owned_p
                 gateway, store, task_id, token, node_id, attempt, authorize
             ),
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         task = await store.create_task(
             VALIDATION_SCOPE,
@@ -2143,6 +2161,7 @@ async def test_waiting_dependency_task_can_pause_and_resume_without_new_attempt(
             checkpointer_factory=lambda *_: None,
             action_gateway_factory=lambda *_: None,
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         assert (
             await store.submit_command(
@@ -2371,6 +2390,7 @@ async def test_node_pause_stops_only_target_after_checkpoint_while_sibling_finis
             ordinary_tool=ordinary_tool,
             max_parallel_agents=2,
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         await runtime.start(VALIDATION_SCOPE, task.task_id)
@@ -2793,6 +2813,7 @@ async def test_completed_node_handoff_crash_reconciles_without_model_recall(
             checkpointer_factory=lambda *_: None,
             action_gateway_factory=lambda *_: NeverGateway(),
             owner="new-worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         assert (
             await RecoveryService(store, runtime).reconcile(VALIDATION_SCOPE, task.task_id)
@@ -2907,6 +2928,7 @@ async def test_root_control_between_model_boundary_and_reservation_is_acknowledg
                 JournaledModelGateway(gateway, store, task_id, token, node_id, attempt, authorize)
             ),
             owner="worker",
+            standalone_authorize=_trusted_test_authorize,
         )
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
@@ -2941,5 +2963,96 @@ async def test_root_control_between_model_boundary_and_reservation_is_acknowledg
                     next(node for node in snapshot["nodes"] if node["role"] == "root")["status"]
                     == "running"
                 )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_originless_dispatch_requires_explicit_current_authorization(owned_project_mysql):
+    import json
+
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelResult,
+        ModelUsage,
+        text_digest,
+    )
+    from tap.modules.workflows.adapters.native_runtime import JournaledModelGateway
+    from tap.modules.workflows.adapters.native_state import NativeStateStore
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+
+    class Gateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, request):
+            self.calls += 1
+            usage = ModelUsage(1, 1)
+            return ModelResult(
+                output=json.dumps(
+                    {
+                        "route": {
+                            "kind": "native",
+                            "reason": "ready",
+                            "confidence": 0.9,
+                            "required_capabilities": [],
+                        },
+                        "answer": "Done",
+                    }
+                ),
+                actual_model="fixture",
+                actual_provider="fixture",
+                usage=usage,
+                audit=ModelCallAudit(
+                    scope=request.scope,
+                    alias=request.alias,
+                    operation=ModelOperation.CHAT,
+                    prompt_digest=request.prompt_digest,
+                    schema_digest=None,
+                    context_digest=text_digest(request.context),
+                    idempotency_key=request.idempotency_key,
+                    actual_provider="fixture",
+                    actual_model="fixture",
+                    usage=usage,
+                ),
+            )
+
+    engine = create_async_engine(owned_project_database_url(owned_project_mysql))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        store = MysqlWorkflowStore(sessions)
+        for mode in ("absent", "revoked", "allowed"):
+            gateway = Gateway()
+            task = await store.create_task(
+                VALIDATION_SCOPE,
+                {"goal": "Review", "model_alias": "qwen-plus", "budget_limit": {"model_calls": 2}},
+                f"originless-{mode}",
+            )
+            decisions = []
+
+            async def authorize(scope, task_id):
+                decisions.append((scope, task_id))
+                return mode == "allowed"
+
+            runtime = NativeWorkflowRuntime(
+                store,
+                NativeStateStore(sessions),
+                gateway,
+                checkpointer_factory=lambda *_: MemorySaver(),
+                action_gateway_factory=lambda scope, task_id, token, node_id, attempt, allowed: (
+                    JournaledModelGateway(gateway, store, task_id, token, node_id, attempt, allowed)
+                ),
+                owner=f"worker-{mode}",
+                standalone_authorize=None if mode == "absent" else authorize,
+            )
+            await runtime.start(VALIDATION_SCOPE, task.task_id)
+            if mode == "allowed":
+                assert decisions and gateway.calls > 0
+            else:
+                assert gateway.calls == 0
+                assert decisions == ([] if mode == "absent" else [(VALIDATION_SCOPE, task.task_id)])
     finally:
         await engine.dispose()
