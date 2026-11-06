@@ -503,17 +503,20 @@ class NativeWorkflowGraph:
         }
         if child_results:
             initial["child_results"] = list(child_results)
-        result = await self._graph.ainvoke(
-            cast(Any, initial),
-            config=RunnableConfig(
-                configurable={
-                    "thread_id": self._graph_run_id,
-                    "checkpoint_ns": node_id,
-                    "graph_version": NATIVE_GRAPH_VERSION,
-                    "state_schema_version": NATIVE_STATE_SCHEMA_VERSION,
-                    "execution_mode": "durable",
-                    "reasoning_mode": "agentic",
-                }
-            ),
+        config = RunnableConfig(
+            configurable={
+                "thread_id": self._graph_run_id,
+                "checkpoint_ns": node_id,
+                "graph_version": NATIVE_GRAPH_VERSION,
+                "state_schema_version": NATIVE_STATE_SCHEMA_VERSION,
+                "execution_mode": "durable",
+                "reasoning_mode": "agentic",
+            }
         )
+        state_config = RunnableConfig(configurable={**config["configurable"], "checkpoint_ns": ""})
+        checkpoint = await self._graph.aget_state(state_config)
+        # A pending graph step is the interrupted execution, not a new Turn.
+        # Waiting for children/clarification has no pending step and uses ingress.
+        graph_input = None if checkpoint.next else cast(Any, initial)
+        result = await self._graph.ainvoke(graph_input, config=config)
         return cast(NativeState, result)

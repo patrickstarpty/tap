@@ -61,7 +61,13 @@ class NativeStatePort(Protocol):
         self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str, reason: str
     ) -> None: ...
     async def finish_node(
-        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str, summary: str
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        token: str,
+        node_id: str,
+        summary: str,
+        outcome: str | None = None,
     ) -> None: ...
     async def unblock_parents(
         self, scope: ProjectScopeContext, task_id: str, token: str

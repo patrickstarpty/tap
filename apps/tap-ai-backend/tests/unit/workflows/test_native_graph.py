@@ -405,3 +405,67 @@ async def test_native_skill_activation_uses_frozen_revision_and_next_prompt():
     assert loaded == [("Login Review", ())]
     assert "CHECK LOGIN EDGE CASES" in gateway.calls[1].prompt
     assert "skill_activate" in [tool.wire_name for tool in gateway.calls[0].tools]
+
+
+@pytest.mark.asyncio
+async def test_pending_tool_checkpoint_resumes_before_new_model_input():
+    saver = MemorySaver()
+    gateway = ScriptedGateway(
+        [
+            (
+                '{"answer": ""}',
+                (ModelToolCall("tool-1", "knowledge_search", json.dumps({"query": "login"})),),
+            ),
+            ("Answered from evidence", ()),
+        ]
+    )
+    attempts = []
+
+    async def ordinary_tool(name, arguments, call_id):
+        attempts.append(call_id)
+        if len(attempts) == 1:
+            raise RuntimeError("simulated interruption at pending tool")
+        return "Evidence"
+
+    graph = NativeWorkflowGraph(
+        gateway, checkpointer=saver, ordinary_tool=ordinary_tool, is_root=False
+    )
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        await graph.run(
+            VALIDATION_SCOPE, "task-pending", "node-pending", "Review login", "qwen-plus"
+        )
+    result = await NativeWorkflowGraph(
+        gateway, checkpointer=saver, ordinary_tool=ordinary_tool, is_root=False
+    ).run(VALIDATION_SCOPE, "task-pending", "node-pending", "Review login", "qwen-plus")
+    assert result["result"]["answer"] == "Answered from evidence"
+    assert attempts == ["tool-1", "tool-1"]
+    assert len(gateway.calls) == 2
+    assert any(
+        message.role == "tool"
+        and message.tool_call_id == "tool-1"
+        and message.content == "Evidence"
+        for message in gateway.calls[1].messages
+    )
+
+
+def test_long_child_result_is_private_and_parent_receives_bounded_reference():
+    from types import SimpleNamespace
+
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+
+    full = "Very detailed specialist result. " * 200
+    events = (
+        SimpleNamespace(
+            kind="node.delegated",
+            payload={"parent_node_id": "root", "node_id": "child", "call_id": "call-child"},
+        ),
+        SimpleNamespace(
+            kind="node.finished",
+            payload={"node_id": "child", "summary": full, "private_result": full},
+        ),
+    )
+    parent = NativeWorkflowRuntime._child_results(events, "root")
+    assert parent[0]["call_id"] == "call-child"
+    assert len(parent[0]["summary"]) < 600
+    assert full not in parent[0]["summary"]
+    assert "child" in parent[0]["summary"]

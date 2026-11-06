@@ -215,6 +215,19 @@ class WorkflowAdmissionCoordinator:
             elif canceled:
                 await self._cancel_command(task_id, turn_id)
                 await self._notify(task_id)
+            else:
+                conversation = await self._conversations.load(conversation_id)
+                turn = next(turn for turn in conversation.turns if turn.turn_id == turn_id)
+                frozen = turn.input_snapshot.value
+                if frozen.workflow_task_id == task_id:
+                    command_id = WorkflowSelection.command_id(
+                        scope, conversation_id, task_id, turn.client_request_id
+                    )
+                    if await self._store.command(scope, task_id, command_id) is None:
+                        await self._selection.follow_up(
+                            scope, conversation_id, frozen, turn.client_request_id
+                        )
+                        await self._notify(task_id)
         # A crash after the Chat link but before task activation leaves no unlinked Turn.
         for task_id, conversation_id, origin_turn_id in await self._store.pending_admissions(
             scope, limit

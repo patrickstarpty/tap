@@ -24,7 +24,7 @@ from tap.modules.ai.domain.models import (
 from tap.modules.ai.ports.gateway import ModelGateway
 from tap.modules.knowledge.api import KnowledgeAPI
 from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
-from tap.modules.workflows.domain.commands import WorkflowLimitExceeded
+from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked, WorkflowLimitExceeded
 
 
 def _remaining_seconds(request: dict[str, object]) -> float | None:
@@ -162,6 +162,8 @@ class JournaledModelGateway:
                 request.scope, self._action_id(request, attempt)
             )
             if previous is not None:
+                if "skipped" in previous:
+                    raise WorkflowDispatchBlocked("model action settled without dispatch")
                 await self._require_known_cost_within_limit(request)
                 return self._restore(request, previous)
         if self._authorize is not None and not await self._authorize():
@@ -182,6 +184,15 @@ class JournaledModelGateway:
         if status == "existing":
             raise RuntimeError("unsettled model action requires recovery inspection")
         if self._authorize is not None and not await self._authorize():
+            await self._store.settle_action(
+                request.scope,
+                self._task_id,
+                self._token,
+                action_id,
+                {"skipped": "conversation dispatch authorization revoked"},
+                node_id=self._node_id,
+                attempt=self._attempt,
+            )
             raise PermissionError("workflow conversation dispatch is no longer authorized")
         remaining = _remaining_seconds(await self._store.task_request(request.scope, self._task_id))
         if remaining is not None and remaining <= 0:
@@ -299,6 +310,8 @@ class JournaledKnowledgeSearch:
                 scope, self._action_id(task_id, node_id, call_id, query, selected, prior)
             )
             if saved is not None:
+                if "skipped" in saved:
+                    raise WorkflowDispatchBlocked("knowledge action settled without dispatch")
                 return str(saved["summary"])
         remaining = _remaining_seconds(request)
         if remaining is not None and remaining <= 0:
@@ -326,6 +339,15 @@ class JournaledKnowledgeSearch:
         if status == "existing":
             raise RuntimeError("unsettled knowledge search requires recovery inspection")
         if not await authorize():
+            await self._store.settle_action(
+                scope,
+                task_id,
+                token,
+                action_id,
+                {"skipped": "conversation dispatch authorization revoked"},
+                node_id=node_id,
+                attempt=attempt,
+            )
             raise PermissionError("workflow knowledge search is no longer authorized")
         remaining = _remaining_seconds(request)
         if remaining is not None and remaining <= 0:

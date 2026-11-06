@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import select, update
-from sqlalchemy.engine import Result, RowMapping
+from sqlalchemy.engine import Result, Row, RowMapping
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -89,6 +89,7 @@ def _task(row: object) -> TaskSnapshot:
 class MysqlWorkflowStore:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
+        self._scan_cursors: dict[tuple[str, str], str] = {}
 
     async def create_task(
         self, scope: ProjectScopeContext, request: dict[str, object], idempotency_key: str
@@ -1698,6 +1699,60 @@ class MysqlWorkflowStore:
             .one()
         )
 
+    async def mark_dispatch_blocked(
+        self, scope: ProjectScopeContext, task_id: str, lease_token: str
+    ) -> None:
+        """Quarantine an exited graph whose stop/checkpoint proof is incomplete."""
+        scope = require_project_scope(scope)
+        async with self._sessions.begin() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_task)
+                        .where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == task_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise LookupError("workflow task not found")
+            self._require_lease(row, lease_token)
+            if row["status"] != "running":
+                raise ValueError("workflow task is not running")
+            now = datetime.now(UTC).replace(tzinfo=None)
+            await session.execute(
+                update(workflow_task)
+                .where(workflow_task.c.task_id == task_id)
+                .values(
+                    status="recovering",
+                    recovering_from="running",
+                    lease_owner=None,
+                    lease_until=None,
+                    next_sequence=row["next_sequence"] + 1,
+                    updated_at=now,
+                )
+            )
+            payload = {"reason": "checkpoint or external effect not proven"}
+            await session.execute(
+                workflow_event.insert().values(
+                    event_id=uuid4().hex,
+                    task_id=task_id,
+                    sequence=row["next_sequence"],
+                    node_id=None,
+                    attempt=0,
+                    kind="task.dispatch_blocked",
+                    payload=payload,
+                    payload_digest=_digest(payload),
+                    occurred_at=now,
+                    **scope_values(scope),
+                )
+            )
+
     async def mark_lease_lost(
         self, scope: ProjectScopeContext, task_id: str
     ) -> RecoveryEpisode | str:
@@ -2266,6 +2321,42 @@ class MysqlWorkflowStore:
                 .mappings()
                 .all()
             )
+            if not nodes and len(claims) == 1:
+                # The old epoch can have committed node.finished immediately
+                # before dying, leaving only its scheduler/finalization handoff.
+                finished = (
+                    (
+                        await session.execute(
+                            select(workflow_event).where(
+                                *scope_predicates(workflow_event, scope),
+                                workflow_event.c.task_id == episode.task_id,
+                                workflow_event.c.kind == "node.finished",
+                                workflow_event.c.sequence > claims[0]["sequence"],
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                finished_attempts = {(event["node_id"], event["attempt"]) for event in finished}
+                if finished_attempts:
+                    nodes = [
+                        node
+                        for node in (
+                            (
+                                await session.execute(
+                                    select(workflow_node).where(
+                                        *scope_predicates(workflow_node, scope),
+                                        workflow_node.c.task_id == episode.task_id,
+                                        workflow_node.c.status == "succeeded",
+                                    )
+                                )
+                            )
+                            .mappings()
+                            .all()
+                        )
+                        if (node["node_id"], node["attempt"]) in finished_attempts
+                    ]
             compatible = bool(nodes)
             for node in nodes:
                 current_attempt = (
@@ -2484,43 +2575,55 @@ class MysqlWorkflowStore:
     async def scan_work(
         self, scope: ProjectScopeContext, limit: int
     ) -> tuple[tuple[str, str], ...]:
-        """Discover this configured project's work; claims recheck every state under lock."""
+        """Scan eligible work fairly; claims still recheck state under the task lock."""
         scope = require_project_scope(scope)
         if limit < 1:
             raise ValueError("workflow scan limit must be positive")
         now = datetime.now(UTC).replace(tzinfo=None)
-        async with self._sessions() as session:
-            rows = (
-                await session.execute(
-                    select(
-                        workflow_task.c.task_id,
-                        workflow_task.c.status,
-                        workflow_task.c.lease_until,
-                    )
-                    .where(
-                        *scope_predicates(workflow_task, scope),
-                        workflow_task.c.status.in_(
-                            (
-                                "queued",
-                                "waiting_dependency",
-                                "paused",
-                                "awaiting_input",
-                                "running",
-                                "pausing",
-                                "canceling",
-                                "recovering",
-                            )
-                        ),
-                    )
-                    .order_by(workflow_task.c.created_at)
-                    .limit(limit)
+        key = (scope.enterprise_id, scope.project_id)
+        cursor = self._scan_cursors.get(key)
+        eligible = select(workflow_task.c.task_id, workflow_task.c.status).where(
+            *scope_predicates(workflow_task, scope),
+            workflow_task.c.status.in_(
+                (
+                    "queued",
+                    "waiting_dependency",
+                    "paused",
+                    "awaiting_input",
+                    "running",
+                    "pausing",
+                    "canceling",
+                    "recovering",
                 )
-            ).all()
-        return tuple(
-            (str(row.task_id), str(row.status))
-            for row in rows
-            if row.lease_until is None or row.lease_until <= now
+            ),
+            (workflow_task.c.lease_until.is_(None) | (workflow_task.c.lease_until <= now)),
         )
+        async with self._sessions() as session:
+            rows: list[Row[Any]] = []
+            if cursor is not None:
+                rows = list(
+                    (
+                        await session.execute(
+                            eligible.where(workflow_task.c.task_id > cursor)
+                            .order_by(workflow_task.c.task_id)
+                            .limit(limit)
+                        )
+                    ).all()
+                )
+            if len(rows) < limit:
+                wrap = eligible
+                if cursor is not None:
+                    wrap = wrap.where(workflow_task.c.task_id <= cursor)
+                rows.extend(
+                    (
+                        await session.execute(
+                            wrap.order_by(workflow_task.c.task_id).limit(limit - len(rows))
+                        )
+                    ).all()
+                )
+        if rows:
+            self._scan_cursors[key] = str(rows[-1].task_id)
+        return tuple((str(row.task_id), str(row.status)) for row in rows)
 
     async def release_control(
         self, scope: ProjectScopeContext, task_id: str, lease_token: str

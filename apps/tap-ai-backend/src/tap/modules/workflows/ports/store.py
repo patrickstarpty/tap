@@ -81,6 +81,10 @@ class WorkflowStore(Protocol):
         self, scope: ProjectScopeContext, episode: RecoveryEpisode
     ) -> dict[str, object]: ...
 
+    async def mark_dispatch_blocked(
+        self, scope: ProjectScopeContext, task_id: str, lease_token: str
+    ) -> None: ...
+
     async def mark_lease_lost(
         self, scope: ProjectScopeContext, task_id: str
     ) -> RecoveryEpisode | str: ...

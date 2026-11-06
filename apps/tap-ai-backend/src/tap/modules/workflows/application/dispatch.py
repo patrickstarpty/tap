@@ -17,7 +17,7 @@ from tap.modules.ai.domain.skill_activation import SkillCatalogEntry, catalog_en
 from tap.modules.chat.application.workflow_bridge import WorkflowChatPort
 from tap.modules.workflows.application.native_graph import NativeChatGateway, NativeWorkflowGraph
 from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked, WorkflowLimitExceeded
-from tap.modules.workflows.domain.delegation import DelegationRequest
+from tap.modules.workflows.domain.delegation import DelegationRequest, child_result_summary
 from tap.modules.workflows.ports.runtime import (
     NativeStatePort,
     RecoveryEpisode,
@@ -192,6 +192,17 @@ class NativeWorkflowRuntime:
                 and await self._store.node_running(scope, task_id, current_node)
             )
 
+    async def _reconcile_stopped(
+        self, scope: ProjectScopeContext, task_id: str, token: str
+    ) -> bool:
+        proceed = await self._apply_controls(scope, task_id, token)
+        active = await self._store.active_lease(scope, task_id, token)
+        if not proceed and active:
+            # An interrupted graph with incomplete checkpoint/effect proof
+            # cannot hold a silent live lease or claim to have safely paused.
+            await self._store.mark_dispatch_blocked(scope, task_id, token)
+        return proceed and active
+
     async def _project_task(self, scope: ProjectScopeContext, task_id: str) -> None:
         if self._projection is None:
             return
@@ -208,11 +219,37 @@ class NativeWorkflowRuntime:
     async def advance(self, scope: ProjectScopeContext, task_id: str, lease_token: str) -> None:
         heartbeat = asyncio.create_task(self._heartbeat(scope, task_id, lease_token))
         try:
-            if not await self._apply_controls(scope, task_id, lease_token):
+            if not await self._reconcile_stopped(scope, task_id, lease_token):
                 return
             request = await self._store.task_request(scope, task_id)
             root_id = await self._state.ensure_root(scope, task_id, lease_token)
+            unblocked = await self._state.unblock_parents(scope, task_id, lease_token)
+            if unblocked:
+                await self._state.release_task(scope, task_id, lease_token, "queued")
+                return
             snapshot = await self._store.snapshot(scope, task_id)
+            root_node = next(
+                (node for node in snapshot["nodes"] if node["node_id"] == root_id), None
+            )
+            if root_node is not None and root_node["status"] == "succeeded":
+                finished = next(
+                    (
+                        event
+                        for event in reversed(snapshot["events"])
+                        if event.kind == "node.finished" and event.payload.get("node_id") == root_id
+                    ),
+                    None,
+                )
+                if finished is None or "private_result" not in finished.payload:
+                    raise ValueError("finished root has no durable result")
+                await self._state.finish_task(
+                    scope,
+                    task_id,
+                    lease_token,
+                    str(finished.payload["private_result"]),
+                    str(finished.payload.get("outcome") or "completed"),
+                )
+                return
             ready = await self._store.ready_nodes(scope, task_id)
             if root_id in ready:
                 result = await self._run_node(
@@ -232,6 +269,9 @@ class NativeWorkflowRuntime:
                     await self._state.fail_task(
                         scope, task_id, lease_token, result.removeprefix("limit:")
                     )
+                elif result == "stopped":
+                    if await self._reconcile_stopped(scope, task_id, lease_token):
+                        await self._state.release_task(scope, task_id, lease_token, "queued")
                 return
             if not ready:
                 await self._state.release_task(scope, task_id, lease_token, "waiting_dependency")
@@ -267,7 +307,7 @@ class NativeWorkflowRuntime:
                 await self._state.fail_task(scope, task_id, lease_token, limits[0])
                 return
             if any(item.result() == "stopped" for item in running):
-                if not await self._apply_controls(scope, task_id, lease_token):
+                if not await self._reconcile_stopped(scope, task_id, lease_token):
                     return
             await self._state.unblock_parents(scope, task_id, lease_token)
             after = await self._store.ready_nodes(scope, task_id)
@@ -477,7 +517,7 @@ class NativeWorkflowRuntime:
                 child_results=child_results,
                 graph_run_id=graph_run_id,
             )
-        except (WorkflowStopped, WorkflowDispatchBlocked):
+        except (WorkflowStopped, WorkflowDispatchBlocked, PermissionError):
             return "stopped"
         except WorkflowLimitExceeded as error:
             return f"limit:{error}"
@@ -498,7 +538,14 @@ class NativeWorkflowRuntime:
         if not isinstance(final, dict):
             raise ValueError("native graph did not finish or wait")
         answer = str(final["answer"])
-        await self._state.finish_node(scope, task_id, token, node_id, answer)
+        await self._state.finish_node(
+            scope,
+            task_id,
+            token,
+            node_id,
+            answer,
+            str(final["outcome"]) if root else None,
+        )
         if root:
             await self._state.finish_task(
                 scope,
@@ -521,7 +568,9 @@ class NativeWorkflowRuntime:
         return tuple(
             {
                 "call_id": str(event.payload["call_id"]),
-                "summary": str(finished[event.payload["node_id"]]),
+                "summary": child_result_summary(
+                    str(event.payload["node_id"]), str(finished[event.payload["node_id"]])
+                ),
             }
             for event in events
             if event.kind == "node.delegated"

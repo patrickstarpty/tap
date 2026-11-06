@@ -19,7 +19,7 @@ from tap.modules.workflows.adapters.schema import (
     workflow_node,
     workflow_task,
 )
-from tap.modules.workflows.domain.delegation import DelegationRequest
+from tap.modules.workflows.domain.delegation import DelegationRequest, child_result_summary
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 
 
@@ -536,7 +536,13 @@ class NativeStateStore:
             )
 
     async def finish_node(
-        self, scope: ProjectScopeContext, task_id: str, token: str, node_id: str, summary: str
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        token: str,
+        node_id: str,
+        summary: str,
+        outcome: str | None = None,
     ) -> None:
         scope = require_project_scope(scope)
         async with self._sessions.begin() as session:
@@ -575,7 +581,12 @@ class NativeStateStore:
                 scope,
                 task,
                 "node.finished",
-                {"node_id": node_id, "summary": summary},
+                {
+                    "node_id": node_id,
+                    "summary": child_result_summary(node_id, summary),
+                    "private_result": summary,
+                    **({"outcome": outcome} if outcome is not None else {}),
+                },
                 node_id,
                 node["attempt"],
             )

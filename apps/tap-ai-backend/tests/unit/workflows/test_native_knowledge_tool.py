@@ -285,3 +285,139 @@ async def test_known_cost_overage_keeps_settlement_and_blocks_replay_progress():
         await journal.chat(request)
     assert gateway.calls == 1 and store.settled == 1
     assert store.saved["cost_usd"] == "0.000002"
+
+
+@pytest.mark.asyncio
+async def test_post_reservation_model_authorization_denial_settles_skipped_without_dispatch():
+    from tap.modules.ai.domain.models import ModelOperation, ModelRequest, text_digest
+    from tap.modules.workflows.adapters.native_runtime import JournaledModelGateway
+    from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked
+
+    class Store:
+        def __init__(self):
+            self.settled = []
+
+        async def graph_lineage(self, scope, task_id, node_id, attempt):
+            return "run-1", 1
+
+        async def action_result(self, scope, action_id):
+            return self.settled[-1] if self.settled else None
+
+        async def task_request(self, scope, task_id):
+            return {}
+
+        async def reserve_action(self, *args, **kwargs):
+            return "reserved"
+
+        async def settle_action(self, scope, task_id, token, action_id, result, **kwargs):
+            self.settled.append(result)
+            return result
+
+    class Gateway:
+        async def chat(self, request):
+            raise AssertionError("authorization-denied model must not dispatch")
+
+    checks = 0
+
+    async def authorize():
+        nonlocal checks
+        checks += 1
+        return checks == 1
+
+    store = Store()
+    model = JournaledModelGateway(
+        Gateway(), store, "task-1", "token-1", "node-1", 1, authorize=authorize
+    )
+    request = ModelRequest(
+        scope=VALIDATION_SCOPE,
+        alias="qwen-plus",
+        operation=ModelOperation.CHAT,
+        prompt="Review",
+        prompt_digest=text_digest("Review"),
+        context="Review",
+        timeout_seconds=60,
+        idempotency_key="task-1:node-1:graph:run-1:model:1",
+    )
+    with pytest.raises(PermissionError, match="authorized"):
+        await model.chat(request)
+    assert checks == 2
+    assert store.settled == [{"skipped": "conversation dispatch authorization revoked"}]
+    with pytest.raises(WorkflowDispatchBlocked, match="without dispatch"):
+        await model.chat(request)
+
+
+@pytest.mark.asyncio
+async def test_post_reservation_knowledge_authorization_denial_settles_skipped_without_search():
+    from tap.modules.workflows.adapters.native_runtime import JournaledKnowledgeSearch
+    from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked
+
+    class Store:
+        def __init__(self):
+            self.settled = []
+
+        async def task_request(self, scope, task_id):
+            return {
+                "resolved_resources": [
+                    {
+                        "source_id": "source-1",
+                        "revision_id": "rev-1",
+                        "source_content_hash": "sha256:" + "a" * 64,
+                    }
+                ]
+            }
+
+        async def graph_lineage(self, scope, task_id, node_id, attempt):
+            return "run-1", 1
+
+        async def action_result(self, scope, action_id):
+            return self.settled[-1] if self.settled else None
+
+        async def reserve_action(self, *args, **kwargs):
+            return "reserved"
+
+        async def settle_action(self, scope, task_id, token, action_id, result, **kwargs):
+            self.settled.append(result)
+            return result
+
+    class Knowledge:
+        async def search(self, request, policy):
+            raise AssertionError("authorization-denied search must not dispatch")
+
+    async def policy_for(resources):
+        return "policy"
+
+    checks = 0
+
+    async def authorize():
+        nonlocal checks
+        checks += 1
+        return checks in (1, 3)
+
+    store = Store()
+    tool = JournaledKnowledgeSearch(store, Knowledge(), policy_for)
+    with pytest.raises(PermissionError, match="authorized"):
+        await tool.execute(
+            VALIDATION_SCOPE,
+            "task-1",
+            "token-1",
+            "node-1",
+            1,
+            "knowledge_search",
+            {"query": "login"},
+            "call-1",
+            authorize,
+        )
+    assert checks == 2
+    assert store.settled == [{"skipped": "conversation dispatch authorization revoked"}]
+    with pytest.raises(WorkflowDispatchBlocked, match="without dispatch"):
+        await tool.execute(
+            VALIDATION_SCOPE,
+            "task-1",
+            "token-1",
+            "node-1",
+            1,
+            "knowledge_search",
+            {"query": "login"},
+            "call-1",
+            authorize,
+        )

@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import insert, select, update
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -43,6 +45,7 @@ class MysqlWorkflowChatBridge:
         self._scope = require_project_scope(scope)
         self._repository = MysqlConversationRepository(sessions, scope=scope)
         self._wakeups = wakeups
+        self._repair_cursor: str | None = None
 
     async def _turn(self, session: AsyncSession, conversation_id: str, turn_id: str, *, lock: bool):
         query = select(chat_turn).where(
@@ -102,27 +105,61 @@ class MysqlWorkflowChatBridge:
     async def repair_candidates(self, limit: int) -> tuple[tuple[str, str, str | None, bool], ...]:
         if limit < 1:
             raise ValueError("repair limit must be positive")
-        async with self._sessions() as session:
-            rows = (
-                await session.execute(
-                    select(
-                        chat_turn.c.chat_id,
-                        chat_turn.c.turn_id,
-                        chat_turn.c.workflow_task_id,
-                        chat_turn.c.cancel_requested_at,
-                    )
-                    .where(
-                        *scope_predicates(chat_turn, self._scope),
-                        chat_turn.c.execution_owner == "workflow",
-                        (
-                            chat_turn.c.workflow_task_id.is_(None)
-                            | chat_turn.c.cancel_requested_at.is_not(None)
-                        ),
-                    )
-                    .order_by(chat_turn.c.created_at, chat_turn.c.turn_id)
-                    .limit(limit)
+        # Chat owns the frozen Turn marker. A linked continuation remains
+        # repairable until its deterministic workflow command exists.
+        eligible = (
+            select(
+                chat_turn.c.chat_id,
+                chat_turn.c.turn_id,
+                chat_turn.c.workflow_task_id,
+                chat_turn.c.cancel_requested_at,
+            )
+            .select_from(
+                chat_turn.join(
+                    turn_input_snapshot,
+                    chat_turn.c.turn_id == turn_input_snapshot.c.turn_id,
                 )
-            ).all()
+            )
+            .where(
+                *scope_predicates(chat_turn, self._scope),
+                *scope_predicates(turn_input_snapshot, self._scope),
+                chat_turn.c.execution_owner == "workflow",
+                chat_turn.c.state.not_in(("completed", "abstained", "failed", "canceled")),
+                (
+                    chat_turn.c.workflow_task_id.is_(None)
+                    | chat_turn.c.cancel_requested_at.is_not(None)
+                    | (
+                        turn_input_snapshot.c.snapshot["workflow_task_id"].as_string()
+                        == chat_turn.c.workflow_task_id
+                    )
+                ),
+            )
+        )
+        async with self._sessions() as session:
+            rows: list[Row[Any]] = []
+            if self._repair_cursor is not None:
+                rows = list(
+                    (
+                        await session.execute(
+                            eligible.where(chat_turn.c.turn_id > self._repair_cursor)
+                            .order_by(chat_turn.c.turn_id)
+                            .limit(limit)
+                        )
+                    ).all()
+                )
+            if len(rows) < limit:
+                wrap = eligible
+                if self._repair_cursor is not None:
+                    wrap = wrap.where(chat_turn.c.turn_id <= self._repair_cursor)
+                rows.extend(
+                    (
+                        await session.execute(
+                            wrap.order_by(chat_turn.c.turn_id).limit(limit - len(rows))
+                        )
+                    ).all()
+                )
+        if rows:
+            self._repair_cursor = str(rows[-1].turn_id)
         return tuple((row[0], row[1], row[2], row[3] is not None) for row in rows)
 
     async def client_request_id(self, conversation_id: str, turn_id: str, task_id: str) -> str:
