@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import replace
 
@@ -282,6 +283,69 @@ async def test_follow_up_submits_idempotent_steer_for_same_task_and_frozen_messa
             replace(frozen, message="Other work"),
             "request-1",
         )
+    with pytest.raises(ValueError, match="command id payload conflict"):
+        await selection.follow_up(
+            VALIDATION_SCOPE,
+            "conversation-1",
+            frozen,
+            "request-1",
+            target_node_id="other-node",
+        )
+    with pytest.raises(ValueError, match="conversation scope mismatch"):
+        await selection.follow_up(
+            VALIDATION_SCOPE,
+            "conversation-1",
+            replace(frozen, actor_id="other-actor"),
+            "request-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_follow_up_reloads_winning_command_after_plan_changes():
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    await conversations.create(
+        "conversation-1",
+        "turn-1",
+        "first",
+        TurnInput("Start", VALIDATION_SCOPE.actor_id, "validation", "qwen-plus"),
+    )
+    store = _TaskStore()
+
+    class PausedFirstSubmit(WorkflowService):
+        def __init__(self):
+            super().__init__(store)
+            self.waiting = asyncio.Event()
+            self.resume = asyncio.Event()
+            self.calls = 0
+
+        async def submit(self, scope, command):
+            self.calls += 1
+            if self.calls == 1:
+                self.waiting.set()
+                await self.resume.wait()
+            return await super().submit(scope, command)
+
+    controls = PausedFirstSubmit()
+    selection = WorkflowSelection(conversations, store, controls)
+    frozen = TurnInput(
+        "Only login",
+        VALIDATION_SCOPE.actor_id,
+        "validation",
+        "qwen-plus",
+        workflow_task_id="task-1",
+    )
+    first = asyncio.create_task(
+        selection.follow_up(VALIDATION_SCOPE, "conversation-1", frozen, "request-1")
+    )
+    await controls.waiting.wait()
+    store.revision = 3
+    second_receipt = await selection.follow_up(
+        VALIDATION_SCOPE, "conversation-1", frozen, "request-1"
+    )
+    controls.resume.set()
+    assert await first == second_receipt
+    assert len(store.commands) == 1
+    assert store.commands[0].expected_plan_revision == 3
 
 
 @pytest.mark.asyncio

@@ -69,12 +69,7 @@ class WorkflowSelection:
         command_id = hashlib.sha256(material.encode()).hexdigest()
         existing = await self._store.command(scope, task_id, command_id)
         if existing is not None:
-            if (
-                existing.kind != "steer"
-                or existing.target_node_id != target_node_id
-                or existing.text != frozen.message
-            ):
-                raise ValueError("command id payload conflict")
+            self._validate_replay(existing, frozen.message, target_node_id)
             return await self._controls.submit(scope, existing)
         command = ControlCommand(
             command_id=command_id,
@@ -84,4 +79,24 @@ class WorkflowSelection:
             expected_plan_revision=plan_revision,
             text=frozen.message,
         )
-        return await self._controls.submit(scope, command)
+        try:
+            return await self._controls.submit(scope, command)
+        except ValueError as error:
+            if str(error) != "command id payload conflict":
+                raise
+            # Another request may have submitted this ID after our lookup, using
+            # the plan revision it observed. Keep the winner's complete command.
+            winner = await self._store.command(scope, task_id, command_id)
+            if winner is None:
+                raise
+            self._validate_replay(winner, frozen.message, target_node_id)
+            return await self._controls.submit(scope, winner)
+
+    @staticmethod
+    def _validate_replay(command: ControlCommand, message: str, target_node_id: str | None) -> None:
+        if (
+            command.kind != "steer"
+            or command.target_node_id != target_node_id
+            or command.text != message
+        ):
+            raise ValueError("command id payload conflict")
