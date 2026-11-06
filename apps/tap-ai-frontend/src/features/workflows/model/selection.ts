@@ -1,21 +1,36 @@
+type AgentRevision = {
+  assetId: string;
+  agentId: string;
+  isLatest: boolean;
+  status: string;
+};
+
+const selectable = (agent: AgentRevision) =>
+  agent.isLatest &&
+  agent.status === "enabled" &&
+  agent.agentId !== "orchestrator";
+
 export function agentSelectionProblem(
   workflowEnabled: boolean,
   selectedRevisions: readonly string[],
-  agentsByRevision: ReadonlyMap<string, { assetId: string }>,
+  agentsByRevision: ReadonlyMap<string, AgentRevision>,
   restoredAssetIds: readonly string[] = [],
 ): string | null {
   if (restoredAssetIds.length > 0 && !workflowEnabled)
     return `This chat used workflow Agents: ${restoredAssetIds.join(", ")}. Choose one Agent again or clear the restored selection before sending in legacy mode.`;
+  const selectableAgents = new Map(
+    [...agentsByRevision].filter(([, agent]) => selectable(agent)),
+  );
   const unavailableRestored = restoredAssetIds.filter(
     (assetId) =>
-      ![...agentsByRevision.values()].some(
+      ![...selectableAgents.values()].some(
         (agent) => agent.assetId === assetId,
       ),
   );
   if (unavailableRestored.length > 0)
     return `Unavailable Agent IDs: ${unavailableRestored.join(", ")}. Choose available Agents or clear the restored selection.`;
   const unavailable = selectedRevisions.filter(
-    (revision) => !agentsByRevision.has(revision),
+    (revision) => !selectableAgents.has(revision),
   );
   if (unavailable.length > 0)
     return `Unavailable Agent revisions: ${unavailable.join(", ")}. Choose available Agents before sending.`;
@@ -27,7 +42,7 @@ export function agentSelectionProblem(
 export function agentSelectionFields(
   workflowEnabled: boolean,
   selectedRevisions: readonly string[],
-  agentsByRevision: ReadonlyMap<string, { assetId: string }>,
+  agentsByRevision: ReadonlyMap<string, AgentRevision>,
 ) {
   const problem = agentSelectionProblem(
     workflowEnabled,

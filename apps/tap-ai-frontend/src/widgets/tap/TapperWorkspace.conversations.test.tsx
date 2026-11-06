@@ -1,9 +1,10 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { fakeKnowledgeClient } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
+import { createTestQueryClient } from "../../shared/testing/renderApp";
 import { TapperWorkspace } from "./TapperWorkspace";
 
 afterEach(() => {
@@ -163,6 +164,8 @@ function completedConversation({
   workflowTaskId = null,
   workflowNode = null,
   requestedAgentIds = [],
+  agentRevisionId = null,
+  workflowEnabled,
   agentCatalog = [],
   capturedSends,
   resolvedResources = [
@@ -179,6 +182,8 @@ function completedConversation({
   workflowTaskId?: string | null;
   workflowNode?: Record<string, unknown> | null;
   requestedAgentIds?: readonly string[];
+  agentRevisionId?: string | null;
+  workflowEnabled?: boolean;
   agentCatalog?: readonly Record<string, unknown>[];
   capturedSends?: Record<string, unknown>[];
   answer?: Record<string, unknown>;
@@ -328,7 +333,7 @@ function completedConversation({
               sourceRevisionIds: [],
               documentRevisionIds: [],
               resolvedResources,
-              agentRevisionId: null,
+              agentRevisionId,
               requestedAgentIds,
               agentLabel: null,
               skillRevisionIds: [],
@@ -375,8 +380,18 @@ function completedConversation({
       `Unexpected API call: ${request instanceof Request ? request.method : "GET"} ${request instanceof Request ? request.url : request}`,
     );
   });
+  const queryClient = createTestQueryClient();
+  if (workflowEnabled !== undefined)
+    queryClient.setQueryData(["runtime-mode"], {
+      mode: "validation",
+      identityMode: "validation",
+      projectId: api.projectId,
+      actorId: "actor-test",
+      workflowEnabled,
+    });
   return renderKnowledgeApp(<TapperWorkspace />, {
     api,
+    queryClient,
   });
 }
 
@@ -489,6 +504,100 @@ it("lets a person resolve two restored workflow Agents to one exact legacy revis
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(capturedSends).toHaveLength(1));
   expect(capturedSends[0]?.agentRevisionId).toBe("rev-sdet");
+  expect(capturedSends[0]?.requestedAgentIds).toEqual([]);
+});
+
+it("blocks a restored disabled native Agent and clears it from the next request", async () => {
+  const capturedSends: Record<string, unknown>[] = [];
+  completedConversation({
+    traceId: null,
+    workflowEnabled: true,
+    requestedAgentIds: ["retired"],
+    capturedSends,
+    agentCatalog: [
+      {
+        revisionId: "rev-retired",
+        assetId: "retired",
+        agentId: "retired",
+        displayName: "Retired",
+        isLatest: true,
+        status: "disabled",
+        toolAllowlist: [],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  const issue = await screen.findByRole("alert", {
+    name: "Agent selection needs attention",
+  });
+  expect(issue).toHaveTextContent("retired");
+  await user.type(
+    screen.getByRole("textbox", { name: "Message Tapper" }),
+    "Next question",
+  );
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(capturedSends).toHaveLength(0);
+  await user.click(
+    screen.getByRole("button", { name: "Clear restored Agent selection" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(capturedSends).toHaveLength(1));
+  expect(capturedSends[0]?.agentRevisionId).toBeNull();
+  expect(capturedSends[0]?.requestedAgentIds).toEqual([]);
+});
+
+it("blocks a disabled legacy revision until an enabled Agent is chosen", async () => {
+  const capturedSends: Record<string, unknown>[] = [];
+  completedConversation({
+    traceId: null,
+    agentRevisionId: "rev-retired",
+    capturedSends,
+    agentCatalog: [
+      {
+        revisionId: "rev-retired",
+        assetId: "retired",
+        agentId: "retired",
+        displayName: "Retired",
+        isLatest: true,
+        status: "disabled",
+        toolAllowlist: [],
+      },
+      {
+        revisionId: "rev-reviewer",
+        assetId: "reviewer",
+        agentId: "reviewer",
+        displayName: "Reviewer",
+        isLatest: true,
+        status: "enabled",
+        toolAllowlist: [],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  const issue = await screen.findByRole("alert", {
+    name: "Agent selection needs attention",
+  });
+  expect(issue).toHaveTextContent("rev-retired");
+  await user.type(
+    screen.getByRole("textbox", { name: "Message Tapper" }),
+    "Next question",
+  );
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(capturedSends).toHaveLength(0);
+  await user.click(
+    screen.getByRole("button", { name: "Clear restored Agent selection" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Add to message" }));
+  await user.click(screen.getByRole("menuitem", { name: "Use Agents" }));
+  await user.click(
+    within(await screen.findByRole("dialog", { name: "Use Agents" })).getByRole(
+      "option",
+      { name: "Reviewer" },
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(capturedSends).toHaveLength(1));
+  expect(capturedSends[0]?.agentRevisionId).toBe("rev-reviewer");
   expect(capturedSends[0]?.requestedAgentIds).toEqual([]);
 });
 

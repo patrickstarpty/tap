@@ -1793,18 +1793,15 @@ export function TapperWorkspace() {
       aiAssets.agents.data !== undefined ||
       aiAssets.skills.data !== undefined
     ) {
-      const allowedAgents = new Set(
-        (aiAssets.agents.data ?? []).map((item) => item.revisionId),
-      );
       const allowedSkills = new Set(
         (aiAssets.skills.data ?? []).map((item) => item.revisionId),
       );
       setConversations((current) =>
         current.map((conversation) => ({
           ...conversation,
-          selectedAgentIds: conversation.selectedAgentIds.filter((id) =>
-            allowedAgents.has(id),
-          ),
+          // Keep unavailable restored Agent revisions until the person
+          // explicitly clears or replaces them; selection validation shows
+          // the issue instead of silently dropping an invisible identity.
           selectedSkillIds: conversation.selectedSkillIds.filter((id) =>
             allowedSkills.has(id),
           ),

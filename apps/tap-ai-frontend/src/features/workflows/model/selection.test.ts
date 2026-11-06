@@ -1,9 +1,24 @@
 import { expect, it } from "vitest";
-import { agentSelectionFields, followUpTaskId } from "./selection";
+import {
+  agentSelectionFields,
+  agentSelectionProblem,
+  followUpTaskId,
+} from "./selection";
 
 const agents = new Map([
-  ["rev-sdet", { assetId: "sdet" }],
-  ["rev-review", { assetId: "reviewer" }],
+  [
+    "rev-sdet",
+    { assetId: "sdet", agentId: "sdet", isLatest: true, status: "enabled" },
+  ],
+  [
+    "rev-review",
+    {
+      assetId: "reviewer",
+      agentId: "reviewer",
+      isLatest: true,
+      status: "enabled",
+    },
+  ],
 ]);
 
 it("sends all stable Agent IDs only in native mode and keeps legacy exact revision single-select", () => {
@@ -23,6 +38,33 @@ it("sends all stable Agent IDs only in native mode and keeps legacy exact revisi
   expect(() => agentSelectionFields(true, ["removed-rev"], agents)).toThrow(
     "Unavailable Agent",
   );
+});
+
+it("rejects disabled restored assets and exact revisions despite catalog presence", () => {
+  const withDisabled = new Map([
+    ...agents,
+    [
+      "rev-disabled",
+      {
+        assetId: "retired",
+        agentId: "retired",
+        isLatest: true,
+        status: "disabled",
+      },
+    ],
+  ]);
+  expect(
+    agentSelectionProblem(true, ["rev-disabled"], withDisabled, ["retired"]),
+  ).toContain("retired");
+  expect(() =>
+    agentSelectionFields(true, ["rev-disabled"], withDisabled),
+  ).toThrow("Unavailable Agent");
+  expect(
+    agentSelectionProblem(false, ["rev-disabled"], withDisabled),
+  ).toContain("rev-disabled");
+  expect(() =>
+    agentSelectionFields(false, ["rev-disabled"], withDisabled),
+  ).toThrow("Unavailable Agent");
 });
 
 it("only follows a live native task associated with this conversation", () => {
