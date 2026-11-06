@@ -24,11 +24,12 @@ def _render(agent: ProbeAgent) -> bytes:
             f"agent {agent.agent_id!r} has unknown tools: {sorted(unknown)!r}"
         )
 
-    description = json.dumps(agent.description, ensure_ascii=False)
-    revision = json.dumps(agent.revision_id, ensure_ascii=False)
+    name = json.dumps(agent.agent_id, ensure_ascii=True)
+    description = json.dumps(agent.description, ensure_ascii=True)
+    revision = json.dumps(agent.revision_id, ensure_ascii=True)
     tools = json.dumps(list(agent.tools), ensure_ascii=False)
     content = (
-        f"---\nname: {agent.agent_id}\ndescription: {description}\n"
+        f"---\nname: {name}\ndescription: {description}\n"
         f"tools: {tools}\nstrict-tools-list: true\n# revision: {revision}\n"
         f"---\n\n{agent.instruction}\n"
     )
