@@ -372,6 +372,30 @@
       "status": 400,
       "title": "Unsupported document",
       "type": "https://tap.example/problems/unsupported-document"
+    },
+    {
+      "code": "workflow-control-unavailable",
+      "detail": "This task does not support native workflow controls.",
+      "retryable": false,
+      "status": 409,
+      "title": "Workflow control unavailable",
+      "type": "https://tap.example/problems/workflow-control-unavailable"
+    },
+    {
+      "code": "workflow-not-found",
+      "detail": "The Workflow is unavailable in this Project.",
+      "retryable": false,
+      "status": 404,
+      "title": "Workflow not found",
+      "type": "https://tap.example/problems/workflow-not-found"
+    },
+    {
+      "code": "workflow-snapshot-required",
+      "detail": "The workflow event cursor is unavailable; fetch a new snapshot.",
+      "retryable": false,
+      "status": 409,
+      "title": "Workflow snapshot required",
+      "type": "https://tap.example/problems/workflow-snapshot-required"
     }
   ],
   "schemaVersion": 1

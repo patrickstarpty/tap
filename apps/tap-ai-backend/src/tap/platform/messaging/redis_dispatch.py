@@ -40,6 +40,8 @@ class AsyncRedis(Protocol):
 class AsyncRedisStream(Protocol):
     """Generic Redis Stream subset shared by domain-neutral wake-up consumers."""
 
+    async def xread(self, streams: dict[str, str], *, count: int, block: int) -> object: ...
+
     async def xgroup_create(
         self, name: str, groupname: str, id: str, *, mkstream: bool
     ) -> object: ...

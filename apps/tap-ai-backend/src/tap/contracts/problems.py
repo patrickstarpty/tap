@@ -232,6 +232,27 @@ PROBLEM_REGISTRY = MappingProxyType(
                 None,
             ),
             ProblemDefinition(
+                "workflow-not-found",
+                "Workflow not found",
+                404,
+                "The Workflow is unavailable in this Project.",
+                False,
+            ),
+            ProblemDefinition(
+                "workflow-snapshot-required",
+                "Workflow snapshot required",
+                409,
+                "The workflow event cursor is unavailable; fetch a new snapshot.",
+                False,
+            ),
+            ProblemDefinition(
+                "workflow-control-unavailable",
+                "Workflow control unavailable",
+                409,
+                "This task does not support native workflow controls.",
+                False,
+            ),
+            ProblemDefinition(
                 "conversation-integrity",
                 "Conversation integrity fault",
                 500,

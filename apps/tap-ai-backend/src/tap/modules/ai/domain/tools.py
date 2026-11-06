@@ -10,9 +10,10 @@ adding a built-in tool means adding one entry here.
 the model (OpenAI-style function names reject ``.``); ``input_schema`` is the
 closed JSON Schema object the model must satisfy for a tool call; only
 ``model_callable`` tools are ever offered to a model (``knowledge.answer`` is
-a governance marker, never an invocable function). ``platform`` tools bypass the Agent allowlist and are not in public Agent
-``toolIds``. Visibility still depends on the task: ``skill.activate`` is for
-Knowledge Chat, while ``workflow.delegate`` is injected only for a native root.
+a governance marker, never an invocable function). ``platform`` tools bypass
+the Agent allowlist and are not in public Agent ``toolIds``. Visibility still
+depends on the task: ``skill.activate`` is for Knowledge Chat, while
+``workflow.delegate`` is injected only for a native root.
 """
 
 from __future__ import annotations

@@ -10,9 +10,10 @@ const mode = {
 describe("runtime client", () => {
   it("resolves the trusted runtime endpoint", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json(mode));
-    expect(await createRuntimeClient({ fetch: fetcher }).getMode()).toEqual(
-      mode,
-    );
+    expect(await createRuntimeClient({ fetch: fetcher }).getMode()).toEqual({
+      ...mode,
+      workflowEnabled: false,
+    });
     expect(fetcher.mock.calls[0]?.[0]).toBe("/api/v1/runtime-mode");
   });
   it.each(["projectId", "actorId"] as const)(
@@ -20,9 +21,10 @@ describe("runtime client", () => {
     async (field) => {
       const value = { ...mode, [field]: "a".repeat(128) };
       const fetcher = vi.fn().mockResolvedValue(Response.json(value));
-      expect(await createRuntimeClient({ fetch: fetcher }).getMode()).toEqual(
-        value,
-      );
+      expect(await createRuntimeClient({ fetch: fetcher }).getMode()).toEqual({
+        ...value,
+        workflowEnabled: false,
+      });
     },
   );
   it.each(["projectId", "actorId"] as const)(
@@ -41,10 +43,22 @@ describe("runtime client", () => {
     { ...mode, mode: "personal" },
     { ...mode, identityMode: "personal" },
     { ...mode, role: "admin" },
+    { ...mode, workflowEnabled: "true" },
   ])("rejects malformed runtime authority %j", async (value) => {
     const fetcher = vi.fn().mockResolvedValue(Response.json(value));
     await expect(
       createRuntimeClient({ fetch: fetcher }).getMode(),
     ).rejects.toThrow();
+  });
+});
+
+describe("workflow capability", () => {
+  it("accepts an explicit server-owned workflow capability", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(Response.json({ ...mode, workflowEnabled: true }));
+    expect(
+      (await createRuntimeClient({ fetch: fetcher }).getMode()).workflowEnabled,
+    ).toBe(true);
   });
 });

@@ -267,6 +267,8 @@ class HttpServices:
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
     workflow_admission: WorkflowAdmission | None = None
+    workflow_store: object | None = None
+    workflow_events: object | None = None
     workflow_enabled: bool = False
     workflow_knowledge_application: KnowledgeAPI | None = None
     feedback: FeedbackService | None = None

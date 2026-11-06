@@ -1967,6 +1967,72 @@
               "const": "https://tap.example/problems/unsupported-document"
             }
           }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "This task does not support native workflow controls."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Workflow control unavailable"
+            },
+            "type": {
+              "const": "https://tap.example/problems/workflow-control-unavailable"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The Workflow is unavailable in this Project."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 404
+            },
+            "title": {
+              "const": "Workflow not found"
+            },
+            "type": {
+              "const": "https://tap.example/problems/workflow-not-found"
+            }
+          }
+        },
+        {
+          "properties": {
+            "detail": {
+              "const": "The workflow event cursor is unavailable; fetch a new snapshot."
+            },
+            "failureStage": {
+              "const": null
+            },
+            "retryable": {
+              "const": false
+            },
+            "status": {
+              "const": 409
+            },
+            "title": {
+              "const": "Workflow snapshot required"
+            },
+            "type": {
+              "const": "https://tap.example/problems/workflow-snapshot-required"
+            }
+          }
         }
       ],
       "properties": {
@@ -2077,7 +2143,10 @@
             "https://tap.example/problems/source-unavailable",
             "https://tap.example/problems/turn-not-implemented",
             "https://tap.example/problems/unsupported-answer-control",
-            "https://tap.example/problems/unsupported-document"
+            "https://tap.example/problems/unsupported-document",
+            "https://tap.example/problems/workflow-control-unavailable",
+            "https://tap.example/problems/workflow-not-found",
+            "https://tap.example/problems/workflow-snapshot-required"
           ],
           "pattern": "^https://",
           "title": "Type",

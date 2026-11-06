@@ -10,7 +10,7 @@ from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.engine import Result, Row, RowMapping
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from tap.modules.access.domain.context import ProjectScopeContext, require_identifier
 from tap.modules.ai.adapters.mysql_checkpointer import graph_checkpoint, graph_run
 from tap.modules.workflows.adapters.schema import (
+    workflow_artifact,
     workflow_attempt,
     workflow_command,
     workflow_dependency,
@@ -233,7 +234,74 @@ class MysqlWorkflowStore:
                     .order_by(workflow_event.c.sequence)
                 )
             ).all()
+            attempts = (
+                (
+                    await session.execute(
+                        select(workflow_attempt)
+                        .where(
+                            *scope_predicates(workflow_attempt, scope),
+                            workflow_attempt.c.task_id == task_id,
+                        )
+                        .order_by(workflow_attempt.c.node_id, workflow_attempt.c.attempt)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            edges = (
+                (
+                    await session.execute(
+                        select(workflow_dependency)
+                        .where(
+                            *scope_predicates(workflow_dependency, scope),
+                            workflow_dependency.c.task_id == task_id,
+                            workflow_dependency.c.plan_revision == task.plan_revision,
+                        )
+                        .order_by(
+                            workflow_dependency.c.from_node_id, workflow_dependency.c.to_node_id
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            commands = (
+                (
+                    await session.execute(
+                        select(workflow_command)
+                        .where(
+                            *scope_predicates(workflow_command, scope),
+                            workflow_command.c.task_id == task_id,
+                        )
+                        .order_by(workflow_command.c.created_at, workflow_command.c.command_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            artifacts = (
+                (
+                    await session.execute(
+                        select(workflow_artifact)
+                        .where(
+                            *scope_predicates(workflow_artifact, scope),
+                            workflow_artifact.c.task_id == task_id,
+                        )
+                        .order_by(workflow_artifact.c.created_at, workflow_artifact.c.artifact_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
             return {
+                "request_json": row._mapping["request_json"],
+                "created_at": row._mapping["created_at"],
+                "actor_id": row._mapping["actor_id"],
+                "identity_mode": row._mapping["identity_mode"],
+                "attempts": tuple(dict(item) for item in attempts),
+                "edges": tuple(dict(item) for item in edges),
+                "commands": tuple(dict(item) for item in commands),
+                "artifacts": tuple(dict(item) for item in artifacts),
                 "task_id": task.task_id,
                 "project_id": task.project_id,
                 "conversation_id": task.conversation_id,
@@ -245,6 +313,138 @@ class MysqlWorkflowStore:
                 "nodes": tuple(dict(node) for node in nodes),
                 "events": tuple(_event(event) for event in events),
             }
+
+    async def list_tasks(
+        self,
+        scope: ProjectScopeContext,
+        limit: int,
+        cursor: str | None,
+        agent_id: str | None = None,
+    ) -> tuple[tuple[dict[str, Any], ...], str | None]:
+        scope = require_project_scope(scope)
+        if not 1 <= limit <= 50:
+            raise ValueError("invalid workflow page size")
+        async with self._sessions() as session:
+            previous = None
+            if cursor is not None:
+                previous = (
+                    await session.execute(
+                        select(workflow_task.c.created_at, workflow_task.c.task_id).where(
+                            *scope_predicates(workflow_task, scope),
+                            workflow_task.c.task_id == cursor,
+                        )
+                    )
+                ).first()
+                if previous is None:
+                    raise ValueError("invalid workflow list cursor")
+            statement = select(workflow_task).where(*scope_predicates(workflow_task, scope))
+            if agent_id is not None:
+                statement = statement.where(
+                    workflow_task.c.task_id.in_(
+                        select(workflow_node.c.task_id).where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.role == agent_id,
+                            workflow_node.c.kind == "agent",
+                        )
+                    )
+                )
+            if previous is not None:
+                statement = statement.where(
+                    or_(
+                        workflow_task.c.created_at < previous.created_at,
+                        and_(
+                            workflow_task.c.created_at == previous.created_at,
+                            workflow_task.c.task_id < previous.task_id,
+                        ),
+                    )
+                )
+            rows = (
+                (
+                    await session.execute(
+                        statement.order_by(
+                            workflow_task.c.created_at.desc(), workflow_task.c.task_id.desc()
+                        ).limit(limit + 1)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            page = rows[:limit]
+            task_ids = tuple(row["task_id"] for row in page)
+            node_rows = (
+                (
+                    await session.execute(
+                        select(
+                            workflow_node.c.task_id,
+                            workflow_node.c.node_id,
+                            workflow_node.c.role,
+                            workflow_node.c.kind,
+                            workflow_node.c.agent_revision_id,
+                            workflow_node.c.attempt,
+                            workflow_node.c.status,
+                            workflow_node.c.created_at,
+                        ).where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id.in_(task_ids),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+                if task_ids
+                else ()
+            )
+        by_task: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
+        for node in node_rows:
+            by_task[node["task_id"]].append(dict(node))
+        has_more = len(rows) > limit
+        return (
+            tuple({**dict(row), "nodes": tuple(by_task[row["task_id"]])} for row in page),
+            page[-1]["task_id"] if has_more else None,
+        )
+
+    async def node_logs(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        node_id: str,
+        attempt: int,
+        sequence: int,
+        limit: int,
+    ) -> tuple[tuple[WorkflowEvent, ...], int | None]:
+        scope = require_project_scope(scope)
+        if attempt < 1 or sequence < 0 or not 1 <= limit <= 100:
+            raise ValueError("invalid workflow log page")
+        async with self._sessions() as session:
+            exists = (
+                await session.execute(
+                    select(workflow_attempt.c.attempt_id).where(
+                        *scope_predicates(workflow_attempt, scope),
+                        workflow_attempt.c.task_id == task_id,
+                        workflow_attempt.c.node_id == node_id,
+                        workflow_attempt.c.attempt == attempt,
+                    )
+                )
+            ).scalar_one_or_none()
+            if exists is None:
+                raise LookupError("workflow node attempt not found")
+            rows = (
+                await session.execute(
+                    select(workflow_event)
+                    .where(
+                        *scope_predicates(workflow_event, scope),
+                        workflow_event.c.task_id == task_id,
+                        workflow_event.c.node_id == node_id,
+                        workflow_event.c.attempt == attempt,
+                        workflow_event.c.sequence > sequence,
+                    )
+                    .order_by(workflow_event.c.sequence)
+                    .limit(limit + 1)
+                )
+            ).all()
+        has_more = len(rows) > limit
+        page = tuple(_event(row) for row in rows[:limit])
+        return page, page[-1].sequence if has_more and page else None
 
     async def task_request(self, scope: ProjectScopeContext, task_id: str) -> dict[str, Any]:
         """Private frozen admission/runtime input, never an HTTP projection."""
@@ -564,7 +764,7 @@ class MysqlWorkflowStore:
                     )
                 ).first()
                 if node is None:
-                    raise ValueError("command node belongs to another task")
+                    raise LookupError("workflow node not found")
             disposition = command_disposition(
                 command.expected_plan_revision, task["plan_revision"], False
             )

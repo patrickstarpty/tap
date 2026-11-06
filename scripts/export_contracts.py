@@ -40,6 +40,7 @@ from tap.contracts.http import (  # noqa: E402
     RetrievalSearchRequest,
     RetrievalSearchResponse,
 )
+from tap.contracts.workflows import WorkflowEventEnvelope  # noqa: E402
 from tap.interfaces.http.app import create_app  # noqa: E402
 
 KNOWLEDGE_HTTP_MODELS: tuple[
@@ -52,6 +53,7 @@ KNOWLEDGE_HTTP_MODELS: tuple[
     (LiveHealth, "serialization"),
     (ReadyHealth, "serialization"),
     (RuntimeMode, "serialization"),
+    (WorkflowEventEnvelope, "serialization"),
     (ModelCatalogItem, "serialization"),
     (ModelCatalogPage, "serialization"),
     (AiAgentRevisionSummary, "serialization"),
@@ -76,6 +78,10 @@ def generated_contracts() -> dict[Path, bytes]:
     """Return public and private contract artifacts without writing to disk."""
     event_schema: dict[str, Any] = ChatEventEnvelope.model_json_schema(by_alias=True)
     event_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    workflow_event_schema: dict[str, Any] = WorkflowEventEnvelope.model_json_schema(
+        by_alias=True
+    )
+    workflow_event_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     openapi = create_app().openapi()
     _, knowledge_schema = models_json_schema(
         KNOWLEDGE_HTTP_MODELS,
@@ -86,6 +92,9 @@ def generated_contracts() -> dict[Path, bytes]:
     return {
         Path("openapi/api.json"): canonical_json(openapi),
         Path("events/chat-stream.schema.json"): canonical_json(event_schema),
+        Path("events/workflow-stream.schema.json"): canonical_json(
+            workflow_event_schema
+        ),
         Path("events/project-event.schema.json"): canonical_json(
             project_event_schema()
         ),

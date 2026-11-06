@@ -8545,6 +8545,72 @@
                 "const": "https://tap.example/problems/unsupported-document"
               }
             }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "This task does not support native workflow controls."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 409
+              },
+              "title": {
+                "const": "Workflow control unavailable"
+              },
+              "type": {
+                "const": "https://tap.example/problems/workflow-control-unavailable"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The Workflow is unavailable in this Project."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 404
+              },
+              "title": {
+                "const": "Workflow not found"
+              },
+              "type": {
+                "const": "https://tap.example/problems/workflow-not-found"
+              }
+            }
+          },
+          {
+            "properties": {
+              "detail": {
+                "const": "The workflow event cursor is unavailable; fetch a new snapshot."
+              },
+              "failureStage": {
+                "const": null
+              },
+              "retryable": {
+                "const": false
+              },
+              "status": {
+                "const": 409
+              },
+              "title": {
+                "const": "Workflow snapshot required"
+              },
+              "type": {
+                "const": "https://tap.example/problems/workflow-snapshot-required"
+              }
+            }
           }
         ],
         "properties": {
@@ -8655,7 +8721,10 @@
               "https://tap.example/problems/source-unavailable",
               "https://tap.example/problems/turn-not-implemented",
               "https://tap.example/problems/unsupported-answer-control",
-              "https://tap.example/problems/unsupported-document"
+              "https://tap.example/problems/unsupported-document",
+              "https://tap.example/problems/workflow-control-unavailable",
+              "https://tap.example/problems/workflow-not-found",
+              "https://tap.example/problems/workflow-snapshot-required"
             ],
             "pattern": "^https://",
             "title": "Type",
@@ -10535,6 +10604,11 @@
             "minLength": 1,
             "title": "Projectid",
             "type": "string"
+          },
+          "workflowEnabled": {
+            "default": false,
+            "title": "Workflowenabled",
+            "type": "boolean"
           }
         },
         "required": [
@@ -14324,6 +14398,979 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WorkflowArtifactView": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "title": "Artifactid",
+            "type": "string"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "contentDigest": {
+            "title": "Contentdigest",
+            "type": "string"
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "versionRef": {
+            "title": "Versionref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifactId",
+          "nodeId",
+          "attempt",
+          "contentDigest",
+          "versionRef"
+        ],
+        "title": "WorkflowArtifactView",
+        "type": "object"
+      },
+      "WorkflowAttemptView": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt",
+          "status",
+          "createdAt"
+        ],
+        "title": "WorkflowAttemptView",
+        "type": "object"
+      },
+      "WorkflowCommandRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedPlanRevision": {
+            "minimum": 1.0,
+            "title": "Expectedplanrevision",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "steer",
+              "pause",
+              "resume",
+              "cancel",
+              "retry"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetnodeid"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 16000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "kind",
+          "expectedPlanRevision"
+        ],
+        "title": "WorkflowCommandRequest",
+        "type": "object"
+      },
+      "WorkflowCommandView": {
+        "additionalProperties": false,
+        "properties": {
+          "appliedPlanRevision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appliedplanrevision"
+          },
+          "commandId": {
+            "title": "Commandid",
+            "type": "string"
+          },
+          "expectedPlanRevision": {
+            "title": "Expectedplanrevision",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "targetNodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetnodeid"
+          }
+        },
+        "required": [
+          "commandId",
+          "kind",
+          "targetNodeId",
+          "expectedPlanRevision",
+          "status"
+        ],
+        "title": "WorkflowCommandView",
+        "type": "object"
+      },
+      "WorkflowCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "documentRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Documentrevisionids",
+            "type": "array"
+          },
+          "goal": {
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Goal",
+            "type": "string"
+          },
+          "modelAlias": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Modelalias",
+            "type": "string"
+          },
+          "requestedAgentIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Requestedagentids",
+            "type": "array"
+          },
+          "sourceRevisionIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Sourcerevisionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "goal",
+          "modelAlias"
+        ],
+        "title": "WorkflowCreateRequest",
+        "type": "object"
+      },
+      "WorkflowEdgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "fromNodeId": {
+            "title": "Fromnodeid",
+            "type": "string"
+          },
+          "planRevision": {
+            "title": "Planrevision",
+            "type": "integer"
+          },
+          "toNodeId": {
+            "title": "Tonodeid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromNodeId",
+          "toNodeId",
+          "planRevision"
+        ],
+        "title": "WorkflowEdgeView",
+        "type": "object"
+      },
+      "WorkflowEventEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "minimum": 0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "eventId": {
+            "title": "Eventid",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "parentNodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parentnodeid"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Projectid"
+          },
+          "sequence": {
+            "minimum": 1,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "sourceRuntime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sourceruntime"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "eventId",
+          "taskId",
+          "sequence",
+          "nodeId",
+          "attempt",
+          "kind",
+          "payload",
+          "occurredAt"
+        ],
+        "title": "WorkflowEventEnvelope",
+        "type": "object"
+      },
+      "WorkflowInputRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "title": "Revisionid",
+            "type": "string"
+          },
+          "sourceContentHash": {
+            "title": "Sourcecontenthash",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "revisionId",
+          "sourceContentHash"
+        ],
+        "title": "WorkflowInputRef",
+        "type": "object"
+      },
+      "WorkflowLogPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEventEnvelope"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "WorkflowLogPage",
+        "type": "object"
+      },
+      "WorkflowMatchingRun": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "string"
+          },
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          }
+        },
+        "required": [
+          "nodeId",
+          "agentId",
+          "agentRevisionId",
+          "attempt",
+          "status",
+          "createdAt"
+        ],
+        "title": "WorkflowMatchingRun",
+        "type": "object"
+      },
+      "WorkflowNodeDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowArtifactView"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowAttemptView"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "inputRefs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInputRef"
+            },
+            "title": "Inputrefs",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "agent",
+              "service",
+              "approval"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "parentNodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentnodeid"
+          },
+          "planRevision": {
+            "title": "Planrevision",
+            "type": "integer"
+          },
+          "publicSummary": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicsummary"
+          },
+          "sourceRuntime": {
+            "title": "Sourceruntime",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          }
+        },
+        "required": [
+          "nodeId",
+          "parentNodeId",
+          "agentId",
+          "agentRevisionId",
+          "displayName",
+          "kind",
+          "status",
+          "attempt",
+          "planRevision",
+          "sourceRuntime",
+          "artifacts"
+        ],
+        "title": "WorkflowNodeDetail",
+        "type": "object"
+      },
+      "WorkflowNodeView": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "agentRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentrevisionid"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowAttemptView"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "inputRefs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInputRef"
+            },
+            "title": "Inputrefs",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "agent",
+              "service",
+              "approval"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "parentNodeId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentnodeid"
+          },
+          "planRevision": {
+            "title": "Planrevision",
+            "type": "integer"
+          },
+          "publicSummary": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publicsummary"
+          },
+          "sourceRuntime": {
+            "title": "Sourceruntime",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          }
+        },
+        "required": [
+          "nodeId",
+          "parentNodeId",
+          "agentId",
+          "agentRevisionId",
+          "displayName",
+          "kind",
+          "status",
+          "attempt",
+          "planRevision",
+          "sourceRuntime"
+        ],
+        "title": "WorkflowNodeView",
+        "type": "object"
+      },
+      "WorkflowStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "waiting_dependency",
+          "awaiting_input",
+          "pausing",
+          "paused",
+          "recovering",
+          "succeeded",
+          "failed",
+          "canceling",
+          "canceled",
+          "skipped"
+        ],
+        "title": "WorkflowStatus",
+        "type": "string"
+      },
+      "WorkflowTaskPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowTaskView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "WorkflowTaskPage",
+        "type": "object"
+      },
+      "WorkflowTaskSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowArtifactView"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "availableActions": {
+            "items": {
+              "enum": [
+                "steer",
+                "pause",
+                "resume",
+                "cancel",
+                "retry"
+              ],
+              "type": "string"
+            },
+            "title": "Availableactions",
+            "type": "array"
+          },
+          "budgetLimit": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Budgetlimit",
+            "type": "object"
+          },
+          "budgetUsed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Budgetused",
+            "type": "object"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowCommandView"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "conversationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversationid"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEventEnvelope"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "goalSummary": {
+            "maxLength": 200,
+            "title": "Goalsummary",
+            "type": "string"
+          },
+          "lastSequence": {
+            "title": "Lastsequence",
+            "type": "integer"
+          },
+          "matchingRuns": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowMatchingRun"
+            },
+            "title": "Matchingruns",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "origin": {
+            "enum": [
+              "native",
+              "observed"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "planRevision": {
+            "title": "Planrevision",
+            "type": "integer"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "projectId",
+          "conversationId",
+          "status",
+          "planRevision",
+          "lastSequence",
+          "origin",
+          "availableActions",
+          "displayName",
+          "goalSummary",
+          "createdAt",
+          "nodes",
+          "edges",
+          "commands",
+          "artifacts",
+          "events",
+          "budgetLimit",
+          "budgetUsed"
+        ],
+        "title": "WorkflowTaskSnapshot",
+        "type": "object"
+      },
+      "WorkflowTaskView": {
+        "additionalProperties": false,
+        "properties": {
+          "availableActions": {
+            "items": {
+              "enum": [
+                "steer",
+                "pause",
+                "resume",
+                "cancel",
+                "retry"
+              ],
+              "type": "string"
+            },
+            "title": "Availableactions",
+            "type": "array"
+          },
+          "conversationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversationid"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "goalSummary": {
+            "maxLength": 200,
+            "title": "Goalsummary",
+            "type": "string"
+          },
+          "lastSequence": {
+            "title": "Lastsequence",
+            "type": "integer"
+          },
+          "matchingRuns": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowMatchingRun"
+            },
+            "title": "Matchingruns",
+            "type": "array"
+          },
+          "origin": {
+            "enum": [
+              "native",
+              "observed"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "planRevision": {
+            "title": "Planrevision",
+            "type": "integer"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "projectId",
+          "conversationId",
+          "status",
+          "planRevision",
+          "lastSequence",
+          "origin",
+          "availableActions",
+          "displayName",
+          "goalSummary",
+          "createdAt"
+        ],
+        "title": "WorkflowTaskView",
         "type": "object"
       },
       "tap__contracts__chat_stream__BddAnchor": {
@@ -27149,6 +28196,633 @@
         "summary": "Review Revision",
         "tags": [
           "test-management"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows": {
+      "get": {
+        "operationId": "workflow_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agentid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowTaskPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tasks",
+        "tags": [
+          "workflows"
+        ]
+      },
+      "post": {
+        "operationId": "workflow_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowTaskSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Workflow unavailable"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Idempotency conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/{task_id}": {
+      "get": {
+        "operationId": "workflow_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowTaskSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Snapshot",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/{task_id}/commands": {
+      "post": {
+        "operationId": "workflow_command",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowCommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowCommandView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Command",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/{task_id}/events": {
+      "get": {
+        "operationId": "workflow_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshotSequence",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Snapshotsequence"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowEventEnvelope"
+                }
+              }
+            },
+            "description": "Durable workflow event stream"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Snapshot required"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/{task_id}/nodes/{node_id}": {
+      "get": {
+        "operationId": "workflow_node",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowNodeDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Node",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/{task_id}/nodes/{node_id}/logs": {
+      "get": {
+        "operationId": "workflow_node_logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "attempt",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Attempt",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowLogPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Logs",
+        "tags": [
+          "workflows"
         ]
       }
     },

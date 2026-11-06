@@ -1,0 +1,290 @@
+"""Workflow HTTP routes and public DTO shape."""
+
+from datetime import UTC, datetime
+
+import pytest
+
+from tap.interfaces.http.app import create_app
+from tap.modules.workflows.application.queries import WorkflowQueries
+from tap.modules.workflows.domain.models import WorkflowEvent
+
+
+def test_seven_workflow_operations_are_registered() -> None:
+    paths = create_app().openapi()["paths"]
+    base = "/api/v1/projects/{project_id}/workflows"
+    assert "post" in paths[base]
+    assert "get" in paths[base]
+    assert "get" in paths[f"{base}/{{task_id}}"]
+    assert "get" in paths[f"{base}/{{task_id}}/events"]
+    assert "post" in paths[f"{base}/{{task_id}}/commands"]
+    assert "get" in paths[f"{base}/{{task_id}}/nodes/{{node_id}}"]
+    assert "get" in paths[f"{base}/{{task_id}}/nodes/{{node_id}}/logs"]
+
+
+def test_runtime_mode_contract_exposes_default_false_workflow_capability() -> None:
+    from tap.contracts.http import RuntimeMode
+
+    mode = RuntimeMode(
+        mode="validation", project_id="demo", actor_id="actor", identity_mode="validation"
+    )
+    assert mode.model_dump(by_alias=True)["workflowEnabled"] is False
+
+
+async def _snapshot_view(
+    *, origin="native", task_status="waiting_dependency", node_status="paused"
+):
+    now = datetime(2026, 11, 6, tzinfo=UTC)
+
+    class Store:
+        async def snapshot(self, _scope, _task_id):
+            return {
+                "task_id": "task-1",
+                "project_id": "tapper-demo",
+                "conversation_id": None,
+                "status": task_status,
+                "plan_revision": 1,
+                "last_sequence": 3,
+                "created_at": now,
+                "budget_limit": {"model_calls": 10},
+                "budget_used": {},
+                "request_json": {
+                    "origin": origin,
+                    "goal": "Write tests",
+                    "root": {"agent_id": "orchestrator", "name": "Tapper"},
+                    "candidates": [{"agent_id": "qae", "name": "Quality Engineer"}],
+                    "resolved_resources": [
+                        {
+                            "source_id": "source-1",
+                            "revision_id": "rev-1",
+                            "source_content_hash": "sha256:abc",
+                        }
+                    ],
+                },
+                "nodes": (
+                    {
+                        "node_id": "root",
+                        "parent_node_id": None,
+                        "agent_revision_id": "root-rev",
+                        "role": "root",
+                        "kind": "agent",
+                        "runtime": "native",
+                        "status": "waiting_dependency",
+                        "attempt": 1,
+                        "plan_revision": 1,
+                        "created_at": now,
+                    },
+                    {
+                        "node_id": "child",
+                        "parent_node_id": "root",
+                        "agent_revision_id": "qae-rev",
+                        "role": "qae",
+                        "kind": "agent",
+                        "runtime": "native",
+                        "status": node_status,
+                        "attempt": 2,
+                        "plan_revision": 1,
+                        "created_at": now,
+                    },
+                ),
+                "attempts": (
+                    {"node_id": "child", "attempt": 1, "status": "failed", "created_at": now},
+                    {"node_id": "child", "attempt": 2, "status": node_status, "created_at": now},
+                ),
+                "edges": (),
+                "commands": (),
+                "artifacts": (
+                    {
+                        "artifact_id": "artifact-1",
+                        "node_id": "child",
+                        "attempt": 1,
+                        "content_digest": "sha256:def",
+                        "version_ref": "version-1",
+                        "object_ref": "/private/secret/path",
+                    },
+                ),
+                "events": (
+                    WorkflowEvent(
+                        "e1", "task-1", 1, "child", 1, "node.created", {"node_id": "child"}, now
+                    ),
+                    WorkflowEvent(
+                        "e2", "task-1", 2, "child", 1, "node.created", {"node_id": "child"}, now
+                    ),
+                    WorkflowEvent(
+                        "e3",
+                        "task-1",
+                        3,
+                        "child",
+                        2,
+                        "action.settled",
+                        {"result": {"output": "private"}},
+                        now,
+                    ),
+                ),
+            }
+
+    return await WorkflowQueries(Store()).snapshot(None, "task-1")
+
+
+@pytest.mark.asyncio
+async def test_snapshot_keeps_one_node_and_historical_attempts_without_private_refs() -> None:
+    view = await _snapshot_view()
+    assert len(view["nodes"]) == 2
+    child = view["nodes"][1]
+    assert child["agentId"] == "qae"
+    assert child["displayName"] == "Quality Engineer"
+    assert [item["attempt"] for item in child["attempts"]] == [1, 2]
+    assert view["artifacts"][0]["contentDigest"] == "sha256:def"
+    assert "/private/secret/path" not in str(view)
+    assert "private" not in str(view)
+
+
+@pytest.mark.asyncio
+async def test_paused_child_can_resume_while_task_waits_and_observed_has_no_controls() -> None:
+    native = await _snapshot_view()
+    observed = await _snapshot_view(origin="observed")
+    assert "resume" in native["availableActions"]
+    assert observed["availableActions"] == []
+
+
+@pytest.mark.asyncio
+async def test_failed_child_can_retry_while_parent_waits() -> None:
+    native = await _snapshot_view(node_status="failed")
+    assert "retry" in native["availableActions"]
+
+
+@pytest.mark.asyncio
+async def test_filtered_agent_list_has_typed_parallel_run_summaries() -> None:
+    now = datetime(2026, 11, 6, tzinfo=UTC)
+
+    class Store:
+        async def list_tasks(self, _scope, limit, cursor, agent_id):
+            assert (limit, cursor, agent_id) == (20, None, "qae")
+            return (
+                (
+                    {
+                        "task_id": "task-1",
+                        "project_id": "tapper-demo",
+                        "conversation_id": None,
+                        "status": "running",
+                        "plan_revision": 2,
+                        "last_sequence": 5,
+                        "created_at": now,
+                        "request_json": {"origin": "native"},
+                        "goal": "Review",
+                        "nodes": (
+                            {
+                                "node_id": "n1",
+                                "role": "qae",
+                                "kind": "agent",
+                                "agent_revision_id": "r1",
+                                "status": "succeeded",
+                                "attempt": 1,
+                                "created_at": now,
+                            },
+                            {
+                                "node_id": "n2",
+                                "role": "qae",
+                                "kind": "agent",
+                                "agent_revision_id": "r1",
+                                "status": "running",
+                                "attempt": 2,
+                                "created_at": now,
+                            },
+                            {
+                                "node_id": "n3",
+                                "role": "developer",
+                                "kind": "agent",
+                                "agent_revision_id": "r2",
+                                "status": "paused",
+                                "attempt": 1,
+                                "created_at": now,
+                            },
+                        ),
+                    },
+                ),
+                None,
+            )
+
+    page = await WorkflowQueries(Store()).list(None, 20, None, "qae")
+    runs = page["items"][0]["matchingRuns"]
+    assert "resume" in page["items"][0]["availableActions"]
+    assert [(run["nodeId"], run["agentId"], run["attempt"]) for run in runs] == [
+        ("n1", "qae", 1),
+        ("n2", "qae", 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_command_returns_conflict_after_durable_receipt() -> None:
+    from tap.contracts.workflows import WorkflowCommandRequest
+    from tap.interfaces.http.workflow_service import WorkflowHttpService
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    class Store:
+        async def command(self, *_args):
+            return None
+
+        async def submit_command(self, *_args):
+            return {
+                "status": "stale",
+                "reason": "plan revision changed",
+                "applied_plan_revision": None,
+            }
+
+    class Queries:
+        async def snapshot(self, *_args):
+            return {"origin": "native", "lastSequence": 3}
+
+    service = WorkflowHttpService(None, Store(), None, Queries())
+    with pytest.raises(ValueError, match="stale"):
+        await service.command(
+            VALIDATION_SCOPE,
+            "task-1",
+            WorkflowCommandRequest(kind="pause", expectedPlanRevision=1),
+            "cmd-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_standalone_replay_uses_frozen_task_before_mutable_catalogs() -> None:
+    from types import SimpleNamespace
+
+    from tap.contracts.workflows import WorkflowCreateRequest
+    from tap.interfaces.http.workflow_service import WorkflowHttpService
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+
+    class Admission:
+        async def existing_standalone(self, _scope, request, key):
+            assert request["goal"] == "Review"
+            assert key == "create-1"
+            return SimpleNamespace(task_id="existing-task")
+
+    class Queries:
+        async def snapshot(self, _scope, task_id):
+            assert task_id == "existing-task"
+            return {"taskId": task_id}
+
+    service = WorkflowHttpService(
+        SimpleNamespace(asset_catalog=None, model_catalog=None), None, Admission(), Queries()
+    )
+    result = await service.create(
+        VALIDATION_SCOPE,
+        WorkflowCreateRequest(goal="Review", modelAlias="qwen-plus"),
+        "create-1",
+    )
+    assert result == {"taskId": "existing-task"}
+
+
+def test_public_node_summary_requires_matching_finished_attempt() -> None:
+    from tap.modules.workflows.application.queries import attach_node_summaries
+
+    nodes = [{"nodeId": "child", "attempt": 2}]
+    events = [
+        {"kind": "node.finished", "nodeId": "child", "attempt": 1, "payload": {"summary": "old"}},
+        {"kind": "activity", "nodeId": "child", "attempt": 2, "payload": {}},
+    ]
+    assert attach_node_summaries(nodes, events)[0]["publicSummary"] is None
+    events.append(
+        {"kind": "node.finished", "nodeId": "child", "attempt": 2, "payload": {"summary": "safe"}}
+    )
+    assert attach_node_summaries(nodes, events)[0]["publicSummary"] == "safe"

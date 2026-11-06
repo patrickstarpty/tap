@@ -5,14 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
+from typing import cast
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.chat.application.conversations import ConversationService
 from tap.modules.chat.application.workflow_bridge import WorkflowChatPort
 from tap.modules.chat.domain.conversations import ConversationTurn, TurnInput
 from tap.modules.workflows.application.selection import WorkflowSelection
 from tap.modules.workflows.application.service import WorkflowService
 from tap.modules.workflows.domain.commands import ControlCommand
+from tap.modules.workflows.domain.models import TaskSnapshot
 from tap.modules.workflows.ports.runtime import WorkflowWakeups
 from tap.modules.workflows.ports.store import WorkflowStore
 
@@ -95,17 +98,9 @@ class WorkflowAdmissionCoordinator:
             "skill_revision_ids": list(frozen.skill_revision_ids),
             "skill_instructions": list(frozen.skill_instruction_templates),
             "skill_instruction_digests": list(frozen.skill_instruction_template_digests),
-            "budget_limit": {
-                "model_calls": self.max_model_calls,
-                **({"cost_micros": self.max_cost_micros} if self.max_cost_micros else {}),
-            },
-            "deadline_at": (
-                turn.input_snapshot.created_at.astimezone(UTC) + timedelta(seconds=self.max_seconds)
-            ).isoformat(),
-            "max_attempts": self.max_attempts,
-            "max_parallel_agents": self.max_parallel_agents,
             "skill_catalog": [asdict(item) for item in frozen.skill_catalog],
         }
+        request.update(self._limits(turn.input_snapshot.created_at))
         key = self._key(turn.turn_id)
         task = await self._store.task_by_key(scope, key)
         if task is None:
@@ -130,6 +125,62 @@ class WorkflowAdmissionCoordinator:
         else:
             await self._store.activate_task(scope, task.task_id, turn.turn_id)
         await self._notify(task.task_id)
+
+    def _limits(self, created_at: datetime) -> dict[str, object]:
+        return {
+            "budget_limit": {
+                "model_calls": self.max_model_calls,
+                **({"cost_micros": self.max_cost_micros} if self.max_cost_micros else {}),
+            },
+            "deadline_at": (
+                created_at.astimezone(UTC) + timedelta(seconds=self.max_seconds)
+            ).isoformat(),
+            "max_attempts": self.max_attempts,
+            "max_parallel_agents": self.max_parallel_agents,
+        }
+
+    def _standalone_key(self, scope: ProjectScopeContext, idempotency_key: str) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                (scope.enterprise_id, scope.project_id, "standalone", idempotency_key),
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+
+    async def existing_standalone(
+        self, scope: ProjectScopeContext, public_request: dict[str, object], idempotency_key: str
+    ) -> TaskSnapshot | None:
+        """Replay an admitted request before mutable catalogs are consulted."""
+        if scope != self._conversations.scope:
+            raise ValueError("standalone workflow scope mismatch")
+        existing = await self._store.task_by_key(
+            scope, self._standalone_key(scope, idempotency_key)
+        )
+        if existing is None:
+            return None
+        prior = await self._store.task_request(scope, existing.task_id)
+        if prior.get("public_request") != public_request:
+            raise ValueError("idempotency key payload conflict")
+        return existing
+
+    async def create_standalone(
+        self,
+        scope: ProjectScopeContext,
+        frozen: dict[str, object],
+        idempotency_key: str,
+    ) -> TaskSnapshot:
+        """Admit already-authorized, server-frozen HTTP input without a Chat Turn."""
+        if scope != self._conversations.scope or frozen.get("origin") != "native":
+            raise ValueError("standalone workflow scope or origin mismatch")
+        existing = await self.existing_standalone(
+            scope, cast(dict[str, object], frozen["public_request"]), idempotency_key
+        )
+        if existing is not None:
+            return existing
+        request = {**frozen, **self._limits(datetime.now(UTC))}
+        return await self._store.create_task(
+            scope, request, self._standalone_key(scope, idempotency_key)
+        )
 
     async def create(
         self, conversation_id: str, turn_id: str, idempotency_key: str, frozen: TurnInput

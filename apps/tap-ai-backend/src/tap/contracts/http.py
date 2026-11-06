@@ -38,6 +38,7 @@ class RuntimeMode(ContractModel):
     project_id: str = Field(min_length=1, max_length=128)
     actor_id: str = Field(min_length=1, max_length=128)
     identity_mode: Literal["validation"]
+    workflow_enabled: bool = False
 
 
 class ModelCatalogItem(ContractModel):

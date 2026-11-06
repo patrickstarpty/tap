@@ -23,16 +23,27 @@ export function createRuntimeClient({
         typeof mode.projectId !== "string" ||
         mode.projectId.trim().length === 0 ||
         mode.projectId.length > 128 ||
+        (mode.workflowEnabled !== undefined &&
+          typeof mode.workflowEnabled !== "boolean") ||
         typeof mode.actorId !== "string" ||
         mode.actorId.trim().length === 0 ||
         mode.actorId.length > 128 ||
         Object.keys(mode).some(
           (key) =>
-            !["mode", "identityMode", "projectId", "actorId"].includes(key),
+            ![
+              "mode",
+              "identityMode",
+              "projectId",
+              "actorId",
+              "workflowEnabled",
+            ].includes(key),
         )
       )
         throw new Error("Invalid runtime mode.");
-      return mode as RuntimeMode;
+      return {
+        ...mode,
+        workflowEnabled: mode.workflowEnabled ?? false,
+      } as RuntimeMode;
     },
   };
 }

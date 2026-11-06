@@ -45,6 +45,7 @@ OrdinaryTool = Callable[
     Awaitable[str],
 ]
 SkillLoader = Callable[[ProjectScopeContext, str], Awaitable[str]]
+StandaloneAuthorize = Callable[[ProjectScopeContext, str], Awaitable[bool]]
 
 
 class WorkflowStopped(Exception):
@@ -67,6 +68,7 @@ class NativeWorkflowRuntime:
         projection: WorkflowProjection | None = None,
         skill_loader: SkillLoader | None = None,
         wakeups: WorkflowWakeups | None = None,
+        standalone_authorize: StandaloneAuthorize | None = None,
     ) -> None:
         if not 1 <= max_parallel_agents <= 20:
             raise ValueError("native parallel agent limit is outside the bound")
@@ -82,6 +84,7 @@ class NativeWorkflowRuntime:
         self._projection = projection
         self._skill_loader = skill_loader
         self._wakeups = wakeups
+        self._standalone_authorize = standalone_authorize
         self._control_lock = asyncio.Lock()
 
     async def inspect(
@@ -358,6 +361,11 @@ class NativeWorkflowRuntime:
 
         async def authorize() -> bool:
             if origin_turn_id is None:
+                if request.get("standalone_http"):
+                    return bool(
+                        self._standalone_authorize is not None
+                        and await self._standalone_authorize(scope, task_id)
+                    )
                 return True
             return bool(
                 self._chat is not None

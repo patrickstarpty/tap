@@ -38,6 +38,7 @@ from tap.interfaces.http.routes.model_catalog import router as model_catalog_rou
 from tap.interfaces.http.routes.prompt_suggestions import router as prompt_suggestions_router
 from tap.interfaces.http.routes.skill_hub import router as skill_hub_router
 from tap.interfaces.http.routes.test_plans import router as test_plans_router
+from tap.interfaces.http.routes.workflows import router as workflows_router
 from tap.interfaces.http.scope import resolve_project_scope
 from tap.modules.access.domain.context import IdentityMode
 from tap.modules.access.domain.policy import AuthorizationDenied
@@ -99,6 +100,7 @@ def create_app(
             project_id=scope.project_id,
             actor_id=scope.actor_id,
             identity_mode="validation",
+            workflow_enabled=request.app.state.http_services.workflow_enabled,
         )
 
     async def project_path(project_id: str = Path(min_length=1, max_length=128)) -> str:
@@ -119,6 +121,7 @@ def create_app(
         agent_team_router,
         skill_hub_router,
         conversations_router,
+        workflows_router,
         model_calls_router,
         knowledge_graph_router,
         knowledge_reviews_router,

@@ -1174,6 +1174,8 @@ async def create_api_runtime(
             services = replace(
                 services,
                 workflow_admission=workflow_admission,
+                workflow_store=workflow_store,
+                workflow_events=workflow_events,
                 workflow_enabled=True,
             )
             workflow_components = NativeWorkflowComponents(
@@ -1316,6 +1318,34 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         revisions = await components.repository.load_current_source_revisions(selected)
         return build_demo_policy_context(revisions, corpus_version=settings.corpus_version)
 
+    async def authorize_standalone(scope, task_id):
+        from tap.modules.access.application.policy import require_authorized
+        from tap.modules.access.domain.authorization import ResourceRef
+        from tap.modules.access.domain.policy import AuthorizationDenied, PolicyUnavailable
+
+        policy = api.http_services.authorization_policy
+        if policy is None:
+            return False
+        snapshot = await store.snapshot(scope, task_id)
+        request = snapshot["request_json"]
+        if (
+            request.get("origin", "native") != "native"
+            or not request.get("standalone_http")
+            or snapshot["actor_id"] != scope.actor_id
+            or snapshot["identity_mode"] != scope.identity_mode.value
+        ):
+            return False
+        try:
+            await require_authorized(
+                policy,
+                scope,
+                "knowledge.answer",
+                ResourceRef(scope.enterprise_id, scope.project_id, "knowledge"),
+            )
+        except (AuthorizationDenied, PolicyUnavailable):
+            return False
+        return True
+
     knowledge_tool = JournaledKnowledgeSearch(store, components.knowledge, policy_for)
 
     async def load_skill(scope, revision_id):
@@ -1360,6 +1390,7 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         ordinary_tool=knowledge_tool.execute,
         skill_loader=load_skill,
         wakeups=components.events,
+        standalone_authorize=authorize_standalone,
     )
     return WorkerRuntime(
         worker=WorkflowWorker(
