@@ -449,11 +449,14 @@ async def test_pending_tool_checkpoint_resumes_before_new_model_input():
 
 
 def test_long_child_result_is_private_and_parent_receives_bounded_reference():
+    import hashlib
     from types import SimpleNamespace
 
     from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+    from tap.modules.workflows.domain.delegation import child_result_summary
 
     full = "Very detailed specialist result. " * 200
+    persisted_summary = child_result_summary("child", full)
     events = (
         SimpleNamespace(
             kind="node.delegated",
@@ -461,11 +464,12 @@ def test_long_child_result_is_private_and_parent_receives_bounded_reference():
         ),
         SimpleNamespace(
             kind="node.finished",
-            payload={"node_id": "child", "summary": full, "private_result": full},
+            payload={"node_id": "child", "summary": persisted_summary, "private_result": full},
         ),
     )
     parent = NativeWorkflowRuntime._child_results(events, "root")
     assert parent[0]["call_id"] == "call-child"
     assert len(parent[0]["summary"]) < 600
     assert full not in parent[0]["summary"]
-    assert "child" in parent[0]["summary"]
+    assert parent[0]["summary"] == persisted_summary
+    assert f"sha256:{hashlib.sha256(full.encode()).hexdigest()[:16]}" in parent[0]["summary"]

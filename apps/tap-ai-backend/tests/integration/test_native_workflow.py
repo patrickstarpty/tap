@@ -2186,8 +2186,9 @@ async def test_waiting_dependency_task_can_pause_and_resume_without_new_attempt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("safe_checkpoint", [True, False], ids=["safe", "unknown"])
 async def test_node_pause_stops_only_target_after_checkpoint_while_sibling_finishes(
-    owned_project_mysql,
+    owned_project_mysql, safe_checkpoint
 ):
     import asyncio
     import json
@@ -2285,7 +2286,18 @@ async def test_node_pause_stops_only_target_after_checkpoint_while_sibling_finis
     engine = create_async_engine(owned_project_database_url(owned_project_mysql))
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
-        store, state, gateway = MysqlWorkflowStore(sessions), NativeStateStore(sessions), Scripted()
+
+        class TargetEvidenceStore(MysqlWorkflowStore):
+            async def stop_evidence(self, scope, task_id, lease_token, target_node_id):
+                if not safe_checkpoint and target_node_id is not None:
+                    return False
+                return await super().stop_evidence(scope, task_id, lease_token, target_node_id)
+
+        store, state, gateway = (
+            TargetEvidenceStore(sessions),
+            NativeStateStore(sessions),
+            Scripted(),
+        )
         task = await store.create_task(
             VALIDATION_SCOPE,
             {
@@ -2364,9 +2376,14 @@ async def test_node_pause_stops_only_target_after_checkpoint_while_sibling_finis
         await runtime.start(VALIDATION_SCOPE, task.task_id)
         snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
         by_role = {node["role"]: node for node in snapshot["nodes"]}
+        assert by_role["qae"]["status"] == "succeeded"
+        if not safe_checkpoint:
+            assert snapshot["status"] == "recovering"
+            assert by_role["ba"]["status"] == "running"
+            assert any(event.kind == "task.dispatch_blocked" for event in snapshot["events"])
+            return
         assert snapshot["status"] == "waiting_dependency"
         assert by_role["ba"]["status"] == "paused"
-        assert by_role["qae"]["status"] == "succeeded"
         assert (
             await store.submit_command(
                 VALIDATION_SCOPE,
@@ -2797,12 +2814,17 @@ async def test_completed_node_handoff_crash_reconciles_without_model_recall(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("kind", "safe_checkpoint"),
-    [("pause", True), ("cancel", True), ("pause", False)],
-    ids=["pause", "cancel", "unknown-checkpoint"],
+    ("kind", "safe_checkpoint", "targeted"),
+    [
+        ("pause", True, False),
+        ("cancel", True, False),
+        ("pause", False, False),
+        ("pause", False, True),
+    ],
+    ids=["pause", "cancel", "unknown-checkpoint", "targeted-root-unknown"],
 )
 async def test_root_control_between_model_boundary_and_reservation_is_acknowledged(
-    owned_project_mysql, kind, safe_checkpoint
+    owned_project_mysql, kind, safe_checkpoint, targeted
 ):
     from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
     from tap.modules.workflows.adapters.native_runtime import JournaledModelGateway
@@ -2825,7 +2847,15 @@ async def test_root_control_between_model_boundary_and_reservation_is_acknowledg
             if not self.injected:
                 self.injected = True
                 receipt = await self.submit_command(
-                    scope, ControlCommand(f"{kind}-race", task_id, None, kind, 1, None)
+                    scope,
+                    ControlCommand(
+                        f"{kind}-race",
+                        task_id,
+                        kwargs.get("node_id") if targeted else None,
+                        kind,
+                        1,
+                        None,
+                    ),
                 )
                 assert receipt["status"] == "accepted"
             return await super().reserve_action(
@@ -2906,5 +2936,10 @@ async def test_root_control_between_model_boundary_and_reservation_is_acknowledg
             )
         else:
             assert any(event.kind == "task.dispatch_blocked" for event in snapshot["events"])
+            if targeted:
+                assert (
+                    next(node for node in snapshot["nodes"] if node["role"] == "root")["status"]
+                    == "running"
+                )
     finally:
         await engine.dispose()

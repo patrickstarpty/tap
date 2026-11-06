@@ -193,15 +193,29 @@ class NativeWorkflowRuntime:
             )
 
     async def _reconcile_stopped(
-        self, scope: ProjectScopeContext, task_id: str, token: str
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        token: str,
+        stopped_node: str | None = None,
     ) -> bool:
-        proceed = await self._apply_controls(scope, task_id, token)
+        proceed = await self._apply_controls(scope, task_id, token, stopped_node)
         active = await self._store.active_lease(scope, task_id, token)
-        if not proceed and active:
+        if not active:
+            return False
+        if stopped_node is not None:
+            # A stopped coroutine must not leave its node running without an
+            # executor. A proven node pause changes that node's durable status;
+            # independent siblings have already completed in the TaskGroup.
+            if await self._store.node_running(scope, task_id, stopped_node):
+                await self._store.mark_dispatch_blocked(scope, task_id, token)
+                return False
+            return True
+        if not proceed:
             # An interrupted graph with incomplete checkpoint/effect proof
             # cannot hold a silent live lease or claim to have safely paused.
             await self._store.mark_dispatch_blocked(scope, task_id, token)
-        return proceed and active
+        return proceed
 
     async def _project_task(self, scope: ProjectScopeContext, task_id: str) -> None:
         if self._projection is None:
@@ -270,7 +284,7 @@ class NativeWorkflowRuntime:
                         scope, task_id, lease_token, result.removeprefix("limit:")
                     )
                 elif result == "stopped":
-                    if await self._reconcile_stopped(scope, task_id, lease_token):
+                    if await self._reconcile_stopped(scope, task_id, lease_token, root_id):
                         await self._state.release_task(scope, task_id, lease_token, "queued")
                 return
             if not ready:
@@ -306,8 +320,10 @@ class NativeWorkflowRuntime:
             if limits:
                 await self._state.fail_task(scope, task_id, lease_token, limits[0])
                 return
-            if any(item.result() == "stopped" for item in running):
-                if not await self._reconcile_stopped(scope, task_id, lease_token):
+            for node_id, item in zip(selected, running, strict=True):
+                if item.result() == "stopped" and not await self._reconcile_stopped(
+                    scope, task_id, lease_token, node_id
+                ):
                     return
             await self._state.unblock_parents(scope, task_id, lease_token)
             after = await self._store.ready_nodes(scope, task_id)
@@ -561,7 +577,9 @@ class NativeWorkflowRuntime:
         if not isinstance(events, tuple):
             return ()
         finished = {
-            event.payload.get("node_id"): event.payload.get("summary")
+            event.payload.get("node_id"): event.payload.get(
+                "private_result", event.payload.get("summary")
+            )
             for event in events
             if event.kind == "node.finished"
         }
