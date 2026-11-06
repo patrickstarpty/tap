@@ -125,7 +125,7 @@ def test_system_root_cannot_be_requested_as_delegate():
 - [x] 同文件窄测先失败，再实现 `requested_delegate(selected_id: str | None, allowed_ids: tuple[str, ...]) -> dict[str, str | None]`，未知 ID 和系统根身份不能成为委派目标；allowed_ids 只包含可委派专业 Agent。系统 Orchestrator 配置独立于可选择目录解析并冻结，继续复用 AI 修订机制；内置专业角色通过既有资产 seed 机制创建版本，不改用户自定义 Agent。配置与维护写入使用 AI 已有应用入口及 `B/modules/ai/adapters/maintenance.py` 的同事务操作；不向 `agent_team` 或 `skill_hub` 增加资产写入职责，不把运行状态事件写成资产维护记录。
 - [x] 后端请求字段 `requestedAgentIds` 与 `workflowTaskId` 明确委派及已有任务关联；旧 `agentRevisionId` 保持旧入口兼容，在新入口映射为显式委派，不能替换主 Orchestrator。后端保留全部显式选择，契约测试覆盖未选 Agent 仍正常进入 Tapper，以及显式提交系统根 ID 被拒绝；依据稳定身份校验，不靠显示名隐藏或重命名用户自定义 Agent。前端去除 `.find()` 并发送全部选择由 Task 1.6 承接。
 - [x] 纯路由合并接口在编码能力未启用时返回明确不可用，在低置信度且需扩大执行权限时请求澄清；应用进度查询只读已有状态，追加要求走 Task 1.2，不新建重复 task。生产入口调用 Gateway 建议并持久化最终路由、返回对应能力响应由 Task 1.4 承接。
-- [ ] 单测与 HTTP 契约通过，提交 `feat: route requests with frozen agent selections`。
+- [x] 单测与 HTTP 契约通过，提交 `feat: route requests with frozen agent selections`（`8f4df1dc`）。
 
 ### Task 1.4：原生 agent loop、子运行与独立 worker
 
