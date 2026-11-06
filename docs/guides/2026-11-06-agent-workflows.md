@@ -1,6 +1,6 @@
 # Tapper Agent 工作流：运行与验收边界
 
-本指南描述阶段 1 的原生工作流及既有 Agent 观测。对外助手始终叫 **Tapper**；`orchestrator` 是内部根角色，不是 Agents 名册或 @ 候选中的专业 Agent。当前编码路径的目标 provider 是 OpenCode + LiteLLM，但 OpenCode 阶段 0 尚未验证、阶段 2/3 尚未实施；旧 Copilot 确定性探针只属历史记录。阶段 1 的确定性验收不等于真实 provider、真实模型或生产部署验收。
+本指南描述已通过独立任务评审、全分支评审及修复复核并合入 `develop` 的阶段 1 原生工作流与既有 Agent 观测。对外助手始终叫 **Tapper**；`orchestrator` 是内部根角色，不是 Agents 名册或 @ 候选中的专业 Agent。当前编码路径的目标 provider 是 OpenCode + LiteLLM，但 OpenCode 阶段 0 尚未验证、阶段 2/3 尚未实施；旧 Copilot 确定性探针只属历史记录。阶段 1 的确定性验收不等于真实 provider、真实模型或生产部署验收。
 
 ## 两种任务所有权
 
@@ -24,7 +24,7 @@ Chat 的公开 admission/link/cancel 端口与 `workflow_task.admission_ready` �
 
 ## 生命周期与恢复
 
-观测上下文退出只表示一个执行段结束，不表示源任务成功。Chat 的 accepted Turn 完成事实、Test Design 的持久 job 结果及 Suggestions 的已接受 CAS 决定最终状态。Chat/Test Design worker 的有界修复扫描可补观察创建到链接、源完成到观察投影之间的崩溃窗口；扫描采用游标轮转，使长时间未终结的旧前缀不能永久挡住后页。已完成任务不重开；新 source attempt 仍留在同一个逻辑 task/node，旧失败或 unknown 证据保留，迟到旧 attempt 不覆盖获胜状态。
+观测上下文退出只表示一个执行段结束，不表示源任务成功。Chat 的 accepted Turn 完成事实、Test Design 的持久 job 结果及 Suggestions 的已接受 CAS 决定最终状态。Chat/Test Design worker 的有界修复扫描可补观察创建到链接、源完成到观察投影之间的崩溃窗口；扫描采用游标轮转，使长时间未终结的旧前缀不能永久挡住后页。已完成任务不重开；新 source attempt 仍留在同一个逻辑 task/node，旧失败或 unknown 证据保留，迟到旧 attempt 不覆盖获胜状态。原生任务遇硬限制只终结当前未完成 attempt，不覆盖旧 retry 的状态或错误快照。
 
 若源 Turn 已接受终态，而一个被观测的关系子操作仍没有持久结果，其节点和当前 attempt 只读状态为 `unknown`，并写安全、幂等的 `node.outcome_unknown` 事件；已结算的兄弟节点保持原结果。主任务不增加 `unknown` 状态，原生调度也不接管该子操作。代价是节点读合同多一个状态，不能把源已结束误画成子操作仍在运行。
 
@@ -32,11 +32,11 @@ Chat 的公开 admission/link/cancel 端口与 `workflow_task.admission_ready` �
 
 ## 原生执行与控制的实际语义
 
-根首轮真实 Gateway 响应中的路由建议持久冻结在 workflow 事件中，不改写不可变 TurnInput。显式选择是稳定 Agent 资产 ID，服务端冻结当时可用的修订；旧 `agentRevisionId` 仍是确切修订兼容输入。已有关联任务上的无选择追问保留原候选，重复相同选择合法，变更候选集合需用节点补充要求，当前不替换名册。只有需要的专业 Agent 被委派；独立子节点可并行，依赖节点等待，内部根不显示为专业 Agent 卡片。
+根首轮真实 Gateway 响应中的路由建议持久冻结在 workflow 事件中，不改写不可变 TurnInput。显式选择是稳定 Agent 资产 ID，服务端冻结当时可用的修订；旧 `agentRevisionId` 仍是确切修订兼容输入。已有关联任务上的无选择追问保留原候选，重复相同选择合法，变更候选集合需用节点补充要求，当前不替换名册。所有显式选择在工具轮次或部分委派后仍须完成；schema-1 旧 checkpoint 缺少新完成集合时，从已确认的持久委派工具消息恢复，不重复委派已完成 Agent。独立子节点可并行，依赖节点等待，内部根不显示为专业 Agent 卡片。
 
 独立 HTTP 创建复用会话入口的服务端冻结、范围与当前 `knowledge.answer` 授权，但不创建隐藏 Conversation。会话的首次请求在原 Turn 与任务持久关联前禁止领取；旧 Chat worker 对 workflow-owned Turn 的排队和过期租约都不领取。原任务的追问是源 Turn 的短命令回执（已应用、拒绝或过期），不重复根任务最终答案；任务终止时仍未执行的追问也要得到持久拒绝。代价是 Chat 拥有一条公开工作流桥接和源 Turn 投影租约，不能把 workflow store 直接接入 Chat 私表；源 Turn 的摘要关联来自持久 `chat_turn.workflow_task_id`，不改写冻结输入摘要。
 
-原生 runtime 使用单个 task 执行 epoch，而非独立子 worker 租约。等待可释放执行槽，但先持久写等待状态；pause 要在相应分支安全 checkpoint 后才确认。针对一个节点暂停时，健康兄弟节点的结果先落库；不能证明停下的旧 side effect 维持 `recovering`，不把它改为安全排队。显式失败节点重试在非终态 task 内新建 attempt 与 graph lineage；崩溃恢复复用原 lineage、已结算 action 和 checkpoint，不重发已结算外部调用。整个终态 task 的 rerun 是有来源的新 task，不原地复活。
+原生 runtime 使用单个 task 执行 epoch，而非独立子 worker 租约。等待可释放执行槽，但先持久写等待状态；pause 要在相应分支安全 checkpoint 后才确认。针对一个节点暂停时，健康兄弟节点的结果先落库；不能证明停下的旧 side effect 维持 `recovering`，不把它改为安全排队。显式失败节点重试在非终态 task 内新建 attempt 与 graph lineage；崩溃恢复复用原 lineage、已结算 action 和 checkpoint，不重发已结算外部调用。终态专业节点的返工继承原持久委派输入，连续返工按完整节点谱系累积已接受指导；原节点和 attempt 不改，新结果由 root 实际消费。若 root 已进入 `running`，该终态子节点返工返回明确 `rejected`，不会留下无法执行的新子节点；缺少可核实委派输入的旧/合成节点同样拒绝。整个终态 task 的 rerun 是有来源的独立 Runs 新 task，清除旧 Conversation 执行链接；新 admission 冻结执行时长并从新 epoch 计算 deadline，同键返回同一获胜任务，旧任务只有可恢复正时长才可沿用 deadline，不能恢复时须重新提交。
 
 `dependency_wait` 明确持久化 `running → waiting_dependency`，取消中的恢复也保留原始状态来源，不会把 `canceling → recovering` 误解为可安全排队。单 task epoch 的预算预约、末次动作/lease 交接与控制领取均受同一 task lock/fence；Task 1.2 的恢复测试已验证累计预算不会在重领时归零。代价是无法证明旧执行停下时必须停在隔离状态，不能靠新建子租约掩盖不确定性。
 
@@ -100,6 +100,8 @@ Chat 的公开 admission/link/cancel 端口与 `workflow_task.admission_ready` �
 | R42 | 发布 fixture 只额外接受严格 UUID 且 marker/凭据/容器标签一致的自有项目。 | 多一条受限测试入口，不能开放任意项目写入。 |
 | R43 | 原生 rerun 创建独立 Runs task，保留冻结业务输入与来源，清除旧 Chat 执行链接；新 admission 冻结执行时长，重跑从新 epoch 计算 deadline 并按当前 standalone 权限执行。旧任务仅从持久 deadline 与创建时间恢复正时长，无 deadline 保留原语义，同键取既有 winner。 | 结果不回写旧 Conversation；无法恢复正时长的旧任务须重新提交；未来若要 Chat 关联重跑，需要明确的新 Turn 流。 |
 | R44 | 终态专业节点返工只从原持久 `node.delegated` 复制可核实的冻结输入，在同事务建新实例并关联本次指导；原节点和 attempt 保留，root 用原 call ID 的新结果替换旧摘要。无执行输入的结构节点返回 rejected。 | 旧的合成或缺证据节点不能直接返工，须新请求；真实专业委派仍可返工。 |
+| R45 | 对最终修复新引入的旧 checkpoint 重复委派、连续返工指导丢失和结构测试错误预期作一次有界修复与定向复核，不扩成新产品范围或再次全分支扫描。 | 多一轮窄修复/复核与交付延迟；必须保留真实执行与历史证据。 |
+| R46 | 隔离 E2E 只在临时 Compose 覆写中令 `tap-minio` 的 `HOME=/data`，使旧配置落在同一次运行的私有宿主持久目录；验证有效配置、原 UID 和精确挂载。 | runner 增一个容器环境约束；不能据此宣称生产部署已就绪，也不允许改共享 Compose、镜像、存储阈值或 Docker 全局设置。 |
 
 ## 验收与适用范围
 
@@ -107,6 +109,8 @@ Chat 的公开 admission/link/cancel 端口与 `workflow_task.admission_ready` �
 
 真实 Knowledge 工具旅程需要测试专属的已发布资料。发布 fixture 只接受旧固定 E2E 项目，或同时具有 `TAP_DEMO_MODE=e2e`、`TAPPER_WORKFLOW_E2E=1` 且满足严格 UUID 前缀的本 runner 项目；环境、凭据、MySQL 容器标签与项目名必须一致，并保留本机端口、进程、marker 权限及镜像身份校验。代价是 fixture 多一条严格的自有项目入口，不允许任意项目借用该发布能力。owned MySQL 测试另核对持久状态、迁移、重领与并行 barrier。`make contracts`、`make check`、`make test-full` 是阶段 1 仓库门禁；这些确定性结果不能充当真实模型或 OpenCode 能力验证。
 
-2026-11-07 工程证据：`make contracts`、`make check` 和 `make workflow-e2e` 通过，后者为 3 条真实 API/Relay/worker/Web 的确定性 Playwright 旅程。全量组成项为 TAP AI 后端 **5587 passed、585 skipped**，TAP AI Web **1119 passed**，TAP 后端 **147 passed、35 skipped**，TAP Web **240 passed**。单次 `make test-full` 在后端通过后因旧前端精确对象断言缺少两个既有清空字段而停止；修正测试预期后，前端与后续两套测试按 Makefile 顺序单独补齐通过，不能把原命令记成 exit 0。默认 skip 主要是未启用的 owned MySQL/Redis 和真实模型 opt-in；实际调用、迁移回退、源事实修复与并行 barrier 已在相应隔离窄测验证。真实模型及 OpenCode 探针依用户要求未执行，阶段 2/3 未完成。
+2026-11-07 工程证据：先前 `make contracts` 已生成合同，最终 `make check` 重新核对合同并在已审产品树 `f93f638e` 以 exit 0 通过（23 项产品边界测试、TAP 后端 147 passed/35 skipped、TAP AI/TAP Web 构建与确定性质量门禁）。同树 `make test` exit 0：TAP AI 后端 **383 passed**、TAP AI Web **83 passed**、TAP 后端 **17 passed**、TAP Web **9 passed**。历史全量组成项为 TAP AI 后端 **5587 passed、585 skipped**，TAP AI Web **1119 passed**，TAP 后端 **147 passed、35 skipped**，TAP Web **240 passed**；单次 `make test-full` 在后端通过后因旧前端精确对象断言缺少两个既有清空字段而停止，修正测试预期后逐项补齐，不能记成单次 exit 0。默认 skip 主要是未启用的 owned MySQL/Redis 和真实模型 opt-in；实际调用、迁移回退、源事实修复与并行 barrier 在隔离窄测验证。
+
+全分支独立评审指出的 F1–F6 与定向复核 N1–N3 均已修复并复核通过；最后相关回归包括 16 个原生图单测、12 个持久化覆盖用例及 6 个终态返工/旧结构用例。最终 `make workflow-e2e` 首次在自有 `tap-minio` 启动时因容器 overlay 上的旧配置目录写入 `no space left on device` 未进入浏览器；R46 将该配置转到私有宿主持久 `/data` 后，同镜像诊断健康，runner 专属 6 个单测通过。仅重跑的 `make workflow-e2e` exit 0，3 条真实 API/Relay/native worker/Web 的确定性 Playwright 旅程通过；截图、项目容器与临时目录清理均已核对。独立任务评审、全分支评审和修复定向复核通过，代码已合入 `develop`。真实模型及 OpenCode 阶段 0 探针依用户要求未执行，阶段 2/3 未完成。
 
 当前 HTTP 与 worker 组合沿用本地 Demo 的受信验证 scope；多项目生产调度需要另行设计。后续 OpenCode 阶段 0 必须实测预算执行、BYOK 全调用覆盖、子 Agent 身份与并行、权限、控制回执、会话和工作区恢复、失联核对，才能进入阶段 2；阶段 3 的跨应用测试资产单写归属和真实执行闭环仍在计划中。

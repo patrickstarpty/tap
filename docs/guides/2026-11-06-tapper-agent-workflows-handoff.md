@@ -125,6 +125,6 @@
 
 ## 7. 2026-11-07 阶段 1 工程更新
 
-阶段 1.1–1.6 已分别实施并通过任务级评审；1.7 的既有 Agent 实际调用观测、源事实恢复及隔离确定性浏览器旅程已完成工程门禁，仍待独立评审与合入。现状与运行边界以[阶段 1 运行指南](2026-11-06-agent-workflows.md)、[阶段计划](../superpowers/plans/2026-11-06-native-agent-workflows.md)及[架构](../architecture.md)为准；本页上方“尚未实施/尚未提交”的陈述保留交接当日历史，不是当前状态。
+阶段 1.1–1.7 的原生工作流、既有 Agent 实际调用观测、源事实恢复及隔离确定性浏览器旅程已通过各任务独立评审、全分支评审和修复定向复核，2026-11-07 合入 `develop`。现状与运行边界以[阶段 1 运行指南](2026-11-06-agent-workflows.md)、[阶段计划](../superpowers/plans/2026-11-06-native-agent-workflows.md)及[架构](../architecture.md)为准；本页上方“尚未实施/尚未提交”的陈述保留交接当日历史，不是当前状态。
 
-确定性全量组成项为 TAP AI 后端 5587 passed、585 skipped，TAP AI Web 1119 passed，TAP 后端 147 passed、35 skipped，TAP Web 240 passed；`make check` 与真实 API/Relay/native worker/Web 的 `make workflow-e2e` 均通过。全量 `make test-full` 首次在一个旧前端精确对象断言处中断，修正该测试预期后逐项补齐剩余组成项，不声称该单次命令 exit 0。隔离旅程创建并清理自有项目与持久测试数据，不访问共享 Demo。真实模型和 OpenCode 能力探针按用户要求未运行；阶段 0、2、3 仍未完成，不构成生产运行验收。
+确定性全量组成项为 TAP AI 后端 5587 passed、585 skipped，TAP AI Web 1119 passed，TAP 后端 147 passed、35 skipped，TAP Web 240 passed；`make test-full` 首次在旧前端精确对象断言处中断，修正预期后逐项补齐，不声称单次命令 exit 0。最终已审产品树上 `make check` exit 0、`make test` exit 0（383/83/17/9 passed）；runner 的自有 MinIO 配置目录曾遇 Docker overlay 空间不足，在私有宿主持久 `/data` 中修复并经定向审查后，`make workflow-e2e` exit 0，3 条真实 API/Relay/native worker/Web 的确定性旅程通过。隔离旅程清理了自有项目与持久测试数据，不访问共享 Demo。running root 上的终态子节点返工和缺失可验证原委派输入的结构节点会明确拒绝；连续返工累积指导，旧 checkpoint 恢复已确认的选择，不重复委派。终态任务 rerun 创建独立 Runs task 和新时间窗，不回写旧 Conversation。真实模型和 OpenCode 阶段 0 八项能力探针按用户要求未运行；阶段 0、2、3 仍未完成，不构成生产运行验收。

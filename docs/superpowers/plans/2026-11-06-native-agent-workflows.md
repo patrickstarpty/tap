@@ -214,5 +214,7 @@ it("requests a snapshot when an event gap appears", () => {
 - [x] 实现 `scripts/run-workflow-e2e.py`：新建带唯一标签的本机容器/项目/临时目录，显式注入确定性模型；启动 API/Relay/workflow worker/Web，调用指定 Playwright spec，finally 仅删除自己标签资源。新增 `make workflow-e2e` 指向该脚本。
 - [x] `make workflow-e2e` 通过真实 API、Relay、worker、Web 与隔离中间件的确定性浏览器旅程。
 - [ ] 原生真实模型验收以 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 显式启用；用户要求暂缓，本阶段未运行，确定性旅程不替代它。
-- [x] 运行总计划工程门禁，更新现状架构和 guide，仅将阶段 1 标为确定性工程完成；独立评审与合入另行进行。
+- [x] 运行总计划工程门禁，更新现状架构和 guide；阶段 1 的任务级、全分支与修复定向评审完成，确定性工程结果已合入 `develop`（2026-11-07）。
 - [x] 提交 `feat: integrate native workflow coverage and acceptance`。
+
+最终已审产品树 `f93f638e` 的 `make check` 和 `make test` exit 0；后者四组核心回归分别为 383/83/17/9 passed。runner-only `422fa019` 将自有 MinIO 的旧配置目录置于私有 `/data`，解决 Docker VM overlay 空间不足的首次启动失败；同镜像诊断和定向复核通过，随后 `make workflow-e2e` exit 0，三条真实 API/Relay/native worker/Web 的确定性浏览器旅程通过并清理自有资源。历史 `make test-full` 的各组成项补齐，不记为单次命令 exit 0。原生真实模型验收仍按上项暂缓，不能由确定性门禁代替。

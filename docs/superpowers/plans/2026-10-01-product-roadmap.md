@@ -73,12 +73,12 @@ flowchart LR
 
 ## V3：测试闭环（设计已确认，实施计划已编写）
 
-2026-11-06 范围调整：[双路径 Agent 工作流与测试闭环设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已由产品负责人确认并进入实施规划；[实施总计划](2026-11-06-agent-workflows-and-test-loop.md)包含四份分阶段计划，已按 `34f86106` 模块归属重构和 `524c202d` 回归门禁调整接入点、职责边界与 ADR 预留编号；尚未执行，不表示实施或验收完成。底座面向测试、软件开发和业务自动化，首版只以测试闭环验收；V1 的范围与未完成门禁不变。
+2026-11-06 范围调整：[双路径 Agent 工作流与测试闭环设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已由产品负责人确认并进入实施规划；[实施总计划](2026-11-06-agent-workflows-and-test-loop.md)包含四份分阶段计划，已按 `34f86106` 模块归属重构和 `524c202d` 回归门禁调整接入点、职责边界与 ADR 预留编号。当日尚未执行；2026-11-07 阶段 1 已通过确定性工程验收、独立评审与修复复核并合入 `develop`，见[运行指南](../../guides/2026-11-06-agent-workflows.md)。底座面向测试、软件开发和业务自动化，首版只以测试闭环验收；V1 的范围与未完成门禁不变。
 
 | 项 | 确认范围 | 状态 |
 | --- | --- | --- |
-| 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；首版在编码任务启动前一次性生成当前项目已启用且任务获准使用的 Agent 配置，无 `tap-` 前缀，任务内冻结版本，不依赖热加载；编码任务交给 OpenCode CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 已设计并确认；阶段 1.1–1.6 已通过独立评审，1.7 的实际调用观测与隔离浏览器验收在功能分支完成工程门禁，待独立评审与合入；真实模型验证按用户要求暂缓。原 Copilot 确定性探针仅属历史；OpenCode 阶段 0 未实施、CLI/模型组合未固定、八项 required 均未验证，阶段 2/3 未完成。 |
-| 实时 Agent 流水线 | 默认助手对外统一称为 Tapper，Orchestrator 仅为内部技术角色；Agents 模块提供专业 Agent 档案与运行实例，选择 / @ 只指定专业 Agent，不单列系统 Tapper/Orchestrator；中间对话仅显示简短进度和入口，用户点击打开右侧执行侧栏，查看任务统筹进度、专业 Agent 流水线、节点详情及活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 阶段 1 原生路径的右侧栏、Agent 运行视图和真实栈确定性浏览器旅程已完成工程门禁，待独立评审与合入；编码路径阶段 2 尚未实施。GUI 参考为 Claude App（Chat/Cowork）与 Codex App。 |
+| 通用任务与两条路径 | 参考 Claude Code 按需 agent loop，主 Agent 直接处理简单问答或自动/显式委派；首版在编码任务启动前一次性生成当前项目已启用且任务获准使用的 Agent 配置，无 `tap-` 前缀，任务内冻结版本，不依赖热加载；编码任务交给 OpenCode CLI 内 Orchestrator 与专业 Agent，BYOK 接现有 LiteLLM，非编码任务由原生 LangGraph Orchestrator 编排；统一持久化、暂停恢复和产物 | 阶段 1.1–1.7 原生路径已通过任务级与全分支独立评审、修复复核、最终确定性门禁并合入 `develop`（2026-11-07）；真实模型验证按用户要求暂缓。原 Copilot 确定性探针仅属历史；OpenCode 阶段 0 未实施、CLI/模型组合未固定、八项 required 均未验证，阶段 2/3 未完成。 |
+| 实时 Agent 流水线 | 默认助手对外统一称为 Tapper，Orchestrator 仅为内部技术角色；Agents 模块提供专业 Agent 档案与运行实例，选择 / @ 只指定专业 Agent，不单列系统 Tapper/Orchestrator；中间对话仅显示简短进度和入口，用户点击打开右侧执行侧栏，查看任务统筹进度、专业 Agent 流水线、节点详情及活动时间线；用户可定向补充要求，由 Orchestrator 协调并记录影响 | 阶段 1 原生路径的右侧栏、Agent 运行视图和真实栈确定性浏览器旅程已通过独立评审与最终门禁并合入 `develop`（2026-11-07）；编码路径阶段 2 尚未实施。GUI 参考为 Claude App（Chat/Cowork）与 Codex App。 |
 | 测试资产与代码版本 | 测试计划、用例始终在 TAP 管理且各自版本化；首版代码由 TAP 管理；以易懂的“自动化测试步骤”描述结构化操作、数据和预期结果 | 已设计并确认；阶段 3 计划已编写，领域归属及迁移先固化 ADR |
 | 执行与结果回写 | 首个执行器改为 TAP 管理的本机隔离容器，运行 Playwright + TypeScript；固定发布版本，回写真实结果与证据，修复形成新版本 | 已设计并确认；阶段 3 计划已编写 |
 | 后续适配 | Azure DevOps Repos、GitLab 等代码仓库；Jenkins、Azure DevOps Pipelines 执行器；保留 Claude Code、Codex coding provider 接口 | 未设计（仅确认扩展边界，首版不交付这些适配器） |

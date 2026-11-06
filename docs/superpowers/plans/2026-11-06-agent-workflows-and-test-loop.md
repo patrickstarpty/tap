@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.13.12、FastAPI、LangGraph 1.2.12、SQLAlchemy/MySQL、Redis、MinIO、LiteLLM、OpenCode CLI、React 19、TypeScript、Playwright 1.62.1。
 
-**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。阶段 1 的原生工程与确定性验收已完成；OpenCode 阶段 0、阶段 2/3 与真实模型验证未实施。旧 Copilot 确定性探针不计入新 provider 进度。
+**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。阶段 1 的原生工程与确定性验收、独立评审及修复复核已完成并合入 `develop`（2026-11-07）；OpenCode 阶段 0、阶段 2/3 与真实模型验证未实施。旧 Copilot 确定性探针不计入新 provider 进度。
 
 ## Global Constraints
 
@@ -109,4 +109,4 @@ git diff -- README.md docs/ AGENTS.md
 - [ ] 阶段 2：OpenCode 全链路 BYOK、事件与恢复通过验收。
 - [ ] 阶段 3：版本化测试闭环及跨应用切换通过验收。
 
-阶段 1 的实现与验证证据见[运行指南](../../guides/2026-11-06-agent-workflows.md)及各任务报告；仍待独立评审与集成。阶段 0、2、3 和真实 provider/模型验收均未完成，不宣称生产运行条件。
+阶段 1 的实现、独立评审与最终门禁证据见[运行指南](../../guides/2026-11-06-agent-workflows.md)，已集成 `develop`。历史全量组成项逐项补齐，但单次 `make test-full` 未 exit 0；最终 `make check`/`make test` 和修复自有 MinIO 配置后重跑的 `make workflow-e2e` 均通过。阶段 0、2、3 和真实 provider/模型验收均未完成，不宣称生产运行条件。
