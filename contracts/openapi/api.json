@@ -2986,6 +2986,17 @@
             "title": "Modelalias",
             "type": "string"
           },
+          "requestedAgentIds": {
+            "default": [],
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Requestedagentids",
+            "type": "array"
+          },
           "skillRevisionIds": {
             "default": [],
             "items": {
@@ -3003,6 +3014,19 @@
             "maxItems": 50,
             "title": "Sourcerevisionids",
             "type": "array"
+          },
+          "workflowTaskId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflowtaskid"
           }
         },
         "required": [
@@ -3362,6 +3386,14 @@
             "title": "Modelalias",
             "type": "string"
           },
+          "requestedAgentIds": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Requestedagentids",
+            "type": "array"
+          },
           "resolvedResources": {
             "items": {
               "$ref": "#/components/schemas/ConversationResolvedResourceView"
@@ -3405,6 +3437,17 @@
             },
             "title": "Sourcerevisionids",
             "type": "array"
+          },
+          "workflowTaskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflowtaskid"
           }
         },
         "required": [

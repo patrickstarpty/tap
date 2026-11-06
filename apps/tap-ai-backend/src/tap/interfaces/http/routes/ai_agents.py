@@ -25,11 +25,17 @@ from tap.interfaces.http.problems import problem_response_metadata, skill_proble
 from tap.interfaces.http.scope import project_authorization
 from tap.modules.ai.application.agent_authoring import AgentDraft
 from tap.modules.ai.domain.assets import AiAgentRevision, AssetRevisionRejected
+from tap.modules.workflows.adapters.asset_catalog import ROOT_AGENT_ID
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 _WRITE = Depends(project_authorization("ai.agents.write"))
 _READ = Depends(project_authorization("ai.agents.read"))
+
+
+def _public_agent(value: AiAgentRevision) -> bool:
+    # System identity is fixed; a user's Agent named Tapper remains visible.
+    return value.asset_id != ROOT_AGENT_ID
 
 
 # -- serialization --------------------------------------------------------
@@ -108,7 +114,11 @@ def _draft(body: AgentDraftRequest) -> AgentDraft:
     },
 )
 async def list_agents(request: Request) -> AiAgentRevisionPage:
-    items = await asset_catalog_service(request).list_agents(request.state.project_scope)
+    items = tuple(
+        item
+        for item in await asset_catalog_service(request).list_agents(request.state.project_scope)
+        if _public_agent(item)
+    )
     latest = await _latest_revision_ids(request, {item.asset_id for item in items})
     return AiAgentRevisionPage(
         items=[
@@ -135,6 +145,8 @@ async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionDetail
     value = await asset_catalog_service(request).resolve_historical_agent(
         request.state.project_scope, revision_id
     )
+    if not _public_agent(value):
+        raise AssetRevisionRejected()
     latest = await _latest_revision_ids(request, {value.asset_id})
     return _detail(value, is_latest=latest.get(value.asset_id) == value.revision_id)
 
@@ -151,6 +163,8 @@ async def get_agent(request: Request, revision_id: str) -> AiAgentRevisionDetail
     },
 )
 async def list_agent_revision_history(request: Request, agent_id: str) -> AiAgentRevisionPage:
+    if agent_id == ROOT_AGENT_ID:
+        raise AssetRevisionRejected()
     revisions = cast(
         tuple[AiAgentRevision, ...],
         await asset_catalog_service(request).list_revisions("agent", agent_id),
@@ -216,6 +230,8 @@ async def revise_agent(
 async def _toggle_enabled(
     request: Request, agent_id: str, *, enabled: bool
 ) -> AiAgentRevisionSummary:
+    if agent_id == ROOT_AGENT_ID:
+        raise AssetRevisionRejected()
     await agent_authoring_service(request).set_enabled(
         request.state.project_scope, agent_id, enabled
     )

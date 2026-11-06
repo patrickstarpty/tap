@@ -52,6 +52,7 @@ from tap.modules.chat.application.feedback import FeedbackService
 from tap.modules.chat.application.ports import DraftStream, TurnSkillActivations
 from tap.modules.chat.application.suggestion_ports import SuggestionStore
 from tap.modules.chat.application.suggestions import PromptSuggestionService
+from tap.modules.chat.domain.conversations import ConversationTurn, TurnInput
 from tap.modules.graph.application.jobs import GraphJobStore
 from tap.modules.graph.application.node_enrichment import GraphNodeEnrichmentPort
 from tap.modules.graph.ports.project_store import ProjectGraphStorePort
@@ -213,6 +214,22 @@ class AssetCatalogHttpService(Protocol):
     ) -> tuple[AiAgentRevision, ...] | tuple[SkillRevision, ...]: ...
 
 
+class WorkflowAdmission(Protocol):
+    """Task 1.4 owns durable owner/link writes and implementation of this seam."""
+
+    async def create(
+        self, conversation_id: str, turn_id: str, idempotency_key: str, frozen: TurnInput
+    ) -> ConversationTurn: ...
+
+    async def append(
+        self, conversation_id: str, turn_id: str, idempotency_key: str, frozen: TurnInput
+    ) -> ConversationTurn: ...
+
+    async def continue_task(
+        self, conversation_id: str, turn_id: str, idempotency_key: str, frozen: TurnInput
+    ) -> ConversationTurn: ...
+
+
 class _UnconfiguredReadiness:
     async def check(self) -> ReadyHealth:
         return ReadyHealth(
@@ -245,6 +262,7 @@ class HttpServices:
     model_catalog: ModelCatalogHttpService | None = None
     asset_catalog: AssetCatalogHttpService | None = None
     conversations: ConversationService | None = None
+    workflow_admission: WorkflowAdmission | None = None
     feedback: FeedbackService | None = None
     prompt_suggestions: PromptSuggestionService | None = None
     prompt_suggestion_store: SuggestionStore | None = None

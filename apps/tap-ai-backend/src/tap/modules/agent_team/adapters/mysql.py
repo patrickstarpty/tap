@@ -154,7 +154,7 @@ class MysqlAgentTeamStore:
                     & (ai_agent_revision.c.revision_number == latest_numbers.c.revision_number),
                 )
             )
-            .where(*scope_predicates(ai_agent, self._scope))
+            .where(*scope_predicates(ai_agent, self._scope), ai_agent.c.agent_id != "orchestrator")
         )
         if agent_id is not None:
             query = query.where(ai_agent.c.agent_id == agent_id)

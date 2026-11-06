@@ -579,6 +579,35 @@ class MysqlWorkflowStore:
             )
             return receipt
 
+    async def command(
+        self, scope: ProjectScopeContext, task_id: str, command_id: str
+    ) -> ControlCommand | None:
+        scope = require_project_scope(scope)
+        async with self._sessions() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(workflow_command).where(
+                            *scope_predicates(workflow_command, scope),
+                            workflow_command.c.task_id == task_id,
+                            workflow_command.c.command_id == command_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        return ControlCommand(
+            row["command_id"],
+            row["task_id"],
+            row["target_node_id"],
+            row["kind"],
+            row["expected_plan_revision"],
+            row["payload"]["text"],
+        )
+
     async def pending_commands(
         self, scope: ProjectScopeContext, task_id: str
     ) -> tuple[ControlCommand, ...]:

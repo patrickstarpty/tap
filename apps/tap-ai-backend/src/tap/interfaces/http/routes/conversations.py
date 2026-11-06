@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
 from tap.contracts.chat_stream import ChatEventEnvelope
@@ -76,6 +76,7 @@ from tap.modules.chat.domain.conversations import TurnInput
 from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.modules.workflows.adapters.asset_catalog import AssetWorkflowCatalog
 from tap.platform.telemetry import bind_trace, span, trace_id_of
 
 router = APIRouter(
@@ -104,7 +105,14 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
         and value.model_alias == body.model_alias
         and value.source_revision_ids == tuple(body.source_revision_ids)
         and value.document_revision_ids == tuple(body.document_revision_ids)
-        and value.agent_revision_id == body.agent_revision_id
+        and (
+            value.requested_agent_revision_id
+            if value.workflow_root is not None
+            else value.agent_revision_id
+        )
+        == body.agent_revision_id
+        and value.requested_agent_ids == tuple(body.requested_agent_ids)
+        and value.workflow_task_id == body.workflow_task_id
         and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
         and value.insights_report_refs == tuple(body.insights_report_refs)
     )
@@ -130,6 +138,9 @@ def _replay_comparable(value: TurnInput) -> TurnInput:
 async def _validate_replay(turn, body: ConversationCreateRequest, request: Request) -> None:
     if not _matches_replay(turn, body):
         raise ConversationConflict("idempotency-conflict")
+    if turn.input_snapshot.value.workflow_root is not None:
+        # A replay keeps the original approved catalog even if latest revisions changed.
+        return
     try:
         current = await _input(body, request)
     except (
@@ -146,7 +157,9 @@ async def _validate_replay(turn, body: ConversationCreateRequest, request: Reque
         raise ConversationConflict("idempotency-conflict")
 
 
-async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput:
+async def _input(
+    body: ConversationCreateRequest, request: Request, *, workflow: bool = False
+) -> TurnInput:
     scope = request.state.project_scope
     services = request.app.state.http_services
     if services.model_catalog is not None:
@@ -171,7 +184,22 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
             tools=frozenset({"knowledge.answer"}),
             output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
         )
+        if getattr(agent, "asset_id", None) == "orchestrator":
+            raise HTTPException(status_code=422, detail="system root cannot be selected")
         agent_digest = agent.content_digest
+    frozen_agents = None
+    if workflow:
+        if services.asset_catalog is None:
+            raise KnowledgeRuntimeUnavailable
+        requested_ids = tuple(body.requested_agent_ids)
+        if agent is not None and agent.asset_id not in requested_ids:
+            requested_ids = (*requested_ids, agent.asset_id)
+        try:
+            frozen_agents = await AssetWorkflowCatalog(services.asset_catalog).freeze_agents(
+                scope, requested_ids
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
     if body.skill_revision_ids and services.asset_catalog is None:
         raise KnowledgeRuntimeUnavailable
     # Each Skill's latest revision, whatever its status: pinned Skills and the
@@ -188,6 +216,28 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
     pinned_skills, unavailable_notices = pinned_revisions(
         tuple(getattr(agent, "pinned_skill_ids", ()) or ()), library
     )
+    if workflow and agent is not None and frozen_agents is not None:
+        current = next(item for item in frozen_agents.candidates if item.agent_id == agent.asset_id)
+        if current.revision_id != agent.revision_id:
+            if agent.asset_id in body.requested_agent_ids:
+                raise HTTPException(status_code=422, detail="ambiguous Agent revision selection")
+            exact = replace(
+                current,
+                revision_id=agent.revision_id,
+                name=agent.display_name,
+                description=agent.description or "",
+                instruction=agent.system_instruction,
+                tool_ids=tuple(sorted(agent.tool_allowlist)),
+                model_alias=agent.default_model_alias,
+                skill_revision_ids=tuple(item.revision_id for item in pinned_skills),
+            )
+            frozen_agents = replace(
+                frozen_agents,
+                candidates=tuple(
+                    exact if item.agent_id == agent.asset_id else item
+                    for item in frozen_agents.candidates
+                ),
+            )
     selection = merge_skill_selection(manual_skills, pinned_skills, task="knowledge.answer")
     skills = selection.applied
     catalog = build_skill_catalog(
@@ -213,13 +263,19 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
         resolved_resources=selection_facts.resolved_resources,
-        agent_revision_id=body.agent_revision_id,
-        agent_revision_digest=agent_digest,
+        agent_revision_id=None if workflow else body.agent_revision_id,
+        agent_revision_digest=None if workflow else agent_digest,
         agent_label=(
             None
-            if body.agent_revision_id is None
+            if body.agent_revision_id is None or workflow
             else getattr(agent, "display_name", body.agent_revision_id)
         ),
+        requested_agent_ids=tuple(body.requested_agent_ids) if workflow else (),
+        requested_agent_revision_id=body.agent_revision_id if workflow else None,
+        delegate_ids=() if frozen_agents is None else frozen_agents.requested_ids,
+        workflow_task_id=body.workflow_task_id,
+        workflow_root=None if frozen_agents is None else frozen_agents.root,
+        workflow_agents=() if frozen_agents is None else frozen_agents.candidates,
         skill_revision_ids=tuple(item.revision_id for item in skills),
         skill_revision_digests=tuple(item.content_digest for item in skills),
         skill_labels=tuple(getattr(item, "display_name", item.revision_id) for item in skills),
@@ -227,19 +283,19 @@ async def _input(body: ConversationCreateRequest, request: Request) -> TurnInput
         requested_skill_revision_ids=tuple(body.skill_revision_ids),
         skill_catalog=catalog.entries,
         agent_system_instruction=(
-            None if body.agent_revision_id is None else agent.system_instruction
+            None if body.agent_revision_id is None or workflow else agent.system_instruction
         ),
         agent_system_instruction_digest=None
-        if body.agent_revision_id is None
+        if body.agent_revision_id is None or workflow
         else agent.system_instruction_digest,
         agent_tool_allowlist=()
-        if body.agent_revision_id is None
+        if body.agent_revision_id is None or workflow
         else tuple(sorted(agent.tool_allowlist)),
         agent_output_schema_json=None
-        if body.agent_revision_id is None
+        if body.agent_revision_id is None or workflow
         else agent.output_schema_json,
         agent_output_schema_digest=None
-        if body.agent_revision_id is None
+        if body.agent_revision_id is None or workflow
         else agent.output_schema_digest,
         skill_instruction_templates=tuple(
             cast(str, item.instruction_template)
@@ -303,6 +359,8 @@ def _turn(
             ],
             agent_revision_id=frozen.agent_revision_id,
             agent_label=frozen.agent_label or frozen.agent_revision_id,
+            requested_agent_ids=list(frozen.requested_agent_ids),
+            workflow_task_id=frozen.workflow_task_id,
             skill_revision_ids=list(frozen.skill_revision_ids),
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
             skill_notices=list(frozen.skill_notices),
@@ -391,14 +449,27 @@ async def create(
         return ConversationAccepted(
             conversation_id=conversation_id, turn_id=replay.turn_id, state="queued"
         )
+    admission = request.app.state.http_services.workflow_admission
+    workflow = bool(body.requested_agent_ids or body.workflow_task_id) or (
+        admission is not None and body.agent_revision_id is None
+    )
+    if workflow and admission is None:
+        raise KnowledgeRuntimeUnavailable
     with bind_trace(scope=request.state.project_scope, turn_id=turn_id):
         with span(
             "turn.request",
             {"tap.conversation_id": conversation_id, "tap.turn_id": turn_id},
         ):
-            turn = await service.create(
-                conversation_id, turn_id, idempotency_key, await _input(body, request)
-            )
+            frozen = await _input(body, request, workflow=workflow)
+            if workflow:
+                if body.workflow_task_id is not None:
+                    raise HTTPException(
+                        status_code=422, detail="workflowTaskId requires an existing conversation"
+                    )
+                assert admission is not None
+                turn = await admission.create(conversation_id, turn_id, idempotency_key, frozen)
+            else:
+                turn = await service.create(conversation_id, turn_id, idempotency_key, frozen)
     return ConversationAccepted(
         conversation_id=conversation_id, turn_id=turn.turn_id, state="queued"
     )
@@ -517,14 +588,28 @@ async def append(
     # Unknown or deleted Conversations fail before any input resolution work.
     await service.load(conversation_id)
     turn_id = uuid4().hex
+    admission = request.app.state.http_services.workflow_admission
+    workflow = bool(body.requested_agent_ids or body.workflow_task_id) or (
+        admission is not None and body.agent_revision_id is None
+    )
+    if workflow and admission is None:
+        raise KnowledgeRuntimeUnavailable
     with bind_trace(scope=request.state.project_scope, turn_id=turn_id):
         with span(
             "turn.request",
             {"tap.conversation_id": conversation_id, "tap.turn_id": turn_id},
         ):
-            turn = await service.append(
-                conversation_id, turn_id, idempotency_key, await _input(body, request)
-            )
+            frozen = await _input(body, request, workflow=workflow)
+            if workflow:
+                assert admission is not None
+                if body.workflow_task_id is not None:
+                    turn = await admission.continue_task(
+                        conversation_id, turn_id, idempotency_key, frozen
+                    )
+                else:
+                    turn = await admission.append(conversation_id, turn_id, idempotency_key, frozen)
+            else:
+                turn = await service.append(conversation_id, turn_id, idempotency_key, frozen)
     return ConversationAccepted(
         conversation_id=conversation_id, turn_id=turn.turn_id, state="queued"
     )

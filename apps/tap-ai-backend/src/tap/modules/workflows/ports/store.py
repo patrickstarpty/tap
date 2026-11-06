@@ -33,6 +33,10 @@ class WorkflowStore(Protocol):
         self, scope: ProjectScopeContext, command: ControlCommand
     ) -> dict[str, object]: ...
 
+    async def command(
+        self, scope: ProjectScopeContext, task_id: str, command_id: str
+    ) -> ControlCommand | None: ...
+
     async def pending_commands(
         self, scope: ProjectScopeContext, task_id: str
     ) -> tuple[ControlCommand, ...]: ...

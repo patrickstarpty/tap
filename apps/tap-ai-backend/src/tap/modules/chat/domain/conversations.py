@@ -13,6 +13,8 @@ from typing import Mapping
 
 from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
 from tap.modules.ai.domain.tools import known_tool_ids
+from tap.modules.workflows.application.routing import RouteDecision
+from tap.modules.workflows.ports.catalog import AgentSnapshot
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
@@ -123,6 +125,13 @@ class TurnInput:
     agent_revision_id: str | None = None
     agent_revision_digest: str | None = None
     agent_label: str | None = None
+    requested_agent_ids: tuple[str, ...] = ()
+    requested_agent_revision_id: str | None = None
+    delegate_ids: tuple[str, ...] = ()
+    workflow_task_id: str | None = None
+    workflow_root: AgentSnapshot | None = None
+    workflow_agents: tuple[AgentSnapshot, ...] = ()
+    route_decision: RouteDecision | None = None
     skill_revision_ids: tuple[str, ...] = ()
     skill_revision_digests: tuple[str, ...] = ()
     skill_labels: tuple[str, ...] = ()
@@ -263,6 +272,20 @@ class TurnInput:
         value = asdict(self)
         if self.agent_label is None:
             value.pop("agent_label")
+        if not self.requested_agent_ids:
+            value.pop("requested_agent_ids")
+        if self.requested_agent_revision_id is None:
+            value.pop("requested_agent_revision_id")
+        if not self.delegate_ids:
+            value.pop("delegate_ids")
+        if self.workflow_task_id is None:
+            value.pop("workflow_task_id")
+        if self.workflow_root is None:
+            value.pop("workflow_root")
+        if not self.workflow_agents:
+            value.pop("workflow_agents")
+        if self.route_decision is None:
+            value.pop("route_decision")
         if not self.skill_labels:
             value.pop("skill_labels")
         if not self.skill_notices:

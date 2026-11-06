@@ -2858,6 +2858,11 @@ export interface components {
             /** Modelalias */
             modelAlias: string;
             /**
+             * Requestedagentids
+             * @default []
+             */
+            requestedAgentIds?: string[];
+            /**
              * Skillrevisionids
              * @default []
              */
@@ -2867,6 +2872,8 @@ export interface components {
              * @default []
              */
             sourceRevisionIds?: string[];
+            /** Workflowtaskid */
+            workflowTaskId?: string | null;
         };
         /** ConversationDetail */
         ConversationDetail: {
@@ -2985,6 +2992,11 @@ export interface components {
             message: string;
             /** Modelalias */
             modelAlias: string;
+            /**
+             * Requestedagentids
+             * @default []
+             */
+            requestedAgentIds?: string[];
             /** Resolvedresources */
             resolvedResources: components["schemas"]["ConversationResolvedResourceView"][];
             /** Skilllabels */
@@ -3003,6 +3015,8 @@ export interface components {
             skillsUsed?: components["schemas"]["ConversationTurnSkillView"][];
             /** Sourcerevisionids */
             sourceRevisionIds: string[];
+            /** Workflowtaskid */
+            workflowTaskId?: string | null;
         };
         /** ConversationTurnRequestedEvent */
         ConversationTurnRequestedEvent: {

@@ -138,6 +138,73 @@ class ValidationAssetSeed:
     skills: tuple[SkillRevision, ...]
 
 
+_WORKFLOW_ROLES: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "orchestrator",
+        "Orchestrator · 内部统筹",
+        "Coordinate the user request, authorized evidence, and specialist delegation.",
+        "You are Tapper's internal coordinator. Answer directly when possible; "
+        "delegate only when a specialist adds value. Preserve the user's scope and authority.",
+    ),
+    (
+        "ba",
+        "BA · 业务分析师",
+        "Analyze business rules, process branches, and acceptance criteria.",
+        "Analyze requirements and evidence. State business rules, process branches, "
+        "acceptance criteria, and sources without inventing missing facts.",
+    ),
+    (
+        "sde",
+        "SDE · 软件开发工程师",
+        "Implement application and interface changes with verification evidence.",
+        "Implement authorized code changes and report verification evidence. "
+        "Respect project boundaries and request scope.",
+    ),
+    (
+        "qae",
+        "QAE · 质量保证工程师",
+        "Design test plans and cases or perform independent quality review.",
+        "Design tests or review quality independently. Identify coverage, expected results, "
+        "and evidence without claiming unrun checks passed.",
+    ),
+    (
+        "sdet",
+        "SDET · 测试开发工程师",
+        "Implement automation tests and diagnose or repair test scripts.",
+        "Implement authorized test automation and diagnose script failures. "
+        "Preserve assertions and report verification evidence.",
+    ),
+)
+
+
+def _workflow_agent_seeds(scope: ProjectScopeContext) -> tuple[AiAgentRevision, ...]:
+    output_json = json.dumps(VALIDATION_OUTPUT_SCHEMA, sort_keys=True, separators=(",", ":"))
+    return tuple(
+        AiAgentRevision(
+            revision_id=f"{agent_id}-v1",
+            asset_id=agent_id,
+            display_name=name,
+            description=description,
+            scope=scope,
+            content_digest=text_digest(f"workflow-{agent_id}-v1"),
+            system_instruction_digest=text_digest(instruction),
+            tool_allowlist=frozenset({"knowledge.search", "knowledge.answer"}),
+            output_schema_digest=schema_digest(VALIDATION_OUTPUT_SCHEMA),
+            system_instruction=instruction,
+            output_schema_json=output_json,
+            source_kind="built_in",
+        )
+        for agent_id, name, description, instruction in _WORKFLOW_ROLES
+    )
+
+
+def workflow_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
+    """Versioned internal root and professional roles, persisted by the AI catalog."""
+    return ValidationAssetSeed(
+        version="tapper-workflow-roles-v1", agents=_workflow_agent_seeds(scope), skills=()
+    )
+
+
 def validation_asset_seed(scope: ProjectScopeContext) -> ValidationAssetSeed:
     """Versioned server configuration; scope is supplied by trusted composition."""
     return ValidationAssetSeed(

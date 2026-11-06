@@ -2094,10 +2094,11 @@ async def _create_asset_catalog(
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
-    from tap.modules.ai.application.assets import validation_asset_seed
+    from tap.modules.ai.application.assets import validation_asset_seed, workflow_asset_seed
 
     catalog = MysqlAssetCatalog(async_sessionmaker(engine, expire_on_commit=False), scope=scope)
     await catalog.seed(validation_asset_seed(scope))
+    await catalog.seed(workflow_asset_seed(scope))
     return catalog
 
 

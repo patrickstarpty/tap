@@ -61,6 +61,8 @@ from tap.modules.governance.domain.audit import (
     AuditResource,
     SafeAuditMetadata,
 )
+from tap.modules.workflows.application.routing import RouteDecision
+from tap.modules.workflows.ports.catalog import AgentSnapshot
 from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 from tap.platform.db.schema import metadata
@@ -554,6 +556,26 @@ class MysqlConversationRepository:
             agent_revision_id=raw["agent_revision_id"],
             agent_revision_digest=raw["agent_revision_digest"],
             agent_label=raw.get("agent_label"),
+            requested_agent_ids=tuple(raw.get("requested_agent_ids", [])),
+            requested_agent_revision_id=raw.get("requested_agent_revision_id"),
+            delegate_ids=tuple(raw.get("delegate_ids", [])),
+            workflow_task_id=raw.get("workflow_task_id"),
+            workflow_root=(
+                AgentSnapshot.from_json(raw["workflow_root"]) if raw.get("workflow_root") else None
+            ),
+            workflow_agents=tuple(
+                AgentSnapshot.from_json(item) for item in raw.get("workflow_agents", [])
+            ),
+            route_decision=(
+                RouteDecision(
+                    kind=raw["route_decision"]["kind"],
+                    reason=raw["route_decision"]["reason"],
+                    confidence=raw["route_decision"]["confidence"],
+                    required_capabilities=tuple(raw["route_decision"]["required_capabilities"]),
+                )
+                if raw.get("route_decision")
+                else None
+            ),
             skill_revision_ids=tuple(raw["skill_revision_ids"]),
             skill_revision_digests=tuple(raw["skill_revision_digests"]),
             skill_labels=tuple(raw.get("skill_labels", [])),

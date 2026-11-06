@@ -1261,6 +1261,10 @@ class ConversationCreateRequest(ContractModel):
     source_revision_ids: Annotated[list[str], Field(max_length=50)] = []
     document_revision_ids: Annotated[list[str], Field(max_length=50)] = []
     agent_revision_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+    requested_agent_ids: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]], Field(max_length=16)
+    ] = []
+    workflow_task_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
     skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
     # Task 8: a plain conversation Turn may freeze `insightsReportRefs` alone
     # (no historical `insights_query_id` -- that field has no HTTP entry
@@ -1291,6 +1295,20 @@ class ConversationCreateRequest(ContractModel):
             raise ValueError("insights report refs must be unique")
         return values
 
+    @field_validator("requested_agent_ids")
+    @classmethod
+    def valid_requested_agents(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)) or "orchestrator" in values:
+            raise ValueError("requested Agents must be unique delegates")
+        return values
+
+    @field_validator("agent_revision_id")
+    @classmethod
+    def legacy_agent_cannot_be_root(cls, value: str | None) -> str | None:
+        if value in {"orchestrator", "orchestrator-v1"}:
+            raise ValueError("system root cannot be selected")
+        return value
+
 
 class ConversationResolvedResourceView(ContractModel):
     source_id: str
@@ -1320,6 +1338,8 @@ class ConversationTurnInputView(ContractModel):
     resolved_resources: list[ConversationResolvedResourceView]
     agent_revision_id: str | None = None
     agent_label: str | None = None
+    requested_agent_ids: list[str] = []
+    workflow_task_id: str | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
     skill_notices: list[str] = []

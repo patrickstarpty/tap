@@ -104,7 +104,7 @@ TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap
 
 **Interfaces:** `AgentSnapshot(agent_id, revision_id, name, description, instruction, tool_ids: tuple[str, ...], model_alias: str | None, skill_revision_ids: tuple[str, ...])`；`freeze_agents(scope, requested_ids: tuple[str, ...]) -> tuple[AgentSnapshot, ...]`。Skill 保持现有自动激活机制；开始时冻结候选 Skill 修订与常驻正文，不能恢复后换成最新文本。`RouteDecision(kind: Literal["native","coding","execute"], reason: str, confidence: float, required_capabilities: tuple[str, ...])`。分类可与入口模型响应合并，不新增强制前置模型轮次。
 
-- [ ] 写失败测试，覆盖选择被停用/越权 Agent、重复显示名、恢复保持旧修订、解释代码仍 native、生成脚本 coding、执行已发布制品 execute。用于验证显式意图与模型建议合并的纯函数：
+- [x] 写失败测试，覆盖选择被停用/越权 Agent、重复显示名、恢复保持旧修订、解释代码仍 native、生成脚本 coding、执行已发布制品 execute。用于验证显式意图与模型建议合并的纯函数：
 
 ```python
 import pytest
@@ -122,9 +122,9 @@ def test_system_root_cannot_be_requested_as_delegate():
         requested_delegate("orchestrator", ("orchestrator", "qae"))
 ```
 
-- [ ] 同文件窄测先失败，再实现 `requested_delegate(selected_id: str | None, allowed_ids: tuple[str, ...]) -> dict[str, str | None]`，未知 ID 和系统根身份不能成为委派目标；allowed_ids 只包含可委派专业 Agent。系统 Orchestrator 配置独立于可选择目录解析并冻结，继续复用 AI 修订机制；内置专业角色通过既有资产 seed 机制创建版本，不改用户自定义 Agent。配置与维护写入使用 AI 已有应用入口及 `B/modules/ai/adapters/maintenance.py` 的同事务操作；不向 `agent_team` 或 `skill_hub` 增加资产写入职责，不把运行状态事件写成资产维护记录。
-- [ ] 新请求字段 `requestedAgentIds` 与 `workflowTaskId` 明确委派及已有任务关联；旧 `agentRevisionId` 保持旧入口兼容，在新入口映射为显式委派，不能替换主 Orchestrator。多个显式选择保留全部，不再使用 `.find()` 静默只取一个。契约测试须覆盖未选 Agent 仍正常进入 Tapper，以及显式提交系统根 ID 被拒绝；依据稳定身份校验，不靠显示名隐藏或重命名用户自定义 Agent。
-- [ ] 编码能力未启用时返回明确不可用；低置信度且需扩大执行权限时请求澄清；进度查询读现有状态，追加要求走 Task 1.2，不能新建重复 task。
+- [x] 同文件窄测先失败，再实现 `requested_delegate(selected_id: str | None, allowed_ids: tuple[str, ...]) -> dict[str, str | None]`，未知 ID 和系统根身份不能成为委派目标；allowed_ids 只包含可委派专业 Agent。系统 Orchestrator 配置独立于可选择目录解析并冻结，继续复用 AI 修订机制；内置专业角色通过既有资产 seed 机制创建版本，不改用户自定义 Agent。配置与维护写入使用 AI 已有应用入口及 `B/modules/ai/adapters/maintenance.py` 的同事务操作；不向 `agent_team` 或 `skill_hub` 增加资产写入职责，不把运行状态事件写成资产维护记录。
+- [x] 后端请求字段 `requestedAgentIds` 与 `workflowTaskId` 明确委派及已有任务关联；旧 `agentRevisionId` 保持旧入口兼容，在新入口映射为显式委派，不能替换主 Orchestrator。后端保留全部显式选择，契约测试覆盖未选 Agent 仍正常进入 Tapper，以及显式提交系统根 ID 被拒绝；依据稳定身份校验，不靠显示名隐藏或重命名用户自定义 Agent。前端去除 `.find()` 并发送全部选择由 Task 1.6 承接。
+- [x] 纯路由合并接口在编码能力未启用时返回明确不可用，在低置信度且需扩大执行权限时请求澄清；应用进度查询只读已有状态，追加要求走 Task 1.2，不新建重复 task。生产入口调用 Gateway 建议并持久化最终路由、返回对应能力响应由 Task 1.4 承接。
 - [ ] 单测与 HTTP 契约通过，提交 `feat: route requests with frozen agent selections`。
 
 ### Task 1.4：原生 agent loop、子运行与独立 worker
@@ -146,6 +146,7 @@ def test_waiting_dependency_does_not_take_a_worker_slot():
 
 - [ ] 通过现有 DeterministicModelGateway 增加脚本化 response fixture：直接回答、普通工具、单委派、双独立委派、等待后汇总。运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_native_graph.py -q`，先失败。
 - [ ] 构建新图 `ingress → model ⇄ tools → verify → finalize`；工具执行按类型分派普通工具或委派命令，子运行使用独立 messages/checkpoint namespace。记录 tool_call_id→node_id，恢复不能重复 spawn；等待子任务时持久化并释放 worker，不 busy-poll、不把子任务全文塞回主上下文。复用知识能力时通过 `B/modules/knowledge/api.py` 的公开接口，在组装处注入依赖；不调用 HTTP `knowledge_service.py` 或复制 Knowledge 内部回答阶段。既有 Chat 的 `ConversationExecutionContext`、授权复检和 checkpoint v3 边界保持兼容。
+- [ ] 在生产 admission 中组合 Task 1.3 的冻结目录、进度/追加接口与路由合并接口：通过现有 Gateway 的首轮响应或显式意图确定并持久化最终 `route_decision`，执行前落实编码能力不可用与低置信度澄清；建立 durable owner/link，连接独立 worker，不能重复进入旧 Chat 队列。
 - [ ] worker 领取任务使用现有 `claim_transaction` 重试规则；新增 `TAP_WORKFLOW_ENABLED=false`、`TAP_WORKFLOW_MAX_PARALLEL_AGENTS=3`、`TAP_WORKFLOW_MAX_MODEL_CALLS=40`、`TAP_WORKFLOW_MAX_SECONDS=900`、`TAP_WORKFLOW_MAX_ATTEMPTS=3`，task 创建时冻结。费用上限可配置，未知成本保持 unknown，仍执行调用数/时间硬限制。委派和普通工具均重查授权。
 - [ ] 独立 MySQL 集成测试用 barrier 协调两个子任务，不用 sleep 证明并行；断电重启只重试未结算动作；保持旧 `test_agent_loop_mysql.py` 的既有聊天验收。
 
@@ -196,7 +197,7 @@ it("requests a snapshot when an event gap appears", () => {
 ```
 
 - [ ] `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/workflows` 先失败；实现 API hooks/reducer，然后实现 UI。中间对话仅显示简短进度与 RunStatusLink；用户点击才打开右侧 WorkflowSidebar，复杂任务也不自动展开。侧栏顶层“任务进度”显示 Tapper 当前活动、等待原因与统筹记录，关联内部 Orchestrator 根运行但不显示可调用的根 Agent 卡片；内部呈现工作流/时间线；点击节点在同一侧栏切换 NodeDetails，保留返回概览入口；服务/审批节点明确不同类型。
-- [ ] Agents 增加运行页签，专业 Agent 档案能看本 Agent 多个并行实例；目录、搜索和 picker/@ 排除系统 Tapper/Orchestrator。直接输入默认由 Tapper 执行，无须选择助手；picker/@ 仅将可委派专业 Agent 解析成稳定 ID，重名时要求选择具体档案；发送全部显式选择。定向输入展示 accepted/pending/applied/stale，暂停中不显示已暂停。
+- [ ] Agents 增加运行页签，专业 Agent 档案能看本 Agent 多个并行实例；目录、搜索和 picker/@ 排除系统 Tapper/Orchestrator。直接输入默认由 Tapper 执行，无须选择助手；picker/@ 仅将可委派专业 Agent 解析成稳定 ID，重名时要求选择具体档案；去除现有单项 `.find()`，映射 Task 1.3 的 `requestedAgentIds` 并发送全部显式选择。定向输入展示 accepted/pending/applied/stale，暂停中不显示已暂停。
 - [ ] `TapperWorkspace` 继续使用 `useConversationRuntime` 的 send/cancel/selectConversation/reset，不复制 SSE 合并、轮询、幂等键或恢复逻辑。widget 负责把 Agent 选择映射为发送字段、关联 taskId 和打开侧栏；workflow 订阅独立于侧栏展开状态，关闭面板不能取消运行。保留会话切换屏蔽迟到响应、失败重试复用幂等键、重复发送合并和 Insights 发送契约测试；运行 `corepack pnpm --filter @tap/ai-frontend exec vitest run src/features/conversations/model/useConversationRuntime.test.tsx src/widgets/tap/TapperWorkspace.conversations.test.tsx`。
 - [ ] 组件测试覆盖默认助手在对话、进度、通知和错误提示中统一显示 Tapper（不泄漏内部角色名）、目录/搜索/@ 无系统 Tapper 或 Orchestrator、未选 Agent 可直接发送、选择 SDET 不替换默认助手、简单问答只显示任务活动而无多余根 Agent 卡片；并覆盖默认收起、点击打开右侧、对话中无展开流水线、关闭侧栏任务仍继续、新事件/失败不强制重开、节点详情不叠第二层侧栏、再次打开同步最新快照；同时覆盖重连提示、失败 attempt 保留、更新不抢滚动/选择、日志分页、节点补充要求、取消状态竞态、键盘焦点、窄屏覆盖面板和 reduced-motion。检查实际视觉，沿用现有浅色/橙色，不加入装饰性虚假工作动画。
 - [ ] 浏览器场景：原生单问答→点击入口打开右侧→两个专业节点并行→指定节点补充→关闭侧栏后继续收到简短进度→重开/刷新/重连→从 Agent 档案打开同一 task 的侧栏；运行环境由阶段 1.7 专属脚本创建，不能连共享 Demo。

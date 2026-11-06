@@ -6,6 +6,34 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_workflow_seed_is_persisted_and_internal_root_absent_from_team_roster(
+    owned_project_mysql,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+    from tap.modules.agent_team.adapters.mysql import MysqlAgentTeamStore
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import workflow_asset_seed
+    from tap.modules.workflows.adapters.asset_catalog import AssetWorkflowCatalog
+
+    engine = create_async_engine(owned_project_mysql.url.replace("mysql+pymysql", "mysql+asyncmy"))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        catalog = MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE)
+        await catalog.seed(workflow_asset_seed(VALIDATION_SCOPE))
+        await catalog.seed(workflow_asset_seed(VALIDATION_SCOPE))
+        frozen = await AssetWorkflowCatalog(catalog).freeze_agents(VALIDATION_SCOPE, ("qae",))
+        assert frozen.root.revision_id == "orchestrator-v1"
+        assert {item.agent_id for item in frozen.candidates} == {"ba", "sde", "qae", "sdet"}
+        roster = MysqlAgentTeamStore(sessions, scope=VALIDATION_SCOPE)
+        assert await roster.agent("orchestrator") is None
+        assert "orchestrator" not in {item.agent_id for item in await roster.agents()}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_mysql_seed_is_idempotent_and_retired_revisions_remain_historically_resolvable(
     owned_project_mysql,
 ) -> None:

@@ -452,6 +452,8 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         ],
         "agentRevisionId": None,
         "agentLabel": None,
+        "requestedAgentIds": [],
+        "workflowTaskId": None,
         "skillRevisionIds": [],
         "skillLabels": [],
         "skillNotices": [],
