@@ -15,6 +15,7 @@ from tap.modules.workflows.adapters.schema import (
     workflow_attempt,
     workflow_command,
     workflow_dependency,
+    workflow_event,
     workflow_node,
     workflow_plan_revision,
     workflow_task,
@@ -72,8 +73,13 @@ class FixedRuntime:
     def __init__(self, inspection: RuntimeInspection) -> None:
         self.inspection = inspection
 
-    async def inspect(self, scope, task_id: str) -> RuntimeInspection:
-        return self.inspection
+    async def inspect(self, scope, episode) -> RuntimeInspection:
+        return RuntimeInspection(
+            self.inspection.outcome,
+            self.inspection.checkpoint_compatible,
+            self.inspection.side_effects,
+            execution_token=episode.execution_token,
+        )
 
 
 @pytest.mark.asyncio
@@ -271,7 +277,7 @@ async def test_steer_reworks_completed_node_without_mutating_it(workflow_db) -> 
     rework_id = rework[0][0]
     assert rework[0][2:] == ("queued", 2)
     assert (1, "finished", "successor") in edges
-    assert (2, "finished", rework_id) in edges
+    assert (2, "finished", rework_id) not in edges
     assert (2, rework_id, "successor") in edges
     assert {"independent", rework_id} == set(
         await store.ready_nodes(VALIDATION_SCOPE, task.task_id)
@@ -374,3 +380,197 @@ async def test_completed_task_rerun_creates_new_task_with_source(workflow_db) ->
             select(workflow_task.c.request_json).where(workflow_task.c.task_id == rerun.task_id)
         )
     assert source["rerun_from_task_id"] == original.task_id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_ack_keeps_first_applied_receipt(workflow_db) -> None:
+    sessions, store, service = workflow_db
+    task = await store.create_task(VALIDATION_SCOPE, {"goal": "race"}, "controls-race")
+    token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker-a")
+    command = ControlCommand("race-steer", task.task_id, None, "steer", 1, "clarify")
+    await service.submit(VALIDATION_SCOPE, command)
+    both_read = asyncio.Event()
+    reads = 0
+
+    def after_command_read(_conn, _cursor, statement, _params, _context, _many):
+        nonlocal reads
+        if "FROM workflow_command" in statement and "workflow_command.command_id =" in statement:
+            reads += 1
+            if reads == 2:
+                both_read.set()
+
+    engine = sessions.kw["bind"]
+    sa_event.listen(engine.sync_engine, "after_cursor_execute", after_command_read)
+    try:
+        async with sessions.begin() as blocker:
+            await blocker.execute(
+                select(workflow_task.c.task_id)
+                .where(workflow_task.c.task_id == task.task_id)
+                .with_for_update()
+            )
+            first = asyncio.create_task(
+                service.ack_command(VALIDATION_SCOPE, "race-steer", token, {"status": "applied"})
+            )
+            second = asyncio.create_task(
+                service.ack_command(VALIDATION_SCOPE, "race-steer", token, {"status": "applied"})
+            )
+            await asyncio.wait_for(both_read.wait(), timeout=10)
+        receipts = await asyncio.gather(first, second)
+    finally:
+        sa_event.remove(engine.sync_engine, "after_cursor_execute", after_command_read)
+    expected = {"status": "applied", "reason": None, "applied_plan_revision": 2}
+    assert receipts == [expected, expected]
+    async with sessions() as session:
+        stored = await session.scalar(
+            select(workflow_command.c.receipt).where(workflow_command.c.command_id == "race-steer")
+        )
+        revisions = await session.scalar(
+            select(func.count())
+            .select_from(workflow_plan_revision)
+            .where(workflow_plan_revision.c.task_id == task.task_id)
+        )
+        receipts_count = await session.scalar(
+            select(func.count())
+            .select_from(workflow_event)
+            .where(
+                workflow_event.c.task_id == task.task_id,
+                workflow_event.c.kind == "command.receipted",
+            )
+        )
+    assert stored == expected
+    assert revisions == 2
+    assert receipts_count == 1
+
+
+@pytest.mark.asyncio
+async def test_old_recovery_observation_cannot_resolve_new_episode(workflow_db) -> None:
+    sessions, store, _service = workflow_db
+    task = await store.create_task(VALIDATION_SCOPE, {"goal": "recover"}, "controls-episode")
+    first_token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker-a")
+    async with sessions.begin() as session:
+        await session.execute(
+            update(workflow_task)
+            .where(workflow_task.c.task_id == task.task_id)
+            .values(lease_until=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1))
+        )
+    first_episode = await store.mark_lease_lost(VALIDATION_SCOPE, task.task_id)
+    old_observation = RuntimeInspection(
+        "stopped", True, "clear", execution_token=first_episode.execution_token
+    )
+    assert await store.resolve_recovery(VALIDATION_SCOPE, task.task_id, old_observation) == "queued"
+    second_token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker-b")
+    assert second_token and second_token != first_token
+    async with sessions.begin() as session:
+        await session.execute(
+            update(workflow_task)
+            .where(workflow_task.c.task_id == task.task_id)
+            .values(lease_until=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1))
+        )
+    second_episode = await store.mark_lease_lost(VALIDATION_SCOPE, task.task_id)
+    assert second_episode.execution_token != first_episode.execution_token
+    with pytest.raises(ValueError, match="recovery episode"):
+        await store.resolve_recovery(VALIDATION_SCOPE, task.task_id, old_observation)
+    assert (await store.snapshot(VALIDATION_SCOPE, task.task_id))["status"] == "recovering"
+
+
+@pytest.mark.asyncio
+async def test_steer_accepted_before_terminal_completion_cannot_revise_task(workflow_db) -> None:
+    sessions, store, service = workflow_db
+    task = await store.create_task(VALIDATION_SCOPE, {"goal": "finish"}, "controls-terminal")
+    token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker-a")
+    await service.submit(
+        VALIDATION_SCOPE,
+        ControlCommand("late-steer", task.task_id, None, "steer", 1, "change"),
+    )
+    await store.append_event(
+        VALIDATION_SCOPE,
+        task.task_id,
+        token,
+        "finished-event",
+        "task.status",
+        {"signal": "runtime_succeeded"},
+    )
+    receipt = await service.ack_command(
+        VALIDATION_SCOPE, "late-steer", token, {"status": "applied"}
+    )
+    assert receipt == {
+        "status": "rejected",
+        "reason": "terminal task requires a new task",
+        "applied_plan_revision": None,
+    }
+    snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
+    assert snapshot["status"] == "succeeded"
+    assert snapshot["plan_revision"] == 1
+    async with sessions() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(workflow_plan_revision)
+                .where(workflow_plan_revision.c.task_id == task.task_id)
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                select(workflow_command.c.receipt).where(
+                    workflow_command.c.command_id == "late-steer"
+                )
+            )
+            == receipt
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_node_rework_inherits_prerequisites_without_blocking_on_failure(
+    workflow_db,
+) -> None:
+    sessions, store, service = workflow_db
+    task = await store.create_task(VALIDATION_SCOPE, {"goal": "repair"}, "controls-failed-rework")
+    token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker-a")
+    await _node(sessions, task.task_id, "prerequisite", "succeeded")
+    await _node(sessions, task.task_id, "failed-target", "failed")
+    await _node(sessions, task.task_id, "successor", "queued")
+    await _node(sessions, task.task_id, "independent", "queued")
+    await store.add_dependency(
+        VALIDATION_SCOPE, task.task_id, token, "prerequisite", "failed-target", 1
+    )
+    await store.add_dependency(
+        VALIDATION_SCOPE, task.task_id, token, "failed-target", "successor", 1
+    )
+    await service.submit(
+        VALIDATION_SCOPE,
+        ControlCommand("repair-steer", task.task_id, "failed-target", "steer", 1, "repair"),
+    )
+    assert (
+        await service.ack_command(VALIDATION_SCOPE, "repair-steer", token, {"status": "applied"})
+    )["applied_plan_revision"] == 2
+    async with sessions() as session:
+        rework_id = await session.scalar(
+            select(workflow_node.c.node_id).where(
+                workflow_node.c.task_id == task.task_id,
+                workflow_node.c.parent_node_id == "failed-target",
+            )
+        )
+        edges = (
+            await session.execute(
+                select(
+                    workflow_dependency.c.plan_revision,
+                    workflow_dependency.c.from_node_id,
+                    workflow_dependency.c.to_node_id,
+                ).where(workflow_dependency.c.task_id == task.task_id)
+            )
+        ).all()
+        original_status = await session.scalar(
+            select(workflow_node.c.status).where(workflow_node.c.node_id == "failed-target")
+        )
+    assert rework_id
+    assert original_status == "failed"
+    assert (1, "prerequisite", "failed-target") in edges
+    assert (1, "failed-target", "successor") in edges
+    assert (2, "prerequisite", rework_id) in edges
+    assert (2, rework_id, "successor") in edges
+    assert (2, "failed-target", rework_id) not in edges
+    assert set(await store.ready_nodes(VALIDATION_SCOPE, task.task_id)) == {
+        "independent",
+        rework_id,
+    }

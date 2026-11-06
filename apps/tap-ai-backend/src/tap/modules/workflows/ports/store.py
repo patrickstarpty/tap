@@ -5,7 +5,7 @@ from typing import Protocol
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.workflows.domain.commands import ControlCommand
 from tap.modules.workflows.domain.models import TaskSnapshot, WorkflowEvent
-from tap.modules.workflows.ports.runtime import RuntimeInspection
+from tap.modules.workflows.ports.runtime import RecoveryEpisode, RuntimeInspection
 
 
 class WorkflowStore(Protocol):
@@ -49,7 +49,9 @@ class WorkflowStore(Protocol):
         self, scope: ProjectScopeContext, task_id: str, owner: str
     ) -> str | None: ...
 
-    async def mark_lease_lost(self, scope: ProjectScopeContext, task_id: str) -> str: ...
+    async def mark_lease_lost(
+        self, scope: ProjectScopeContext, task_id: str
+    ) -> RecoveryEpisode | str: ...
 
     async def resolve_recovery(
         self, scope: ProjectScopeContext, task_id: str, inspection: RuntimeInspection

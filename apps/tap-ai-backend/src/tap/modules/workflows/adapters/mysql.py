@@ -28,7 +28,7 @@ from tap.modules.workflows.domain.commands import ControlCommand, command_dispos
 from tap.modules.workflows.domain.dependencies import validate_dependency_dag
 from tap.modules.workflows.domain.models import TaskSnapshot, WorkflowEvent, WorkflowStatus
 from tap.modules.workflows.domain.transitions import transition
-from tap.modules.workflows.ports.runtime import RuntimeInspection
+from tap.modules.workflows.ports.runtime import RecoveryEpisode, RuntimeInspection
 from tap.platform.db.lock_contention import claim_or_nothing, claim_transaction
 from tap.platform.db.project_scope import require_project_scope, scope_predicates, scope_values
 
@@ -696,7 +696,7 @@ class MysqlWorkflowStore:
         async with self._sessions.begin() as session:
             command_row = (
                 await session.execute(
-                    select(workflow_command).where(
+                    select(workflow_command.c.task_id).where(
                         *scope_predicates(workflow_command, scope),
                         workflow_command.c.command_id == command_id,
                     )
@@ -704,8 +704,7 @@ class MysqlWorkflowStore:
             ).first()
             if command_row is None:
                 raise LookupError("workflow command not found")
-            command = command_row._mapping
-            task_id = command["task_id"]
+            task_id = command_row.task_id
             task_row = (
                 await session.execute(
                     select(workflow_task)
@@ -719,22 +718,44 @@ class MysqlWorkflowStore:
                 raise LookupError("workflow task not found")
             task = task_row._mapping
             self._require_lease(task, lease_token)
+            current_command = (
+                await session.execute(
+                    select(workflow_command)
+                    .where(
+                        *scope_predicates(workflow_command, scope),
+                        workflow_command.c.command_id == command_id,
+                        workflow_command.c.task_id == task_id,
+                    )
+                    .with_for_update()
+                )
+            ).first()
+            if current_command is None:
+                raise LookupError("workflow command not found")
+            command = current_command._mapping
             if command["receipt"]["status"] not in ("accepted", "pending"):
                 return dict(command["receipt"])
             if command["payload"]["accepted_sequence"] != self._first_pending_sequence(
                 await session.execute(
-                    select(workflow_command.c.payload, workflow_command.c.receipt).where(
+                    select(workflow_command.c.payload, workflow_command.c.receipt)
+                    .where(
                         *scope_predicates(workflow_command, scope),
                         workflow_command.c.task_id == task_id,
                     )
+                    .with_for_update()
                 )
             ):
                 raise ValueError("earlier control command is pending")
             disposition = command_disposition(
                 command["expected_plan_revision"], task["plan_revision"], False
             )
-            if disposition != "pending":
+            if task["status"] in ("succeeded", "failed", "canceled", "skipped"):
                 result: dict[str, object] = {
+                    "status": "rejected",
+                    "reason": "terminal task requires a new task",
+                    "applied_plan_revision": None,
+                }
+            elif disposition != "pending":
+                result = {
                     "status": disposition,
                     "reason": "plan revision changed"
                     if disposition == "stale"
@@ -865,6 +886,9 @@ class MysqlWorkflowStore:
                 rework_id = uuid4().hex
             new_edges: set[tuple[str, str]] = set()
             for from_id, to_id in old_edges:
+                if rework_id is not None and to_id == node_id:
+                    new_edges.add((from_id, rework_id))
+                    continue
                 if (
                     rework_id is not None
                     and from_id == node_id
@@ -872,8 +896,6 @@ class MysqlWorkflowStore:
                 ):
                     from_id = rework_id
                 new_edges.add((from_id, to_id))
-            if rework_id is not None:
-                new_edges.add((node_id, rework_id))
             ordered_edges = sorted(new_edges)
             await session.execute(
                 workflow_plan_revision.insert().values(
@@ -1075,7 +1097,9 @@ class MysqlWorkflowStore:
             .one()
         )
 
-    async def mark_lease_lost(self, scope: ProjectScopeContext, task_id: str) -> str:
+    async def mark_lease_lost(
+        self, scope: ProjectScopeContext, task_id: str
+    ) -> RecoveryEpisode | str:
         scope = require_project_scope(scope)
         async with self._sessions.begin() as session:
             row = (
@@ -1090,6 +1114,9 @@ class MysqlWorkflowStore:
             if row is None:
                 raise LookupError("workflow task not found")
             task = row._mapping
+            if task["status"] == "recovering":
+                token = task["lease_token"]
+                return RecoveryEpisode(task_id, token) if token else "recovering"
             if task["status"] not in ("running", "pausing", "canceling"):
                 return task["status"]
             now = datetime.now(UTC).replace(tzinfo=None)
@@ -1102,7 +1129,6 @@ class MysqlWorkflowStore:
                     status="recovering",
                     recovering_from=task["status"],
                     lease_owner=None,
-                    lease_token=None,
                     lease_until=None,
                     next_sequence=task["next_sequence"] + 1,
                     updated_at=now,
@@ -1123,7 +1149,8 @@ class MysqlWorkflowStore:
                     **scope_values(scope),
                 )
             )
-            return "recovering"
+            token = task["lease_token"]
+            return RecoveryEpisode(task_id, token) if token else "recovering"
 
     async def resolve_recovery(
         self, scope: ProjectScopeContext, task_id: str, inspection: RuntimeInspection
@@ -1146,6 +1173,8 @@ class MysqlWorkflowStore:
             task = row._mapping
             if task["status"] != "recovering":
                 return task["status"]
+            if not inspection.execution_token or inspection.execution_token != task["lease_token"]:
+                raise ValueError("stale recovery episode observation")
             if inspection.outcome != "stopped":
                 return "recovering"
             origin = task["recovering_from"]
