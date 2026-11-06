@@ -38,8 +38,8 @@
 
 **Interfaces:** `ProbeAgent(agent_id: str, revision_id: str, description: str, instruction: str, tools: tuple[str, ...], enabled: bool)`；`export_profiles(root: Path, agents: tuple[ProbeAgent, ...], allowed_ids: frozenset[str]) -> dict[str, str]` 返回文件相对路径到 sha256 的映射。内置 ID 为 `orchestrator/ba/sde/qae/sdet`；其他 ID 仅允许 `[a-z0-9][a-z0-9_-]*`，重复、越界路径、无描述均抛 `ValueError`。先写临时目录，全部成功再原子替换；恢复时核对摘要，不重写旧快照。
 
-- [ ] 写独立阶段设计，固定下列场景、能力判定和 opt-in，不增加正式产品能力。
-- [ ] 写失败测试，另覆盖禁用、越权、重复 ID、换行/YAML 引号、同版本导出字节一致、生成失败不留下半份目录：
+- [x] 写独立阶段设计，固定下列场景、能力判定和 opt-in，不增加正式产品能力。
+- [x] 写失败测试，另覆盖禁用、越权、重复 ID、换行/YAML 引号、同版本导出字节一致、生成失败不留下半份目录：
 
 ```python
 from scripts.copilot_probe.models import ProbeAgent
@@ -53,9 +53,9 @@ def test_profiles_include_all_allowed_agents_without_prefix(tmp_path):
                           ".github/agents/qae.agent.md"}
 ```
 
-- [ ] 执行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/operations/test_copilot_probe.py -q`，预期先因缺模块/函数失败。
-- [ ] 实现明确白名单的 frontmatter 和正文编码；工具只映射选定 CLI 支持的名称，未知名称拒绝，不能通过缺省配置变成全部工具。
-- [ ] 同命令通过后，提交 `test: add frozen copilot probe profiles`。
+- [x] 执行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/operations/test_copilot_probe.py -q`，预期先因缺模块/函数失败。
+- [x] 实现明确白名单的 frontmatter 和正文编码；工具只映射选定 CLI 支持的名称，未知名称拒绝，不能通过缺省配置变成全部工具。
+- [x] 同命令通过后，提交 `test: add frozen copilot probe profiles`。
 
 ### Task 0.2：进程、事件与协议发现
 
