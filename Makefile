@@ -37,7 +37,33 @@ check: ## lint, format-check, typecheck, architecture checks
 brand-check:
 	uv run --project apps/tap-ai-backend python scripts/check_brand_namespace.py
 
-test: ## unit, integration, and contract tests
+.PHONY: test-core test-full
+
+# Keep the daily gate small and explicit; use test-full for release validation.
+test: test-core ## essential regression tests (no external services)
+
+test-core:
+	uv run --project apps/tap-ai-backend python scripts/check_backend_boundary.py
+	uv run --project apps/tap-ai-backend pytest -q \
+		apps/tap-ai-backend/tests/unit/access \
+		apps/tap-ai-backend/tests/unit/ai/test_chat_graph.py \
+		apps/tap-ai-backend/tests/unit/ai/test_agent_authoring.py \
+		apps/tap-ai-backend/tests/unit/ai/test_skill_activation.py \
+		apps/tap-ai-backend/tests/unit/ai/test_skill_package.py \
+		apps/tap-ai-backend/tests/unit/ai/test_tool_registry.py \
+		apps/tap-ai-backend/tests/unit/ai/test_tool_calls.py \
+		apps/tap-ai-backend/tests/unit/chat/test_skill_selection.py \
+		apps/tap-ai-backend/tests/unit/chat/test_turn_processor.py \
+		apps/tap-ai-backend/tests/unit/knowledge/test_inline_citations.py
+	corepack pnpm --filter @tap/ai-frontend exec vitest run --maxWorkers=2 \
+		src/features/conversations/model/stream.test.ts \
+		src/widgets/tap/workspace/agents/AgentForm.test.tsx \
+		src/widgets/tap/workspace/skills/SkillImportDialog.test.tsx \
+		src/widgets/tap/TapperWorkspace.conversations.test.tsx
+	uv run --project apps/backend pytest -q apps/backend/tests/unit/test_insights_query_boundaries.py apps/backend/tests/contract/test_insights_authorization.py
+	corepack pnpm --filter @tap/web exec vitest run --maxWorkers=2 src/App.test.tsx
+
+test-full: ## all unit, integration, and contract tests; E2E remains separate
 	uv run --project apps/tap-ai-backend python scripts/check_backend_boundary.py
 	uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests -v
 	corepack pnpm --filter @tap/ai-frontend test -- --run

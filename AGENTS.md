@@ -31,7 +31,8 @@ Run commands from the repository root:
 make bootstrap     # install frozen uv and pnpm dependencies
 make contracts     # regenerate OpenAPI/SSE and Web client/types
 make check         # lint, format, type, architecture, contract and build checks
-make test          # Backend pytest plus Web Vitest
+make test          # essential backend and frontend regression tests
+make test-full     # full backend and frontend suites, when risk warrants
 make demo-up       # start loopback middleware and owned resources
 make demo-check    # run five redacted dependency checks
 make demo-dev      # loopback API, Relay, worker and Web
@@ -51,7 +52,7 @@ Follow existing conventions. Markdown uses UTF-8, ATX headings, relative links a
 
 ## Testing Guidelines
 
-TAP AI Backend tests are in `apps/tap-ai-backend/tests/{unit,contract,integration,smoke}/`; TAP AI Web tests live beside features and in `apps/tap-ai-frontend/tests/e2e/`. TAP non-AI tests live in `apps/backend/tests/` and beside `apps/web/src/`. Use TDD for behavior changes: run the narrow test, then `make check` and `make test` in proportion to risk. `make demo-e2e` owns isolated middleware and must not mutate shared/default services. Real-model smoke requires `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1`; otherwise expect one skip. Review docs, links, lifecycle metadata and Phase boundaries. Never present local `doc` Milvus as enterprise Azure four-index completion or fake E2E as real-model validation.
+TAP AI Backend tests are in `apps/tap-ai-backend/tests/{unit,contract,integration,smoke}/`; TAP AI Web tests live beside features and in `apps/tap-ai-frontend/tests/e2e/`. TAP non-AI tests live in `apps/backend/tests/` and beside `apps/web/src/`. Use TDD for behavior changes and start with the affected tests. `make test` is the default core regression gate; do not run full suites for every change. Use `make check`, `make test-full`, and isolated E2E only when release scope, cross-module changes, migrations, persistence or integration risk warrants them. Documentation-only edits need document/link checks, not application suites. After a gate passes, do not repeat it unless relevant code or dependencies change; an identical-tree merge can reuse that evidence. `make demo-e2e` owns isolated middleware and must not mutate shared/default services. Real-model smoke requires `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1`; otherwise expect one skip. Review docs, links, lifecycle metadata and Phase boundaries. Never present local `doc` Milvus as enterprise Azure four-index completion or fake E2E as real-model validation.
 
 Tapper Demo is loopback-only, unauthenticated and supports text-extractable PDF/DOCX/MD/TXT and bounded XLSX ingestion without OCR. The rendered answer is page-local and not restored as history. Do not widen binds or make LAN/production claims without a separate security design.
 
