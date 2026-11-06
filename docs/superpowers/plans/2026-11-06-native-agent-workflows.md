@@ -77,7 +77,7 @@ TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap
 
 **Interfaces:** `ControlCommand(command_id, task_id, target_node_id: str | None, kind: Literal["steer","pause","resume","cancel","retry"], expected_plan_revision: int, text: str | None)`；receipt 状态 `accepted/pending/applied/rejected/stale`，含 reason、applied_plan_revision。`command_disposition(expected: int, actual: int, already_applied: bool) -> str`。`WorkflowService.submit(scope, command: ControlCommand) -> dict[str, object]` 只确认持久化；执行端 `ack_command(scope, command_id, lease_token, receipt)` 才确认应用。
 
-- [ ] 写失败测试：
+- [x] 写失败测试：
 
 ```python
 from tap.modules.workflows.domain.commands import command_disposition
@@ -87,16 +87,16 @@ def test_stale_plan_cannot_apply_new_instruction():
     assert command_disposition(2, 3, True) == "applied"
 ```
 
-- [ ] 运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_commands.py -q`，先失败，再实现去重、版本比较和授权。
-- [ ] 增补要求创建新的 plan revision；已完成实例保留，新返工建实例；暂停节点阻塞后继、独立分支继续；终态 retry 新 attempt，已完成任务 rerun 新 task。预算从 task 累加，不能因 attempt 清零。
-- [ ] 恢复服务先核对 lease、checkpoint、运行状态，失联进 recovering；权威未确认停止前不标 paused/canceled。新 worker 取得新 token 后，旧 worker 任何后续写入失败。
-- [ ] 在独立 MySQL 测试：重复指令返回同回执、同 ID 不同内容冲突；两条并发 steer 有稳定服务端顺序；崩溃发生在接收后/应用前与应用后/回执前均不重复应用；取消后的重启不能自动续跑。
+- [x] 运行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/workflows/test_commands.py -q`，先失败，再实现去重、版本比较和授权。
+- [x] 增补要求创建新的 plan revision；已完成实例保留，新返工建实例；暂停节点阻塞后继、独立分支继续；终态 retry 新 attempt，已完成任务 rerun 新 task。预算从 task 累加，不能因 attempt 清零。
+- [x] 恢复服务先核对 lease、checkpoint、运行状态，失联进 recovering；权威未确认停止前不标 paused/canceled。新 worker 取得新 token 后，旧 worker 任何后续写入失败。
+- [x] 在独立 MySQL 测试：重复指令返回同回执、同 ID 不同内容冲突；两条并发 steer 有稳定服务端顺序；崩溃发生在接收后/应用前与应用后/回执前均不重复应用；取消后的重启不能自动续跑。
 
 ```bash
 TAP_RUN_MYSQL_INTEGRATION=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/integration/test_workflow_recovery.py -q
 ```
 
-- [ ] 提交 `feat: coordinate workflow controls and recovery`。
+- [x] 提交 `feat: coordinate workflow controls and recovery`。
 
 ### Task 1.3：目录冻结、路由与显式 Agent 选择
 
