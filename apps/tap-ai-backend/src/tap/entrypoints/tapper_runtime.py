@@ -1318,6 +1318,7 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
     from tap.modules.workflows.adapters.native_runtime import (
         JournaledKnowledgeSearch,
         JournaledModelGateway,
+        append_tool_step,
     )
     from tap.modules.workflows.adapters.native_state import NativeStateStore
     from tap.modules.workflows.adapters.schema import workflow_task
@@ -1383,15 +1384,9 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         tool_id,
         outcome,
     ):
-        import hashlib
-
-        payload = {"node_id": node_id, "attempt": attempt, "tool_id": tool_id}
-        if outcome is not None:
-            payload["outcome"] = outcome
-        event_id = hashlib.sha256(
-            f"actual-step:{task_id}:{node_id}:{attempt}:{kind}:{call_id}".encode()
-        ).hexdigest()
-        await store.append_event(scope, task_id, token, event_id, kind, payload)
+        await append_tool_step(
+            store, scope, task_id, token, node_id, attempt, kind, call_id, tool_id, outcome
+        )
 
     knowledge_tool = JournaledKnowledgeSearch(
         store,

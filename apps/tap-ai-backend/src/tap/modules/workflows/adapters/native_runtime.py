@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
 
+from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.access.domain.policy import RetrievalPolicyContext
 from tap.modules.ai.domain.models import (
     ModelCallAudit,
@@ -32,6 +33,61 @@ def _remaining_seconds(request: dict[str, object]) -> float | None:
     if not isinstance(deadline, str):
         return None
     return (datetime.fromisoformat(deadline).astimezone(UTC) - datetime.now(UTC)).total_seconds()
+
+
+def tool_step_event(
+    task_id: str,
+    node_id: str,
+    attempt: int,
+    kind: str,
+    call_id: str,
+    tool_id: str,
+    outcome: str | None,
+) -> tuple[str, dict[str, object]]:
+    """The established immutable public identity and safe payload for a tool fact."""
+    payload: dict[str, object] = {"node_id": node_id, "attempt": attempt, "tool_id": tool_id}
+    if outcome is not None:
+        payload["outcome"] = outcome
+    event_id = hashlib.sha256(
+        f"actual-step:{task_id}:{node_id}:{attempt}:{kind}:{call_id}".encode()
+    ).hexdigest()
+    return event_id, payload
+
+
+async def append_tool_step(
+    store: MysqlWorkflowStore,
+    scope: ProjectScopeContext,
+    task_id: str,
+    token: str,
+    node_id: str,
+    attempt: int,
+    kind: str,
+    call_id: str,
+    tool_id: str,
+    outcome: str | None,
+) -> None:
+    event_id, payload = tool_step_event(task_id, node_id, attempt, kind, call_id, tool_id, outcome)
+    try:
+        await store.append_event(scope, task_id, token, event_id, kind, payload)
+    except ValueError as error:
+        if not (
+            kind == "node.tool_finished"
+            and outcome == "succeeded"
+            and str(error) == "event id payload conflict"
+        ):
+            raise
+        previous = await store.event_by_id(scope, task_id, event_id)
+        if (
+            previous is None
+            or previous.kind != kind
+            or previous.payload != {**payload, "outcome": "unknown"}
+        ):
+            raise
+        # A persisted uncertain outcome (including one written by the older
+        # event-ID rule) is immutable. Confirm its settled result with another
+        # stable event; ordinary succeeded replay remains a single old event.
+        confirmation_id = hashlib.sha256(f"{event_id}:confirmed".encode()).hexdigest()
+        await store.append_event(scope, task_id, token, confirmation_id, kind, payload)
 
 
 class JournaledModelGateway:

@@ -170,14 +170,26 @@ async def test_public_knowledge_search_reserves_shared_model_budget_and_replays_
 
 
 @pytest.mark.asyncio
-async def test_settled_knowledge_result_repairs_original_tool_outcome_after_crash():
-    from tap.modules.workflows.adapters.native_runtime import JournaledKnowledgeSearch
+@pytest.mark.parametrize(
+    "settled_history", ["lost_ack", "legacy_unknown", "legacy_success", "legacy_mismatch"]
+)
+async def test_settled_knowledge_result_confirms_prior_unknown_without_event_conflict(
+    settled_history,
+):
+    import hashlib
 
-    events: set[tuple[int, str, str | None]] = set()
+    from tap.modules.workflows.adapters.native_runtime import (
+        JournaledKnowledgeSearch,
+        append_tool_step,
+    )
+
+    events: dict[str, tuple[str, dict[str, object]]] = {}
+    history: list[tuple[int, str, str | None]] = []
     calls: list[str] = []
 
     class Store:
         result = None
+        lose_acknowledgement = True
 
         async def task_request(self, scope, task_id):
             return {"resolved_resources": [{"source_id": "source-1"}]}
@@ -194,7 +206,23 @@ async def test_settled_knowledge_result_repairs_original_tool_outcome_after_cras
 
         async def settle_action(self, scope, task_id, token, action_id, result, **kwargs):
             self.result = result
+            if self.lose_acknowledgement:
+                self.lose_acknowledgement = False
+                raise RuntimeError("settlement acknowledgement lost after commit")
             return result
+
+        async def append_event(self, scope, task_id, token, event_id, kind, payload):
+            previous = events.get(event_id)
+            if previous is not None:
+                if previous != (kind, payload):
+                    raise ValueError("event id payload conflict")
+                return
+            events[event_id] = (kind, payload)
+            history.append((payload["attempt"], kind, payload.get("outcome")))
+
+        async def event_by_id(self, scope, task_id, event_id):
+            existing = events.get(event_id)
+            return SimpleNamespace(kind=existing[0], payload=existing[1]) if existing else None
 
     class Knowledge:
         async def search(self, request, policy):
@@ -207,16 +235,13 @@ async def test_settled_knowledge_result_repairs_original_tool_outcome_after_cras
     async def authorize():
         return True
 
-    fail_finish = True
-
     async def actual_step(scope, task_id, token, node_id, attempt, kind, call_id, name, outcome):
-        nonlocal fail_finish
-        if kind == "node.tool_finished" and fail_finish:
-            fail_finish = False
-            raise RuntimeError("crash after durable action settlement")
-        events.add((attempt, kind, outcome))
+        await append_tool_step(
+            store, scope, task_id, token, node_id, attempt, kind, call_id, name, outcome
+        )
 
-    tool = JournaledKnowledgeSearch(Store(), Knowledge(), policy_for, on_actual_step=actual_step)
+    store = Store()
+    tool = JournaledKnowledgeSearch(store, Knowledge(), policy_for, on_actual_step=actual_step)
 
     async def execute(attempt):
         return await tool.execute(
@@ -231,15 +256,52 @@ async def test_settled_knowledge_result_repairs_original_tool_outcome_after_cras
             authorize,
         )
 
-    with pytest.raises(RuntimeError, match="crash after durable"):
-        await execute(1)
-    assert events == {(1, "node.tool_started", None)}
+    if settled_history != "lost_ack":
+        # Deliberately encode the old event identity as a literal rule. The
+        # current writer cannot redefine what was already persisted.
+        event_id = hashlib.sha256(
+            b"actual-step:task-1:node-1:1:node.tool_finished:call-1"
+        ).hexdigest()
+        outcome = "succeeded" if settled_history == "legacy_success" else "unknown"
+        payload = {
+            "node_id": "node-1",
+            "attempt": 1,
+            "tool_id": (
+                "different.tool" if settled_history == "legacy_mismatch" else "knowledge.search"
+            ),
+            "outcome": outcome,
+        }
+        store.result = {"summary": "persisted", "private_replay": True}
+        events[event_id] = ("node.tool_finished", payload)
+        history.append((1, "node.tool_finished", outcome))
+    else:
+        with pytest.raises(RuntimeError, match="acknowledgement lost"):
+            await execute(1)
+        assert history == [
+            (1, "node.tool_started", None),
+            (1, "node.tool_finished", "unknown"),
+        ]
+    if settled_history == "legacy_mismatch":
+        with pytest.raises(ValueError, match="event id payload conflict"):
+            await execute(2)
+        assert history == [(1, "node.tool_finished", "unknown")]
+        assert calls == []
+        return
     assert await execute(2) == await execute(3)
-    assert events == {
-        (1, "node.tool_started", None),
-        (1, "node.tool_finished", "succeeded"),
+    expected = {
+        "lost_ack": [
+            (1, "node.tool_started", None),
+            (1, "node.tool_finished", "unknown"),
+            (1, "node.tool_finished", "succeeded"),
+        ],
+        "legacy_unknown": [
+            (1, "node.tool_finished", "unknown"),
+            (1, "node.tool_finished", "succeeded"),
+        ],
+        "legacy_success": [(1, "node.tool_finished", "succeeded")],
     }
-    assert calls == ["reserve", "search"]
+    assert history == expected[settled_history]
+    assert calls == (["reserve", "search"] if settled_history == "lost_ack" else [])
 
 
 @pytest.mark.asyncio

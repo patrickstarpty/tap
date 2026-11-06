@@ -514,6 +514,24 @@ class MysqlWorkflowStore:
             raise LookupError("workflow task not found")
         return dict(request)
 
+    async def event_by_id(
+        self, scope: ProjectScopeContext, task_id: str, event_id: str
+    ) -> WorkflowEvent | None:
+        """Read one immutable event fact for a narrowly scoped replay conflict."""
+        scope = require_project_scope(scope)
+        require_identifier("event_id", event_id)
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    select(workflow_event).where(
+                        *scope_predicates(workflow_event, scope),
+                        workflow_event.c.task_id == task_id,
+                        workflow_event.c.event_id == event_id,
+                    )
+                )
+            ).first()
+        return _event(row) if row is not None else None
+
     async def append_event(
         self,
         scope: ProjectScopeContext,
