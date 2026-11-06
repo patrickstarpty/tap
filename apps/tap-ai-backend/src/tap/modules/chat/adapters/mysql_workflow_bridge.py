@@ -46,6 +46,7 @@ class MysqlWorkflowChatBridge:
         self._repository = MysqlConversationRepository(sessions, scope=scope)
         self._wakeups = wakeups
         self._repair_cursor: str | None = None
+        self._projection_cursor: str | None = None
 
     async def _turn(self, session: AsyncSession, conversation_id: str, turn_id: str, *, lock: bool):
         query = select(chat_turn).where(
@@ -390,22 +391,59 @@ class MysqlWorkflowChatBridge:
     async def projection_candidates(self, limit: int) -> tuple[tuple[str, str, str], ...]:
         if limit < 1:
             raise ValueError("projection scan limit must be positive")
+        eligible = select(
+            chat_turn.c.chat_id,
+            chat_turn.c.turn_id,
+            chat_turn.c.workflow_task_id,
+        ).where(
+            *scope_predicates(chat_turn, self._scope),
+            chat_turn.c.execution_owner == "workflow",
+            chat_turn.c.workflow_task_id.is_not(None),
+            chat_turn.c.state.in_(("queued", "running")),
+        )
+        async with self._sessions() as session:
+            rows = []
+            if self._projection_cursor is not None:
+                rows = list(
+                    (
+                        await session.execute(
+                            eligible.where(chat_turn.c.turn_id > self._projection_cursor)
+                            .order_by(chat_turn.c.turn_id)
+                            .limit(limit)
+                        )
+                    ).all()
+                )
+            if len(rows) < limit:
+                wrapped = (
+                    eligible
+                    if self._projection_cursor is None
+                    else eligible.where(chat_turn.c.turn_id <= self._projection_cursor)
+                )
+                rows.extend(
+                    (
+                        await session.execute(
+                            wrapped.order_by(chat_turn.c.turn_id).limit(limit - len(rows))
+                        )
+                    ).all()
+                )
+        if rows:
+            self._projection_cursor = str(rows[-1][1])
+        return tuple((str(row[0]), str(row[1]), str(row[2])) for row in rows)
+
+    async def projection_candidates_for_task(
+        self, task_id: str
+    ) -> tuple[tuple[str, str, str], ...]:
         async with self._sessions() as session:
             rows = (
                 await session.execute(
-                    select(
-                        chat_turn.c.chat_id,
-                        chat_turn.c.turn_id,
-                        chat_turn.c.workflow_task_id,
-                    )
+                    select(chat_turn.c.chat_id, chat_turn.c.turn_id, chat_turn.c.workflow_task_id)
                     .where(
                         *scope_predicates(chat_turn, self._scope),
                         chat_turn.c.execution_owner == "workflow",
-                        chat_turn.c.workflow_task_id.is_not(None),
+                        chat_turn.c.workflow_task_id == task_id,
                         chat_turn.c.state.in_(("queued", "running")),
                     )
-                    .order_by(chat_turn.c.created_at)
-                    .limit(limit)
+                    .order_by(chat_turn.c.turn_id)
                 )
             ).all()
         return tuple((str(row[0]), str(row[1]), str(row[2])) for row in rows)

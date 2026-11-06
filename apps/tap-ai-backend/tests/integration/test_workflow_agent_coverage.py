@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,6 +17,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
 from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
 from tap.modules.workflows.adapters.mysql_observations import MysqlAgentObservations
+from tap.modules.workflows.adapters.native_state import NativeStateStore
+from tap.modules.workflows.adapters.schema import workflow_attempt, workflow_node
+from tap.platform.db.project_scope import scope_values
 from tests.owned_mysql import owned_project_database_url
 
 
@@ -171,6 +175,664 @@ async def hosted_observations(host_backed_owned_mysql):
         yield MysqlAgentObservations(sessions, MysqlWorkflowStore(sessions)), sessions
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("historical_status", ["failed", "interrupted", "canceled", "skipped"])
+async def test_hard_limit_preserves_prior_attempt_history(
+    hosted_observations, historical_status
+) -> None:
+    _, sessions = hosted_observations
+    store, state = MysqlWorkflowStore(sessions), NativeStateStore(sessions)
+    task = await store.create_task(VALIDATION_SCOPE, {"goal": "retry then limit"}, uuid4().hex)
+    token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "history-worker")
+    assert token is not None
+    root = await state.ensure_root(VALIDATION_SCOPE, task.task_id, token)
+    await state.start_node(VALIDATION_SCOPE, task.task_id, token, root)
+    async with sessions.begin() as session:
+        await session.execute(
+            workflow_attempt.update()
+            .where(workflow_attempt.c.task_id == task.task_id, workflow_attempt.c.attempt == 1)
+            .values(status=historical_status, error_snapshot={"reason": "original failure"})
+        )
+        await session.execute(
+            workflow_node.update()
+            .where(workflow_node.c.node_id == root)
+            .values(status="running", attempt=2)
+        )
+        await session.execute(
+            workflow_attempt.insert().values(
+                attempt_id=uuid4().hex,
+                task_id=task.task_id,
+                node_id=root,
+                attempt=2,
+                status="running",
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                **scope_values(VALIDATION_SCOPE),
+            )
+        )
+    await state.fail_task(VALIDATION_SCOPE, task.task_id, token, "hard limit")
+    async with sessions() as session:
+        attempts = (
+            (
+                await session.execute(
+                    workflow_attempt.select()
+                    .where(workflow_attempt.c.task_id == task.task_id)
+                    .order_by(workflow_attempt.c.attempt)
+                )
+            )
+            .mappings()
+            .all()
+        )
+    assert [(row["status"], row["error_snapshot"]) for row in attempts] == [
+        (historical_status, {"reason": "original failure"}),
+        ("failed", {"reason": "hard limit"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_projection_scans_past_old_pending_turns_and_known_task_projects_directly(
+    hosted_observations,
+) -> None:
+    from tap.modules.chat.adapters.mysql import chat_turn
+    from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+    from tap.modules.chat.adapters.mysql_workflow_bridge import MysqlWorkflowChatBridge
+    from tap.modules.chat.application.conversations import ConversationService
+    from tap.modules.chat.domain.conversations import TurnInput
+    from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime, WorkflowProjection
+    from tap.modules.workflows.ports.catalog import AgentSnapshot
+
+    _, sessions = hosted_observations
+    store = MysqlWorkflowStore(sessions)
+    conversations = ConversationService(
+        MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+        scope=VALIDATION_SCOPE,
+    )
+    bridge = MysqlWorkflowChatBridge(sessions, scope=VALIDATION_SCOPE)
+    admission = WorkflowAdmissionCoordinator(conversations, bridge, store)
+    root = AgentSnapshot("orchestrator", None, "Tapper", "", "help", (), None, ())
+    turns = []
+    for index in range(3):
+        turns.append(
+            await (admission.create if index == 0 else admission.append)(
+                "projection-starvation",
+                f"projection-turn-{index}",
+                f"projection-request-{index}",
+                TurnInput(
+                    "Answer",
+                    VALIDATION_SCOPE.actor_id,
+                    "validation",
+                    "qwen-plus",
+                    workflow_root=root,
+                ),
+            )
+        )
+    async with sessions() as session:
+        task_ids = (
+            (
+                await session.execute(
+                    chat_turn.select()
+                    .with_only_columns(chat_turn.c.workflow_task_id)
+                    .where(chat_turn.c.turn_id.in_([turn.turn_id for turn in turns]))
+                    .order_by(chat_turn.c.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    terminal_id = task_ids[-1]
+    token = await store.claim_task(VALIDATION_SCOPE, terminal_id, "projection-worker")
+    assert token
+    state = NativeStateStore(sessions)
+    root_id = await state.ensure_root(VALIDATION_SCOPE, terminal_id, token)
+    await state.start_node(VALIDATION_SCOPE, terminal_id, token, root_id)
+    await state.finish_node(VALIDATION_SCOPE, terminal_id, token, root_id, "Persisted answer")
+    await state.finish_task(VALIDATION_SCOPE, terminal_id, token, "Persisted answer", "completed")
+    projection = WorkflowProjection(store, bridge)
+    await projection.repair(VALIDATION_SCOPE, limit=2)
+    await projection.repair(VALIDATION_SCOPE, limit=2)
+    loaded = await conversations.load("projection-starvation")
+    assert loaded.turns[-1].answer_snapshot.value.answer == "Persisted answer"
+
+    # A known task must bypass the unrelated pending prefix in one call.
+    fourth = await admission.append(
+        "projection-starvation",
+        "projection-turn-3",
+        "projection-request-3",
+        TurnInput(
+            "Again", VALIDATION_SCOPE.actor_id, "validation", "qwen-plus", workflow_root=root
+        ),
+    )
+    async with sessions() as session:
+        fourth_id = await session.scalar(
+            chat_turn.select()
+            .with_only_columns(chat_turn.c.workflow_task_id)
+            .where(chat_turn.c.turn_id == fourth.turn_id)
+        )
+    token = await store.claim_task(VALIDATION_SCOPE, fourth_id, "projection-worker")
+    assert token
+    root_id = await state.ensure_root(VALIDATION_SCOPE, fourth_id, token)
+    await state.start_node(VALIDATION_SCOPE, fourth_id, token, root_id)
+    await state.finish_node(VALIDATION_SCOPE, fourth_id, token, root_id, "Direct answer")
+    await state.finish_task(VALIDATION_SCOPE, fourth_id, token, "Direct answer", "completed")
+    runtime = NativeWorkflowRuntime(
+        store,
+        state,
+        object(),
+        checkpointer_factory=lambda *_: None,
+        action_gateway_factory=lambda *_: None,
+        owner="projection-worker",
+        chat=bridge,
+        projection=projection,
+    )
+    await runtime.start(VALIDATION_SCOPE, fourth_id)
+    loaded = await conversations.load("projection-starvation")
+    assert loaded.turns[-1].answer_snapshot.value.answer == "Direct answer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prior_status", "parent_queued"),
+    [("succeeded", False), ("succeeded", True), ("failed", False)],
+)
+async def test_terminal_specialist_steer_executes_rework_and_root_uses_new_result(
+    hosted_observations,
+    prior_status,
+    parent_queued,
+) -> None:
+    from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelResult,
+        ModelUsage,
+        text_digest,
+    )
+    from tap.modules.workflows.adapters.native_runtime import JournaledModelGateway
+    from tap.modules.workflows.adapters.schema import workflow_task
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+    from tap.modules.workflows.domain.commands import ControlCommand
+    from tap.modules.workflows.domain.delegation import DelegationRequest
+
+    _, sessions = hosted_observations
+    store, state = MysqlWorkflowStore(sessions), NativeStateStore(sessions)
+    task = await store.create_task(
+        VALIDATION_SCOPE,
+        {
+            "goal": "Review login",
+            "model_alias": "qwen-plus",
+            "root": {"agent_id": "orchestrator", "tool_ids": []},
+            "candidates": [
+                {"agent_id": "ba", "revision_id": None, "model_alias": "qwen-plus", "tool_ids": []}
+            ],
+            "budget_limit": {"model_calls": 4},
+        },
+        uuid4().hex,
+    )
+    token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker")
+    assert token
+    root = await state.ensure_root(VALIDATION_SCOPE, task.task_id, token)
+    await state.start_node(VALIDATION_SCOPE, task.task_id, token, root)
+    child = await state.delegate(
+        VALIDATION_SCOPE,
+        task.task_id,
+        token,
+        root,
+        DelegationRequest("ba", "Check login flow", (), "findings", ()),
+        "delegate-ba",
+    )
+    await state.wait_node(VALIDATION_SCOPE, task.task_id, token, root)
+    await state.start_node(VALIDATION_SCOPE, task.task_id, token, child)
+    if prior_status == "succeeded":
+        await state.finish_node(VALIDATION_SCOPE, task.task_id, token, child, "Old findings")
+    else:
+        await state.fail_node(VALIDATION_SCOPE, task.task_id, token, child, "Old failure")
+    if parent_queued:
+        assert await state.unblock_parents(VALIDATION_SCOPE, task.task_id, token) == (root,)
+    command_id = f"steer-rework-{prior_status}-{parent_queued}"
+    receipt = await store.submit_command(
+        VALIDATION_SCOPE,
+        ControlCommand(command_id, task.task_id, child, "steer", 1, "Check password reset"),
+    )
+    assert receipt["status"] == "accepted"
+    assert (
+        await store.ack_command(
+            VALIDATION_SCOPE,
+            command_id,
+            token,
+            {"status": "applied"},
+        )
+    )["status"] == "applied"
+    assert (
+        await store.ack_command(
+            VALIDATION_SCOPE,
+            command_id,
+            token,
+            {"status": "applied"},
+        )
+    )["status"] == "applied"
+    await state.release_task(VALIDATION_SCOPE, task.task_id, token, "queued")
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, request):
+            self.calls.append(request)
+            output = "Reworked findings" if len(self.calls) == 1 else "Final using rework"
+            usage = ModelUsage(1, 1)
+            return ModelResult(
+                output=output,
+                actual_model="fixture",
+                actual_provider="fixture",
+                usage=usage,
+                audit=ModelCallAudit(
+                    scope=request.scope,
+                    alias=request.alias,
+                    operation=ModelOperation.CHAT,
+                    prompt_digest=request.prompt_digest,
+                    schema_digest=None,
+                    context_digest=text_digest(request.context),
+                    idempotency_key=request.idempotency_key,
+                    actual_provider="fixture",
+                    actual_model="fixture",
+                    usage=usage,
+                ),
+                tool_calls=(),
+            )
+
+    gateway = Gateway()
+
+    def checkpointer_factory(scope, task_id, lease_token):
+        return MysqlGraphCheckpointer(
+            sessions,
+            scope=scope,
+            fence=GraphFence(
+                table=workflow_task,
+                identity_column=workflow_task.c.task_id,
+                identity=task_id,
+                token_column=workflow_task.c.lease_token,
+                token=lease_token,
+                lease_until_column=workflow_task.c.lease_until,
+                status_column=workflow_task.c.status,
+                running_status="running",
+                lease_owner="worker",
+            ),
+            defer_completion=True,
+        )
+
+    runtime = NativeWorkflowRuntime(
+        store,
+        state,
+        gateway,
+        checkpointer_factory=checkpointer_factory,
+        action_gateway_factory=lambda scope,
+        task_id,
+        token,
+        node_id,
+        attempt,
+        authorize: JournaledModelGateway(
+            gateway, store, task_id, token, node_id, attempt, authorize
+        ),
+        owner="worker",
+        standalone_authorize=lambda scope, task_id: _allow_owned(scope, task_id),
+    )
+    for _ in range(4):
+        await runtime.start(VALIDATION_SCOPE, task.task_id)
+        if (await store.snapshot(VALIDATION_SCOPE, task.task_id))["status"] == "succeeded":
+            break
+    snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
+    assert snapshot["status"] == "succeeded"
+    assert len(gateway.calls) == 2
+    assert "Check login flow" in gateway.calls[0].context
+    assert "Check password reset" in gateway.calls[0].context
+    assert "Reworked findings" in str(gateway.calls[1].messages)
+    assert "Old findings" not in str(gateway.calls[1].messages)
+    children = [node for node in snapshot["nodes"] if node["role"] == "ba"]
+    assert len(children) == 2
+    assert {node["status"] for node in children} == {prior_status, "succeeded"}
+    assert sum(event.kind == "node.delegated" for event in snapshot["events"]) == 2
+
+
+async def _allow_owned(scope, task_id):
+    assert scope == VALIDATION_SCOPE and task_id
+    return True
+
+
+@pytest.mark.asyncio
+async def test_terminal_structural_node_without_delegation_rejects_rework(hosted_observations):
+    from tap.modules.workflows.domain.commands import ControlCommand
+
+    _, sessions = hosted_observations
+    store = MysqlWorkflowStore(sessions)
+    task = await store.create_task(VALIDATION_SCOPE, {"goal": "Synthetic review"}, uuid4().hex)
+    token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker")
+    assert token
+    async with sessions.begin() as session:
+        await session.execute(
+            workflow_node.insert().values(
+                node_id="synthetic-completed",
+                task_id=task.task_id,
+                plan_revision=1,
+                role="service",
+                kind="service",
+                runtime="native",
+                status="succeeded",
+                attempt=1,
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                **scope_values(VALIDATION_SCOPE),
+            )
+        )
+        await session.execute(
+            workflow_attempt.insert().values(
+                attempt_id=uuid4().hex,
+                task_id=task.task_id,
+                node_id="synthetic-completed",
+                attempt=1,
+                status="succeeded",
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                **scope_values(VALIDATION_SCOPE),
+            )
+        )
+    await store.submit_command(
+        VALIDATION_SCOPE,
+        ControlCommand(
+            "synthetic-rework", task.task_id, "synthetic-completed", "steer", 1, "revise"
+        ),
+    )
+    receipt = await store.ack_command(
+        VALIDATION_SCOPE, "synthetic-rework", token, {"status": "applied"}
+    )
+    assert receipt["status"] == "rejected"
+    assert receipt["reason"] == "terminal node has no executable delegation input"
+    snapshot = await store.snapshot(VALIDATION_SCOPE, task.task_id)
+    assert snapshot["plan_revision"] == 1
+    assert [(node["node_id"], node["status"]) for node in snapshot["nodes"]] == [
+        ("synthetic-completed", "succeeded")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_expired_chat_task_reruns_as_new_authorized_execution_epoch(
+    hosted_observations,
+) -> None:
+    from datetime import timedelta
+
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelResult,
+        ModelUsage,
+        text_digest,
+    )
+    from tap.modules.workflows.adapters.schema import workflow_task
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+
+    _, sessions = hosted_observations
+    store, state = MysqlWorkflowStore(sessions), NativeStateStore(sessions)
+    old = await store.create_task(
+        VALIDATION_SCOPE,
+        {
+            "goal": "Review",
+            "origin_turn_id": "old-turn",
+            "conversation_id": "old-conversation",
+            "model_alias": "qwen-plus",
+            "root": {"agent_id": "orchestrator", "tool_ids": []},
+            "execution_window_seconds": 60,
+            "deadline_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        },
+        uuid4().hex,
+    )
+    async with sessions.begin() as session:
+        await session.execute(
+            workflow_task.update()
+            .where(workflow_task.c.task_id == old.task_id)
+            .values(status="failed")
+        )
+    rerun = await store.rerun_task(VALIDATION_SCOPE, old.task_id, "rerun-new-epoch")
+    replay = await store.rerun_task(VALIDATION_SCOPE, old.task_id, "rerun-new-epoch")
+    assert replay.task_id == rerun.task_id
+    request = await store.task_request(VALIDATION_SCOPE, rerun.task_id)
+    assert request["rerun_from_task_id"] == old.task_id
+    assert "origin_turn_id" not in request and "conversation_id" not in request
+    assert datetime.fromisoformat(request["deadline_at"]) > datetime.now(UTC)
+
+    class Gateway:
+        calls = 0
+
+        async def chat(self, model_request):
+            self.calls += 1
+            usage = ModelUsage(1, 1)
+            return ModelResult(
+                output="New completed answer",
+                actual_model="fixture",
+                actual_provider="fixture",
+                usage=usage,
+                audit=ModelCallAudit(
+                    scope=model_request.scope,
+                    alias=model_request.alias,
+                    operation=ModelOperation.CHAT,
+                    prompt_digest=model_request.prompt_digest,
+                    schema_digest=None,
+                    context_digest=text_digest(model_request.context),
+                    idempotency_key=model_request.idempotency_key,
+                    actual_provider="fixture",
+                    actual_model="fixture",
+                    usage=usage,
+                ),
+                tool_calls=(),
+            )
+
+    gateway = Gateway()
+    runtime = NativeWorkflowRuntime(
+        store,
+        state,
+        gateway,
+        checkpointer_factory=lambda *_: MemorySaver(),
+        action_gateway_factory=lambda *args: gateway,
+        owner="worker",
+        standalone_authorize=_allow_owned,
+    )
+    await runtime.start(VALIDATION_SCOPE, rerun.task_id)
+    assert (await store.snapshot(VALIDATION_SCOPE, rerun.task_id))["status"] == "succeeded"
+    assert gateway.calls == 1
+    assert (await store.snapshot(VALIDATION_SCOPE, old.task_id))["status"] == "failed"
+    other = await store.create_task(VALIDATION_SCOPE, {"goal": "Other"}, uuid4().hex)
+    async with sessions.begin() as session:
+        await session.execute(
+            workflow_task.update()
+            .where(workflow_task.c.task_id == other.task_id)
+            .values(status="failed")
+        )
+    with pytest.raises(ValueError, match="idempotency key payload conflict"):
+        await store.rerun_task(VALIDATION_SCOPE, other.task_id, "rerun-new-epoch")
+
+
+@pytest.mark.asyncio
+async def test_rerun_legacy_window_requires_positive_persisted_duration(
+    hosted_observations,
+) -> None:
+    from datetime import timedelta
+
+    from tap.modules.workflows.adapters.schema import workflow_task
+
+    _, sessions = hosted_observations
+    store = MysqlWorkflowStore(sessions)
+    original = await store.create_task(
+        VALIDATION_SCOPE,
+        {
+            "goal": "Legacy review",
+            "deadline_at": (datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+        },
+        uuid4().hex,
+    )
+    invalid = await store.create_task(
+        VALIDATION_SCOPE,
+        {
+            "goal": "Late legacy review",
+            "deadline_at": (datetime.now(UTC) - timedelta(minutes=2)).isoformat(),
+        },
+        uuid4().hex,
+    )
+    async with sessions.begin() as session:
+        await session.execute(
+            workflow_task.update()
+            .where(workflow_task.c.task_id.in_([original.task_id, invalid.task_id]))
+            .values(status="failed")
+        )
+    rerun = await store.rerun_task(VALIDATION_SCOPE, original.task_id, "legacy-valid-rerun")
+    request = await store.task_request(VALIDATION_SCOPE, rerun.task_id)
+    assert datetime.fromisoformat(request["deadline_at"]) > datetime.now(UTC)
+    with pytest.raises(ValueError, match="cannot recover"):
+        await store.rerun_task(VALIDATION_SCOPE, invalid.task_id, "legacy-invalid-rerun")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_ids", "effective_ids"),
+    [((), ("qae",)), (("ba",), ("ba", "qae"))],
+)
+async def test_legacy_and_mixed_selection_execute_all_frozen_specialists(
+    hosted_observations, raw_ids, effective_ids
+) -> None:
+    from tap.modules.ai.adapters.mysql_checkpointer import GraphFence, MysqlGraphCheckpointer
+    from tap.modules.ai.domain.models import (
+        ModelCallAudit,
+        ModelOperation,
+        ModelResult,
+        ModelUsage,
+        text_digest,
+    )
+    from tap.modules.chat.adapters.mysql import chat_turn
+    from tap.modules.chat.adapters.mysql_conversations import MysqlConversationRepository
+    from tap.modules.chat.adapters.mysql_workflow_bridge import MysqlWorkflowChatBridge
+    from tap.modules.chat.application.conversations import ConversationService
+    from tap.modules.chat.domain.conversations import TurnInput
+    from tap.modules.workflows.adapters.native_runtime import JournaledModelGateway
+    from tap.modules.workflows.adapters.schema import workflow_task
+    from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
+    from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+    from tap.modules.workflows.ports.catalog import AgentSnapshot
+
+    _, sessions = hosted_observations
+    store, state = MysqlWorkflowStore(sessions), NativeStateStore(sessions)
+    conversations = ConversationService(
+        MysqlConversationRepository(sessions, scope=VALIDATION_SCOPE),
+        scope=VALIDATION_SCOPE,
+    )
+    bridge = MysqlWorkflowChatBridge(sessions, scope=VALIDATION_SCOPE)
+    admission = WorkflowAdmissionCoordinator(conversations, bridge, store)
+    turn = await admission.create(
+        f"legacy-selection-{len(effective_ids)}",
+        f"turn-selection-{len(effective_ids)}",
+        f"request-selection-{len(effective_ids)}",
+        TurnInput(
+            "Review",
+            VALIDATION_SCOPE.actor_id,
+            "validation",
+            "qwen-plus",
+            requested_agent_ids=raw_ids,
+            requested_agent_revision_id="qae-v1",
+            delegate_ids=effective_ids,
+            workflow_root=AgentSnapshot(
+                "orchestrator", None, "Tapper", "", "help", (), "qwen-plus", ()
+            ),
+            workflow_agents=tuple(
+                AgentSnapshot(agent_id, None, agent_id, "", "", (), "qwen-plus", ())
+                for agent_id in effective_ids
+            ),
+        ),
+    )
+    async with sessions() as session:
+        task_id = await session.scalar(
+            chat_turn.select()
+            .with_only_columns(chat_turn.c.workflow_task_id)
+            .where(chat_turn.c.turn_id == turn.turn_id)
+        )
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, request):
+            self.calls.append(request)
+            if "Expected output:" in request.context:
+                output = f"Specialist completed {request.context}"
+            elif request.messages:
+                output = "All selected specialists completed"
+            else:
+                output = '{"route":{"kind":"native","reason":"review","confidence":1.0}}'
+            usage = ModelUsage(1, 1)
+            return ModelResult(
+                output=output,
+                actual_model="fixture",
+                actual_provider="fixture",
+                usage=usage,
+                audit=ModelCallAudit(
+                    scope=request.scope,
+                    alias=request.alias,
+                    operation=ModelOperation.CHAT,
+                    prompt_digest=request.prompt_digest,
+                    schema_digest=None,
+                    context_digest=text_digest(request.context),
+                    idempotency_key=request.idempotency_key,
+                    actual_provider="fixture",
+                    actual_model="fixture",
+                    usage=usage,
+                ),
+                tool_calls=(),
+            )
+
+    gateway = Gateway()
+
+    def checkpointer_factory(scope, task_id, lease_token):
+        return MysqlGraphCheckpointer(
+            sessions,
+            scope=scope,
+            fence=GraphFence(
+                table=workflow_task,
+                identity_column=workflow_task.c.task_id,
+                identity=task_id,
+                token_column=workflow_task.c.lease_token,
+                token=lease_token,
+                lease_until_column=workflow_task.c.lease_until,
+                status_column=workflow_task.c.status,
+                running_status="running",
+                lease_owner="worker",
+            ),
+            defer_completion=True,
+        )
+
+    runtime = NativeWorkflowRuntime(
+        store,
+        state,
+        gateway,
+        checkpointer_factory=checkpointer_factory,
+        action_gateway_factory=lambda scope,
+        task_id,
+        token,
+        node_id,
+        attempt,
+        authorize: JournaledModelGateway(
+            gateway, store, task_id, token, node_id, attempt, authorize
+        ),
+        owner="worker",
+        chat=bridge,
+    )
+    for _ in range(7):
+        await runtime.start(VALIDATION_SCOPE, task_id)
+        if (await store.snapshot(VALIDATION_SCOPE, task_id))["status"] == "succeeded":
+            break
+    snapshot = await store.snapshot(VALIDATION_SCOPE, task_id)
+    assert snapshot["status"] == "succeeded"
+    assert {node["role"] for node in snapshot["nodes"] if node["role"] != "root"} == set(
+        effective_ids
+    )
+    assert all(node["status"] == "succeeded" for node in snapshot["nodes"])
+    assert len(gateway.calls) == 2 + len(effective_ids)
 
 
 @pytest_asyncio.fixture

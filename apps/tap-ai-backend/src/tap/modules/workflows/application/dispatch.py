@@ -230,7 +230,7 @@ class NativeWorkflowRuntime:
         request = await self._store.task_request(scope, task_id)
         conversation_id = request.get("conversation_id")
         if isinstance(conversation_id, str):
-            await self._projection.repair(scope)
+            await self._projection.project_task(scope, task_id)
 
     async def _heartbeat(self, scope: ProjectScopeContext, task_id: str, token: str) -> None:
         while True:
@@ -731,4 +731,8 @@ class WorkflowProjection:
 
     async def repair(self, scope: ProjectScopeContext, limit: int = 100) -> None:
         for conversation_id, turn_id, task_id in await self._chat.projection_candidates(limit):
+            await self.project(scope, conversation_id, turn_id, task_id)
+
+    async def project_task(self, scope: ProjectScopeContext, task_id: str) -> None:
+        for conversation_id, turn_id, _ in await self._chat.projection_candidates_for_task(task_id):
             await self.project(scope, conversation_id, turn_id, task_id)

@@ -98,6 +98,8 @@ Chat 的公开 admission/link/cancel 端口与 `workflow_task.admission_ready` �
 | R40 | 原生会话答案用互斥 `workflowResult` 完成事实恢复。 | 事件合同和前端投影增加分支，不伪造检索证据。 |
 | R41 | E2E 六个中间件数据卷仅在自有项目覆写到私有宿主持久目录。 | runner 须验挂载/UID/清理；不能降低存储保护。 |
 | R42 | 发布 fixture 只额外接受严格 UUID 且 marker/凭据/容器标签一致的自有项目。 | 多一条受限测试入口，不能开放任意项目写入。 |
+| R43 | 原生 rerun 创建独立 Runs task，保留冻结业务输入与来源，清除旧 Chat 执行链接；新 admission 冻结执行时长，重跑从新 epoch 计算 deadline 并按当前 standalone 权限执行。旧任务仅从持久 deadline 与创建时间恢复正时长，无 deadline 保留原语义，同键取既有 winner。 | 结果不回写旧 Conversation；无法恢复正时长的旧任务须重新提交；未来若要 Chat 关联重跑，需要明确的新 Turn 流。 |
+| R44 | 终态专业节点返工只从原持久 `node.delegated` 复制可核实的冻结输入，在同事务建新实例并关联本次指导；原节点和 attempt 保留，root 用原 call ID 的新结果替换旧摘要。无执行输入的结构节点返回 rejected。 | 旧的合成或缺证据节点不能直接返工，须新请求；真实专业委派仍可返工。 |
 
 ## 验收与适用范围
 

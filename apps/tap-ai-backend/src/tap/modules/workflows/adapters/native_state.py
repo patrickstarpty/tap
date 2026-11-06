@@ -31,6 +31,30 @@ class NativeStateStore:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @staticmethod
+    async def _superseded_nodes(
+        session: AsyncSession, scope: ProjectScopeContext, task_id: str
+    ) -> frozenset[str]:
+        """Historical child outcomes do not block their executable rework successor."""
+        payloads = (
+            (
+                await session.execute(
+                    select(workflow_event.c.payload).where(
+                        *scope_predicates(workflow_event, scope),
+                        workflow_event.c.task_id == task_id,
+                        workflow_event.c.kind == "node.delegated",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return frozenset(
+            str(payload["rework_of_node_id"])
+            for payload in payloads
+            if isinstance(payload, dict) and isinstance(payload.get("rework_of_node_id"), str)
+        )
+
     async def _locked(
         self, session: AsyncSession, scope: ProjectScopeContext, task_id: str, token: str
     ):
@@ -609,9 +633,10 @@ class NativeStateStore:
                 .mappings()
                 .all()
             )
+            superseded = await self._superseded_nodes(session, scope, task_id)
             children: dict[str, list[str]] = {}
             for node in nodes:
-                if node["parent_node_id"]:
+                if node["parent_node_id"] and node["node_id"] not in superseded:
                     children.setdefault(node["parent_node_id"], []).append(node["status"])
             unblocked = tuple(
                 sorted(
@@ -692,16 +717,48 @@ class NativeStateStore:
                 .where(
                     *scope_predicates(workflow_node, scope),
                     workflow_node.c.task_id == task_id,
-                    workflow_node.c.status != "succeeded",
+                    workflow_node.c.status.in_(
+                        (
+                            "queued",
+                            "running",
+                            "waiting_dependency",
+                            "awaiting_input",
+                            "paused",
+                            "recovering",
+                            "pausing",
+                            "canceling",
+                        )
+                    ),
                 )
                 .values(status="failed")
+            )
+            current_attempt = (
+                select(workflow_node.c.attempt)
+                .where(
+                    *scope_predicates(workflow_node, scope),
+                    workflow_node.c.task_id == task_id,
+                    workflow_node.c.node_id == workflow_attempt.c.node_id,
+                )
+                .scalar_subquery()
             )
             await session.execute(
                 update(workflow_attempt)
                 .where(
                     *scope_predicates(workflow_attempt, scope),
                     workflow_attempt.c.task_id == task_id,
-                    workflow_attempt.c.status != "succeeded",
+                    workflow_attempt.c.attempt == current_attempt,
+                    workflow_attempt.c.status.in_(
+                        (
+                            "queued",
+                            "running",
+                            "waiting_dependency",
+                            "awaiting_input",
+                            "paused",
+                            "recovering",
+                            "pausing",
+                            "canceling",
+                        )
+                    ),
                 )
                 .values(status="failed", error_snapshot={"reason": reason})
             )
@@ -735,7 +792,8 @@ class NativeStateStore:
                     )
                 )
             ).all()
-            if remaining:
+            superseded = await self._superseded_nodes(session, scope, task_id)
+            if any(node_id not in superseded for (node_id,) in remaining):
                 raise ValueError("workflow task has unfinished nodes")
             # A follow-up accepted just before finalization must receive an
             # authoritative terminal rejection. Its command receipt and event

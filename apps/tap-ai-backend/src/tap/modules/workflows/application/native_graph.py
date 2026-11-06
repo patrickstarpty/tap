@@ -56,6 +56,7 @@ class NativeState(TypedDict, total=False):
     route_decision: dict[str, object]
     explicit_kind: RouteKind | None
     requested_ids: list[str]
+    fulfilled_requested_ids: list[str]
     activated_skills: list[dict[str, Any]]
 
 
@@ -227,6 +228,11 @@ class NativeWorkflowGraph:
                         sort_keys=True,
                     )
                 )
+            if state.get("requested_ids"):
+                instructions.append(
+                    "Explicitly selected specialists must each be delegated before the final "
+                    "answer: " + json.dumps(state["requested_ids"], ensure_ascii=False)
+                )
         else:
             instructions.append(
                 "Fulfill only the delegated objective; do not route or delegate again."
@@ -327,10 +333,10 @@ class NativeWorkflowGraph:
         if (
             self._is_root
             and route_json["kind"] == "native"
-            and round_number == 1
             and not calls
             and state.get("requested_ids")
         ):
+            fulfilled = set(state.get("fulfilled_requested_ids") or ())
             calls = [
                 {
                     "call_id": f"requested:{agent_id}",
@@ -346,6 +352,7 @@ class NativeWorkflowGraph:
                     ),
                 }
                 for agent_id in state["requested_ids"]
+                if agent_id not in fulfilled
             ]
         assistant = {
             "role": "assistant",
@@ -370,6 +377,7 @@ class NativeWorkflowGraph:
     async def _tools(self, state: NativeState) -> dict[str, Any]:
         messages = list(state.get("messages") or [])
         delegated = False
+        fulfilled = list(state.get("fulfilled_requested_ids") or ())
         activated = list(state.get("activated_skills") or [])
         for raw in state.get("pending_calls", []):
             if raw["name"] not in self._allowed_wire_names:
@@ -396,6 +404,11 @@ class NativeWorkflowGraph:
                     }
                 )
                 delegated = True
+                if (
+                    request.agent_id in state.get("requested_ids", ())
+                    and request.agent_id not in fulfilled
+                ):
+                    fulfilled.append(request.agent_id)
             elif raw["name"] == "skill_activate":
                 if self._skill_activation is None:
                     raise ValueError("Skill activation is unavailable")
@@ -457,6 +470,7 @@ class NativeWorkflowGraph:
             "messages": messages,
             "pending_calls": [],
             "activated_skills": activated,
+            "fulfilled_requested_ids": fulfilled,
             "waiting_reason": "children" if delegated else None,
         }
 

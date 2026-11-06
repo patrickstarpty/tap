@@ -124,6 +124,105 @@ async def test_two_delegations_return_waiting_without_root_model_recall():
 
 
 @pytest.mark.asyncio
+async def test_explicit_specialists_survive_tool_round_before_final_answer():
+    gateway = ScriptedGateway(
+        [
+            (
+                json.dumps(
+                    {
+                        "route": {"kind": "native", "reason": "review", "confidence": 1.0},
+                        "answer": "",
+                    }
+                ),
+                (ModelToolCall("search-1", "knowledge_search", json.dumps({"query": "check"})),),
+            ),
+            ("Final after search", ()),
+        ]
+    )
+    delegated = []
+
+    async def delegate(request, call_id):
+        delegated.append((request.agent_id, call_id))
+        return f"node-{request.agent_id}"
+
+    async def ordinary_tool(name, arguments, call_id):
+        return "search result"
+
+    graph = NativeWorkflowGraph(
+        gateway,
+        checkpointer=MemorySaver(),
+        delegate=delegate,
+        ordinary_tool=ordinary_tool,
+        allowed_tool_ids=("knowledge.search",),
+    )
+    result = await graph.run(
+        VALIDATION_SCOPE,
+        "task-explicit-tools",
+        "root",
+        "Review",
+        "qwen-plus",
+        requested_ids=("ba", "qae"),
+    )
+    assert result["waiting_reason"] == "children"
+    assert [item[0] for item in delegated] == ["ba", "qae"]
+    assert "ba" in gateway.calls[0].prompt and "qae" in gateway.calls[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_partial_explicit_delegation_resumes_only_missing_specialist():
+    gateway = ScriptedGateway(
+        [
+            (
+                json.dumps({"route": {"kind": "native", "reason": "review", "confidence": 1.0}}),
+                (
+                    ModelToolCall(
+                        "manual-ba",
+                        "workflow_delegate",
+                        json.dumps(
+                            {
+                                "agentId": "ba",
+                                "objective": "review",
+                                "inputRefs": [],
+                                "expectedOutput": "findings",
+                                "dependsOn": [],
+                            }
+                        ),
+                    ),
+                ),
+            ),
+            ("Final", ()),
+        ]
+    )
+    delegated = []
+
+    async def delegate(request, call_id):
+        delegated.append((request.agent_id, call_id))
+        return f"node-{request.agent_id}"
+
+    graph = NativeWorkflowGraph(gateway, checkpointer=MemorySaver(), delegate=delegate)
+    first = await graph.run(
+        VALIDATION_SCOPE,
+        "task-explicit-partial",
+        "root",
+        "Review",
+        "qwen-plus",
+        requested_ids=("ba", "qae"),
+    )
+    assert first["waiting_reason"] == "children"
+    second = await graph.run(
+        VALIDATION_SCOPE,
+        "task-explicit-partial",
+        "root",
+        "Review",
+        "qwen-plus",
+        requested_ids=("ba", "qae"),
+        child_results=({"call_id": "manual-ba", "summary": "BA complete"},),
+    )
+    assert second["waiting_reason"] == "children"
+    assert [item[0] for item in delegated] == ["ba", "qae"]
+
+
+@pytest.mark.asyncio
 async def test_root_resumes_after_children_with_only_summaries_and_same_route():
     route = {
         "route": {

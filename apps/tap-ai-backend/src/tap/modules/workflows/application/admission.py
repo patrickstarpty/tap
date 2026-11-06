@@ -92,7 +92,8 @@ class WorkflowAdmissionCoordinator:
             "model_alias": frozen.model_alias,
             "root": asdict(frozen.workflow_root),
             "candidates": [asdict(item) for item in frozen.workflow_agents],
-            "requested_ids": list(frozen.requested_agent_ids),
+            "requested_ids": list(frozen.delegate_ids),
+            "requested_agent_ids": list(frozen.requested_agent_ids),
             "requested_agent_revision_id": frozen.requested_agent_revision_id,
             "resolved_resources": [asdict(item) for item in frozen.resolved_resources],
             "skill_revision_ids": list(frozen.skill_revision_ids),
@@ -137,6 +138,7 @@ class WorkflowAdmissionCoordinator:
             ).isoformat(),
             "max_attempts": self.max_attempts,
             "max_parallel_agents": self.max_parallel_agents,
+            "execution_window_seconds": self.max_seconds,
         }
 
     def _standalone_key(self, scope: ProjectScopeContext, idempotency_key: str) -> str:
@@ -220,7 +222,7 @@ class WorkflowAdmissionCoordinator:
             self._conversations.scope, frozen.workflow_task_id
         )
         selected = tuple(original.get("requested_ids") or ())
-        if (frozen.requested_agent_ids and set(frozen.requested_agent_ids) != set(selected)) or (
+        if (frozen.delegate_ids and set(frozen.delegate_ids) != set(selected)) or (
             frozen.requested_agent_revision_id is not None
             and frozen.requested_agent_revision_id != original.get("requested_agent_revision_id")
         ):

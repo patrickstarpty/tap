@@ -1567,6 +1567,7 @@ class MysqlWorkflowStore:
             disposition = command_disposition(
                 command["expected_plan_revision"], task["plan_revision"], False
             )
+            delegated: dict[str, object] | None = None
             if task["status"] in ("succeeded", "failed", "canceled", "skipped"):
                 result: dict[str, object] = {
                     "status": "rejected",
@@ -1588,7 +1589,9 @@ class MysqlWorkflowStore:
                     "applied_plan_revision": None,
                 }
             else:
-                result = await self._apply_command(session, scope, task, command, receipt)
+                result, delegated = await self._apply_command(
+                    session, scope, task, command, receipt
+                )
             now = datetime.now(UTC).replace(tzinfo=None)
             await session.execute(
                 update(workflow_command)
@@ -1610,11 +1613,26 @@ class MysqlWorkflowStore:
                     **scope_values(scope),
                 )
             )
+            if delegated is not None:
+                await session.execute(
+                    workflow_event.insert().values(
+                        event_id=uuid4().hex,
+                        task_id=task_id,
+                        sequence=task["next_sequence"] + 1,
+                        node_id=delegated["node_id"],
+                        attempt=1,
+                        kind="node.delegated",
+                        payload=delegated,
+                        payload_digest=_digest(delegated),
+                        occurred_at=now,
+                        **scope_values(scope),
+                    )
+                )
             await session.execute(
                 update(workflow_task)
                 .where(workflow_task.c.task_id == task_id)
                 .values(
-                    next_sequence=task["next_sequence"] + 1,
+                    next_sequence=task["next_sequence"] + 1 + int(delegated is not None),
                     updated_at=now,
                 )
             )
@@ -1647,7 +1665,7 @@ class MysqlWorkflowStore:
         task: RowMapping,
         command: RowMapping,
         receipt: dict[str, object],
-    ) -> dict[str, object]:
+    ) -> tuple[dict[str, object], dict[str, object] | None]:
         fields = task
         item = command
         task_id = fields["task_id"]
@@ -1655,6 +1673,7 @@ class MysqlWorkflowStore:
         node_id = item["target_node_id"]
         now = datetime.now(UTC).replace(tzinfo=None)
         revision: int | None = None
+        delegated: dict[str, object] | None = None
         if kind == "steer":
             prior = (
                 (
@@ -1702,7 +1721,54 @@ class MysqlWorkflowStore:
                 "canceled",
                 "skipped",
             ):
+                original = (
+                    await session.execute(
+                        select(workflow_event.c.payload).where(
+                            *scope_predicates(workflow_event, scope),
+                            workflow_event.c.task_id == task_id,
+                            workflow_event.c.node_id == node_id,
+                            workflow_event.c.kind == "node.delegated",
+                        )
+                    )
+                ).scalar_one_or_none()
+                parent_id = target["parent_node_id"]
+                parent = by_id.get(parent_id)
+                if (
+                    target["kind"] != "agent"
+                    or not isinstance(original, dict)
+                    or parent is None
+                    or parent["role"] != "root"
+                    or original.get("parent_node_id") != parent_id
+                    or original.get("agent_id") != target["role"]
+                    or not isinstance(original.get("call_id"), str)
+                    or not isinstance(original.get("objective"), str)
+                    or not isinstance(original.get("expected_output"), str)
+                    or not isinstance(original.get("input_refs"), list)
+                ):
+                    return (
+                        {
+                            "status": "rejected",
+                            "reason": "terminal node has no executable delegation input",
+                            "applied_plan_revision": None,
+                        },
+                        None,
+                    )
+                if parent["status"] not in ("queued", "waiting_dependency"):
+                    return (
+                        {
+                            "status": "rejected",
+                            "reason": "delegation parent is already executing",
+                            "applied_plan_revision": None,
+                        },
+                        None,
+                    )
                 rework_id = uuid4().hex
+                delegated = {
+                    **original,
+                    "node_id": rework_id,
+                    "rework_of_node_id": node_id,
+                    "steer_command_id": item["command_id"],
+                }
             new_edges: set[tuple[str, str]] = set()
             for from_id, to_id in old_edges:
                 if rework_id is not None and to_id == node_id:
@@ -1736,12 +1802,34 @@ class MysqlWorkflowStore:
                 )
             )
             if rework_id is not None and target is not None:
+                if parent is not None and parent["status"] == "queued":
+                    await session.execute(
+                        update(workflow_node)
+                        .where(
+                            *scope_predicates(workflow_node, scope),
+                            workflow_node.c.task_id == task_id,
+                            workflow_node.c.node_id == parent["node_id"],
+                            workflow_node.c.status == "queued",
+                        )
+                        .values(status="waiting_dependency")
+                    )
+                    await session.execute(
+                        update(workflow_attempt)
+                        .where(
+                            *scope_predicates(workflow_attempt, scope),
+                            workflow_attempt.c.task_id == task_id,
+                            workflow_attempt.c.node_id == parent["node_id"],
+                            workflow_attempt.c.attempt == parent["attempt"],
+                            workflow_attempt.c.status == "queued",
+                        )
+                        .values(status="waiting_dependency")
+                    )
                 await session.execute(
                     workflow_node.insert().values(
                         node_id=rework_id,
                         task_id=task_id,
                         plan_revision=revision,
-                        parent_node_id=node_id,
+                        parent_node_id=target["parent_node_id"],
                         agent_revision_id=target["agent_revision_id"],
                         role=target["role"],
                         kind=target["kind"],
@@ -1959,7 +2047,7 @@ class MysqlWorkflowStore:
             )
         else:
             raise ValueError("unsupported workflow command")
-        return {"status": "applied", "reason": None, "applied_plan_revision": revision}
+        return {"status": "applied", "reason": None, "applied_plan_revision": revision}, delegated
 
     @staticmethod
     async def _command_node(
@@ -2832,6 +2920,16 @@ class MysqlWorkflowStore:
     ) -> tuple[str, ...]:
         scope = require_project_scope(scope)
         async with self._sessions() as session:
+            delegation = (
+                await session.execute(
+                    select(workflow_event.c.payload).where(
+                        *scope_predicates(workflow_event, scope),
+                        workflow_event.c.task_id == task_id,
+                        workflow_event.c.node_id == node_id,
+                        workflow_event.c.kind == "node.delegated",
+                    )
+                )
+            ).scalar_one_or_none()
             rows = (
                 (
                     await session.execute(
@@ -2850,7 +2948,12 @@ class MysqlWorkflowStore:
                 row
                 for row in rows
                 if row["receipt"]["status"] == "applied"
-                and row["target_node_id"] in (None, node_id)
+                and row["target_node_id"]
+                in (
+                    None,
+                    node_id,
+                    delegation.get("rework_of_node_id") if isinstance(delegation, dict) else None,
+                )
             ),
             key=lambda row: row["payload"]["accepted_sequence"],
         )
@@ -2946,10 +3049,20 @@ class MysqlWorkflowStore:
         """Create a fresh task with explicit provenance from a terminal task."""
         scope = require_project_scope(scope)
         require_identifier("task_id", task_id)
+        existing = await self.task_by_key(scope, idempotency_key)
+        if existing is not None:
+            prior = await self.task_request(scope, existing.task_id)
+            if prior.get("rerun_from_task_id") != task_id:
+                raise ValueError("idempotency key payload conflict")
+            return existing
         async with self._sessions() as session:
             row = (
                 await session.execute(
-                    select(workflow_task.c.status, workflow_task.c.request_json).where(
+                    select(
+                        workflow_task.c.status,
+                        workflow_task.c.request_json,
+                        workflow_task.c.created_at,
+                    ).where(
                         *scope_predicates(workflow_task, scope),
                         workflow_task.c.task_id == task_id,
                     )
@@ -2962,5 +3075,36 @@ class MysqlWorkflowStore:
         if row.status not in ("succeeded", "failed", "canceled", "skipped"):
             raise ValueError("rerun requires a terminal task")
         request = dict(row.request_json)
+        window = request.get("execution_window_seconds")
+        if window is None and request.get("deadline_at") is not None:
+            original_deadline = datetime.fromisoformat(str(request["deadline_at"]))
+            if original_deadline.tzinfo is None:
+                raise ValueError("rerun cannot recover the original execution window")
+            window = int(
+                (
+                    original_deadline.astimezone(UTC).replace(tzinfo=None) - row.created_at
+                ).total_seconds()
+            )
+        if window is not None:
+            if type(window) is not int or window < 1:
+                raise ValueError("rerun cannot recover the original execution window")
+            epoch = datetime.now(UTC)
+            request["execution_epoch_at"] = epoch.isoformat()
+            request["execution_window_seconds"] = window
+            request["deadline_at"] = (epoch + timedelta(seconds=window)).isoformat()
+        request.pop("origin_turn_id", None)
+        request.pop("conversation_id", None)
         request["rerun_from_task_id"] = task_id
-        return await self.create_task(scope, request, idempotency_key)
+        try:
+            return await self.create_task(scope, request, idempotency_key)
+        except ValueError as error:
+            if str(error) != "idempotency key payload conflict":
+                raise
+            winner = await self.task_by_key(scope, idempotency_key)
+            if (
+                winner is None
+                or (await self.task_request(scope, winner.task_id)).get("rerun_from_task_id")
+                != task_id
+            ):
+                raise
+            return winner

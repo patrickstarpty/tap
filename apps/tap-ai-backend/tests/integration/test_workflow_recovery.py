@@ -238,7 +238,7 @@ async def test_node_pause_blocks_dependents_but_not_independent_work(workflow_db
 
 
 @pytest.mark.asyncio
-async def test_steer_reworks_completed_node_without_mutating_it(workflow_db) -> None:
+async def test_steer_rejects_completed_node_without_executable_delegation(workflow_db) -> None:
     sessions, store, service = workflow_db
     task = await store.create_task(VALIDATION_SCOPE, {"goal": "review"}, "controls-5")
     token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker-a")
@@ -248,9 +248,11 @@ async def test_steer_reworks_completed_node_without_mutating_it(workflow_db) -> 
     await store.add_dependency(VALIDATION_SCOPE, task.task_id, token, "finished", "successor", 1)
     command = ControlCommand("steer-rework", task.task_id, "finished", "steer", 1, "revise")
     await service.submit(VALIDATION_SCOPE, command)
-    assert (
-        await service.ack_command(VALIDATION_SCOPE, "steer-rework", token, {"status": "applied"})
-    )["applied_plan_revision"] == 2
+    receipt = await service.ack_command(
+        VALIDATION_SCOPE, "steer-rework", token, {"status": "applied"}
+    )
+    assert receipt["status"] == "rejected"
+    assert receipt["reason"] == "terminal node has no executable delegation input"
     async with sessions() as session:
         nodes = (
             await session.execute(
@@ -272,16 +274,10 @@ async def test_steer_reworks_completed_node_without_mutating_it(workflow_db) -> 
             )
         ).all()
     assert ("finished", None, "succeeded", 1) in nodes
-    rework = [node for node in nodes if node[1] == "finished"]
-    assert len(rework) == 1
-    rework_id = rework[0][0]
-    assert rework[0][2:] == ("queued", 2)
+    assert len(nodes) == 3
     assert (1, "finished", "successor") in edges
-    assert (2, "finished", rework_id) not in edges
-    assert (2, rework_id, "successor") in edges
-    assert {"independent", rework_id} == set(
-        await store.ready_nodes(VALIDATION_SCOPE, task.task_id)
-    )
+    assert not any(edge[0] == 2 for edge in edges)
+    assert set(await store.ready_nodes(VALIDATION_SCOPE, task.task_id)) == {"independent"}
 
 
 @pytest.mark.asyncio
@@ -525,7 +521,7 @@ async def test_steer_accepted_before_terminal_completion_cannot_revise_task(work
 
 
 @pytest.mark.asyncio
-async def test_failed_node_rework_inherits_prerequisites_without_blocking_on_failure(
+async def test_failed_synthetic_node_without_delegation_input_cannot_rework(
     workflow_db,
 ) -> None:
     sessions, store, service = workflow_db
@@ -545,9 +541,11 @@ async def test_failed_node_rework_inherits_prerequisites_without_blocking_on_fai
         VALIDATION_SCOPE,
         ControlCommand("repair-steer", task.task_id, "failed-target", "steer", 1, "repair"),
     )
-    assert (
-        await service.ack_command(VALIDATION_SCOPE, "repair-steer", token, {"status": "applied"})
-    )["applied_plan_revision"] == 2
+    receipt = await service.ack_command(
+        VALIDATION_SCOPE, "repair-steer", token, {"status": "applied"}
+    )
+    assert receipt["status"] == "rejected"
+    assert receipt["reason"] == "terminal node has no executable delegation input"
     async with sessions() as session:
         rework_id = await session.scalar(
             select(workflow_node.c.node_id).where(
@@ -567,14 +565,9 @@ async def test_failed_node_rework_inherits_prerequisites_without_blocking_on_fai
         original_status = await session.scalar(
             select(workflow_node.c.status).where(workflow_node.c.node_id == "failed-target")
         )
-    assert rework_id
+    assert rework_id is None
     assert original_status == "failed"
     assert (1, "prerequisite", "failed-target") in edges
     assert (1, "failed-target", "successor") in edges
-    assert (2, "prerequisite", rework_id) in edges
-    assert (2, rework_id, "successor") in edges
-    assert (2, "failed-target", rework_id) not in edges
-    assert set(await store.ready_nodes(VALIDATION_SCOPE, task.task_id)) == {
-        "independent",
-        rework_id,
-    }
+    assert not any(edge[0] == 2 for edge in edges)
+    assert set(await store.ready_nodes(VALIDATION_SCOPE, task.task_id)) == {"independent"}
