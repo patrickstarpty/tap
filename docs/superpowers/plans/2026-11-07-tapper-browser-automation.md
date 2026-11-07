@@ -57,21 +57,22 @@ assert ledger.totals() == (117, 0.1496368)
 
 ## Task 3：修复 macOS 进程身份读取与中断观察
 
-**Diagnosis:** Task 2 的真实样本没有中断。离线已复现：同 PGID 的 `/usr/bin/python3 waiter.py` 仍被拒绝；组合 `ps` 输出截断 `comm`，真实 Xcode Python.app 的可执行名称为 `Python`，不能用小写 basename 正则推断身份。保存的最后一个条件快照无法解释此前窗口；历史 `any(bash running)` 会在工具完成后仍为 true。真实运行时的 PGID 关系尚未知，不能因此放宽进程组检查。
+**Diagnosis:** Task 2 的真实样本没有中断。离线已复现：同 PGID 的 `/usr/bin/python3 waiter.py` 仍被拒绝；组合 `ps` 输出截断 `comm`，真实 Xcode Python.app 的可执行名称为 `Python`，不能用小写 basename 正则推断身份。保存的最后一个条件快照无法解释此前窗口；历史 `any(bash running)` 会在工具完成后仍为 true。真实样本未保存 PGID；随后核对固定版本 shell.ts，非 Windows 的工具使用 detached 子进程，不能要求工具 PGID 等于 serve PID。改为下述严格的祖先链绑定，并以离线 detached 复现验证，不接受任意进程组。
 
 **Files:** Modify `scripts/opencode_probe/scenarios.py`；必要时新增小型 `scripts/opencode_probe/process_identity.py` 封装完整元数据与受信解释器预检；Modify `apps/tap-ai-backend/tests/unit/operations/test_opencode_scenarios.py`。保留 evaluator、权限、旧 fixture 和预算配置。
 
 **Interfaces and invariants:**
 
 - 监督端在固定子进程 PATH `/usr/bin:/bin:/usr/sbin:/sbin` 下启动自己持有 Popen 句柄的合成 Python 子进程，采集其完整可执行文件路径作为本次受信解释器身份。预检有短期限和 finally 清理，无网络，不读 `.env`；仅接受预检中该已知 PID 的完整可执行路径，不加入模糊 Python 名称白名单。macOS `sys.executable` 与进程实际 Python.app image 可能不同，应以已知进程的实际 image 为准。
-- `_owned_marker_status` 用完整不截断的进程字段，核对受信解释器的完整路径、PID、原 owner PGID、开始时间、精确 waiter.py 参数和 cwd。拆开读取元数据时确认开始身份仍相同，异常或身份变化仍 unknown。现有 `_post_abort_action` 与 `_signal_owned_waiter` 继续在发信号前复核同一身份；未证实停止不得续接。仅在报告保留身份摘要/安全枚举，不泄露主机完整路径。
+- `_owned_marker_status` 用完整不截断的进程字段，核对受信解释器的完整路径、PID、实际工具 PGID、开始时间、精确 waiter.py 参数和 cwd。拆开读取元数据时确认开始身份仍相同，异常或身份变化仍 unknown。现有 `_post_abort_action` 与 `_signal_owned_waiter` 继续在发信号前复核同一身份；未证实停止不得续接。仅在报告保留身份摘要/安全枚举，不泄露主机完整路径。
+- 所有权绑定：在中断前，按有界的 PID/PPID/PGID/start 快照验证 waiter 的祖先链确实到达当前仍存活的 serve PID，工具 group leader 也在该链上；拒绝断链、循环、超过 16 层、变化的开始身份、其他根或未知进程。将已核实的 serve 身份、工具 PGID/leader 开始身份和 waiter 身份冻结在监督器内存；中断后允许已绑定 waiter 因父进程退出而被系统收养，但必须仍匹配原 PID/start/full executable/PGID/cwd/script，发信号前再次核对。没有中断前的祖先链绑定不能信号或续接，不能仅凭进程名/文件标记接管。进程观察有总期限和输出长度上限；不在证据中保存其他进程的命令或路径。
 - 若新增内部 `TrustedInterpreter` 结构或 helper，其生产调用和所有相关测试一次更新；接口不对外发布。预检不属于 OpenCode 生成/执行证据，真实运行仍由 OpenCode bash 启动 waiter。
 - root 状态继续按同一 session 的最新状态；bash 状态按同一根 session、part ID 折叠，只有最新状态为 running 才算当前执行。忽略其他 session，不把旧 running 事件当当前事实。缺 part ID 或状态不明确时保守为 false。
 - 新增有界脱敏中断观察（最多 64 次状态变化，含相对时间、事件索引、root 状态、bash part 状态、marker PID/PGID 是否匹配和失败枚举）；同时保留现有最终 pre_abort_conditions。达到观察上限记录截断并保持未验证，不能静默丢掉关键条件。不要保存原始事件、命令输出、提示词或响应正文。
 
-- [ ] RED：用实际 `/usr/bin/python3` 与受控自有进程组复现拒绝；同时测试未知解释器、错误 PGID、变化的 PID/start/executable、错误 cwd/脚本均拒绝。所有活进程用 finally 清理，测试不等待 60 秒。
+- [ ] RED：用实际 `/usr/bin/python3` 与受控自有进程组复现拒绝；再用受控 detached 子进程复现真实组结构，验证可绑定到自有根；同时测试未知解释器、无祖先关系的 PGID、变化的 PID/start/executable、错误 cwd/脚本均拒绝。所有活进程用 finally 清理，测试不等待 60 秒。
 - [ ] RED：纯事件序列 `root busy → root bash running → 同 part completed → root idle` 的最终 active_bash 必须 false；其他 session running 不影响根，缺 ID 保守拒绝。测试观察轨迹上限和脱敏字段。
-- [ ] GREEN：只修上述读取和观察问题；不能调整门禁、放宽 PGID、增加模型输出或实验预算。
+- [ ] GREEN：只修上述读取和观察问题；不能调整门禁、接受未经祖先链绑定的 PGID、增加模型输出或实验预算。
 - [ ] 运行受影响 scenarios 测试，以及 import/调用签名受影响的 probe/evaluate 窄测；改动文件 Ruff/format/mypy 与 diff check。提交 `fix: verify complete macos waiter process identity`，报告确切命令和离线实际进程结果；实现者不执行真实模型实验。
 - [ ] 独立审查后，控制器可另行授权一次新输出路径的同上限真实恢复复验，记录剩余额度和新的诊断证据。不是自动重试；若出现新的 PGID 或事件协议问题，先诊断，再决定，不通过松绑身份校验取得 supported。
 
