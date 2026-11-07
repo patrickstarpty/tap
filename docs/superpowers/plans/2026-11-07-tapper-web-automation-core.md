@@ -26,12 +26,12 @@
 
 **Interfaces:** `BrowserRuntime.start_inspector(task_id, allowed_origins, deadline) -> handle`；`observe(handle, action) -> BrowserObservation`；`execute(bundle, inputs, limits) -> BrowserExecution`；`cancel(handle) -> stop_receipt`。这里以协议/注入式 Docker client 隔开真实命令；执行方法 async，命令 argv 固定、JSON 参数 stdin。合同字段按 spec，不在测试中导入 AI 应用。
 
-- [ ] RED：路径穿越、symlink、未授权 origin/私网、跨任务资源、缺证据、全 skipped、超时/取消未确认都拒绝。最小例：`assert execution_succeeded(exit_code=0, passed=0, skipped=1, evidence_complete=True) is False`。
-- [ ] 构建轻量固定 Node slim + Chromium + Playwright1.62.1；只在构建期安装依赖，记录 base/platform/npm/browser/final digest。复用已验证 Linux OpenCode包作为后续构建输入，当前任务无需模型。
-- [ ] inspector 固定结构化动作，持久 context、真实有界 snapshot/字段/截图；runner 在新 context 执行冻结 `flow.spec.ts`，受信 reporter 输出结果、每测试/步骤状态、截图与 trace。失败不由模型文字覆盖。
-- [ ] 实现隔离 Docker 生命周期、站点代理、NET_ADMIN-only短命规则设置及先验证后启动。CPU/memory/pids/输出/期限有界；取消确认停止。生成与执行不合并成同一未隔离进程。
-- [ ] unit 先 RED/GREEN；独立集成命令在自有合成站点验证 navigate/fill/select/result/screenshot/trace、取消和禁止出站/宿主网关/跨任务。读写检查及真实 Chromium sandbox 运行证据必需。不能用 mock 代替本项镜像/浏览器证明。
-- [ ] 相关 pytest、Node 测试、Ruff/mypy/diff 检查，提交 `feat: add isolated browser runtime`，报告实际镜像摘要与验证命令。无真实模型或用户网站动作。
+- [x] RED：路径穿越、symlink、未授权 origin/私网、跨任务资源、缺证据、全 skipped、超时/取消未确认都拒绝。最小例：`assert execution_succeeded(exit_code=0, passed=0, skipped=1, evidence_complete=True) is False`。
+- [x] 构建轻量固定 Node slim + Chromium + Playwright1.62.1；只在构建期安装依赖，记录 base/platform/npm/browser/final digest。复用已验证 Linux OpenCode包作为后续构建输入，当前任务无需模型。
+- [x] inspector 固定结构化动作，持久 context、真实有界 snapshot/字段/截图；runner 在新 context 执行冻结 `flow.spec.ts`，受信 reporter 输出结果、每测试/步骤状态、截图与 trace。失败不由模型文字覆盖。
+- [x] 实现隔离 Docker 生命周期、站点代理、NET_ADMIN-only短命规则设置及先验证后启动。CPU/memory/pids/输出/期限有界；取消确认停止。生成与执行不合并成同一未隔离进程。
+- [x] unit 先 RED/GREEN；独立集成命令在自有合成站点验证 navigate/fill/select/result/screenshot/trace、取消和禁止出站/宿主网关/跨任务。读写检查及真实 Chromium sandbox 运行证据必需。不能用 mock 代替本项镜像/浏览器证明。
+- [x] 相关 pytest、Node 测试、Ruff/mypy/diff 检查，提交 `feat: add isolated browser runtime`，报告实际镜像摘要与验证命令。无真实模型或用户网站动作。
 
 ## Task 2：浏览器资产、执行 API 与持久证据
 
