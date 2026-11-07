@@ -55,6 +55,63 @@ assert ledger.totals() == (117, 0.1496368)
 - [ ] 若监督器发送 SIGTERM，明确记录“监督器辅助停止”，不能宣称 OpenCode 原生 abort 已终止工具；后续 runtime 必须实现同等身份核实及确认停止。预置 waiter 不算模型生成脚本证据。
 - [ ] 若 evaluator 支持本次恢复证据，将新样本接入矩阵并保留旧不完整样本的回归；否则保持 unverified，只报告具体缺失。运行相关 fixture/evaluator 窄测与 diff/文档检查。不能因单项通过宣称阶段 0 或浏览器 E2E 完成。
 
+## Task 3：修复 macOS 进程身份读取与中断观察
+
+**Diagnosis:** Task 2 的真实样本没有中断。离线已复现：同 PGID 的 `/usr/bin/python3 waiter.py` 仍被拒绝；组合 `ps` 输出截断 `comm`，真实 Xcode Python.app 的可执行名称为 `Python`，不能用小写 basename 正则推断身份。保存的最后一个条件快照无法解释此前窗口；历史 `any(bash running)` 会在工具完成后仍为 true。真实运行时的 PGID 关系尚未知，不能因此放宽进程组检查。
+
+**Files:** Modify `scripts/opencode_probe/scenarios.py`；必要时新增小型 `scripts/opencode_probe/process_identity.py` 封装完整元数据与受信解释器预检；Modify `apps/tap-ai-backend/tests/unit/operations/test_opencode_scenarios.py`。保留 evaluator、权限、旧 fixture 和预算配置。
+
+**Interfaces and invariants:**
+
+- 监督端在固定子进程 PATH `/usr/bin:/bin:/usr/sbin:/sbin` 下启动自己持有 Popen 句柄的合成 Python 子进程，采集其完整可执行文件路径作为本次受信解释器身份。预检有短期限和 finally 清理，无网络，不读 `.env`；仅接受预检中该已知 PID 的完整可执行路径，不加入模糊 Python 名称白名单。macOS `sys.executable` 与进程实际 Python.app image 可能不同，应以已知进程的实际 image 为准。
+- `_owned_marker_status` 用完整不截断的进程字段，核对受信解释器的完整路径、PID、原 owner PGID、开始时间、精确 waiter.py 参数和 cwd。拆开读取元数据时确认开始身份仍相同，异常或身份变化仍 unknown。现有 `_post_abort_action` 与 `_signal_owned_waiter` 继续在发信号前复核同一身份；未证实停止不得续接。仅在报告保留身份摘要/安全枚举，不泄露主机完整路径。
+- 若新增内部 `TrustedInterpreter` 结构或 helper，其生产调用和所有相关测试一次更新；接口不对外发布。预检不属于 OpenCode 生成/执行证据，真实运行仍由 OpenCode bash 启动 waiter。
+- root 状态继续按同一 session 的最新状态；bash 状态按同一根 session、part ID 折叠，只有最新状态为 running 才算当前执行。忽略其他 session，不把旧 running 事件当当前事实。缺 part ID 或状态不明确时保守为 false。
+- 新增有界脱敏中断观察（最多 64 次状态变化，含相对时间、事件索引、root 状态、bash part 状态、marker PID/PGID 是否匹配和失败枚举）；同时保留现有最终 pre_abort_conditions。达到观察上限记录截断并保持未验证，不能静默丢掉关键条件。不要保存原始事件、命令输出、提示词或响应正文。
+
+- [ ] RED：用实际 `/usr/bin/python3` 与受控自有进程组复现拒绝；同时测试未知解释器、错误 PGID、变化的 PID/start/executable、错误 cwd/脚本均拒绝。所有活进程用 finally 清理，测试不等待 60 秒。
+- [ ] RED：纯事件序列 `root busy → root bash running → 同 part completed → root idle` 的最终 active_bash 必须 false；其他 session running 不影响根，缺 ID 保守拒绝。测试观察轨迹上限和脱敏字段。
+- [ ] GREEN：只修上述读取和观察问题；不能调整门禁、放宽 PGID、增加模型输出或实验预算。
+- [ ] 运行受影响 scenarios 测试，以及 import/调用签名受影响的 probe/evaluate 窄测；改动文件 Ruff/format/mypy 与 diff check。提交 `fix: verify complete macos waiter process identity`，报告确切命令和离线实际进程结果；实现者不执行真实模型实验。
+- [ ] 独立审查后，控制器可另行授权一次新输出路径的同上限真实恢复复验，记录剩余额度和新的诊断证据。不是自动重试；若出现新的 PGID 或事件协议问题，先诊断，再决定，不通过松绑身份校验取得 supported。
+
+## Task 4：可核对的全任务预算停止证据
+
+**Files:** Modify `scripts/opencode_probe/gateway.py`、`scenarios.py`、`cli.py`、`evaluate.py`；必要时新增 `scripts/opencode_probe/budget_evidence.py` 承载检查点和判定，避免扩大场景主循环；Modify `apps/tap-ai-backend/tests/unit/operations/test_opencode_gateway.py`、`test_opencode_scenarios.py`、`test_opencode_evaluate.py`。不发真实调用、不改权限配置或旧 fixture。
+
+**Interfaces and invariants:**
+
+- `BudgetGate.snapshot() -> dict[str, object]` 在现有锁内返回脱敏快照：单个随机 `task_budget_id`、`limits`（`max_calls/max_seconds/max_cost_usd`）、`calls/reserved_cost_usd/elapsed_ms`、`forwarded`、`blocked_after_cutoff`、首次 `cutoff`。cutoff 包含 `cause`（`deadline/calls/cost`）、`elapsed_ms/calls_at_cutoff/reserved_cost_usd_at_cutoff/forwarded_at_cutoff`。
+- 在同一 admission 锁下按 deadline、calls、cost 检查；首次 cutoff 一旦设置不可被之后原因覆盖，之后不再接纳或转发新请求。上游失败仍 fail closed，但不能伪装成预算 cutoff。保留每请求最坏费用预约；场景中不释放，只在网关关闭且所有 handler 结束后结算。
+- 每个真实调用 record 增加 `admitted_elapsed_ms` 和 `reserved_cost_usd`，用于重算而非信任自报 totals；拒绝记录保留原因、相对时间和已脱敏 session ID。计数和转发数分开，成功证据中必须与完整 record 对齐。截止前接纳的请求可稍后完成，不得把 record 写入时间当成接纳时间。
+- `_accounted_gate` 在最终 report 记录单一 ledger reservation/settlement（ID、实际 calls/charge、是否结算）及最终快照。历史 fixture 仍可读，但缺字段不能通过新预算判定。
+- 新 CLI 场景 `budget-continuation`：先用真实 task 委派 SDE 写一个合成标记，再由根启动预置 waiter；按现有身份核对中断、确认停止，再同一根会话续接。全过程只用一个 BudgetGate 和一组 ledger reserve/settle。通过持久 child/parent/tool 与网关 child request 核实委派，通过 assistant parentID 核实续接。之后可发有限的简单合成续问直到同一调用预算拒绝；不可重启网关或刷新 deadline。
+- 新场景 `budget-cost`、`budget-deadline`：分别通过保守预约触顶和短期限触发拒绝；deadline 使用预置受控等待，让模型调用不在到期时悬空。模型恢复后的请求须实际被拒绝或连接关闭，不能仅凭 runner timeout 判通过。保留 owned-process 清理，不能泄漏等待进程。
+- `budget_trace` 的 `before_child/after_child/before_abort/after_abort/after_continuation/final` 检查点共享 budget ID/root ID，并含累计 calls/reserved cost/elapsed。检查点须单调；after_child 有真实 child request，after_continuation 有续接消息关联和之后接纳的调用。监督器辅助停止必须如实记录。
+- 单独预算判定允许明确的预期 cutoff 导致 `terminal: incomplete`，不放宽 `verified_provenance`。要求固定真实 source/version/model/config、known sessions、完整可信 usage、限制与 cutoff 算术吻合、截止后至少一次阻止且 forward 不增加、单一结算；拒绝上游失败、未知用量、missing fields、reset counters/IDs、probe error。三个真实样本 key 为 `budget_count_continuation`、`budget_cost`、`budget_deadline`，全部满足才令 budget_enforcement supported。
+- 保留全局账本与单实验 10 calls/180 秒/USD0.60/512 output tokens 上限。不同场景是独立任务；只有 combined 场景证明子任务/暂停恢复共用预算。Stage 0 不新增网关重启恢复机制，后续产品 runtime 再验证自己的持久恢复。
+
+- [ ] RED：补网关三种 cutoff、并发接纳、不再转发、错误不能冒充预算的失败测试；补 trace ID/单调性/子调用/续接/结算缺失的拒绝测试。示意断言（对象由测试自有回环上游和真实网关产生）：
+
+```python
+before = gate.snapshot()
+assert before["task_budget_id"] == after_resume["task_budget_id"]
+assert before["calls"] <= after_resume["calls"]
+assert final["forwarded"] == final["cutoff"]["forwarded_at_cutoff"]
+assert final["blocked_after_cutoff"] > 0
+```
+
+- [ ] GREEN：实现以上最小 capture/场景/判定；单测的合成正例仅验证判定逻辑，不能产生 `opencode-real` 文件或提高真实能力矩阵。
+- [ ] 验证上述三个受影响测试文件，及 cli/ledger 接口涉及的 `test_opencode_probe.py`；运行改动文件 Ruff/format/mypy、diff check。报告 RED/GREEN、确切命令和结果，提交 `feat: verify task-wide opencode budget cutoffs`，独立审查之后才执行真实场景。
+
+## Task 5：三项有界真实预算实验
+
+**Files:** 新增 real fixture `budget-count-continuation.json`、`budget-cost-continuation.json`、`budget-deadline-continuation.json`；更新装载测试及能力 guide/spec/roadmap 的真实状态。不改旧样本，不放宽 Task 4 判定。
+
+- [ ] Task 4 独立审查后，在同一原 ledger 顺序运行至多三个场景；每个结束先检查和结算，不盲目重试。调用数场景最多 10 calls/180 秒/USD0.60；费用场景最多 10 calls/180 秒/USD0.50；期限场景最多 10 calls/180 秒/USD0.50（网关短期限按确定性检查和模型首回合耗时选择并在报告记录）。总预约最多 30 calls/USD1.60；先核对剩余全局预算。
+- [ ] 首个非预期失败即停止后续真实调用，依实际证据定位；不能提高 cap 让模型完成，不能拼接不同运行补齐 combined trace。
+- [ ] 三项真实证据全部满足新 predicate 才更新能力状态，否则保持 unverified。运行 fixture/evaluator 窄测、文档链接与 diff 检查，提交后独立审查。
+
 ## 后续执行顺序与阶段退出
 
 1. 根据固定版本源代码和真实协议可达性，把 BYOK、权限和累计预算的缺口落实为有限实验与精确判定。源协议无法满足既定要求时提出具体重大取舍，不暗改要求；避免重复同一无效提示词。恢复只做一次完整实验，失败先依前置条件证据诊断。
