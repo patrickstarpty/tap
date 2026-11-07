@@ -87,7 +87,16 @@ def test_ledger_rejects_settlement_larger_than_reservation(tmp_path) -> None:
 
 def test_square_artifact_check_rejects_imports_and_accepts_bounded_prints() -> None:
     assert _safe_square_script("print(2 ** 2)\nprint(3 ** 2)\n")
+    assert _safe_square_script(
+        "print('The square of 2 is', 2 ** 2)\nprint('The square of 3 is', 3 ** 2)\n"
+    )
     assert not _safe_square_script("import os\nprint(4)\n")
+
+
+def test_square_artifact_check_rejects_growth_without_execution() -> None:
+    assert not _safe_square_script("print('x' * 10**12)\n")
+    assert not _safe_square_script("print(2 ** (2 ** 32))\n")
+    assert not _safe_square_script("print('x' * 300)\n")
 
 
 def test_roster_profiles_have_exact_allowed_sizes() -> None:

@@ -3,6 +3,7 @@
 import signal
 import subprocess
 import threading
+import time
 
 import pytest
 from scripts.opencode_probe import scenarios
@@ -132,6 +133,59 @@ def test_first_action_count_is_strict_append_only_marker(tmp_path) -> None:
     assert scenarios._first_action_count(tmp_path) == 2
     marker.write_bytes(b"start\ninvalid\n")
     assert scenarios._first_action_count(tmp_path) is None
+
+
+def test_generated_script_source_and_artifact_digest_are_bounded(tmp_path) -> None:
+    script = tmp_path / "square.py"
+    script.write_text("print(4, 9)\n")
+    assert scenarios._read_bounded_script(script) == "print(4, 9)\n"
+    assert scenarios._bounded_artifact_digest(script) is not None
+    script.write_bytes(b"x" * 4097)
+    assert scenarios._read_bounded_script(script) is None
+    script.write_bytes(b"x" * 1_048_577)
+    assert scenarios._bounded_artifact_digest(script) is None
+
+
+def test_permission_target_rejects_oversized_generated_artifact(tmp_path) -> None:
+    (tmp_path / "denied.txt").write_bytes(b"x" * 1_048_577)
+    assert scenarios._permission_target_digest(tmp_path) == "unsafe"
+
+
+def test_generated_script_stdout_stops_at_capture_cap(tmp_path) -> None:
+    script = tmp_path / "square.py"
+    script.write_text("import time\nprint('x' * 300, flush=True)\ntime.sleep(10)\n")
+    started = time.monotonic()
+    exit_code, stdout, limit = scenarios._run_square_script(script, tmp_path)
+    assert exit_code is None
+    assert stdout is None
+    assert limit == "stdout_cap"
+    assert time.monotonic() - started < 2
+
+
+def test_generated_script_stdout_rejects_invalid_encoding(tmp_path) -> None:
+    script = tmp_path / "square.py"
+    script.write_text("import sys\nsys.stdout.buffer.write(b'\\xff')\n")
+    exit_code, stdout, limit = scenarios._run_square_script(script, tmp_path)
+    assert exit_code is None
+    assert stdout is None
+    assert limit == "stdout_encoding"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("print(2 ** 2, 3 ** 2)\n", "4 9"),
+        (
+            "print('The square of 2 is', 2 ** 2)\nprint('The square of 3 is', 3 ** 2)\n",
+            "The square of 2 is 4\nThe square of 3 is 9",
+        ),
+    ],
+)
+def test_generated_script_preserves_bounded_square_outputs(tmp_path, source, expected) -> None:
+    script = tmp_path / "square.py"
+    script.write_text(source)
+    assert scenarios._safe_square_script(source)
+    assert scenarios._run_square_script(script, tmp_path) == (0, expected, None)
 
 
 def _mock_waiter_process(

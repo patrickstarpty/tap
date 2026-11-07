@@ -5,9 +5,11 @@ import ast
 import hashlib
 import http.client
 import json
+import math
 import os
 import re
 import secrets
+import selectors
 import shlex
 import shutil
 import signal
@@ -119,36 +121,147 @@ def _safe_square_script(source: str) -> bool:
         return False
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, RecursionError):
         return False
-    allowed = (
-        ast.Module,
-        ast.Expr,
-        ast.Call,
-        ast.Name,
-        ast.Load,
-        ast.Constant,
-        ast.BinOp,
-        ast.Pow,
-        ast.Mult,
-        ast.Add,
-        ast.Sub,
-        ast.Div,
+    if not 0 < len(tree.body) <= 16:
+        return False
+    predicted_bytes = 0
+    try:
+        for statement in tree.body:
+            if (
+                not isinstance(statement, ast.Expr)
+                or not isinstance(statement.value, ast.Call)
+                or not isinstance(statement.value.func, ast.Name)
+                or statement.value.func.id != "print"
+                or statement.value.keywords
+            ):
+                return False
+            values = [_bounded_print_value(arg) for arg in statement.value.args]
+            if any(value is None for value in values):
+                return False
+            predicted_bytes += sum(len(str(value).encode()) for value in values)
+            predicted_bytes += max(len(values) - 1, 0) + 1
+            if predicted_bytes > 256:
+                return False
+    except (OverflowError, RecursionError, ValueError, ZeroDivisionError):
+        return False
+    return True
+
+
+def _bounded_print_value(node: ast.expr) -> int | float | str | None:
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if type(value) is str:
+            return value if len(value.encode()) <= 256 else None
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and abs(value) <= 10_000
+        ):
+            return value
+        return None
+    if not isinstance(node, ast.BinOp):
+        return None
+    left = _bounded_print_value(node.left)
+    right = _bounded_print_value(node.right)
+    if left is None or right is None:
+        return None
+    if isinstance(node.op, ast.Add) and type(left) is str and type(right) is str:
+        combined = left + right
+        return combined if len(combined.encode()) <= 256 else None
+    if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+        return None
+    if isinstance(node.op, ast.Pow):
+        if type(right) is not int or not 0 <= right <= 8 or abs(left) > 100:
+            return None
+        result = left**right
+    elif isinstance(node.op, ast.Mult):
+        result = left * right
+    elif isinstance(node.op, ast.Add):
+        result = left + right
+    elif isinstance(node.op, ast.Sub):
+        result = left - right
+    elif isinstance(node.op, ast.Div):
+        result = left / right
+    else:
+        return None
+    return result if math.isfinite(result) and abs(result) <= 10_000 else None
+
+
+def _read_bounded_script(path: Path) -> str | None:
+    if path.is_symlink():
+        return None
+    try:
+        with path.open("rb") as source:
+            raw = source.read(4097)
+        return raw.decode("utf-8") if len(raw) <= 4096 else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _bounded_artifact_digest(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with path.open("rb") as artifact:
+            while chunk := artifact.read(65_536):
+                total += len(chunk)
+                if total > 1_048_576:
+                    return None
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _run_square_script(
+    script: Path, workspace: Path
+) -> tuple[int | None, str | None, str | None]:
+    process = subprocess.Popen(
+        (sys.executable, "-I", str(script)),
+        cwd=workspace,
+        env={"PATH": "/usr/bin:/bin"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
     )
-    return all(
-        isinstance(node, allowed)
-        and (not isinstance(node, ast.Name) or node.id == "print")
-        and (
-            not isinstance(node, ast.Call)
-            or isinstance(node.func, ast.Name)
-            and node.func.id == "print"
-            and not node.keywords
-        )
-        and (
-            not isinstance(node, ast.Constant) or type(node.value) in {int, float, str}
-        )
-        for node in ast.walk(tree)
-    )
+    assert process.stdout is not None
+    captured = bytearray()
+    limit: str | None = None
+    deadline = time.monotonic() + 3
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                limit = "timeout"
+                break
+            chunk = os.read(process.stdout.fileno(), 257 - len(captured))
+            if not chunk:
+                break
+            captured.extend(chunk)
+            if len(captured) > 256:
+                limit = "stdout_cap"
+                break
+    if limit is not None:
+        process.kill()
+    try:
+        exit_code = process.wait(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        limit = "timeout"
+        exit_code = None
+    finally:
+        process.stdout.close()
+    if limit is not None:
+        return None, None, limit
+    try:
+        return exit_code, captured.decode("utf-8").strip(), None
+    except UnicodeDecodeError:
+        return None, None, "stdout_encoding"
 
 
 def _square_output_matches(output: str) -> bool:
@@ -808,10 +921,7 @@ def _permission_target_digest(workspace: Path) -> str | None:
         return None
     if not target.is_file():
         return "unsafe"
-    try:
-        return hashlib.sha256(target.read_bytes()).hexdigest()
-    except OSError:
-        return "unsafe"
+    return _bounded_artifact_digest(target) or "unsafe"
 
 
 def _facts(client: LegacyClient, session_id: str, workspace: Path) -> dict[str, Any]:
@@ -977,9 +1087,16 @@ def _safe_error(value: object) -> dict[str, object] | None:
 
 def _first_action_count(workspace: Path) -> int | None:
     marker = workspace / "first-action.log"
-    if not marker.is_file() or marker.is_symlink() or marker.stat().st_size > 256:
+    if not marker.is_file() or marker.is_symlink():
         return None
-    lines = marker.read_bytes().splitlines(keepends=True)
+    try:
+        with marker.open("rb") as source:
+            raw = source.read(257)
+    except OSError:
+        return None
+    if len(raw) > 256:
+        return None
+    lines = raw.splitlines(keepends=True)
     return len(lines) if lines and all(line == b"start\n" for line in lines) else None
 
 
@@ -1130,9 +1247,9 @@ async def run_scenario(
                             first_path = workspace / "first.txt"
                             report["control"] = {
                                 "submitted_during_active_root": active_root,
-                                "first_digest_at_submission": hashlib.sha256(
-                                    first_path.read_bytes()
-                                ).hexdigest()
+                                "first_digest_at_submission": _bounded_artifact_digest(
+                                    first_path
+                                )
                                 if first_path.is_file()
                                 else None,
                             }
@@ -1178,9 +1295,10 @@ async def run_scenario(
                                 and active_bash
                                 and marker.get("identity_verified") is True
                             ):
-                                first_digest = hashlib.sha256(
-                                    first_path.read_bytes()
-                                ).hexdigest()
+                                first_digest = _bounded_artifact_digest(first_path)
+                                if first_digest is None:
+                                    report["reason"] = "first_artifact_limit"
+                                    break
                                 report["resume"] = {
                                     "first_digest_before_abort": first_digest,
                                     "first_action_count_before_abort": _first_action_count(
@@ -1221,10 +1339,13 @@ async def run_scenario(
                                 )
                             ):
                                 report["resume"]["first_digest_after_abort"] = (
-                                    hashlib.sha256(first_path.read_bytes()).hexdigest()
+                                    _bounded_artifact_digest(first_path)
                                     if first_path.is_file()
                                     else None
                                 )
+                                if report["resume"]["first_digest_after_abort"] is None:
+                                    report["reason"] = "first_artifact_limit"
+                                    break
                                 report["resume"]["first_action_count_after_abort"] = (
                                     _first_action_count(workspace)
                                 )
@@ -1413,44 +1534,50 @@ async def run_scenario(
                         "budget.txt",
                         "denied.txt",
                     )
-                    report["artifacts"] = {
-                        name: hashlib.sha256(
-                            (workspace / name).read_bytes()
-                        ).hexdigest()
-                        for name in artifact_names
-                        if (workspace / name).is_file()
-                        and not (workspace / name).is_symlink()
-                    }
+                    artifacts: dict[str, str] = {}
+                    artifact_limits: list[str] = []
+                    for name in artifact_names:
+                        path = workspace / name
+                        if path.is_file() and not path.is_symlink():
+                            digest = _bounded_artifact_digest(path)
+                            if digest is None:
+                                artifact_limits.append(name)
+                            else:
+                                artifacts[name] = digest
+                    report["artifacts"] = artifacts
+                    if artifact_limits:
+                        report["artifact_limits"] = artifact_limits
                     if scenario == "resume-workspace" and "resume" in report:
                         report["resume"]["first_action_count_final"] = (
                             _first_action_count(workspace)
                         )
                     script = workspace / "square.py"
                     if script.is_file() and not script.is_symlink():
-                        source = script.read_text(errors="replace")
-                        safe = _safe_square_script(source)
+                        source = _read_bounded_script(script)
+                        safe = source is not None and _safe_square_script(source)
                         script_check: dict[str, object] = {
                             "safe_ast": safe,
                             "exit_code": None,
                             "expected_output": False,
                         }
-                        if safe:
-                            result = subprocess.run(
-                                (sys.executable, "-I", str(script)),
-                                cwd=workspace,
-                                env={"PATH": "/usr/bin:/bin"},
-                                capture_output=True,
-                                text=True,
-                                timeout=3,
-                                check=False,
+                        if not safe:
+                            script_check["limit_reason"] = (
+                                "source_size_or_encoding"
+                                if source is None
+                                else "unsafe_expression"
                             )
-                            stdout = result.stdout.strip()
+                        if safe:
+                            exit_code, stdout, limit = _run_square_script(
+                                script, workspace
+                            )
                             script_check.update(
                                 {
-                                    "exit_code": result.returncode,
-                                    "expected_output": _square_output_matches(stdout),
+                                    "exit_code": exit_code,
+                                    "expected_output": exit_code == 0
+                                    and stdout is not None
+                                    and _square_output_matches(stdout),
                                     "synthetic_stdout": stdout
-                                    if len(stdout.encode()) <= 256
+                                    if stdout is not None
                                     and all(
                                         character.isprintable() or character in "\n\r\t"
                                         for character in stdout
@@ -1458,8 +1585,20 @@ async def run_scenario(
                                     else None,
                                 }
                             )
+                            if limit is not None:
+                                script_check["limit_reason"] = limit
                         report["script_check"] = script_check
-                    report["last_stage"] = "complete"
+                    if artifact_limits or (
+                        "script_check" in report
+                        and "limit_reason" in report["script_check"]
+                    ):
+                        report["provider_terminal"] = report["terminal"]
+                        report["terminal"] = "incomplete"
+                        report["status"] = "unverified"
+                        report["reason"] = "artifact_inspection_limit"
+                        report["last_stage"] = "artifact_limit"
+                    else:
+                        report["last_stage"] = "complete"
             except Exception as error:
                 report["reason"] = "probe_error:" + type(error).__name__
             finally:

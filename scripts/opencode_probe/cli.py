@@ -299,43 +299,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model_calls": 0,
         "budget_exceeded": False,
     }
-    if opted_in:
-        from scripts.opencode_probe.scenarios import run_freeze_experiment, run_scenario
-
-        if args.gateway_env_file is None or args.ledger is None:
-            parser.error("real probe requires --gateway-env-file and --ledger")
-        try:
-            runner = (
-                run_freeze_experiment
-                if args.scenario == "config-freeze"
-                else run_scenario
-            )
-            report = asyncio.run(
-                runner(
-                    **(
-                        {}
-                        if args.scenario == "config-freeze"
-                        else {"scenario": args.scenario}
-                    ),
-                    binary=args.binary,
-                    gateway_env_file=args.gateway_env_file,
-                    ledger_path=args.ledger,
-                    max_calls=args.max_model_calls,
-                    max_seconds=args.max_seconds,
-                    max_cost_usd=args.max_cost_usd,
-                )
-            )
-        except Exception as error:
-            report = {
-                **report,
-                "reason": "probe_preflight_error:" + type(error).__name__,
-            }
+    if opted_in and (args.gateway_env_file is None or args.ledger is None):
+        parser.error("real probe requires --gateway-env-file and --ledger")
     destination: Path = args.output
-    if destination.is_symlink() or destination.exists():
-        parser.error("output must be a new regular path")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError:
+        parser.error("output must be a new writable regular path")
     with os.fdopen(fd, "w", encoding="utf-8") as output:
+        if opted_in:
+            from scripts.opencode_probe.scenarios import (
+                run_freeze_experiment,
+                run_scenario,
+            )
+
+            try:
+                runner = (
+                    run_freeze_experiment
+                    if args.scenario == "config-freeze"
+                    else run_scenario
+                )
+                report = asyncio.run(
+                    runner(
+                        **(
+                            {}
+                            if args.scenario == "config-freeze"
+                            else {"scenario": args.scenario}
+                        ),
+                        binary=args.binary,
+                        gateway_env_file=args.gateway_env_file,
+                        ledger_path=args.ledger,
+                        max_calls=args.max_model_calls,
+                        max_seconds=args.max_seconds,
+                        max_cost_usd=args.max_cost_usd,
+                    )
+                )
+            except Exception as error:
+                report = {
+                    **report,
+                    "reason": "probe_preflight_error:" + type(error).__name__,
+                }
         json.dump(report, output, indent=2, sort_keys=True)
         output.write("\n")
     return 0

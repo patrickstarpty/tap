@@ -1,6 +1,7 @@
 """Deterministic command admission without model calls."""
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,92 @@ def test_invalid_caps_are_rejected_before_output(tmp_path: Path) -> None:
             ]
         )
     assert not output.exists()
+
+
+@pytest.mark.parametrize("destination_kind", ["existing", "symlink", "bad_parent"])
+def test_invalid_output_never_invokes_real_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, destination_kind: str
+) -> None:
+    from scripts.opencode_probe import scenarios
+
+    monkeypatch.setenv("TAP_RUN_TAPPER_REAL_MODEL_SMOKE", "1")
+    monkeypatch.setenv("TAP_RUN_OPENCODE_PROBE", "1")
+    called = 0
+
+    async def fake_runner(**_kwargs: object) -> dict[str, object]:
+        nonlocal called
+        called += 1
+        return {"status": "supported"}
+
+    monkeypatch.setattr(scenarios, "run_scenario", fake_runner)
+    output = tmp_path / "report.json"
+    if destination_kind == "existing":
+        output.write_text("original")
+    elif destination_kind == "symlink":
+        target = tmp_path / "target.json"
+        target.write_text("original")
+        output.symlink_to(target)
+    else:
+        parent = tmp_path / "not_a_directory"
+        parent.write_text("original")
+        output = parent / "report.json"
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            [
+                "--scenario",
+                "simple-question",
+                "--output",
+                str(output),
+                "--max-seconds",
+                "10",
+                "--max-model-calls",
+                "2",
+                "--gateway-env-file",
+                str(tmp_path / "never-read.env"),
+                "--ledger",
+                str(tmp_path / "ledger.jsonl"),
+            ]
+        )
+    assert exit_info.value.code == 2
+    assert called == 0
+    if destination_kind != "bad_parent":
+        assert output.read_text() == "original"
+
+
+def test_reserved_output_writes_fake_report_with_private_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.opencode_probe import scenarios
+
+    monkeypatch.setenv("TAP_RUN_TAPPER_REAL_MODEL_SMOKE", "1")
+    monkeypatch.setenv("TAP_RUN_OPENCODE_PROBE", "1")
+
+    async def fake_runner(**_kwargs: object) -> dict[str, object]:
+        return {"status": "supported", "scenario": "simple-question"}
+
+    monkeypatch.setattr(scenarios, "run_scenario", fake_runner)
+    output = tmp_path / "new" / "report.json"
+    assert (
+        main(
+            [
+                "--scenario",
+                "simple-question",
+                "--output",
+                str(output),
+                "--max-seconds",
+                "10",
+                "--max-model-calls",
+                "2",
+                "--gateway-env-file",
+                str(tmp_path / "never-read.env"),
+                "--ledger",
+                str(tmp_path / "ledger.jsonl"),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(output.read_text()) == {"status": "supported", "scenario": "simple-question"}
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
 
 
 def test_child_env_is_isolated_and_uses_scoped_token(
