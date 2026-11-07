@@ -39,9 +39,9 @@
 
 **Interfaces:** 项目作用域 `/api/projects/{project_id}/browser/sessions`、`sessions/{id}/actions`、`bundles`、`executions`、`executions/{id}/cancel`、`evidence/{id}`；service 只接受经过授权主体、不可变摘要和 idempotency key。响应均符合 spec。后台任务使用持久 intent+所有权标签，重复请求先核对；不实现复杂恢复，未知不重发副作用。
 
-- [ ] RED：同 key 同内容幂等、异内容冲突、跨项目读写取消/证据拒绝、hash不符拒绝、旧证据不覆盖；重跑新执行ID保持 bundle/input 摘要。
-- [ ] MySQL 持久 browser_session/bundle/execution/evidence 与状态；内容寻址对象仅允许任务文件，限制体积/MIME，不泄露宿主路径。沿用现有文件对象 store 模式，加入缺对象/不完整证据不能成功测试。
-- [ ] API/worker 连接 Task1，执行结果原子落库后事件可读；取消请求到实际stopreceipt再终态。读回结果与真实证据，不仅返回内存内容。完成 migration/contract/窄集成测试并提交。
+- [x] RED：同 key 同内容幂等、异内容冲突、跨项目读写取消/证据拒绝、hash不符拒绝、旧证据不覆盖；重跑新执行ID保持 bundle/input 摘要。
+- [x] MySQL 持久 browser_session/bundle/execution/evidence 与状态；内容寻址对象仅允许任务文件，限制体积/MIME，不泄露宿主路径。沿用现有文件对象 store 模式，加入缺对象/不完整证据不能成功测试。
+- [x] API/worker 连接 Task1，执行结果原子落库后事件可读；取消请求到实际stopreceipt再终态。读回结果与真实证据，不仅返回内存内容。完成 migration/contract/窄集成测试并提交。
 
 ## Task 3：OpenCode 编码段与实际页面工具
 
