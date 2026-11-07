@@ -471,28 +471,38 @@ class BudgetGate:
                 status = 502
                 content = bytearray()
                 try:
+                    connect_remaining = gate._deadline - time.monotonic()
+                    if connect_remaining <= 0:
+                        raise TimeoutError("gate deadline before connect")
                     connection = http.client.HTTPConnection(
                         "127.0.0.1",
                         gate._upstream_port,
-                        timeout=max(0.1, gate._deadline - time.monotonic()),
+                        timeout=connect_remaining,
                     )
                     try:
                         connection.connect()
                         if connection.sock is not None:
                             gate._track(connection.sock)
                         with gate._lock:
-                            if gate._cutoff is not None or gate._closed:
+                            remaining = gate._deadline - time.monotonic()
+                            if (
+                                remaining <= 0
+                                or gate._cutoff is not None
+                                or gate._closed
+                            ):
                                 raise TimeoutError("gate closed before forward")
-                            connection.request(
-                                "POST",
-                                "/v1/chat/completions",
-                                body=forwarded,
-                                headers={
-                                    "Authorization": f"Bearer {gate._upstream_key}",
-                                    "Content-Type": "application/json",
-                                },
-                            )
+                            assert connection.sock is not None
+                            connection.sock.settimeout(remaining)
                             gate._forwarded += 1
+                        connection.request(
+                            "POST",
+                            "/v1/chat/completions",
+                            body=forwarded,
+                            headers={
+                                "Authorization": f"Bearer {gate._upstream_key}",
+                                "Content-Type": "application/json",
+                            },
+                        )
                     finally:
                         with gate._forward_condition:
                             gate._pending_forwards -= 1

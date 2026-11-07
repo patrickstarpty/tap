@@ -796,3 +796,93 @@ def test_concurrent_cutoff_waits_for_previously_admitted_forward(
         snapshot = gate.snapshot()
         assert snapshot["forwarded"] == snapshot["cutoff"]["forwarded_at_cutoff"] == 1
     assert Upstream.calls == 1
+
+
+def test_deadline_closes_sockets_while_upstream_send_is_stalled(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread], monkeypatch
+) -> None:
+    server, _ = upstream
+    original_request = gateway_module.http.client.HTTPConnection.request
+    sending = threading.Event()
+    release = threading.Event()
+    socket_at_send: list[socket.socket] = []
+
+    def stalled_request(connection, method, url, *args, **kwargs) -> None:
+        if connection.port == server.server_port:
+            assert connection.sock is not None
+            socket_at_send.append(connection.sock)
+            sending.set()
+            assert release.wait(3)
+        original_request(connection, method, url, *args, **kwargs)
+
+    monkeypatch.setattr(gateway_module.http.client.HTTPConnection, "request", stalled_request)
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=2,
+        max_seconds=1,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        outcome: list[object] = []
+
+        def call() -> None:
+            try:
+                outcome.append(send(gate))
+            except OSError as error:
+                outcome.append(type(error).__name__)
+
+        thread = threading.Thread(target=call)
+        thread.start()
+        try:
+            assert sending.wait(1.5)
+            time.sleep(1.15)
+            assert gate._closed
+            assert socket_at_send[0].fileno() == -1
+            assert gate.snapshot()["cutoff"]["cause"] == "deadline"
+        finally:
+            release.set()
+            thread.join(2)
+        assert not thread.is_alive()
+        assert outcome
+        assert Upstream.calls == 0
+    assert len(gate.records) == 1
+    assert gate.records[0].usage_verified is False
+
+
+def test_upstream_send_timeout_uses_remaining_deadline_after_connect(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread], monkeypatch
+) -> None:
+    server, _ = upstream
+    original_connect = gateway_module.http.client.HTTPConnection.connect
+    original_request = gateway_module.http.client.HTTPConnection.request
+    send_timeouts: list[float] = []
+
+    def delayed_connect(connection) -> None:
+        if connection.port == server.server_port:
+            time.sleep(0.65)
+        original_connect(connection)
+
+    def record_request(connection, method, url, *args, **kwargs) -> None:
+        if connection.port == server.server_port:
+            assert connection.sock is not None
+            send_timeouts.append(connection.sock.gettimeout())
+        original_request(connection, method, url, *args, **kwargs)
+
+    monkeypatch.setattr(gateway_module.http.client.HTTPConnection, "connect", delayed_connect)
+    monkeypatch.setattr(gateway_module.http.client.HTTPConnection, "request", record_request)
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=2,
+        max_seconds=2,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        assert send(gate) == 200
+    assert len(send_timeouts) == 1
+    assert 0 < send_timeouts[0] < 1.6
