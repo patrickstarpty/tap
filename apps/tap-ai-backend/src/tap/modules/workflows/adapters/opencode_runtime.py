@@ -144,7 +144,9 @@ class DockerCodingContainer:
         self.config = config
         self.mailbox_root = mailbox_root
         self.name = "tapper-coding-" + secrets.token_hex(12)
+        self.attempt_id = secrets.token_hex(16)
         self.container_id: str | None = None
+        self._run_attempted = False
         self._stopped = False
 
     @staticmethod
@@ -226,6 +228,8 @@ class DockerCodingContainer:
             self.name,
             "--label",
             "tap.owner=workflow-coding",
+            "--label",
+            f"tap.attempt={self.attempt_id}",
             "--network",
             "none",
             "--read-only",
@@ -256,9 +260,11 @@ class DockerCodingContainer:
             *(entry for key, value in env.items() for entry in ("--env", f"{key}={value}")),
             self.config.image,
         )
-        self.container_id = (await self._command(argv, timeout=30)).decode().strip()
-        if not self.container_id.startswith("sha256:") and len(self.container_id) < 12:
+        self._run_attempted = True
+        acquired_id = (await self._command(argv, timeout=30)).decode().strip()
+        if not acquired_id.startswith("sha256:") and len(acquired_id) < 12:
             raise RuntimeError("coding container identity unavailable")
+        self.container_id = acquired_id
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             try:
@@ -357,9 +363,48 @@ class DockerCodingContainer:
         return result
 
     async def stop(self) -> bool:
-        if self.container_id is None or self._stopped:
+        if self._stopped or not self._run_attempted:
             return True
         identity = self.container_id
+        if identity is None:
+            # The run CLI may lose its reply after Docker accepted the create.
+            # Never stop an object found by name without matching both owner labels.
+            try:
+                probe = await asyncio.wait_for(
+                    asyncio.create_subprocess_exec(
+                        "docker",
+                        "inspect",
+                        self.name,
+                        "--format",
+                        "{{json .}}",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    ),
+                    self._INSPECT_TIMEOUT,
+                )
+                try:
+                    stdout, _ = await asyncio.wait_for(probe.communicate(), self._INSPECT_TIMEOUT)
+                except TimeoutError:
+                    probe.kill()
+                    await asyncio.wait_for(probe.communicate(), 1)
+                    return False
+                found = json.loads(stdout) if probe.returncode == 0 else None
+            except (OSError, TimeoutError, ValueError, asyncio.CancelledError):
+                return False
+            if not isinstance(found, dict):
+                # An absent name can race an in-flight daemon create. Without
+                # the run reply there is no affirmative settled absence proof.
+                return False
+            labels = found.get("Config", {}).get("Labels", {})
+            if (
+                found.get("Name") != "/" + self.name
+                or labels.get("tap.owner") != "workflow-coding"
+                or labels.get("tap.attempt") != self.attempt_id
+                or not isinstance(found.get("Id"), str)
+            ):
+                return False
+            identity = found["Id"]
+            self.container_id = identity
         try:
             await self._command(("docker", "stop", "-t", "2", identity), timeout=10, max_stdout=200)
         except Exception:
@@ -492,6 +537,9 @@ class CodingRuntime:
         deadline_monotonic = (
             time.monotonic() + (deadline_value.astimezone(UTC) - datetime.now(UTC)).total_seconds()
         )
+        # Browser sessions have a hard 600-second server cap. The session and
+        # every subsequent stage share this shorter absolute task boundary.
+        deadline_monotonic = min(deadline_monotonic, time.monotonic() + 600)
 
         def seconds_left() -> int:
             remaining = int(deadline_monotonic - time.monotonic())
@@ -499,15 +547,46 @@ class CodingRuntime:
                 raise TimeoutError("browser task deadline exceeded")
             return remaining
 
+        async def task_stop_requested() -> bool:
+            if stop_requested is None:
+                return False
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("browser task deadline exceeded")
+            return bool(await asyncio.wait_for(stop_requested(), timeout=remaining))
+
+        async def bounded_stage(work: Any, *, accept_stopped_result: bool = False) -> Any:
+            pending = asyncio.create_task(work)
+            try:
+                seconds_left()
+                while not pending.done():
+                    if await task_stop_requested():
+                        raise asyncio.CancelledError("workflow cancel requested")
+                    remaining = deadline_monotonic - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("browser task deadline exceeded")
+                    await asyncio.wait({pending}, timeout=min(0.1, remaining))
+                return await pending
+            except BaseException:
+                if not pending.done():
+                    pending.cancel()
+                settled = await asyncio.gather(pending, return_exceptions=True)
+                if accept_stopped_result and isinstance(settled[0], dict):
+                    return settled[0]
+                raise
+
         remaining_seconds = seconds_left()
         replay_of = browser.get("replay_execution_id")
         if isinstance(replay_of, str):
-            receipt = await self.browser.replay(
-                task_id,
-                replay_of,
-                f"replay-{task_id}",
-                deadline_seconds=seconds_left(),
-                stop_requested=stop_requested,
+            receipt = await bounded_stage(
+                self.browser.replay(
+                    task_id,
+                    replay_of,
+                    f"replay-{task_id}",
+                    deadline_seconds=seconds_left(),
+                    stop_requested=stop_requested,
+                ),
+                accept_stopped_result=True,
             )
             if receipt.get("status") == "canceled":
                 receipt = {**receipt, "stop_confirmed": True}
@@ -536,10 +615,20 @@ class CodingRuntime:
         remaining_cost = (limit["cost_micros"] - int(used.get("cost_micros", 0))) / 1_000_000
         if remaining_calls <= 0 or remaining_cost <= 0:
             raise ValueError("browser task budget exhausted")
-        session = await self.browser.session(
-            task_id, origins, remaining_seconds, f"session-{task_id}"
-        )
+        try:
+            session = await bounded_stage(
+                self.browser.session(
+                    task_id, origins, min(600, remaining_seconds), f"session-{task_id}"
+                ),
+                accept_stopped_result=True,
+            )
+        except (asyncio.CancelledError, TimeoutError):
+            return CodingResult(
+                "unknown", terminal_evidence={"failure": "session create unconfirmed"}
+            )
         if session.get("status") != "active":
+            if session.get("status") == "canceled":
+                return CodingResult("canceled", terminal_evidence=session)
             return CodingResult("unknown", terminal_evidence=session)
         session_id = str(session["session_id"])
         loop = asyncio.get_running_loop()
@@ -684,8 +773,10 @@ class CodingRuntime:
                         output_tokens=self.config.max_output_tokens,
                     )
                     container = self.container_factory(self.config, mailbox.root)
-                    await container.start(config, shim_token, seconds_left())
-                    await container.set_frozen_input(canonical_json_bytes(input_data), digest)
+                    await bounded_stage(container.start(config, shim_token, seconds_left()))
+                    await bounded_stage(
+                        container.set_frozen_input(canonical_json_bytes(input_data), digest)
+                    )
 
                     async def handle(item: MailItem) -> dict[str, Any]:
                         if item.kind == "model":
@@ -728,20 +819,20 @@ class CodingRuntime:
                         return action["observation"]
 
                     async def prompt_once(text: str) -> tuple[dict[str, Any], dict[str, Any]]:
-                        await container.set_goal(text)
+                        await bounded_stage(container.set_goal(text))
                         running = asyncio.create_task(container.run_prompt())
                         try:
                             while not running.done():
-                                if stop_requested is not None and await stop_requested():
+                                if await task_stop_requested():
                                     running.cancel()
                                     raise asyncio.CancelledError("workflow cancel requested")
                                 if time.monotonic() >= deadline_monotonic:
                                     running.cancel()
                                     raise TimeoutError("coding deadline exceeded")
-                                if not await mailbox.serve_once(handle):
+                                if not await bounded_stage(mailbox.serve_once(handle)):
                                     await asyncio.sleep(0.02)
                             terminal = await running
-                            collected = await container.collect()
+                            collected = await bounded_stage(container.collect())
                             return terminal, collected
                         finally:
                             if not running.done():
@@ -782,8 +873,10 @@ class CodingRuntime:
                         ).hexdigest() != collected.get("script_sha256"):
                             raise ValueError("generated script digest invalid")
                         script = script_bytes.decode("utf8")
-                        bundle = await self.browser.bundle(
-                            task_id, script, input_data, origins, f"bundle-{task_id}-{repair}"
+                        bundle = await bounded_stage(
+                            self.browser.bundle(
+                                task_id, script, input_data, origins, f"bundle-{task_id}-{repair}"
+                            )
                         )
                         latest_bundle = str(bundle["bundle_id"])
                         limits = browser.get(
@@ -804,14 +897,17 @@ class CodingRuntime:
                                 int(limits.get("deadline_seconds", 120)), seconds_left()
                             ),
                         }
-                        latest_execution = await self.browser.execute(
-                            task_id,
-                            latest_bundle,
-                            str(bundle["input_sha256"]),
-                            limits,
-                            f"execution-{task_id}-{repair}",
-                            deadline_seconds=min(120, seconds_left()),
-                            stop_requested=stop_requested,
+                        latest_execution = await bounded_stage(
+                            self.browser.execute(
+                                task_id,
+                                latest_bundle,
+                                str(bundle["input_sha256"]),
+                                limits,
+                                f"execution-{task_id}-{repair}",
+                                deadline_seconds=min(120, seconds_left()),
+                                stop_requested=stop_requested,
+                            ),
+                            accept_stopped_result=True,
                         )
                         if latest_execution.get("status") in {"passed", "canceled", "unknown"}:
                             break
@@ -837,7 +933,7 @@ class CodingRuntime:
                         bundle_ref=latest_bundle,
                         usage=gate.snapshot(),
                     )
-                stopped = await container.stop()
+                stopped = await _finish_cleanup(container.stop())
                 if not stopped:
                     return CodingResult(
                         "unknown",
@@ -854,12 +950,12 @@ class CodingRuntime:
             finally:
                 try:
                     if container is not None and not stopped:
-                        stopped = await container.stop()
+                        stopped = await _finish_cleanup(container.stop())
                 finally:
                     try:
                         try:
-                            session_stop = await self.browser.cancel_session(
-                                session_id, deadline_seconds=30
+                            session_stop = await _finish_cleanup(
+                                self.browser.cancel_session(session_id, deadline_seconds=30)
                             )
                             inspector_status = str(session_stop.get("status"))
                         except BaseException:

@@ -9,11 +9,13 @@ from threading import Event, Thread
 
 import pytest
 
+from tap.entrypoints.tapper_runtime import TapperSettings
 from tap.modules.workflows.adapters.opencode_runtime import (
     CodingConfig,
     CodingRuntime,
     DockerCodingContainer,
 )
+from tests.object_settings import S3_SETTINGS
 
 
 class ReplayBrowser:
@@ -324,7 +326,7 @@ async def test_coding_generation_receives_exact_frozen_input_before_prompt():
     )
 
     async def cancel():
-        return True
+        return bool(built and built[0].frozen_input)
 
     result = await runtime.run(
         "task-a", frozen, {}, None, "lease", "node", 1, stop_requested=cancel
@@ -420,7 +422,7 @@ async def test_coding_runtime_cancel_confirms_container_and_inspector_stop():
     )
 
     async def cancel():
-        return True
+        return bool(built and built[0].frozen_input)
 
     result = await runtime.run(
         "task-a",
@@ -497,6 +499,139 @@ async def test_session_start_time_does_not_extend_absolute_coding_deadline():
     with pytest.raises(TimeoutError, match="deadline"):
         await runtime.run("task-a", frozen, {}, None, "lease", "node", 1)
     assert time.monotonic() - start < 3.6
+
+
+@pytest.mark.asyncio
+async def test_shipped_workflow_default_fits_browser_session_cap():
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.workflow_max_seconds == 900
+
+    class DeadlineBrowser(SessionBrowser):
+        async def session(self, _task, _origins, seconds, _key):
+            assert 1 <= seconds <= 600
+            return {"status": "unknown", "failure_code": "synthetic_stop"}
+
+    frozen = request(replay=False)
+    frozen["deadline_at"] = (
+        datetime.now(UTC) + timedelta(seconds=settings.workflow_max_seconds)
+    ).isoformat()
+    result = await CodingRuntime(
+        CodingConfig.for_test(), browser=DeadlineBrowser(), store=Journal()
+    ).run("task-a", frozen, {}, None, "lease", "node", 1)
+    assert result.status == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["cancel", "deadline"])
+async def test_blocked_coding_start_observes_task_stop_or_absolute_deadline(trigger):
+    entered = asyncio.Event()
+    calls = 0
+    built = []
+
+    class BlockingContainer(MailContainer):
+        async def start(self, *_args):
+            entered.set()
+            await asyncio.Event().wait()
+
+    def make_container(_config, root):
+        container = BlockingContainer(root)
+        built.append(container)
+        return container
+
+    async def stop_requested():
+        nonlocal calls
+        calls += 1
+        return trigger == "cancel" and entered.is_set()
+
+    frozen = request(replay=False)
+    frozen["deadline_at"] = (
+        datetime.now(UTC) + timedelta(seconds=5 if trigger == "cancel" else 2)
+    ).isoformat()
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=SessionBrowser(),
+        store=Journal(),
+        container_factory=make_container,
+    )
+    start = time.monotonic()
+    if trigger == "cancel":
+        result = await asyncio.wait_for(
+            runtime.run(
+                "task-a", frozen, {}, None, "lease", "node", 1, stop_requested=stop_requested
+            ),
+            timeout=2,
+        )
+        assert result.status == "canceled"
+        assert result.terminal_evidence["stop_confirmed"] is True
+        assert calls > 0
+    else:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                runtime.run("task-a", frozen, {}, None, "lease", "node", 1),
+                timeout=3,
+            )
+    assert entered.is_set() and built[0].stopped
+    assert time.monotonic() - start < (1.8 if trigger == "cancel" else 2.8)
+
+
+@pytest.mark.asyncio
+async def test_blocked_browser_action_handler_observes_absolute_task_deadline():
+    built = []
+
+    class ActionContainer(MailContainer):
+        async def run_prompt(self):
+            (self.root / "requests" / "action-a.json").write_text(
+                json.dumps(
+                    {
+                        "id": "action-a",
+                        "kind": "browser",
+                        "deadline_at": time.time() + 10,
+                        "payload": {"type": "snapshot"},
+                    }
+                )
+            )
+            (self.root / "requests" / "action-a.json").chmod(0o600)
+            await asyncio.Event().wait()
+
+    class BlockedBrowser(SessionBrowser):
+        def __init__(self):
+            super().__init__()
+            self.action_started = asyncio.Event()
+            self.action_canceled = False
+
+        async def action(self, *_args, **_kwargs):
+            self.action_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.action_canceled = True
+                raise
+
+    browser = BlockedBrowser()
+
+    def make_container(_config, root):
+        container = ActionContainer(root)
+        built.append(container)
+        return container
+
+    frozen = request(replay=False)
+    frozen["deadline_at"] = (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=browser,
+        store=Journal(),
+        container_factory=make_container,
+    )
+    start = time.monotonic()
+    try:
+        await asyncio.wait_for(
+            runtime.run("task-a", frozen, {}, None, "lease", "node", 1), timeout=3
+        )
+    except TimeoutError:
+        pass
+    assert browser.action_started.is_set() and browser.action_canceled
+    assert built[0].stopped and browser.canceled
+    assert time.monotonic() - start < 2.8
 
 
 @pytest.mark.asyncio
@@ -592,6 +727,7 @@ async def test_coding_container_stop_requires_affirmative_exact_inspect(
     )
     container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
     container.container_id = "a" * 64
+    container._run_attempted = True
     assert await container.stop() is expected
 
 
@@ -625,8 +761,82 @@ async def test_coding_container_inspect_timeout_is_unknown(monkeypatch, tmp_path
     )
     container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
     container.container_id = "a" * 64
+    container._run_attempted = True
     assert await container.stop() is False
     assert probe.killed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["owned_running", "owned_stopped", "unresolved", "foreign"])
+@pytest.mark.parametrize("lost", ["timeout", "canceled", "invalid_reply"])
+async def test_coding_run_lost_id_reconciles_exact_attempt_before_stop(
+    monkeypatch, tmp_path, state, lost
+):
+    container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
+    commands = []
+    inspected = 0
+
+    async def command(argv, **_kwargs):
+        commands.append(argv)
+        if argv[:3] == ("docker", "image", "inspect"):
+            return (container.config.image_id + "\n").encode()
+        if argv[:2] == ("docker", "run"):
+            if lost == "timeout":
+                raise TimeoutError("run response lost after acceptance")
+            if lost == "canceled":
+                raise asyncio.CancelledError("run canceled after acceptance")
+            return b""
+        return b""
+
+    class Probe:
+        def __init__(self, nth):
+            self.nth = nth
+
+        @property
+        def returncode(self):
+            return 1 if state == "unresolved" or (state == "owned_stopped" and self.nth == 2) else 0
+
+        async def communicate(self):
+            if state == "unresolved":
+                return b"", b"Cannot connect to Docker daemon"
+            if state == "owned_stopped" and self.nth == 2:
+                return b"", ("Error: No such object: " + "a" * 64).encode()
+            labels = {
+                "tap.owner": "workflow-coding" if state.startswith("owned") else "foreign",
+                "tap.attempt": container.attempt_id,
+            }
+            return json.dumps(
+                {
+                    "Id": "a" * 64,
+                    "Name": "/" + container.name,
+                    "Config": {"Labels": labels},
+                    "State": {"Running": True},
+                }
+            ).encode(), b""
+
+    async def create_probe(*_args, **_kwargs):
+        nonlocal inspected
+        inspected += 1
+        return Probe(inspected)
+
+    monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(command))
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_probe,
+    )
+    expected = {
+        "timeout": TimeoutError,
+        "canceled": asyncio.CancelledError,
+        "invalid_reply": RuntimeError,
+    }[lost]
+    with pytest.raises(expected):
+        await container.start({}, "shim", 30)
+    assert container.container_id is None
+    assert await container.stop() is (state == "owned_stopped")
+    stops = [argv for argv in commands if argv[:2] in {("docker", "stop"), ("docker", "rm")}]
+    assert bool(stops) is state.startswith("owned")
+    if stops:
+        assert all(argv[-1] == "a" * 64 for argv in stops)
 
 
 @pytest.mark.asyncio

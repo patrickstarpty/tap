@@ -663,6 +663,17 @@ def verify_cancel_evidence(directory: Path) -> None:
         )
 
 
+def finish_owned_compose(
+    compose: list[str], env: dict[str, str], *, preserve_accounting: bool
+) -> None:
+    # compose is the unique project command built and checked before startup.
+    # Stop its middleware on retained accounting, preserving all state/volumes.
+    command = (
+        ["stop"] if preserve_accounting else ["down", "--volumes", "--remove-orphans"]
+    )
+    helpers.run(compose + command, env, timeout=180)
+
+
 def main() -> int:
     args = parse_args()
     nonce = uuid.uuid4().hex[:12]
@@ -1144,10 +1155,8 @@ def main() -> int:
                     json.loads(inspected.stdout), site_id, site_name, project
                 )
                 helpers.run(["docker", "rm", "-f", site_id], env)
-        if owned and compose is not None and not preserve_accounting:
-            helpers.run(
-                compose + ["down", "--volumes", "--remove-orphans"], env, timeout=180
-            )
+        if owned and compose is not None:
+            finish_owned_compose(compose, env, preserve_accounting=preserve_accounting)
         if success:
             shutil.rmtree(state)
     if success:

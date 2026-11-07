@@ -79,14 +79,38 @@ def test_failure_accounting_requires_terminal_or_waiting_tasks_and_all_settlemen
     manifest[0]["status"] = "running"
     (tmp_path / "usage-manifest.json").write_text(json.dumps(manifest))
     assert not runner.failure_accounting_confirmed(tmp_path)
-
     manifest[0]["status"] = "awaiting_input"
     (tmp_path / "usage-manifest.json").write_text(json.dumps(manifest))
     assert runner.failure_accounting_confirmed(tmp_path)
-
     audit["events"].pop()
     (tmp_path / "task-1-audit.json").write_text(json.dumps(audit))
     assert not runner.failure_accounting_confirmed(tmp_path)
+
+
+def test_unconfirmed_accounting_stops_only_owned_compose_without_deleting_data(
+    monkeypatch,
+):
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[4] / "scripts/run-browser-core-e2e.py"
+    spec = importlib.util.spec_from_file_location("browser_core_acceptance", path)
+    assert spec and spec.loader
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    called = []
+    monkeypatch.setattr(
+        runner.helpers, "run", lambda argv, env, **kwargs: called.append(argv)
+    )
+    compose = [
+        "docker",
+        "compose",
+        "-p",
+        "tap-browser-core-exact",
+        "-f",
+        "deploy/compose.yaml",
+    ]
+    runner.finish_owned_compose(compose, {}, preserve_accounting=True)
+    assert called == [compose + ["stop"]]
 
 
 @pytest.mark.parametrize(

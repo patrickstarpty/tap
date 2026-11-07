@@ -196,7 +196,8 @@ class BrowserService:
         key: str,
     ) -> dict[str, Any]:
         project = self._project(principal, "browser.actions.create")
-        prior = self._prior("action", project, key, {"session_id": session_id, **body})
+        identity = {"route_session_id": session_id, "body": body}
+        prior = self._prior("action", project, key, identity)
         if prior is not None:
             return self._action(prior)
         session = self.store.get("session", project, self._id(session_id, "session_id"))
@@ -211,7 +212,7 @@ class BrowserService:
                 project,
                 session_id,
                 self._key(key),
-                digest({"session_id": session_id, **body}),
+                digest(identity),
                 body,
             )
         except ValueError as exc:

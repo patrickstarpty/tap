@@ -110,32 +110,72 @@ function verifiedIdentity() {
   return info;
 }
 
+export async function waitForDaemon(child, deadlineMs) {
+  let expired = false;
+  let grace;
+  const signalGroup = signal => {
+    try { process.kill(-child.pid, signal); } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  };
+  const timer = setTimeout(() => {
+    expired = true;
+    signalGroup('SIGTERM');
+    grace = setTimeout(() => signalGroup('SIGKILL'), 2000);
+  }, Math.max(0, deadlineMs - Date.now()));
+  try {
+    if (child.exitCode === null) {
+      await new Promise((resolve, reject) => {
+        child.once('exit', resolve);
+        child.once('error', reject);
+      });
+    }
+    return expired;
+  } finally {
+    clearTimeout(timer);
+    if (grace) clearTimeout(grace);
+    signalGroup('SIGKILL');
+  }
+}
+
 async function daemon() {
+  const seconds = Number(process.env.TAP_CODING_DEADLINE_SECONDS);
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) throw new Error('coding daemon deadline invalid');
+  const absoluteDeadline = Date.now() + seconds * 1000;
   const version = spawnSync('/opt/opencode/opencode', ['--version'], { encoding: 'utf8', timeout: 10000 });
   if (version.status !== 0 || version.stdout.trim() !== '1.19.5') throw new Error('OpenCode version mismatch');
   const shim = createModelShim({ root: '/mailbox', token: process.env.TAP_MODEL_SHIM_TOKEN });
   await new Promise(resolve => shim.listen(39001, '127.0.0.1', resolve));
   const child = spawn('/opt/opencode/opencode', ['serve', '--pure', '--hostname', '127.0.0.1', '--port', String(PORT)],
-    { cwd: '/workspace', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    { cwd: '/workspace', env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.resume();
   child.stderr.resume();
-  const deadline = Date.now() + 15000;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error('OpenCode serve exited before readiness');
+  const lifetime = waitForDaemon(child, absoluteDeadline);
+  const shutdown = () => { try { process.kill(-child.pid, 'SIGTERM'); } catch {} };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+  try {
+  const readinessDeadline = Math.min(Date.now() + 15000, absoluteDeadline);
+  while (Date.now() < readinessDeadline) {
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('OpenCode serve exited before readiness');
     try {
-      const document = await api('GET', '/doc');
+      const document = await api('GET', '/doc', undefined, Math.max(1, Math.min(5000, absoluteDeadline - Date.now())));
       const required = ['/session', '/session/{sessionID}/message', '/session/{sessionID}/prompt_async', '/session/{sessionID}/children', '/session/{sessionID}/abort', '/event'];
       if (document.status === 200 && document.value?.openapi === '3.1.0' && required.every(item => Object.hasOwn(document.value.paths || {}, item))) break;
     } catch {}
     await sleep(50);
   }
-  if (Date.now() >= deadline) throw new Error('OpenCode serve readiness deadline');
+  if (Date.now() >= absoluteDeadline) throw new Error('coding daemon deadline exceeded');
+  if (Date.now() >= readinessDeadline) throw new Error('OpenCode serve readiness deadline');
   fs.writeFileSync('/workspace/serve.json', JSON.stringify({ pid: child.pid, nonce: crypto.randomBytes(16).toString('hex'), version: '1.19.5' }), { flag: 'wx', mode: 0o600 });
-  const shutdown = () => { child.kill('SIGTERM'); shim.close(); };
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
-  await new Promise(resolve => child.on('exit', resolve));
-  shim.close();
+  if (await lifetime) throw new Error('coding daemon deadline exceeded');
+  } finally {
+    process.off('SIGTERM', shutdown);
+    process.off('SIGINT', shutdown);
+    shutdown();
+    await lifetime;
+    shim.close();
+  }
 }
 
 async function run() {

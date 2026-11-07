@@ -1,3 +1,4 @@
+import asyncio
 import json
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -230,3 +231,98 @@ async def test_unconfirmed_execution_cancel_returns_unknown_receipt():
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["execute", "replay", "session"])
+async def test_cancel_during_accepted_create_reconciles_same_key_and_stops(kind, monkeypatch):
+    client = BrowserApiClient("http://127.0.0.1:8002", "project-a", "x" * 16)
+    accepted = asyncio.Event()
+    release = asyncio.Event()
+    posts = []
+    canceled = []
+
+    async def request(method, path, body=None, key=None):
+        if method == "POST" and path in {"/sessions", "/executions"}:
+            posts.append((path, body, key))
+            if len(posts) == 1:
+                accepted.set()
+                await release.wait()
+                raise OSError("response lost after commit")
+            return {"session_id": "session-a", "execution_id": "execution-a", "status": "pending"}
+        if method == "POST" and path.endswith("/cancel"):
+            canceled.append(path)
+            return {"status": "pending"}
+        if method == "GET":
+            return {"session_id": "session-a", "execution_id": "execution-a", "status": "canceled"}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(client, "request", request)
+    if kind == "session":
+        work = client.session("task-a", ["https://example.com"], 30, "same-key")
+    elif kind == "replay":
+        work = client.replay("task-a", "execution-old", "same-key", deadline_seconds=30)
+    else:
+        work = client.execute("task-a", "bundle-a", "a" * 64, {}, "same-key", deadline_seconds=30)
+    running = asyncio.create_task(work)
+    await accepted.wait()
+    running.cancel()
+    release.set()
+    result = await running
+    assert result["status"] == "canceled"
+    assert len(posts) == 2 and posts[0] == posts[1]
+    assert canceled == [
+        "/sessions/session-a/cancel" if kind == "session" else "/executions/execution-a/cancel"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["execute", "session"])
+async def test_unresolved_accepted_create_is_unknown(kind, monkeypatch):
+    client = BrowserApiClient("http://127.0.0.1:8002", "project-a", "x" * 16)
+    attempts = []
+
+    async def request(method, path, body=None, key=None):
+        attempts.append((method, path, body, key))
+        raise OSError("receipt unavailable")
+
+    monkeypatch.setattr(client, "request", request)
+    if kind == "session":
+        result = await client.session("task-a", ["https://example.com"], 30, "same-key")
+    else:
+        result = await client.execute(
+            "task-a", "bundle-a", "a" * 64, {}, "same-key", deadline_seconds=30
+        )
+    assert result["status"] == "unknown"
+    assert result["failure_code"] == "create_unconfirmed"
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+
+
+@pytest.mark.asyncio
+async def test_session_readiness_cancellation_stops_known_session(monkeypatch):
+    client = BrowserApiClient("http://127.0.0.1:8002", "project-a", "x" * 16)
+    polling = asyncio.Event()
+    canceled = []
+
+    async def request(method, path, body=None, key=None):
+        if method == "POST" and path == "/sessions":
+            return {"session_id": "session-a", "status": "pending"}
+        if method == "POST" and path == "/sessions/session-a/cancel":
+            canceled.append(path)
+            return {"session_id": "session-a", "status": "pending"}
+        if method == "GET":
+            if not canceled:
+                polling.set()
+                await asyncio.Event().wait()
+            return {"session_id": "session-a", "status": "canceled"}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(client, "request", request)
+    running = asyncio.create_task(
+        client.session("task-a", ["https://example.com"], 30, "session-key")
+    )
+    await polling.wait()
+    running.cancel()
+    receipt = await running
+    assert receipt["status"] == "canceled"
+    assert canceled == ["/sessions/session-a/cancel"]

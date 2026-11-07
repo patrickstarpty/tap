@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import test from 'node:test';
-import { terminalMessages, terminalFailure, linkedChildren, validateFrozenInput } from '../opencode-client.mjs';
+import { terminalMessages, terminalFailure, linkedChildren, validateFrozenInput, waitForDaemon } from '../opencode-client.mjs';
+
+test('daemon deadline terminates its independent process group', async () => {
+  const child = spawn('/bin/sh', ['-c', 'sleep 30 & wait'], { detached: true, stdio: 'ignore' });
+  try {
+    const started = Date.now();
+    const expired = await waitForDaemon(child, started + 150);
+    assert.equal(expired, true);
+    assert.ok(Date.now() - started < 3000);
+    assert.throws(() => process.kill(-child.pid, 0), { code: 'ESRCH' });
+  } finally {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+  }
+});
 
 test('coding input requires exact frozen bytes and digest', () => {
   const data = Buffer.from('{"notes":"customer=Ada; region=west"}');

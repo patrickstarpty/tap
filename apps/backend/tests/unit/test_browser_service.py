@@ -181,3 +181,20 @@ def test_distinct_concurrent_actions_get_unique_ordered_sequences(tmp_path):
         )["sequence"]
         == results[0]["sequence"]
     )
+
+
+def test_action_idempotency_route_cannot_be_overwritten_by_body(tmp_path):
+    browser = service(tmp_path)
+    actor = principal("project-a")
+    body = {
+        "task_id": "task-a",
+        "allowed_origins": ["https://example.com"],
+        "deadline_seconds": 60,
+    }
+    first_session = browser.create_session(actor, body, "session-one")["session_id"]
+    second_session = browser.create_session(actor, body, "session-two")["session_id"]
+    action = {"type": "snapshot", "session_id": first_session}
+    first = browser.create_action(actor, first_session, action, "same-action-key")
+    with pytest.raises(Conflict, match="idempotency conflict"):
+        browser.create_action(actor, second_session, action, "same-action-key")
+    assert first["session_id"] == first_session
