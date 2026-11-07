@@ -1,0 +1,32 @@
+{
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:31:45.045345+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 85,
+    "charged_cost_usd": 0.1054964
+  },
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 0,
+    "denials": [],
+    "records": [],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "last_stage": "serve_preflight",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 85,
+    "charged_cost_usd": 0.1054964
+  },
+  "reason": "probe_error:ValueError",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "roster": {
+    "allowed_agents": 25,
+    "input_tokens_observed": 0
+  },
+  "scenario": "roster-25",
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "incomplete"
+}

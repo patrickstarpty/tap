@@ -1,6 +1,15 @@
 """Frozen inputs for OpenCode capability probes."""
 
 from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(frozen=True)
+class CapabilityResult:
+    name: str
+    status: Literal["supported", "unsupported", "unverified"]
+    evidence_refs: tuple[str, ...]
+    limitation: str | None
 
 
 @dataclass(frozen=True)

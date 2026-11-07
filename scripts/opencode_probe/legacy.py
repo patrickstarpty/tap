@@ -172,6 +172,7 @@ class LegacyClient:
         )
         self._timeout = timeout_seconds
         self._operations: dict[str, _Operation] = {}
+        self.serve_pid: int | None = None
 
     def _request(
         self, method: str, path: str, body: object | None = None

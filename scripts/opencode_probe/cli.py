@@ -1,9 +1,7 @@
-"""Admission and bounded evidence options for OpenCode capability probes.
-
-Task 0.2 does not send model prompts; Task 0.3 supplies scenario execution.
-"""
+"""Dual opt-in and bounded options for OpenCode capability probes."""
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -24,6 +22,10 @@ SCENARIOS = (
     "resume-workspace",
     "reconcile",
     "budget-enforcement",
+    "roster-5",
+    "roster-25",
+    "roster-100",
+    "config-freeze",
 )
 
 
@@ -34,8 +36,21 @@ def _positive(value: str) -> int:
     return parsed
 
 
+def _cost_cap(value: str) -> float:
+    parsed = float(value)
+    if not 0 < parsed <= 0.60:
+        raise argparse.ArgumentTypeError("must be above zero and at most USD 0.60")
+    return parsed
+
+
 def make_child_env(
-    root: Path, gate_url: str, scoped_token: str, server_password: str
+    root: Path,
+    gate_url: str,
+    scoped_token: str,
+    server_password: str,
+    *,
+    model_input_limit: int = 129024,
+    model_output_limit: int = 512,
 ) -> dict[str, str]:
     """Construct a clean OpenCode environment without inherited credentials."""
     parsed = urlsplit(gate_url)
@@ -50,6 +65,8 @@ def make_child_env(
         or parsed.fragment
         or not scoped_token
         or not server_password
+        or model_input_limit <= 0
+        or not 0 < model_output_limit <= 512
     ):
         raise ValueError("invalid isolated probe environment")
     resolved = root.resolve()
@@ -128,7 +145,16 @@ def make_child_env(
                                 "baseURL": gate_url + "/v1",
                                 "apiKey": scoped_token,
                             },
-                            "models": {"qwen-plus": {"name": "qwen-plus"}},
+                            "models": {
+                                "qwen-plus": {
+                                    "name": "qwen-plus",
+                                    "limit": {
+                                        "context": model_input_limit,
+                                        "input": model_input_limit,
+                                        "output": model_output_limit,
+                                    },
+                                }
+                            },
                         }
                     },
                 },
@@ -248,13 +274,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-seconds", type=_positive, required=True)
     parser.add_argument("--max-model-calls", type=_positive, required=True)
+    parser.add_argument("--max-cost-usd", type=_cost_cap, default=0.50)
+    parser.add_argument("--gateway-env-file", type=Path)
+    parser.add_argument("--ledger", type=Path)
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        default=Path(".superpowers/tools/opencode-1.19.5/opencode"),
+    )
     args = parser.parse_args(argv)
 
     opted_in = all(
         os.environ.get(name) == "1"
         for name in ("TAP_RUN_TAPPER_REAL_MODEL_SMOKE", "TAP_RUN_OPENCODE_PROBE")
     )
-    report = {
+    report: dict[str, object] = {
         "scenario": args.scenario,
         "status": "unverified",
         "reason": "scenario_execution_pending_task_0_3"
@@ -265,6 +299,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model_calls": 0,
         "budget_exceeded": False,
     }
+    if opted_in:
+        from scripts.opencode_probe.scenarios import run_freeze_experiment, run_scenario
+
+        if args.gateway_env_file is None or args.ledger is None:
+            parser.error("real probe requires --gateway-env-file and --ledger")
+        try:
+            runner = (
+                run_freeze_experiment
+                if args.scenario == "config-freeze"
+                else run_scenario
+            )
+            report = asyncio.run(
+                runner(
+                    **(
+                        {}
+                        if args.scenario == "config-freeze"
+                        else {"scenario": args.scenario}
+                    ),
+                    binary=args.binary,
+                    gateway_env_file=args.gateway_env_file,
+                    ledger_path=args.ledger,
+                    max_calls=args.max_model_calls,
+                    max_seconds=args.max_seconds,
+                    max_cost_usd=args.max_cost_usd,
+                )
+            )
+        except Exception as error:
+            report = {
+                **report,
+                "reason": "probe_preflight_error:" + type(error).__name__,
+            }
     destination: Path = args.output
     if destination.is_symlink() or destination.exists():
         parser.error("output must be a new regular path")

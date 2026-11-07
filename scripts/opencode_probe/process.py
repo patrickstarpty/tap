@@ -47,14 +47,16 @@ def classify_capture(
     return "complete" if terminal_seen else "incomplete"
 
 
-async def _read_lines(stream: asyncio.StreamReader) -> tuple[tuple[str, ...], bool]:
+async def _read_lines(
+    stream: asyncio.StreamReader, max_lines: int
+) -> tuple[tuple[str, ...], bool]:
     lines: list[str] = []
     pending = bytearray()
     truncated = False
     while chunk := await stream.read(_READ_CHUNK):
         for byte in chunk:
             if byte == 10:
-                if len(lines) < _MAX_LINES:
+                if len(lines) < max_lines:
                     lines.append(pending.decode("utf-8", errors="replace"))
                 else:
                     truncated = True
@@ -64,7 +66,7 @@ async def _read_lines(stream: asyncio.StreamReader) -> tuple[tuple[str, ...], bo
             else:
                 truncated = True
     if pending:
-        if len(lines) < _MAX_LINES:
+        if len(lines) < max_lines:
             lines.append(pending.decode("utf-8", errors="replace"))
         else:
             truncated = True
@@ -89,9 +91,14 @@ async def _reap(process: asyncio.subprocess.Process) -> None:
     await asyncio.wait_for(process.wait(), _REAP_SECONDS)
 
 
-async def run_probe(spec: ProbeRun) -> ProbeCapture:
+async def run_probe(spec: ProbeRun, *, max_lines: int = _MAX_LINES) -> ProbeCapture:
     """Run one explicit argv with bounded dual-stream capture and group cleanup."""
-    if not spec.argv or spec.timeout_seconds <= 0 or not spec.cwd.is_dir():
+    if (
+        not spec.argv
+        or spec.timeout_seconds <= 0
+        or not spec.cwd.is_dir()
+        or not 0 < max_lines <= 4096
+    ):
         raise ValueError("invalid probe process specification")
     process = await asyncio.create_subprocess_exec(
         *spec.argv,
@@ -103,8 +110,8 @@ async def run_probe(spec: ProbeRun) -> ProbeCapture:
         limit=_READ_CHUNK * 2,
     )
     assert process.stdout is not None and process.stderr is not None
-    stdout_task = asyncio.create_task(_read_lines(process.stdout))
-    stderr_task = asyncio.create_task(_read_lines(process.stderr))
+    stdout_task = asyncio.create_task(_read_lines(process.stdout, max_lines))
+    stderr_task = asyncio.create_task(_read_lines(process.stderr, max_lines))
     timed_out = False
     try:
         try:
@@ -148,7 +155,8 @@ async def serve_probe(
     if version.exit_code != 0 or version.stdout_lines != ("1.19.5",):
         raise ValueError("installed OpenCode version mismatch")
     effective_capture = await run_probe(
-        ProbeRun(binary_argv + ("debug", "config"), cwd, env, min(timeout_seconds, 10))
+        ProbeRun(binary_argv + ("debug", "config"), cwd, env, min(timeout_seconds, 10)),
+        max_lines=4096,
     )
     if (
         effective_capture.exit_code != 0
@@ -179,11 +187,12 @@ async def serve_probe(
         start_new_session=True,
     )
     assert process.stdout is not None and process.stderr is not None
-    stdout_task = asyncio.create_task(_read_lines(process.stdout))
-    stderr_task = asyncio.create_task(_read_lines(process.stderr))
+    stdout_task = asyncio.create_task(_read_lines(process.stdout, _MAX_LINES))
+    stderr_task = asyncio.create_task(_read_lines(process.stderr, _MAX_LINES))
     client = LegacyClient(
         f"http://127.0.0.1:{port}", env["OPENCODE_SERVER_PASSWORD"], timeout_seconds=1
     )
+    client.serve_pid = process.pid
     try:
         async with asyncio.timeout(timeout_seconds):
             while True:

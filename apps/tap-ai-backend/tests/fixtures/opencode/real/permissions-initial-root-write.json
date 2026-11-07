@@ -1,0 +1,108 @@
+{
+  "artifacts": {
+    "denied.txt": "62d6c2330036f64bcf71b95791743d6c77c38e0d7c8cbedcbc525c77c57cf0ee"
+  },
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:10:59.397619+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 41,
+    "charged_cost_usd": 0.0517212
+  },
+  "event_count": 111,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "file.edited",
+    "file.watcher.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 3,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b5e3f7fffe811NTV79cpWh9w",
+        "completion_tokens": 9,
+        "estimated_cost_usd": 0.000232,
+        "gate_request_id": "probe_bd5863ae2468c881a977258e",
+        "prompt_tokens": 553,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5e3f7fffe811NTV79cpWh9w",
+        "completion_tokens": 119,
+        "estimated_cost_usd": 0.0017019999999999997,
+        "gate_request_id": "probe_3e75b89e5913bacc8e02ef18",
+        "prompt_tokens": 3898,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5e3f7fffe811NTV79cpWh9w",
+        "completion_tokens": 24,
+        "estimated_cost_usd": 0.0016427999999999998,
+        "gate_request_id": "probe_65c2c505522f5ff3da724b97",
+        "prompt_tokens": 4035,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 38,
+    "charged_cost_usd": 0.0481444
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b5e3f7fffe811NTV79cpWh9w",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "permissions",
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "stop"
+    ],
+    "children": [],
+    "readable": true,
+    "root_message_count": 3,
+    "tools": [
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "write"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b5e3f7fffe811NTV79cpWh9w"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "complete",
+  "user_message_id": "msg_974943f2843b188ccdb1a520"
+}

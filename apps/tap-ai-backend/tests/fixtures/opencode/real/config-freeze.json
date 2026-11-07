@@ -1,0 +1,90 @@
+{
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:37:05.106113+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 100,
+    "charged_cost_usd": 0.1243144
+  },
+  "freeze": {
+    "new_config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+    "new_profile_hash": "08818504893b24b3e8bba7ec1c21af656dc1f6120efd07651928e384dd49d2bf",
+    "new_revision": "probe-0.3-freeze-r2",
+    "new_session_id": "ses_e4b4650eefferD8l1Ag6hkzZdd",
+    "new_terminal": "complete",
+    "old_busy_at_source_change": true,
+    "old_profile_hash_after": "3ef61a3708e741147cd5fbacbdad09da3372eb74a88e45b8160b88d5dbcadae6",
+    "old_profile_hash_before": "3ef61a3708e741147cd5fbacbdad09da3372eb74a88e45b8160b88d5dbcadae6",
+    "old_revision": "probe-0.3-freeze-r1",
+    "old_terminal": "complete"
+  },
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 5,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b465ad7ffeIBstCMQKH0VR38",
+        "completion_tokens": 9,
+        "estimated_cost_usd": 0.000232,
+        "gate_request_id": "probe_4b896383ef91737c2be6a164",
+        "prompt_tokens": 553,
+        "status": 200,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b465ad7ffeIBstCMQKH0VR38",
+        "completion_tokens": 20,
+        "estimated_cost_usd": 0.0015836,
+        "gate_request_id": "probe_a12964b3593cfccdfa926e98",
+        "prompt_tokens": 3899,
+        "status": 200,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b4650eefferD8l1Ag6hkzZdd",
+        "completion_tokens": 5,
+        "estimated_cost_usd": 0.00022639999999999997,
+        "gate_request_id": "probe_acf38701e67c9f2b4df1bf77",
+        "prompt_tokens": 551,
+        "status": 200,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b4650eefferD8l1Ag6hkzZdd",
+        "completion_tokens": 2,
+        "estimated_cost_usd": 0.0015608,
+        "gate_request_id": "probe_b665f69419381acbc90f8b5a",
+        "prompt_tokens": 3896,
+        "status": 200,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b465ad7ffeIBstCMQKH0VR38",
+        "completion_tokens": 2,
+        "estimated_cost_usd": 0.0015764,
+        "gate_request_id": "probe_c00dbb7024443aeec18fb1e7",
+        "prompt_tokens": 3935,
+        "status": 200,
+        "usage_verified": true
+      }
+    ]
+  },
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 95,
+    "charged_cost_usd": 0.1191352
+  },
+  "reason": "old_live_snapshot_unchanged_new_session_loaded_revision",
+  "redaction": "revision and profile digests, session IDs, terminal states, gate usage only; prompt and response bodies omitted",
+  "root_session_id": "ses_e4b465ad7ffeIBstCMQKH0VR38",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "config-freeze",
+  "sessions": [
+    "ses_e4b465ad7ffeIBstCMQKH0VR38",
+    "ses_e4b4650eefferD8l1Ag6hkzZdd"
+  ],
+  "source": "opencode-real",
+  "status": "supported",
+  "terminal": "complete"
+}

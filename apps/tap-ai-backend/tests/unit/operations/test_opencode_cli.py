@@ -75,6 +75,11 @@ def test_child_env_is_isolated_and_uses_scoped_token(
     assert config["enabled_providers"] == ["litellm"]
     assert config["provider"]["litellm"]["options"]["baseURL"] == "http://127.0.0.1:54321/v1"
     assert config["provider"]["litellm"]["options"]["apiKey"] == "scoped-token"
+    assert config["provider"]["litellm"]["models"]["qwen-plus"]["limit"] == {
+        "context": 129024,
+        "input": 129024,
+        "output": 512,
+    }
 
 
 def test_reused_isolation_directories_are_rejected(tmp_path: Path) -> None:

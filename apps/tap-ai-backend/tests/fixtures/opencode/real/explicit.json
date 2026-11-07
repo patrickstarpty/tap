@@ -1,0 +1,154 @@
+{
+  "artifacts": {},
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:24:46.412188+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 74,
+    "charged_cost_usd": 0.0917524
+  },
+  "event_count": 131,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "server.heartbeat",
+    "session.created",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 5,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b519facffeBy2d6fVtGnkTz1",
+        "completion_tokens": 8,
+        "estimated_cost_usd": 0.00023159999999999996,
+        "gate_request_id": "probe_f438f0e7e3441dbf83c1ac69",
+        "prompt_tokens": 555,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b519facffeBy2d6fVtGnkTz1",
+        "completion_tokens": 65,
+        "estimated_cost_usd": 0.0016388,
+        "gate_request_id": "probe_01c877a3564a18d12aecd615",
+        "prompt_tokens": 3902,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b51955cffe9nl7GcGFArPUxo",
+        "completion_tokens": 19,
+        "estimated_cost_usd": 0.0004256,
+        "gate_request_id": "probe_a4fe485b9b2eba0c4a9502fb",
+        "prompt_tokens": 1007,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b51955cffe9nl7GcGFArPUxo",
+        "completion_tokens": 1,
+        "estimated_cost_usd": 0.0004184,
+        "gate_request_id": "probe_f8ce00ed386c11e7765b635e",
+        "prompt_tokens": 1043,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b519facffeBy2d6fVtGnkTz1",
+        "completion_tokens": 13,
+        "estimated_cost_usd": 0.0016247999999999998,
+        "gate_request_id": "probe_aeaf82cd52f824a548147cb9",
+        "prompt_tokens": 4023,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 69,
+    "charged_cost_usd": 0.0874132
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b519facffeBy2d6fVtGnkTz1",
+  "scenario": "explicit-delegation",
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "stop"
+    ],
+    "assistant_parent_ids": [
+      "msg_57ad8e4960f8ba0f87921b80",
+      "msg_57ad8e4960f8ba0f87921b80"
+    ],
+    "children": [
+      {
+        "agent": "qae",
+        "assistant_errors": [
+          null,
+          null
+        ],
+        "assistant_finishes": [
+          "tool-calls",
+          "stop"
+        ],
+        "ended_ms": 1794032710995,
+        "id": "ses_e4b51955cffe9nl7GcGFArPUxo",
+        "message_count": 3,
+        "parent_id": "ses_e4b519facffeBy2d6fVtGnkTz1",
+        "started_ms": 1794032691885,
+        "tools": [
+          {
+            "file": null,
+            "status": "completed",
+            "tool": "glob"
+          }
+        ]
+      }
+    ],
+    "readable": true,
+    "root_message_count": 3,
+    "tools": [
+      {
+        "child_session_id": "ses_e4b51955cffe9nl7GcGFArPUxo",
+        "status": "completed",
+        "tool": "task"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b519facffeBy2d6fVtGnkTz1",
+    "ses_e4b51955cffe9nl7GcGFArPUxo"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "complete",
+  "user_message_id": "msg_57ad8e4960f8ba0f87921b80"
+}

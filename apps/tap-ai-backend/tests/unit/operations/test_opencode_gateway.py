@@ -182,6 +182,49 @@ def test_auth_model_path_and_host_are_fixed(
         )
 
 
+def test_rejected_payload_records_safe_diagnostic_without_forwarding(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=1,
+        max_seconds=10,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        assert send(gate, extra={"unexpected": "private data"}) == 400
+        assert gate.calls == 0
+        assert gate.denials[-1].reason == "payload_schema"
+        assert "private data" not in repr(gate.denials)
+    assert Upstream.calls == 0
+
+
+def test_output_cap_denial_identifies_safe_numeric_limit(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=1,
+        max_seconds=10,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+        max_output_tokens=512,
+    ) as gate:
+        assert send(gate, extra={"max_tokens": 16384}) == 400
+        assert gate.denials[-1].reason == "output_token_cap"
+        assert gate.denials[-1].requested_output_tokens == 16384
+        assert gate.calls == 0
+    assert Upstream.calls == 0
+
+
 def test_unknown_usage_stops_subsequent_upstream_calls(
     upstream: tuple[ThreadingHTTPServer, threading.Thread],
 ) -> None:

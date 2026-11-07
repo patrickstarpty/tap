@@ -1,0 +1,133 @@
+{
+  "artifacts": {},
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:11:41.382942+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 45,
+    "charged_cost_usd": 0.055752
+  },
+  "event_count": 132,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "session.created",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "fixture_schema_version": 1,
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 4,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b5d974cffeJvuT7v2EMKEaU2",
+        "completion_tokens": 10,
+        "estimated_cost_usd": 0.00024119999999999998,
+        "gate_request_id": "probe_243a3360c7ef81e4c09005ed",
+        "prompt_tokens": 573,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5d974cffeJvuT7v2EMKEaU2",
+        "completion_tokens": 76,
+        "estimated_cost_usd": 0.0016588,
+        "gate_request_id": "probe_ab0ac0c0b1c436a356cced0d",
+        "prompt_tokens": 3919,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5d8cacffeGry1PTr24RsN4R",
+        "completion_tokens": 45,
+        "estimated_cost_usd": 0.0004612,
+        "gate_request_id": "probe_650056b409ef58ed32b70a7e",
+        "prompt_tokens": 1018,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5d974cffeJvuT7v2EMKEaU2",
+        "completion_tokens": 27,
+        "estimated_cost_usd": 0.0016695999999999998,
+        "gate_request_id": "probe_c61c166cdb80626b0ff69bb5",
+        "prompt_tokens": 4093,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 41,
+    "charged_cost_usd": 0.0517212
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b5d974cffeJvuT7v2EMKEaU2",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "permissions",
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "stop"
+    ],
+    "children": [
+      {
+        "agent": "qae",
+        "assistant_errors": [
+          null
+        ],
+        "assistant_finishes": [
+          "stop"
+        ],
+        "ended_ms": 1794031909238,
+        "id": "ses_e4b5d8cacffeGry1PTr24RsN4R",
+        "message_count": 2,
+        "parent_id": "ses_e4b5d974cffeJvuT7v2EMKEaU2",
+        "started_ms": 1794031907676,
+        "tools": []
+      }
+    ],
+    "readable": true,
+    "root_message_count": 3,
+    "tools": [
+      {
+        "child_session_id": "ses_e4b5d8cacffeGry1PTr24RsN4R",
+        "status": "completed",
+        "tool": "task"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b5d974cffeJvuT7v2EMKEaU2",
+    "ses_e4b5d8cacffeGry1PTr24RsN4R"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "complete",
+  "user_message_id": "msg_4e36e2dc3ef5dacb9d219182"
+}

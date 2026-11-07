@@ -1,0 +1,205 @@
+{
+  "artifacts": {
+    "square.py": "166c83cd99bf5ec1762993b4423770f150092aeac95a915616f14a6b07cf040b"
+  },
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:07:39.919645+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 19,
+    "charged_cost_usd": 0.0233032
+  },
+  "event_count": 249,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "file.edited",
+    "file.watcher.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "server.heartbeat",
+    "session.created",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "fixture_schema_version": 1,
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 8,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "completion_tokens": 11,
+        "estimated_cost_usd": 0.00023719999999999997,
+        "gate_request_id": "probe_af159b4da2e70a85586b59c1",
+        "prompt_tokens": 560,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "completion_tokens": 133,
+        "estimated_cost_usd": 0.0017219999999999998,
+        "gate_request_id": "probe_cdfe07860bab7c046dea87a5",
+        "prompt_tokens": 3906,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b613a18ffetjfnqWWEe8oV1G",
+        "completion_tokens": 132,
+        "estimated_cost_usd": 0.0013752,
+        "gate_request_id": "probe_5cdd4f41f4abf23e747d1b05",
+        "prompt_tokens": 3042,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b613a18ffetjfnqWWEe8oV1G",
+        "completion_tokens": 60,
+        "estimated_cost_usd": 0.0013488,
+        "gate_request_id": "probe_77efb1b05b2e46178d94688b",
+        "prompt_tokens": 3192,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "completion_tokens": 90,
+        "estimated_cost_usd": 0.0017699999999999999,
+        "gate_request_id": "probe_e9c92609dc1bda7621443874",
+        "prompt_tokens": 4155,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "completion_tokens": 34,
+        "estimated_cost_usd": 0.0017843999999999998,
+        "gate_request_id": "probe_ab64374f1fdd775aa3c4fb03",
+        "prompt_tokens": 4359,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "completion_tokens": 44,
+        "estimated_cost_usd": 0.0018196,
+        "gate_request_id": "probe_7e1e396feafc8fedfea5c488",
+        "prompt_tokens": 4417,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "completion_tokens": 54,
+        "estimated_cost_usd": 0.0018616,
+        "gate_request_id": "probe_6ebad3170ea924e38fc98cc6",
+        "prompt_tokens": 4492,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 11,
+    "charged_cost_usd": 0.0113844
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "auto-delegation",
+  "script_check": {
+    "exit_code": 0,
+    "expected_output": false,
+    "safe_ast": true
+  },
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      "stop"
+    ],
+    "children": [
+      {
+        "agent": "sde",
+        "assistant_errors": [
+          null,
+          null
+        ],
+        "assistant_finishes": [
+          "tool-calls",
+          "stop"
+        ],
+        "ended_ms": 1794031671867,
+        "id": "ses_e4b613a18ffetjfnqWWEe8oV1G",
+        "message_count": 3,
+        "parent_id": "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+        "started_ms": 1794031666673
+      }
+    ],
+    "readable": true,
+    "root_message_count": 6,
+    "tools": [
+      {
+        "child_session_id": "ses_e4b613a18ffetjfnqWWEe8oV1G",
+        "status": "completed",
+        "tool": "task"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "read"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "bash"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "bash"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b614a3bffetlivkQvX7FJ4Mj",
+    "ses_e4b613a18ffetjfnqWWEe8oV1G"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "complete",
+  "user_message_id": "msg_d4ee3994477c66c1b64a1ac1"
+}

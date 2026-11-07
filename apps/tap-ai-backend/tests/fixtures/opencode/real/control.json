@@ -1,0 +1,137 @@
+{
+  "artifacts": {
+    "first.txt": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+    "second.txt": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4"
+  },
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:14:14.032980+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "control": {
+    "accepted_message_id": "msg_8aec25462fd9d1fcf7c800f2",
+    "first_digest_at_submission": null,
+    "submitted_during_active_root": true
+  },
+  "cumulative_ledger": {
+    "calls": 49,
+    "charged_cost_usd": 0.0609416
+  },
+  "event_count": 112,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "file.edited",
+    "file.watcher.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "fixture_schema_version": 1,
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 4,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b5b46f4ffeVcwFH743a019Gd",
+        "completion_tokens": 8,
+        "estimated_cost_usd": 0.00022639999999999997,
+        "gate_request_id": "probe_0339c8923697b24487bb5ebb",
+        "prompt_tokens": 542,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5b46f4ffeVcwFH743a019Gd",
+        "completion_tokens": 68,
+        "estimated_cost_usd": 0.0016359999999999999,
+        "gate_request_id": "probe_666637f4ee07f60183bca6be",
+        "prompt_tokens": 3886,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5b46f4ffeVcwFH743a019Gd",
+        "completion_tokens": 68,
+        "estimated_cost_usd": 0.0016775999999999996,
+        "gate_request_id": "probe_02698de241d43481803bdd4d",
+        "prompt_tokens": 3990,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b5b46f4ffeVcwFH743a019Gd",
+        "completion_tokens": 16,
+        "estimated_cost_usd": 0.0016496,
+        "gate_request_id": "probe_e0b7a82314c6aa3dfabe43e0",
+        "prompt_tokens": 4076,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 45,
+    "charged_cost_usd": 0.055752
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b5b46f4ffeVcwFH743a019Gd",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "control-receipt",
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "tool-calls",
+      "stop"
+    ],
+    "assistant_parent_ids": [
+      "msg_bf0fc05b0fc6de50d23ee129",
+      "msg_8aec25462fd9d1fcf7c800f2",
+      "msg_8aec25462fd9d1fcf7c800f2"
+    ],
+    "children": [],
+    "readable": true,
+    "root_message_count": 5,
+    "tools": [
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "write"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "write"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b5b46f4ffeVcwFH743a019Gd"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "complete",
+  "user_message_id": "msg_bf0fc05b0fc6de50d23ee129"
+}

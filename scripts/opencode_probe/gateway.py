@@ -138,6 +138,15 @@ class CallRecord:
     estimated_cost_usd: float | None
 
 
+@dataclass(frozen=True)
+class DenialRecord:
+    status: int
+    reason: str
+    claimed_session_id: str | None
+    payload_fields: tuple[str, ...] = ()
+    requested_output_tokens: int | None = None
+
+
 class BudgetGate:
     def __init__(
         self,
@@ -196,6 +205,7 @@ class BudgetGate:
         self.calls = 0
         self.budget_exceeded = False
         self.records: list[CallRecord] = []
+        self.denials: list[DenialRecord] = []
         self.token = secrets.token_urlsafe(32)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -261,27 +271,46 @@ class BudgetGate:
             def log_message(self, *_args: object) -> None:
                 pass
 
-            def _reject(self, status: int) -> None:
+            def _reject(
+                self,
+                status: int,
+                reason: str,
+                payload_fields: tuple[str, ...] = (),
+                requested_output_tokens: int | None = None,
+            ) -> None:
+                claimed = self.headers.get("x-opencode-session-id")
+                if claimed and not re.fullmatch(r"ses_[a-zA-Z0-9_-]{1,100}", claimed):
+                    claimed = None
+                with gate._lock:
+                    gate.denials.append(
+                        DenialRecord(
+                            status,
+                            reason,
+                            claimed,
+                            payload_fields,
+                            requested_output_tokens,
+                        )
+                    )
                 self.send_response(status)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
             def do_POST(self) -> None:
                 if self.path != "/v1/chat/completions":
-                    self._reject(404)
+                    self._reject(404, "path")
                     return
                 if self.headers.get("Authorization") != f"Bearer {gate.token}":
-                    self._reject(401)
+                    self._reject(401, "authentication")
                     return
                 if self.headers.get("Transfer-Encoding"):
-                    self._reject(400)
+                    self._reject(400, "transfer_encoding")
                     return
                 try:
                     size = int(self.headers.get("Content-Length", "-1"))
                 except ValueError:
                     size = -1
                 if not 0 < size <= gate._max_input_bytes:
-                    self._reject(413)
+                    self._reject(413, "input_bytes")
                     return
                 raw = self.rfile.read(size)
                 try:
@@ -292,17 +321,44 @@ class BudgetGate:
                         ),
                     )
                 except (ValueError, UnicodeDecodeError):
-                    self._reject(400)
+                    self._reject(400, "invalid_json")
                     return
                 if (
                     isinstance(raw_payload, dict)
                     and raw_payload.get("model") != "qwen-plus"
                 ):
-                    self._reject(403)
+                    self._reject(403, "model_alias")
                     return
                 payload = _allowed_payload(raw_payload, gate._max_output_tokens)
                 if payload is None:
-                    self._reject(400)
+                    fields = (
+                        tuple(
+                            sorted(
+                                str(key)[:64]
+                                for key in raw_payload
+                                if isinstance(key, str)
+                                and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key)
+                            )
+                        )
+                        if isinstance(raw_payload, dict)
+                        else ()
+                    )
+                    requested = (
+                        raw_payload.get(
+                            "max_tokens", raw_payload.get("max_completion_tokens")
+                        )
+                        if isinstance(raw_payload, dict)
+                        else None
+                    )
+                    over_cap = (
+                        type(requested) is int and requested > gate._max_output_tokens
+                    )
+                    self._reject(
+                        400,
+                        "output_token_cap" if over_cap else "payload_schema",
+                        fields,
+                        requested if type(requested) is int else None,
+                    )
                     return
                 requested = payload["max_tokens"]
                 assert isinstance(requested, int)
@@ -310,13 +366,13 @@ class BudgetGate:
                     payload, separators=(",", ":"), allow_nan=False
                 ).encode()
                 if len(forwarded) > gate._max_input_bytes:
-                    self._reject(413)
+                    self._reject(413, "forwarded_input_bytes")
                     return
                 claimed_session_id = self.headers.get("x-opencode-session-id")
                 if claimed_session_id and not re.fullmatch(
                     r"ses_[a-zA-Z0-9_-]{1,100}", claimed_session_id
                 ):
-                    self._reject(400)
+                    self._reject(400, "session_header")
                     return
                 gate_request_id = "probe_" + secrets.token_hex(12)
                 reservation = (
@@ -336,7 +392,7 @@ class BudgetGate:
                         gate.calls += 1
                         gate._reserved_cost += reservation
                 if denied:
-                    self._reject(429)
+                    self._reject(429, "budget")
                     return
                 connection: http.client.HTTPConnection | None = None
                 upstream_status: int | None = None

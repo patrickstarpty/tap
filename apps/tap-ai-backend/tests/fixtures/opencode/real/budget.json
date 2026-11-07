@@ -1,0 +1,93 @@
+{
+  "artifacts": {},
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:22:11.838058+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 69,
+    "charged_cost_usd": 0.0874132
+  },
+  "event_count": 62,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "integration.updated",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "session.diff",
+    "session.status",
+    "session.updated"
+  ],
+  "fixture_schema_version": 1,
+  "gate": {
+    "budget_exceeded": true,
+    "calls": 1,
+    "denials": [
+      {
+        "claimed_session_id": "ses_e4b53fc67ffeyif1Ik0Pn7gjZg",
+        "payload_fields": [],
+        "reason": "budget",
+        "requested_output_tokens": null,
+        "status": 429
+      },
+      {
+        "claimed_session_id": "ses_e4b53fc67ffeyif1Ik0Pn7gjZg",
+        "payload_fields": [],
+        "reason": "budget",
+        "requested_output_tokens": null,
+        "status": 429
+      }
+    ],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b53fc67ffeyif1Ik0Pn7gjZg",
+        "completion_tokens": 5,
+        "estimated_cost_usd": 0.0002228,
+        "gate_request_id": "probe_db1b0f8a64f4010f9467553b",
+        "prompt_tokens": 542,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 68,
+    "charged_cost_usd": 0.0871904
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b53fc67ffeyif1Ik0Pn7gjZg",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "budget-enforcement",
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null
+    ],
+    "assistant_finishes": [
+      null
+    ],
+    "assistant_parent_ids": [
+      "msg_937eb6df522026f3093e5015"
+    ],
+    "children": [],
+    "readable": true,
+    "root_message_count": 2,
+    "tools": []
+  },
+  "sessions": [
+    "ses_e4b53fc67ffeyif1Ik0Pn7gjZg"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "incomplete",
+  "user_message_id": "msg_937eb6df522026f3093e5015"
+}

@@ -1,0 +1,88 @@
+{
+  "artifacts": {},
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T06:03:42.504402+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 2,
+    "charged_cost_usd": 0.0017792
+  },
+  "event_count": 75,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "fixture_enrichment": "Exact final text was checked against 42 in retained private OpenCode DB; only boolean retained.",
+  "fixture_schema_version": 1,
+  "gate": {
+    "budget_exceeded": false,
+    "calls": 2,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b64e9b2ffeN9OWn75cB6ptzf",
+        "completion_tokens": 5,
+        "estimated_cost_usd": 0.0002272,
+        "gate_request_id": "probe_0266bf0d0c89e4ce5abea5b6",
+        "prompt_tokens": 553,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b64e9b2ffeN9OWn75cB6ptzf",
+        "completion_tokens": 2,
+        "estimated_cost_usd": 0.001552,
+        "gate_request_id": "probe_07c56650505d47004e83b2a9",
+        "prompt_tokens": 3874,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 0,
+    "charged_cost_usd": 0.0
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b64e9b2ffeN9OWn75cB6ptzf",
+  "sample_origin": "local OpenCode 1.19.5 via task-owned LiteLLM gate; synthetic workspace",
+  "scenario": "simple-question",
+  "session_facts": {
+    "answer_is_42": true,
+    "assistant_errors": [
+      null
+    ],
+    "assistant_finishes": [
+      "stop"
+    ],
+    "children": [],
+    "readable": true,
+    "root_message_count": 2,
+    "tools": []
+  },
+  "sessions": [
+    "ses_e4b64e9b2ffeN9OWn75cB6ptzf"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "complete",
+  "user_message_id": "msg_6bd5b8bb4768d72a5e568518"
+}
