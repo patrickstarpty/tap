@@ -36,6 +36,6 @@
 | 预算 | 全任务超时、调用数、费用上限在子任务与恢复间累计，超限后执行端停止请求 |
 | 配置冻结 | 运行中修改不改变老任务；新任务可核对新快照 |
 
-required 门禁固定为 `byok_all_calls`、`child_identity`、`parallel`、`permissions`、`control_receipt`、`resume_workspace`、`reconcile`、`budget_enforcement`。每项结果只可为 `supported`、`unsupported`、`unverified`；未知、缺可信计数、缺终态或缺引用均不能解锁阶段 2。当前 `child_identity`、`parallel`、`control_receipt`（安全回合边界）、`reconcile`（仅控制进程失联）有真实 supported 证据；其余四项 unverified。Task 0.4 的自动委派与恢复复现均保留为独立部分样本，不能补足门禁；未复现不等于能力不支持。
+required 门禁固定为 `byok_all_calls`、`child_identity`、`parallel`、`permissions`、`control_receipt`、`resume_workspace`、`reconcile`、`budget_enforcement`。每项结果只可为 `supported`、`unsupported`、`unverified`；未知、缺可信计数、缺终态或缺引用均不能解锁阶段 2。当前 `child_identity`、`parallel`、`control_receipt`（安全回合边界）、`reconcile`（仅控制进程失联）有真实 supported 证据；其余四项 unverified。Task 0.4 的自动委派与恢复复现均保留为独立部分样本；后续一次有界恢复实验捕获首次动作计数，但未进入中断与续接，仍不能补足门禁。未复现不等于能力不支持。
 
 真实模型实验必须同时设置 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 与 `TAP_RUN_OPENCODE_PROBE=1`，缺任一开关则 skip；双开关真实烟测已经通过。探针在任务自有、回环绑定的限额转发边界派生最小 BYOK 凭据，原仓库 `.env` 只由监督端读取，Agent 工具不获得上游密钥。主/子真实请求及用量可核对，但辅助子类型和未观察路径的全覆盖仍未证实。原生路径仍通过 ModelGateway → LiteLLM，编码路径才使用 OpenCode → LiteLLM。实测选择 V1 `serve` 会话与 SSE 加持久 message/children 核对作为阶段 2 候选；`run --format json` 仅给选择性根事件，不能独立满足子实例实时证据。HTTP 接收不是指令已应用或取消完成。SSE 无已验证重放游标，需按持久 session/message/part 标识对账；具体字段与限制见[记录](../../guides/2026-11-06-opencode-capability-validation.md)。

@@ -117,6 +117,14 @@ def test_real_fixture_matrix_requires_execution_side_proof() -> None:
     directory = Path(__file__).resolve().parents[2] / "fixtures/opencode/real"
     samples = {path.stem: json.loads(path.read_text()) for path in directory.glob("*.json")}
     results = {result.name: result for result in evaluate_samples(samples)}
+    latest_resume = samples["resume-browser-continuation"]
+    assert latest_resume["terminal"] == "incomplete"
+    assert latest_resume["resume"]["first_action_count_final"] == 1
+    assert "abort_result" not in latest_resume["resume"]
+    assert not verified_provenance(latest_resume)
+    assert {r.name: r for r in evaluate_samples({"resume": latest_resume})}[
+        "resume_workspace"
+    ].status == "unverified"
     assert results["child_identity"].status == "supported"
     assert results["parallel"].status == "supported"
     assert results["control_receipt"].status == "supported"

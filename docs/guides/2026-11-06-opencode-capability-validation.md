@@ -9,7 +9,7 @@
 | 并行 | supported | `parallel.json` 两个子任务区间重叠，SDE/SDET 各自的 `write` 工具归属 `one.py`/`two.py`，根会话终态完成。`parallel-cost-stop.json` 是旧 USD 0.50 保守预约触顶样本，未把它算作成功。 |
 | profile 权限 | unverified | `permissions.json` 的 QAE 子会话没有写入 `denied.txt`，但模型没有真正调用受拒绝的写工具，缺执行端拒绝事件。`permissions-initial-root-write.json` 中根自己写入文件，也不能证明 QAE 权限。 |
 | 运行中增补 | supported | `control.json` 在根会话忙碌时接收新用户消息 ID，后续 assistant `parentID` 指向该 ID，`second.txt` 出现。只证明安全回合边界的实际应用，不证明工具执行中的即时注入。 |
-| 暂停与恢复 | unverified | `resume.json` 在 `first.txt` 写成且 task-owned `waiter.py` PID 存活时 abort；该 PID 随后消失、第二产物当时不存在、同一会话续接后出现 `second.txt`，但未记录首次写动作的独立运行计数。Task 0.4 的 `resume-task04-no-abort.json` 在 180 秒/8 次转发内产生两个文件，却未进入满足 PID、忙碌根会话与运行中 bash 的中断窗口；没有 abort/续接回执或计数，不能据此补足缺口。旧部分/错误样本仍保留。 |
+| 暂停与恢复 | unverified | `resume.json` 在 `first.txt` 写成且 task-owned `waiter.py` PID 存活时 abort；该 PID 随后消失、第二产物当时不存在、同一会话续接后出现 `second.txt`，但未记录首次写动作的独立运行计数。Task 0.4 的 `resume-task04-no-abort.json` 在 180 秒/8 次转发内产生两个文件，却未进入满足 PID、忙碌根会话与运行中 bash 的中断窗口。新样本 `resume-browser-continuation.json` 记录首次动作最终计数为 1，但未捕获同时满足中断前置条件的窗口；没有 abort、进程停止或同会话续接证据。三个样本不能拼接成一次通过，旧部分/错误样本仍保留。 |
 | 控制进程失联核对 | supported | `reconcile.json` 的 task-owned controller 收到 `prompt_async` 回执后被 SIGKILL，OpenCode serve 仍存活；监督端找回原会话及最终产物，未新建会话。未覆盖 OpenCode serve 自身丢失。 |
 | 执行端预算 | unverified | `budget.json` 在一次转发后，网关以 429 拒绝后续两次请求，未再向上游转发；`parallel-cost-stop.json` 证明单场景保守费用预约触顶。超时、子任务与恢复的全任务累计停止尚无完整实测证据。 |
 
@@ -25,7 +25,7 @@
 
 子 Agent 的可关联身份来自 `/children` 的 `id/parentID/agent/time` 与根 assistant 的 `task` 工具 `state.metadata.sessionId`；工具归属来自各子 session 的持久 message/part，不能只凭根自然语言。`prompt_async` 的 user message ID 是接收标识；后续 assistant `parentID` 和工作区产物证明安全边界应用。模型转发记录中的 `gate_request_id` 是本地尝试 ID，`upstream_request_id` 仅在上游返回时存在，`x-opencode-session-id` 是模型请求携带的会话标识；三者不是同一个消息 ID。标题等辅助请求只可可靠关联到根会话，具体辅助子类型与全部未观察调用路径仍未知。即时工具中插话、真正执行端权限拒绝、无重复动作的恢复、跨子任务/恢复累计时间费用限额均未获完整证据。
 
-阶段 2 可用的根会话终态完成样本为 `simple.json`、`auto.json`、`explicit.json`、`parallel.json`、`control.json`、`resume.json`、`reconcile.json`；其中 `resume.json` 仍缺首次动作未重复的独立计数，不能算暂停恢复能力通过。还须保留失败/部分样本做截断与限额回放。`auto-task04-budget-stop.json` 和 `resume-task04-no-abort.json` 是单独的部分证据；不得把它们接成一个完整运行。外层 LangGraph 只拥有编码父任务生命周期和交接权，OpenCode 内部 Orchestrator 独占该次编码运行的模型规划与专业 Agent 委派。
+阶段 2 可用的根会话终态完成样本为 `simple.json`、`auto.json`、`explicit.json`、`parallel.json`、`control.json`、`resume.json`、`reconcile.json`；其中 `resume.json` 仍缺首次动作未重复的独立计数，不能算暂停恢复能力通过。还须保留失败/部分样本做截断与限额回放。`auto-task04-budget-stop.json`、`resume-task04-no-abort.json` 和 `resume-browser-continuation.json` 是单独的部分证据；不得把它们接成一个完整运行。外层 LangGraph 只拥有编码父任务生命周期和交接权，OpenCode 内部 Orchestrator 独占该次编码运行的模型规划与专业 Agent 委派。
 
 真实烟测默认跳过。2026-11-07 双开关实测 1 passed，2 次模型转发。运行前设置受批准的本地 LiteLLM env 文件和同一持久 ledger 的路径，并同时启用两个开关：
 
@@ -36,4 +36,4 @@ TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 TAP_RUN_OPENCODE_PROBE=1 \
   uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/smoke/test_opencode_capabilities.py -v
 ```
 
-烟测最多预约 3 次模型尝试、90 秒、USD 0.20；每次运行前写入持久预约，进程异常丢失时仍计入总额。完整场景 CLI 另有每场景最多 10 次、180 秒的硬界；全任务 ledger 上限为 120 次、USD 2.00，含失败、辅助与子会话请求。Task 0.4 完成后共享 ledger 为 **117/120 次、估算 USD 0.1496368**；余 3 次，不能无声重置或跨上限重试。不要复制或提交本地 `.env`。运行阶段 2 前必须重新评估全部八项并取得真实 supported 证据。
+烟测最多预约 3 次模型尝试、90 秒、USD 0.20；每次运行前写入持久预约，进程异常丢失时仍计入总额。完整场景 CLI 另有每场景最多 10 次、180 秒的硬界；全任务 ledger 含失败、辅助与子会话请求。Task 0.4 完成时原账本为 117 次、估算 USD 0.1496368；同一账本随后记录 `browser-e2e-2026-11-07` 显式续建授权，上限为 237 次、USD 2.1496368。此次唯一恢复实验结算 3 次、USD 0.0034280，累计 **120/237 次、估算 USD 0.1530648/2.1496368**；剩余 117 次、USD 1.9965720。不得无声重置或跨上限重试。不要复制或提交本地 `.env`。运行阶段 2 前必须重新评估全部八项并取得真实 supported 证据。
