@@ -74,6 +74,8 @@ class EvidenceSink(Protocol):
         kind: str,
         data: bytes,
         max_bytes: int,
+        *,
+        session_id: str | None = None,
     ) -> Evidence: ...
 
 
@@ -144,6 +146,7 @@ class InspectorHandle:
     network: str
     proxy: str
     allowed_origins: tuple[str, ...]
+    session_id: str | None = None
 
 
 @dataclass
@@ -215,7 +218,11 @@ class BrowserRuntime:
         self._inspector_teardowns: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._inspector_pending: set[str] = set()
         self._inspector_starts: dict[str, asyncio.Task[Any]] = {}
-        self._inspector_start_receipts: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._inspector_start_receipts: dict[
+            tuple[str, str | None], asyncio.Future[dict[str, Any]]
+        ] = {}
+        self._inspector_start_owners: dict[str, str | None] = {}
+        self._inspector_handle_owners: dict[str, str | None] = {}
 
     async def _call(
         self,
@@ -511,7 +518,12 @@ class BrowserRuntime:
             return False
 
     async def start_inspector(
-        self, task_id: str, allowed_origins: tuple[str, ...], deadline: int
+        self,
+        task_id: str,
+        allowed_origins: tuple[str, ...],
+        deadline: int,
+        *,
+        session_id: str | None = None,
     ) -> InspectorHandle:
         if not 1 <= deadline <= 600:
             raise ValueError("invalid deadline")
@@ -521,10 +533,11 @@ class BrowserRuntime:
         owner = asyncio.current_task()
         assert owner is not None
         self._inspector_starts[task_id] = owner
+        self._inspector_start_owners[task_id] = session_id
         finished: asyncio.Future[dict[str, Any]] = (
             asyncio.get_running_loop().create_future()
         )
-        self._inspector_start_receipts[task_id] = finished
+        self._inspector_start_receipts[(task_id, session_id)] = finished
         resources = OwnedResources.new(task_id)
         try:
             deadline_at = time.monotonic() + deadline
@@ -569,8 +582,11 @@ class BrowserRuntime:
             except BaseException:
                 resources.cleanup_confirmed = await self._cleanup(resources)
                 raise
-            handle = InspectorHandle(task_id, browser, network, proxy, allowed_origins)
+            handle = InspectorHandle(
+                task_id, browser, network, proxy, allowed_origins, session_id
+            )
             self._handles[task_id] = handle
+            self._inspector_handle_owners[task_id] = session_id
             self._inspector_resources[task_id] = resources
             self._inspector_deadlines[task_id] = deadline_at
             self._inspector_teardowns.pop(task_id, None)
@@ -595,17 +611,27 @@ class BrowserRuntime:
         finally:
             self._inspector_pending.discard(task_id)
             self._inspector_starts.pop(task_id, None)
+            self._inspector_start_owners.pop(task_id, None)
 
-    async def cancel_inspector(self, task_id: str) -> dict[str, Any]:
+    async def cancel_inspector(
+        self, task_id: str, *, session_id: str | None = None
+    ) -> dict[str, Any]:
         handle = self._handles.get(task_id)
-        if handle is not None:
+        if (
+            handle is not None
+            and self._inspector_handle_owners.get(task_id) == session_id
+        ):
             return await self.cancel(handle)
         owner = self._inspector_starts.get(task_id)
-        finished = self._inspector_start_receipts.get(task_id)
-        if owner is not None and finished is not None:
+        finished = self._inspector_start_receipts.get((task_id, session_id))
+        if (
+            owner is not None
+            and finished is not None
+            and self._inspector_start_owners.get(task_id) == session_id
+        ):
             owner.cancel()
             return await asyncio.shield(finished)
-        if finished is not None and finished.done():
+        if handle is None and finished is not None and finished.done():
             return finished.result()
         return {"task_id": task_id, "stopped": False, "status": "unknown"}
 
@@ -634,6 +660,7 @@ class BrowserRuntime:
         *,
         deadline_at: float,
         state: ExecutionState | None = None,
+        session_id: str | None = None,
     ) -> Evidence:
         if self.evidence_sink is None:
             raise RuntimeError("browser evidence sink required")
@@ -642,6 +669,7 @@ class BrowserRuntime:
         remaining = deadline_at - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("browser deadline exceeded")
+        sink_options = {"session_id": session_id} if session_id is not None else {}
         stored = await asyncio.wait_for(
             asyncio.to_thread(
                 self.evidence_sink.persist,
@@ -651,6 +679,7 @@ class BrowserRuntime:
                 kind,
                 data,
                 max_bytes,
+                **sink_options,
             ),
             timeout=remaining,
         )
@@ -697,6 +726,7 @@ class BrowserRuntime:
                 image,
                 2_000_000,
                 deadline_at=deadline_at,
+                session_id=handle.session_id,
             )
             data["screenshot_ref"] = stored.object_ref
         return BrowserObservation(**data)
@@ -717,6 +747,7 @@ class BrowserRuntime:
             stopped = False
         if stopped:
             self._handles.pop(handle.task_id, None)
+            self._inspector_handle_owners.pop(handle.task_id, None)
             self._inspector_resources.pop(handle.task_id, None)
             self._inspector_deadlines.pop(handle.task_id, None)
             expiry = self._inspector_expiries.pop(handle.task_id, None)

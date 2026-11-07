@@ -274,9 +274,11 @@ async def test_worker_owns_session_handle_and_publishes_observation(tmp_path):
     store, objects, service, principal, _ = setup(tmp_path)
 
     class InspectorRuntime(Runtime):
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
-                task_id, "browser", "network", "proxy", allowed_origins
+                task_id, "browser", "network", "proxy", allowed_origins, session_id
             )
 
         async def observe(self, handle, action):
@@ -287,6 +289,7 @@ async def test_worker_owns_session_handle_and_publishes_observation(tmp_path):
                 "screenshot",
                 b"\x89PNG\r\n\x1a\nimage",
                 1024,
+                session_id=handle.session_id,
             )
             return BrowserObservation(
                 "session-a",
@@ -312,9 +315,7 @@ async def test_worker_owns_session_handle_and_publishes_observation(tmp_path):
         principal, session["session_id"], {"type": "snapshot"}, "action-key"
     )
     runtime = InspectorRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     await worker.tick()
     await worker.drain()
     assert service.get_session(principal, session["session_id"])["status"] == "active"
@@ -464,7 +465,9 @@ async def test_second_inspector_action_waits_for_first_observation(tmp_path):
             self.observing = asyncio.Event()
             self.release_observation = asyncio.Event()
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -562,7 +565,9 @@ async def test_active_session_cancel_requires_confirmed_stop_and_settles_actions
             super().__init__(sink)
             self.stops = 0
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -572,9 +577,7 @@ async def test_active_session_cancel_requires_confirmed_stop_and_settles_actions
             return {"task_id": handle.task_id, "stopped": True, "status": "canceled"}
 
     runtime = InspectorRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     session = service.create_session(
         principal,
         {
@@ -612,7 +615,9 @@ async def test_worker_shutdown_stops_owned_inspector(tmp_path):
             super().__init__(sink)
             self.stops = 0
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -622,9 +627,7 @@ async def test_worker_shutdown_stops_owned_inspector(tmp_path):
             return {"task_id": handle.task_id, "stopped": True, "status": "canceled"}
 
     runtime = InspectorRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     session = service.create_session(
         principal,
         {
@@ -650,7 +653,9 @@ async def test_canceling_worker_run_waits_for_session_teardown(tmp_path):
             super().__init__(sink)
             self.stopped = asyncio.Event()
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -669,9 +674,7 @@ async def test_canceling_worker_run_waits_for_session_teardown(tmp_path):
         "session-key",
     )
     runtime = InspectorRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     running = asyncio.create_task(worker.run(0.01))
     try:
         for _ in range(100):
@@ -702,7 +705,9 @@ async def test_worker_run_cancel_during_stop_still_exits(tmp_path):
             self.release_stop = asyncio.Event()
             self.stop_calls = 0
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -723,9 +728,7 @@ async def test_worker_run_cancel_during_stop_still_exits(tmp_path):
         "session-key",
     )
     runtime = SlowStop(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     running = asyncio.create_task(worker.run(0.01))
     for _ in range(100):
         if service.get_session(principal, session["session_id"])["status"] == "active":
@@ -756,22 +759,22 @@ async def test_cancel_during_session_start_waits_for_stop_receipt(tmp_path):
             self.release_start = asyncio.Event()
             self.stop_calls = 0
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             self.entered.set()
             await self.release_start.wait()
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
 
-        async def cancel_inspector(self, task_id):
+        async def cancel_inspector(self, task_id, *, session_id):
             self.stop_calls += 1
             self.release_start.set()
             return {"task_id": task_id, "stopped": True, "status": "canceled"}
 
     runtime = StartingRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     session = service.create_session(
         principal,
         {
@@ -811,7 +814,9 @@ async def test_unconfirmed_session_stop_is_unknown_and_late_action_cannot_publis
             self.observing = asyncio.Event()
             self.release_observation = asyncio.Event()
 
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -827,9 +832,7 @@ async def test_unconfirmed_session_stop_is_unknown_and_late_action_cannot_publis
             return {"task_id": handle.task_id, "stopped": False, "status": "unknown"}
 
     runtime = UnconfirmedRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     session = service.create_session(
         principal,
         {
@@ -879,7 +882,9 @@ async def test_lost_session_owner_cannot_publish_active(tmp_path):
     )
 
     class ExpiringRuntime(Runtime):
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             store.update(
                 "session",
                 "project-a",
@@ -895,9 +900,7 @@ async def test_lost_session_owner_cannot_publish_active(tmp_path):
             return {"task_id": handle.task_id, "stopped": True, "status": "canceled"}
 
     runtime = ExpiringRuntime(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     await worker.tick()
     await worker.drain()
     assert service.get_session(principal, session["session_id"])["status"] == "unknown"
@@ -935,7 +938,9 @@ async def test_wrong_session_screenshot_cannot_publish_observation(tmp_path):
     )
 
     class WrongScreenshot(Runtime):
-        async def start_inspector(self, task_id, allowed_origins, deadline):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
             return InspectorHandle(
                 task_id, "browser", "network", "proxy", allowed_origins
             )
@@ -946,9 +951,7 @@ async def test_wrong_session_screenshot_cannot_publish_observation(tmp_path):
             )
 
     runtime = WrongScreenshot(BrowserEvidenceSink(store, objects))
-    worker = BrowserWorker(
-        service, runtime, "project-a", "owner-a", evidence_sink=runtime.sink
-    )
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
     await worker.tick()
     await worker.drain()
     await worker.tick()
@@ -959,3 +962,103 @@ async def test_wrong_session_screenshot_cannot_publish_observation(tmp_path):
         ]
         == "unknown"
     )
+
+
+@pytest.mark.asyncio
+async def test_cancel_claimed_unstarted_same_task_session_keeps_original_inspector(
+    tmp_path,
+):
+    store, objects, service, principal, _ = setup(tmp_path)
+
+    class SingleTaskRuntime(Runtime):
+        def __init__(self, sink):
+            super().__init__(sink)
+            self.handles = {}
+            self.stopped = []
+
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
+            if task_id in self.handles:
+                raise ValueError("inspector already active")
+            handle = InspectorHandle(
+                task_id, "browser-a", "network", "proxy", allowed_origins
+            )
+            self.handles[task_id] = handle
+            return handle
+
+        async def cancel(self, handle):
+            self.stopped.append(handle)
+            self.handles.pop(handle.task_id, None)
+            return {"task_id": handle.task_id, "stopped": True, "status": "canceled"}
+
+        async def cancel_inspector(self, task_id, *, session_id):
+            handle = self.handles.get(task_id)
+            if handle is not None:
+                return await self.cancel(handle)
+            return {"task_id": task_id, "stopped": False, "status": "unknown"}
+
+    runtime = SingleTaskRuntime(BrowserEvidenceSink(store, objects))
+    worker = BrowserWorker(service, runtime, "project-a", "owner-a")
+    body = {
+        "task_id": "task-a",
+        "allowed_origins": ["https://example.com"],
+        "deadline_seconds": 60,
+    }
+    first = service.create_session(principal, body, "session-first")
+    await worker.tick()
+    await worker.drain()
+    original = worker._handles[first["session_id"]]
+    second = service.create_session(principal, body, "session-second")
+    await worker.tick()  # Claimed; its start task has not run yet.
+    service.cancel_session(principal, second["session_id"])
+    await worker.tick()
+    await worker.drain()
+    assert service.get_session(principal, first["session_id"])["status"] == "active"
+    assert service.get_session(principal, second["session_id"])["status"] == "canceled"
+    assert original in runtime.handles.values()
+    assert original not in runtime.stopped
+
+
+def test_late_inspector_evidence_keeps_originating_session(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    store, objects, service, principal, _ = setup(tmp_path)
+    body = {
+        "task_id": "task-a",
+        "allowed_origins": ["https://example.com"],
+        "deadline_seconds": 60,
+    }
+    first = service.create_session(principal, body, "session-first")
+    second = service.create_session(principal, body, "session-second")
+    entered = threading.Event()
+    release = threading.Event()
+
+    class PausedSink(BrowserEvidenceSink):
+        def persist(self, *args, **kwargs):
+            entered.set()
+            assert release.wait(2)
+            return super().persist(*args, **kwargs)
+
+    sink = PausedSink(store, objects)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(
+            sink.persist,
+            "project-a",
+            "task-a",
+            "task-a",
+            "screenshot",
+            b"\x89PNG\r\n\x1a\nold-session",
+            1024,
+            session_id=first["session_id"],
+        )
+        assert entered.wait(2)
+        service.cancel_session(principal, first["session_id"])
+        store.update("session", "project-a", second["session_id"], status="active")
+        release.set()
+        evidence = pending.result()
+    row = store.get("evidence", "project-a", evidence.object_ref)
+    assert row is not None
+    assert row["session_id"] == first["session_id"]
+    assert row["session_id"] != second["session_id"]

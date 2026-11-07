@@ -258,79 +258,90 @@ class BrowserStore:
             else nullcontext()
         )
         with guard:
-            with self.engine.begin() as connection:
-                session = (
+            try:
+                with self.engine.begin() as connection:
+                    session = (
+                        connection.execute(
+                            select(sessions)
+                            .where(
+                                sessions.c.id == session_id,
+                                sessions.c.project_id == project_id,
+                            )
+                            .with_for_update()
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if (
+                        session is None
+                        or session["status"] not in {"pending", "running", "active"}
+                        or session.get("cancel_requested", False)
+                    ):
+                        raise ValueError("browser session unavailable")
+                    prior = (
+                        connection.execute(
+                            select(idempotency).where(
+                                idempotency.c.project_id == project_id,
+                                idempotency.c.kind == "action",
+                                idempotency.c.key == key,
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if prior is not None:
+                        if prior["digest"] != digest:
+                            raise ValueError("idempotency conflict")
+                        existing = (
+                            connection.execute(
+                                select(actions).where(
+                                    actions.c.id == prior["resource_id"]
+                                )
+                            )
+                            .mappings()
+                            .one()
+                        )
+                        return dict(existing)
+                    sequence = int(session["next_action_sequence"])
+                    action_id = uuid.uuid4().hex
                     connection.execute(
-                        select(sessions)
+                        update(sessions)
                         .where(
                             sessions.c.id == session_id,
                             sessions.c.project_id == project_id,
                         )
-                        .with_for_update()
+                        .values(next_action_sequence=sequence + 1)
                     )
-                    .mappings()
-                    .first()
-                )
-                if (
-                    session is None
-                    or session["status"] not in {"pending", "running", "active"}
-                    or session.get("cancel_requested", False)
-                ):
-                    raise ValueError("browser session unavailable")
-                prior = (
                     connection.execute(
-                        select(idempotency).where(
-                            idempotency.c.project_id == project_id,
-                            idempotency.c.kind == "action",
-                            idempotency.c.key == key,
+                        insert(idempotency).values(
+                            project_id=project_id,
+                            kind="action",
+                            key=key,
+                            digest=digest,
+                            resource_id=action_id,
                         )
                     )
-                    .mappings()
-                    .first()
-                )
-                if prior is not None:
-                    if prior["digest"] != digest:
-                        raise ValueError("idempotency conflict")
-                    existing = (
-                        connection.execute(
-                            select(actions).where(actions.c.id == prior["resource_id"])
-                        )
-                        .mappings()
-                        .one()
-                    )
-                    return dict(existing)
-                sequence = int(session["next_action_sequence"])
-                action_id = uuid.uuid4().hex
-                connection.execute(
-                    update(sessions)
-                    .where(
-                        sessions.c.id == session_id, sessions.c.project_id == project_id
-                    )
-                    .values(next_action_sequence=sequence + 1)
-                )
-                connection.execute(
-                    insert(idempotency).values(
+                    row = dict(
+                        id=action_id,
                         project_id=project_id,
-                        kind="action",
-                        key=key,
-                        digest=digest,
-                        resource_id=action_id,
+                        session_id=session_id,
+                        sequence=sequence,
+                        status="pending",
+                        request=request,
+                        observation=None,
+                        owner=None,
+                        lease_until=None,
+                        created_at=now(),
                     )
-                )
-                row = dict(
-                    id=action_id,
-                    project_id=project_id,
-                    session_id=session_id,
-                    sequence=sequence,
-                    status="pending",
-                    request=request,
-                    observation=None,
-                    owner=None,
-                    lease_until=None,
-                    created_at=now(),
-                )
-                connection.execute(insert(actions).values(**row))
-                return row
+                    connection.execute(insert(actions).values(**row))
+                    return row
+            except IntegrityError:
+                # The losing transaction has rolled back its session counter.
+                # Re-read the project-scoped winning key in a fresh transaction.
+                canonical = self.existing_idempotent("action", project_id, key, digest)
+                if canonical is None:
+                    raise ValueError("idempotency conflict") from None
+                return canonical
 
     def publish_owned(
         self,

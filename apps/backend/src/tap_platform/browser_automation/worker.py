@@ -19,7 +19,12 @@ from .store import now
 
 class Runtime(Protocol):
     async def start_inspector(
-        self, task_id: str, allowed_origins: tuple[str, ...], deadline: int
+        self,
+        task_id: str,
+        allowed_origins: tuple[str, ...],
+        deadline: int,
+        *,
+        session_id: str,
     ) -> InspectorHandle: ...
     async def observe(
         self, handle: InspectorHandle, action: dict[str, Any]
@@ -36,7 +41,9 @@ class Runtime(Protocol):
         self, execution_id: str, task_id: str
     ) -> dict[str, Any]: ...
     async def cancel(self, handle: InspectorHandle) -> dict[str, Any]: ...
-    async def cancel_inspector(self, task_id: str) -> dict[str, Any]: ...
+    async def cancel_inspector(
+        self, task_id: str, *, session_id: str
+    ) -> dict[str, Any]: ...
 
 
 class BrowserWorker:
@@ -46,15 +53,14 @@ class BrowserWorker:
         runtime: Runtime,
         project_id: str,
         owner: str | None = None,
-        evidence_sink: BrowserEvidenceSink | None = None,
     ) -> None:
         self.service = service
         self.runtime = runtime
         self.project_id = project_id
         self.owner = owner or uuid.uuid4().hex
-        self.evidence_sink = evidence_sink
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._handles: dict[str, InspectorHandle] = {}
+        self._attempted_sessions: set[str] = set()
         self._canceling: set[str] = set()
 
     async def tick(self) -> None:
@@ -95,18 +101,17 @@ class BrowserWorker:
             await asyncio.gather(*tuple(self._tasks.values()), return_exceptions=True)
 
     async def _start_session(self, row: dict[str, Any]) -> None:
+        # Set before the runtime can perform its first side effect or await.
+        self._attempted_sessions.add(row["id"])
         try:
             runtime = self.runtime
             handle = await runtime.start_inspector(
                 row["task_id"],
                 tuple(row["request"]["allowed_origins"]),
                 row["request"]["deadline_seconds"],
+                session_id=row["id"],
             )
             self._handles[row["id"]] = handle
-            if self.evidence_sink is not None:
-                self.evidence_sink.bind_session(
-                    self.project_id, row["task_id"], row["id"]
-                )
             if not self.service.store.publish_owned(
                 "session",
                 self.project_id,
@@ -121,10 +126,6 @@ class BrowserWorker:
                 else:
                     await self.runtime.cancel(handle)
                     self._handles.pop(row["id"], None)
-                    if self.evidence_sink is not None:
-                        self.evidence_sink.unbind_session(
-                            self.project_id, row["task_id"], row["id"]
-                        )
         except BaseException:
             current = self.service.store.get("session", self.project_id, row["id"])
             if current and not current["cancel_requested"]:
@@ -168,11 +169,29 @@ class BrowserWorker:
         handle = self._handles.get(session_id)
         interrupted = False
         try:
-            receipt = (
-                await self.runtime.cancel(handle)
-                if handle is not None
-                else await self.runtime.cancel_inspector(row["task_id"])
-            )
+            if handle is not None:
+                receipt = await self.runtime.cancel(handle)
+            elif session_id not in self._attempted_sessions:
+                start_task = self._tasks.get(session_id)
+                if start_task is None:
+                    raise RuntimeError("unowned session start")
+                start_task.cancel()
+                await asyncio.gather(start_task, return_exceptions=True)
+                if session_id in self._attempted_sessions:
+                    receipt = await self.runtime.cancel_inspector(
+                        row["task_id"], session_id=session_id
+                    )
+                else:
+                    receipt = {
+                        "task_id": row["task_id"],
+                        "stopped": True,
+                        "status": "canceled",
+                        "reason": "never_started",
+                    }
+            else:
+                receipt = await self.runtime.cancel_inspector(
+                    row["task_id"], session_id=session_id
+                )
         except asyncio.CancelledError:
             interrupted = True
             receipt = {"task_id": row["task_id"], "stopped": False, "status": "unknown"}
@@ -183,10 +202,6 @@ class BrowserWorker:
         ):
             if receipt.get("stopped") is True and receipt.get("status") == "canceled":
                 self._handles.pop(session_id, None)
-            if self.evidence_sink is not None:
-                self.evidence_sink.unbind_session(
-                    self.project_id, row["task_id"], session_id
-                )
         if interrupted:
             raise asyncio.CancelledError
 
@@ -371,7 +386,7 @@ def main() -> None:
         evidence_sink=sink,
         project_id=principal.project_id,
     )
-    worker = BrowserWorker(service, runtime, principal.project_id, evidence_sink=sink)
+    worker = BrowserWorker(service, runtime, principal.project_id)
 
     async def serve() -> None:
         loop = asyncio.get_running_loop()

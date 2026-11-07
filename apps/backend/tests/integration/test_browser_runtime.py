@@ -641,6 +641,105 @@ async def test_pending_inspector_cancel_returns_cleanup_receipt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pending_inspector_cancel_requires_exact_session_owner() -> None:
+    client = LifecycleDocker("create")
+    runtime = BrowserRuntime(client, "browser:test")
+    pending = asyncio.create_task(
+        runtime.start_inspector(
+            "same-task", ("http://example.test",), 30, session_id="session-a"
+        )
+    )
+    await asyncio.wait_for(client.entered.wait(), 1)
+    wrong = await runtime.cancel_inspector("same-task", session_id="session-b")
+    assert wrong["stopped"] is False
+    assert not pending.done()
+    correct = await runtime.cancel_inspector("same-task", session_id="session-a")
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert correct["stopped"] is True
+    assert (await runtime.cancel_inspector("same-task", session_id="session-b"))[
+        "stopped"
+    ] is False
+
+
+@pytest.mark.asyncio
+async def test_active_inspector_cancel_requires_exact_session_owner() -> None:
+    client = FakeDocker([])
+    runtime = BrowserRuntime(client, "browser:test")
+    handle = await runtime.start_inspector(
+        "same-task", ("https://example.com",), 60, session_id="session-a"
+    )
+    wrong = await runtime.cancel_inspector("same-task", session_id="session-b")
+    assert wrong["stopped"] is False
+    assert runtime._handles["same-task"] is handle
+    assert (await runtime.cancel_inspector("same-task", session_id="session-a"))[
+        "stopped"
+    ] is True
+
+
+@pytest.mark.asyncio
+async def test_inspector_screenshot_passes_immutable_session_before_sink_thread() -> (
+    None
+):
+    class ScreenshotDocker(FakeDocker):
+        async def run(self, argv, stdin=None, *, max_stdout=1_000_000):
+            if argv[:3] == ("docker", "exec", "-i"):
+                return CommandResult(
+                    0,
+                    json.dumps(
+                        {
+                            "session_id": "internal",
+                            "sequence": 1,
+                            "url": "https://example.com/",
+                            "title": "Example",
+                            "bounded_snapshot": "snapshot",
+                            "fields": [],
+                            "screenshot_data": base64.b64encode(
+                                b"\x89PNG\r\n\x1a\nimage"
+                            ).decode(),
+                            "error": None,
+                        }
+                    ),
+                    "",
+                )
+            return await super().run(argv, stdin, max_stdout=max_stdout)
+
+    class CapturingSink:
+        def __init__(self):
+            self.sessions = []
+
+        def persist(
+            self,
+            project_id,
+            task_id,
+            execution_id,
+            kind,
+            data,
+            max_bytes,
+            *,
+            session_id=None,
+        ):
+            self.sessions.append(session_id)
+            return Evidence(
+                kind, "screenshot-ref", hashlib.sha256(data).hexdigest(), len(data)
+            )
+
+    sink = CapturingSink()
+    runtime = BrowserRuntime(
+        ScreenshotDocker([]), "browser:test", evidence_sink=sink, project_id="project-a"
+    )
+    handle = await runtime.start_inspector(
+        "task-a", ("https://example.com",), 60, session_id="session-a"
+    )
+    try:
+        observation = await runtime.observe(handle, {"type": "screenshot"})
+        assert observation.screenshot_ref == "screenshot-ref"
+        assert sink.sessions == ["session-a"]
+    finally:
+        await runtime.cancel(handle)
+
+
+@pytest.mark.asyncio
 async def test_expiry_and_user_cancel_share_inspector_teardown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
