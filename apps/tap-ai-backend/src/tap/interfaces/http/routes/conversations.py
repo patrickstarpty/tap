@@ -17,6 +17,7 @@ from tap.contracts.chat_stream import ChatEventEnvelope
 from tap.contracts.http import (
     AnswerFeedbackRequest,
     AnswerFeedbackView,
+    BrowserTaskRequest,
     CitationPreview,
     ConversationAccepted,
     ConversationCreateRequest,
@@ -34,6 +35,7 @@ from tap.contracts.http import (
 )
 from tap.interfaces.http.conversation_selection import freeze_conversation_selection
 from tap.interfaces.http.dependencies import (
+    browser_available,
     conversation_service,
     feedback_service,
     knowledge_service,
@@ -72,11 +74,12 @@ from tap.modules.chat.application.skill_selection import (
     merge_skill_selection,
     pinned_revisions,
 )
-from tap.modules.chat.domain.conversations import TurnInput
+from tap.modules.chat.domain.conversations import FrozenBrowserIntent, TurnInput
 from tap.modules.chat.domain.feedback import AnswerFeedback
 from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.modules.workflows.adapters.asset_catalog import AssetWorkflowCatalog
+from tap.modules.workflows.adapters.browser_client import canonical_json_bytes
 from tap.platform.telemetry import bind_trace, span, trace_id_of
 
 router = APIRouter(
@@ -113,6 +116,20 @@ def _matches_replay(turn, body: ConversationCreateRequest) -> bool:
         == body.agent_revision_id
         and value.requested_agent_ids == tuple(body.requested_agent_ids)
         and value.workflow_task_id == body.workflow_task_id
+        and (
+            (value.browser is None and body.browser is None)
+            or (
+                value.browser is not None
+                and body.browser is not None
+                and value.browser.start_url == body.browser.start_url
+                and value.browser.source_task_id == body.browser.source_task_id
+                and value.browser.expected_result == (body.browser.expected_result or body.message)
+                and value.browser.input_data_json
+                == canonical_json_bytes(
+                    {"notes": body.browser.input_notes} if body.browser.input_notes else {}
+                ).decode()
+            )
+        )
         and value.requested_skill_revision_ids == tuple(body.skill_revision_ids)
         and value.insights_report_refs == tuple(body.insights_report_refs)
     )
@@ -192,6 +209,38 @@ async def _input(
         if services.asset_catalog is None:
             raise KnowledgeRuntimeUnavailable
         requested_ids = tuple(body.requested_agent_ids)
+        if body.browser is not None:
+            if not browser_available(services, scope):
+                raise HTTPException(status_code=503, detail="Browser automation is not configured")
+            if body.model_alias != services.browser_model_alias:
+                raise HTTPException(
+                    status_code=422, detail="Browser model does not match configured model"
+                )
+            if body.workflow_task_id is not None:
+                raise HTTPException(
+                    status_code=422, detail="Start a new browser task with new frozen input"
+                )
+            if requested_ids and not set(requested_ids) & {"sde", "sdet"}:
+                raise HTTPException(
+                    status_code=422, detail="Select SDE or SDET for browser script authoring"
+                )
+            if agent is not None and agent.asset_id not in {"sde", "sdet"}:
+                raise HTTPException(
+                    status_code=422, detail="Selected Agent cannot author browser scripts"
+                )
+            if not requested_ids:
+                requested_ids = ("sdet",)
+            if body.browser.source_task_id is not None:
+                if services.workflow_store is None:
+                    raise KnowledgeRuntimeUnavailable
+                prior = await services.workflow_store.snapshot(scope, body.browser.source_task_id)
+                if (
+                    prior["request_json"].get("kind") != "browser"
+                    or prior["status"] != "awaiting_input"
+                ):
+                    raise HTTPException(
+                        status_code=422, detail="Input can only continue a blocked browser run"
+                    )
         if agent is not None and agent.asset_id not in requested_ids:
             requested_ids = (*requested_ids, agent.asset_id)
         try:
@@ -255,6 +304,21 @@ async def _input(
         source_revision_ids=tuple(body.source_revision_ids),
         document_revision_ids=tuple(body.document_revision_ids),
     )
+    browser = None
+    if body.browser is not None:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(body.browser.start_url)
+        data = {"notes": body.browser.input_notes} if body.browser.input_notes else {}
+        canonical = canonical_json_bytes(data)
+        browser = FrozenBrowserIntent(
+            start_url=body.browser.start_url,
+            expected_result=body.browser.expected_result or body.message,
+            allowed_origins=(f"{parsed.scheme}://{parsed.netloc}",),
+            input_data_json=canonical.decode(),
+            input_sha256=hashlib.sha256(canonical).hexdigest(),
+            source_task_id=body.browser.source_task_id,
+        )
     return TurnInput(
         message=body.message,
         actor_id=scope.actor_id,
@@ -309,6 +373,7 @@ async def _input(
         retrieval_policy_digest=selection_facts.retrieval_policy_digest,
         persona_version=CURRENT_PERSONA.version,
         insights_report_refs=tuple(body.insights_report_refs),
+        browser=browser,
     )
 
 
@@ -362,6 +427,16 @@ def _turn(
             agent_label=frozen.agent_label or frozen.agent_revision_id,
             requested_agent_ids=list(frozen.requested_agent_ids),
             workflow_task_id=frozen.workflow_task_id,
+            browser=(
+                None
+                if frozen.browser is None
+                else BrowserTaskRequest(
+                    start_url=frozen.browser.start_url,
+                    expected_result=frozen.browser.expected_result,
+                    input_notes=json.loads(frozen.browser.input_data_json).get("notes"),
+                    source_task_id=frozen.browser.source_task_id,
+                )
+            ),
             skill_revision_ids=list(frozen.skill_revision_ids),
             skill_labels=list(frozen.skill_labels or frozen.skill_revision_ids),
             skill_notices=list(frozen.skill_notices),
@@ -451,7 +526,7 @@ async def create(
             conversation_id=conversation_id, turn_id=replay.turn_id, state="queued"
         )
     admission = request.app.state.http_services.workflow_admission
-    workflow = bool(body.requested_agent_ids or body.workflow_task_id) or (
+    workflow = bool(body.browser or body.requested_agent_ids or body.workflow_task_id) or (
         admission is not None and body.agent_revision_id is None
     )
     if workflow and admission is None:
@@ -590,7 +665,7 @@ async def append(
     await service.load(conversation_id)
     turn_id = uuid4().hex
     admission = request.app.state.http_services.workflow_admission
-    workflow = bool(body.requested_agent_ids or body.workflow_task_id) or (
+    workflow = bool(body.browser or body.requested_agent_ids or body.workflow_task_id) or (
         admission is not None and body.agent_revision_id is None
     )
     if workflow and admission is None:

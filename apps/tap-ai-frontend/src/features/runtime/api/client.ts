@@ -25,6 +25,12 @@ export function createRuntimeClient({
         mode.projectId.length > 128 ||
         (mode.workflowEnabled !== undefined &&
           typeof mode.workflowEnabled !== "boolean") ||
+        (mode.browserEnabled !== undefined &&
+          typeof mode.browserEnabled !== "boolean") ||
+        (mode.browserModelAlias !== undefined &&
+          mode.browserModelAlias !== null &&
+          (typeof mode.browserModelAlias !== "string" ||
+            mode.browserModelAlias.trim().length === 0)) ||
         typeof mode.actorId !== "string" ||
         mode.actorId.trim().length === 0 ||
         mode.actorId.length > 128 ||
@@ -36,6 +42,8 @@ export function createRuntimeClient({
               "projectId",
               "actorId",
               "workflowEnabled",
+              "browserEnabled",
+              "browserModelAlias",
             ].includes(key),
         )
       )

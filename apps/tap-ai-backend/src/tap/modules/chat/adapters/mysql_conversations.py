@@ -47,6 +47,7 @@ from tap.modules.chat.domain.conversations import (
     Conversation,
     ConversationEvent,
     ConversationTurn,
+    FrozenBrowserIntent,
     FrozenResource,
     GraphContextStatus,
     RetrievalSummary,
@@ -604,6 +605,16 @@ class MysqlConversationRepository:
             insights_query_id=raw.get("insights_query_id"),
             insights_report_refs=tuple(raw.get("insights_report_refs", [])),
             persona_version=raw.get("persona_version"),
+            browser=(
+                FrozenBrowserIntent(
+                    **{
+                        **raw["browser"],
+                        "allowed_origins": tuple(raw["browser"]["allowed_origins"]),
+                    }
+                )
+                if raw.get("browser")
+                else None
+            ),
         )
         input_value = TurnInputSnapshot(
             snapshot["snapshot_id"],

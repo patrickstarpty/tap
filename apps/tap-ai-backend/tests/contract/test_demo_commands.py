@@ -2964,6 +2964,56 @@ def test_dev_supervisor_preserves_first_child_failure_and_stops_exact_siblings(
     assert list((supervisor.parents[1] / "tmp").glob("tap-tapper-ready.*")) == []
 
 
+def test_dev_supervisor_external_browser_connects_without_owning_service(
+    tmp_path: Path,
+) -> None:
+    supervisor, environment, log = _supervisor_fixture(
+        tmp_path, api_exit="17", ready_status="unready"
+    )
+    environment.update(
+        {
+            "TAP_BROWSER_CODING_ENABLED": "true",
+            "TAP_BROWSER_SERVICE_MODE": "external",
+            "TAP_BROWSER_API_ORIGIN": "http://127.0.0.1:18882",
+        }
+    )
+    external = subprocess.Popen(["sleep", "30"])
+    try:
+        completed = subprocess.run(
+            ["/bin/bash", str(supervisor)],
+            cwd=supervisor.parents[1],
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 17, completed.stderr
+        events = log.read_text(encoding="utf-8").splitlines()
+        assert any(
+            "http://127.0.0.1:18882/health/live" in event
+            for event in events
+            if event.startswith("curl-argv ")
+        )
+        assert {line.split()[1] for line in events if line.startswith("start ")} == {
+            "parser",
+            "api",
+            "relay",
+            "worker",
+            "graph",
+            "suggestion",
+            "langfuse",
+            "test-design",
+            "generation",
+            "web",
+        }
+        _assert_processes_are_gone(_started_child_pids(log))
+        assert external.poll() is None
+    finally:
+        external.terminate()
+        external.wait(timeout=5)
+
+
 def test_dev_supervisor_ignores_dotenv_collisions_with_internal_shell_state(
     tmp_path: Path,
 ) -> None:

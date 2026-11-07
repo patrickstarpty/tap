@@ -6,6 +6,9 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
+from tap.modules.access.domain.context import ProjectScopeContext
+from tap.modules.workflows.adapters.browser_client import BrowserApiError
+from tap.modules.workflows.application.browser_artifacts import BrowserArtifactAdapter
 from tap.modules.workflows.domain.models import WorkflowEvent
 
 
@@ -162,9 +165,20 @@ def _origin(request: Mapping[str, Any]) -> str:
     return "observed" if request.get("origin") == "observed" else "native"
 
 
-def _actions(status: str, origin: str, nodes: tuple[dict[str, Any], ...] = ()) -> list[str]:
+def _actions(
+    status: str,
+    origin: str,
+    nodes: tuple[dict[str, Any], ...] = (),
+    *,
+    kind: str = "native",
+    replay_ready: bool = False,
+) -> list[str]:
     if origin == "observed":
         return []
+    if kind == "browser":
+        if status in ("succeeded", "failed", "canceled", "skipped"):
+            return ["replay"] if replay_ready else []
+        return ["cancel"] if status == "running" else []
     if status in ("succeeded", "failed", "canceled", "skipped"):
         return []
     if status == "paused":
@@ -184,9 +198,11 @@ def _task_view(
     nodes: tuple[dict[str, Any], ...] = (),
     matching_agent_id: str | None = None,
     native_controls_enabled: bool = True,
+    replay_ready: bool = False,
 ) -> dict[str, Any]:
     request = row["request_json"]
     origin = _origin(request)
+    kind = "browser" if request.get("kind") == "browser" else origin
     return {
         "taskId": row["task_id"],
         "projectId": row["project_id"],
@@ -195,7 +211,11 @@ def _task_view(
         "planRevision": row["plan_revision"],
         "lastSequence": row.get("last_sequence", row.get("next_sequence", 1) - 1),
         "origin": origin,
-        "availableActions": _actions(row["status"], origin, nodes)
+        "taskKind": kind,
+        "replayOfTaskId": (request.get("rerun_from_task_id") if kind == "browser" else None),
+        "availableActions": _actions(
+            row["status"], origin, nodes, kind=kind, replay_ready=replay_ready
+        )
         if native_controls_enabled
         else [],
         "displayName": "Tapper"
@@ -332,10 +352,12 @@ class WorkflowQueries:
         *,
         redactor: TextRedactor | None = None,
         native_controls_enabled: bool = True,
+        browser_artifacts: BrowserArtifactAdapter | None = None,
     ) -> None:
         self._store = store
         self._redactor = redactor
         self._native_controls_enabled = native_controls_enabled
+        self._browser_artifacts = browser_artifacts
 
     async def _public_event(
         self, event: WorkflowEvent, *, snapshot: Mapping[str, Any]
@@ -385,8 +407,70 @@ class WorkflowQueries:
         public_events = [
             await self._public_event(event, snapshot=value) for event in value["events"]
         ]
+        request_json = value["request_json"]
+        browser_intent = None
+        browser_run = None
+        browser_unavailable = False
+        browser_input_request = None
+        if request_json.get("kind") == "browser":
+            browser = request_json.get("browser", {})
+            if isinstance(browser, dict):
+                data = browser.get("input_data", {})
+                browser_intent = {
+                    "goal": str(request_json.get("goal", "")),
+                    "startUrl": str(browser.get("start_url", "")),
+                    "expectedResult": str(browser.get("expected_result", "")),
+                    "inputNotes": data.get("notes") if isinstance(data, dict) else None,
+                }
+            input_event = next(
+                (
+                    event
+                    for event in reversed(public_events)
+                    if event["kind"] == "task.awaiting_input"
+                ),
+                None,
+            )
+            raw_input = next(
+                (
+                    event.payload.get("input_request")
+                    for event in reversed(value["events"])
+                    if event.kind == "browser.coding_result"
+                    and isinstance(event.payload.get("input_request"), dict)
+                ),
+                None,
+            )
+            if (
+                input_event is not None
+                and isinstance(raw_input, dict)
+                and raw_input.get("reason") in {"missing_input", "external_block"}
+            ):
+                browser_input_request = {
+                    "question": input_event["payload"].get(
+                        "question", "Additional input is required."
+                    ),
+                    "reason": raw_input["reason"],
+                }
+            if self._browser_artifacts is not None:
+                try:
+                    browser_run = await self._browser_artifacts.project(
+                        cast(ProjectScopeContext, scope), task_id, value
+                    )
+                except (LookupError, BrowserApiError, TimeoutError, ValueError, OSError):
+                    browser_unavailable = True
+            elif any(event.kind == "browser.coding_result" for event in value["events"]):
+                browser_unavailable = True
         return {
-            **_task_view(value, nodes, native_controls_enabled=self._native_controls_enabled),
+            **_task_view(
+                value,
+                nodes,
+                native_controls_enabled=self._native_controls_enabled,
+                replay_ready=any(
+                    event.kind == "browser.coding_result"
+                    and isinstance(event.payload.get("bundle_ref"), str)
+                    and isinstance(event.payload.get("execution_ref"), str)
+                    for event in value["events"]
+                ),
+            ),
             "goalSummary": await self._goal_summary(value["request_json"].get("goal")),
             "nodes": attach_node_summaries(
                 [_node(item, request, attempts) for item in nodes], public_events
@@ -415,6 +499,10 @@ class WorkflowQueries:
             "events": public_events,
             "budgetLimit": value["budget_limit"],
             "budgetUsed": value["budget_used"],
+            "browserRun": browser_run,
+            "browserRunUnavailable": browser_unavailable,
+            "browserIntent": browser_intent,
+            "browserInputRequest": browser_input_request,
         }
 
     async def node(self, scope: object, task_id: str, node_id: str) -> dict[str, Any]:

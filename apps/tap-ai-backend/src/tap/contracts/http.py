@@ -39,6 +39,8 @@ class RuntimeMode(ContractModel):
     actor_id: str = Field(min_length=1, max_length=128)
     identity_mode: Literal["validation"]
     workflow_enabled: bool = False
+    browser_enabled: bool = False
+    browser_model_alias: str | None = None
 
 
 class ModelCatalogItem(ContractModel):
@@ -1256,6 +1258,37 @@ class InsightsExplanationAccepted(ContractModel):
     state: Literal["queued", "running", "completed", "abstained", "canceled", "failed"]
 
 
+class BrowserTaskRequest(ContractModel):
+    start_url: Annotated[str, Field(strict=True, min_length=1, max_length=2048)]
+    expected_result: Annotated[str, Field(strict=True, min_length=1, max_length=4000)] | None = None
+    input_notes: Annotated[str, Field(strict=True, max_length=16000)] | None = None
+    source_task_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+
+    @field_validator("start_url")
+    @classmethod
+    def valid_start_url(cls, value: str) -> str:
+        from urllib.parse import urlsplit, urlunsplit
+
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+        ):
+            raise ValueError("browser start URL must be an absolute HTTP(S) URL")
+        try:
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("browser start URL has an invalid port") from error
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("browser start URL has an invalid port")
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        netloc = f"{host}:{port}" if port is not None else host
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
+
+
 class ConversationCreateRequest(ContractModel):
     message: Annotated[str, Field(strict=True, min_length=1, max_length=20_000)]
     model_alias: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
@@ -1266,6 +1299,7 @@ class ConversationCreateRequest(ContractModel):
         list[Annotated[str, Field(strict=True, min_length=1, max_length=64)]], Field(max_length=16)
     ] = []
     workflow_task_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+    browser: BrowserTaskRequest | None = None
     skill_revision_ids: Annotated[list[str], Field(max_length=16)] = []
     # Task 8: a plain conversation Turn may freeze `insightsReportRefs` alone
     # (no historical `insights_query_id` -- that field has no HTTP entry
@@ -1341,6 +1375,7 @@ class ConversationTurnInputView(ContractModel):
     agent_label: str | None = None
     requested_agent_ids: list[str] = []
     workflow_task_id: str | None = None
+    browser: BrowserTaskRequest | None = None
     skill_revision_ids: list[str]
     skill_labels: list[str]
     skill_notices: list[str] = []

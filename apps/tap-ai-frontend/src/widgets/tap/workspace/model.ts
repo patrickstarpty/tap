@@ -92,6 +92,12 @@ export interface AssistantTurn {
   skillsUsed?: readonly TurnSkillUse[];
   skillNotices?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
+  browserIntent?: {
+    startUrl: string;
+    expectedResult?: string | null;
+    inputNotes?: string | null;
+    sourceTaskId?: string | null;
+  } | null;
 }
 
 export interface Conversation {

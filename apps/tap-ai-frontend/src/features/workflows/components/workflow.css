@@ -92,6 +92,7 @@
   gap: 6px;
 }
 .tap-workflow-actions button,
+.tap-workflow-browser-section button,
 .tap-workflow-node-detail > button,
 .tap-workflow-steer button,
 .tap-workflow-logs > button {
@@ -100,6 +101,58 @@
   background: var(--tap-surface);
   color: var(--tap-ink);
   padding: 6px 9px;
+}
+
+.tap-workflow-browser-section {
+  overflow-wrap: anywhere;
+}
+
+.tap-workflow-browser-section > h2 {
+  font-size: 13px;
+}
+
+.tap-workflow-browser-values dl {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.tap-workflow-browser-values dl > div,
+.tap-workflow-browser-steps li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tap-workflow-browser-values dt {
+  color: var(--tap-muted);
+}
+
+.tap-workflow-browser-values dd {
+  margin: 0;
+  text-align: right;
+}
+
+.tap-workflow-browser-steps,
+.tap-workflow-browser-evidence {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+}
+
+.tap-workflow-browser-steps li span:last-child {
+  color: var(--tap-muted);
+  white-space: nowrap;
+}
+
+.tap-workflow-browser-evidence img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  margin-top: 6px;
+  border: 1px solid var(--tap-line);
+  border-radius: 6px;
+  object-fit: contain;
 }
 .tap-workflow-graph {
   position: relative;

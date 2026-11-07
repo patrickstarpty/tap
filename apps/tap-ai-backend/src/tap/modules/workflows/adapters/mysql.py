@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
@@ -58,6 +59,46 @@ def _canonical(value: Mapping[str, object]) -> str:
 
 def _digest(value: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(_canonical(value).encode()).hexdigest()
+
+
+def _frozen_browser_replay(
+    request: dict[str, Any], events: tuple[WorkflowEvent, ...]
+) -> dict[str, Any]:
+    """Keep the original intent/input; replay only an actual recorded execution."""
+    browser = request.get("browser")
+    if request.get("kind") != "browser" or not isinstance(browser, dict):
+        raise ValueError("browser frozen request unavailable")
+    data = browser.get("input_data")
+    if not isinstance(data, dict):
+        raise ValueError("browser frozen input unavailable")
+    input_digest = hashlib.sha256(
+        json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    ).hexdigest()
+    if browser.get("input_sha256") != input_digest:
+        raise ValueError("browser frozen input digest mismatch")
+    result = next(
+        (
+            event.payload
+            for event in reversed(events)
+            if event.kind == "browser.coding_result"
+            and isinstance(event.payload.get("bundle_ref"), str)
+            and isinstance(event.payload.get("execution_ref"), str)
+        ),
+        None,
+    )
+    if result is None or any(
+        re.fullmatch(r"[A-Za-z0-9_-]{1,128}", str(result[name])) is None
+        for name in ("bundle_ref", "execution_ref")
+    ):
+        raise ValueError("browser frozen bundle and execution unavailable")
+    return {
+        **request,
+        "browser": {
+            **browser,
+            "bundle_ref": result["bundle_ref"],
+            "replay_execution_id": result["execution_ref"],
+        },
+    }
 
 
 def _budget(value: object, *, field: str) -> dict[str, int]:
@@ -3107,6 +3148,9 @@ class MysqlWorkflowStore:
         if row.status not in ("succeeded", "failed", "canceled", "skipped"):
             raise ValueError("rerun requires a terminal task")
         request = dict(row.request_json)
+        if request.get("kind") == "browser":
+            original = await self.snapshot(scope, task_id)
+            request = _frozen_browser_replay(request, original["events"])
         window = request.get("execution_window_seconds")
         if window is None and request.get("deadline_at") is not None:
             original_deadline = datetime.fromisoformat(str(request["deadline_at"]))

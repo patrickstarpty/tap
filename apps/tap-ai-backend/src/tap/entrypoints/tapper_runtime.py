@@ -56,6 +56,7 @@ from tap.modules.knowledge.ports.search import (
     QueryEmbeddingPort,
     SearchPort,
 )
+from tap.modules.workflows.adapters.browser_client import BrowserApiClient
 from tap.operations.milvus.contracts import validate_milvus_role_usernames
 from tap.platform.budget import TurnBudget
 
@@ -1269,6 +1270,19 @@ async def create_api_runtime(
                 workflow_store=workflow_store,
                 workflow_events=workflow_events,
                 workflow_enabled=True,
+                browser_enabled=settings.browser_coding_enabled,
+                browser_client=(
+                    BrowserApiClient(
+                        settings.browser_api_origin,
+                        settings.browser_project_id,
+                        settings.browser_access_token,
+                    )
+                    if settings.browser_coding_enabled
+                    else None
+                ),
+                browser_model_alias=(
+                    settings.browser_coding_model_alias if settings.browser_coding_enabled else None
+                ),
             )
             workflow_components = NativeWorkflowComponents(
                 workflow_sessions,

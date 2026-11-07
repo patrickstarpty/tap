@@ -65,3 +65,57 @@ it("labels exhausted stream errors as disconnected and offers retry", async () =
   );
   expect(retry).toHaveBeenCalledOnce();
 });
+
+it("shows persisted browser values and evidence and offers frozen replay", async () => {
+  const replay = vi.fn().mockResolvedValue({ taskId: "task-replay" });
+  render(
+    <RunDetail
+      snapshot={{
+        ...snapshot,
+        status: "succeeded",
+        taskKind: "browser",
+        replayOfTaskId: "task-original",
+        availableActions: ["replay"],
+        browserRun: {
+          executionId: "execution-1",
+          bundleId: "bundle-1",
+          inputSha256: "a".repeat(64),
+          status: "passed",
+          failureCode: null,
+          replayModelCalls: 0,
+          steps: [{ title: "Read quote", status: "passed", durationMs: 21 }],
+          outputs: [{ customer: "Ada", quote: "FOUND" }],
+          evidence: [
+            {
+              evidenceId: "evidence-1",
+              kind: "screenshot",
+              sha256: "b".repeat(64),
+              url: "/api/v1/projects/project-1/workflows/task-1/browser-evidence/evidence-1",
+            },
+          ],
+        },
+      }}
+      connection="idle"
+      onSelectNode={vi.fn()}
+      onReplay={replay}
+    />,
+  );
+  expect(screen.getByText(/Ada/u)).toBeInTheDocument();
+  expect(screen.getByText("Read quote")).toBeInTheDocument();
+  expect(screen.queryByText("Tapper is handling this task.")).toBeNull();
+  expect(
+    screen.getByText("No specialist nodes were recorded for this task."),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Replay of run task-original")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Screenshot/u })).toHaveAttribute(
+    "href",
+    "/api/v1/projects/project-1/workflows/task-1/browser-evidence/evidence-1",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Pause|Resume|Retry node/u }),
+  ).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Replay frozen run" }),
+  );
+  expect(replay).toHaveBeenCalledOnce();
+});

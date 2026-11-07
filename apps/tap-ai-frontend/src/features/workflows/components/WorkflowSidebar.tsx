@@ -4,6 +4,7 @@ import type {
   WorkflowCommandView,
   WorkflowTaskSnapshot,
 } from "../api/client";
+import { createWorkflowClient } from "../api/client";
 import { useWorkflowCommand } from "../api/queries";
 import { NodeDetails } from "./NodeDetails";
 import { RunDetail } from "./RunDetail";
@@ -22,6 +23,8 @@ export function WorkflowSidebar({
   scrollTop = 0,
   onScrollTopChange,
   onRetryConnection,
+  onReplayed,
+  onProvideInput,
 }: {
   projectId: string;
   snapshot: WorkflowTaskSnapshot;
@@ -34,6 +37,8 @@ export function WorkflowSidebar({
   scrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
   onRetryConnection?: () => void;
+  onReplayed?: (taskId: string) => void;
+  onProvideInput?: () => void;
 }) {
   const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const selection = selectedNodeId === undefined ? localNodeId : selectedNodeId;
@@ -41,6 +46,7 @@ export function WorkflowSidebar({
   const selected = snapshot.nodes.find((node) => node.nodeId === selection);
   const command = useWorkflowCommand(projectId, snapshot.taskId);
   const intent = useRef<{ signature: string; key: string } | null>(null);
+  const replayKey = useRef<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -113,6 +119,20 @@ export function WorkflowSidebar({
             onSelectNode={select}
             onCommand={issue}
             onRetryConnection={onRetryConnection}
+            onReplay={
+              snapshot.taskKind === "browser" && onReplayed
+                ? async () => {
+                    replayKey.current ??= crypto.randomUUID();
+                    const next = await createWorkflowClient(projectId).replay(
+                      snapshot.taskId,
+                      replayKey.current,
+                    );
+                    replayKey.current = null;
+                    onReplayed(next.taskId);
+                  }
+                : undefined
+            }
+            onProvideInput={onProvideInput}
           />
         )}
       </div>

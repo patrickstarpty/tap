@@ -254,6 +254,15 @@ class _UnconfiguredReadiness:
 _UNCONFIGURED_READINESS = _UnconfiguredReadiness()
 
 
+def browser_available(services: HttpServices, scope: ProjectScopeContext) -> bool:
+    """Expose the configured browser runtime only to its selected project."""
+    return bool(
+        getattr(services, "browser_enabled", False)
+        and getattr(getattr(services, "browser_client", None), "project_id", None)
+        == scope.project_id
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class HttpServices:
     """Optional service assembly used by routes without eager infrastructure startup."""
@@ -270,6 +279,9 @@ class HttpServices:
     workflow_store: object | None = None
     workflow_events: object | None = None
     workflow_enabled: bool = False
+    browser_client: object | None = None
+    browser_enabled: bool = False
+    browser_model_alias: str | None = None
     workflow_knowledge_application: KnowledgeAPI | None = None
     feedback: FeedbackService | None = None
     prompt_suggestions: PromptSuggestionService | None = None

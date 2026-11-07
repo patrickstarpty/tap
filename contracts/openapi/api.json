@@ -2271,6 +2271,60 @@
         "title": "Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post",
         "type": "object"
       },
+      "BrowserTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedResult": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedresult"
+          },
+          "inputNotes": {
+            "anyOf": [
+              {
+                "maxLength": 16000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputnotes"
+          },
+          "sourceTaskId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcetaskid"
+          },
+          "startUrl": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Starturl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "startUrl"
+        ],
+        "title": "BrowserTaskRequest",
+        "type": "object"
+      },
       "ChatEventEnvelope": {
         "additionalProperties": false,
         "description": "A recoverable, ordered event persisted for one chat turn.",
@@ -2954,6 +3008,16 @@
             ],
             "title": "Agentrevisionid"
           },
+          "browser": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserTaskRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "documentRevisionIds": {
             "default": [],
             "items": {
@@ -3359,6 +3423,16 @@
               }
             ],
             "title": "Agentrevisionid"
+          },
+          "browser": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserTaskRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "documentRevisionIds": {
             "items": {
@@ -10600,6 +10674,23 @@
             "title": "Actorid",
             "type": "string"
           },
+          "browserEnabled": {
+            "default": false,
+            "title": "Browserenabled",
+            "type": "boolean"
+          },
+          "browserModelAlias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Browsermodelalias"
+          },
           "identityMode": {
             "const": "validation",
             "title": "Identitymode",
@@ -14487,6 +14578,202 @@
         "title": "WorkflowAttemptView",
         "type": "object"
       },
+      "WorkflowBrowserEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "evidenceId": {
+            "title": "Evidenceid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "screenshot",
+              "trace",
+              "result"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidenceId",
+          "kind",
+          "sha256",
+          "url"
+        ],
+        "title": "WorkflowBrowserEvidence",
+        "type": "object"
+      },
+      "WorkflowBrowserInputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "missing_input",
+              "external_block"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "reason"
+        ],
+        "title": "WorkflowBrowserInputRequest",
+        "type": "object"
+      },
+      "WorkflowBrowserIntent": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedResult": {
+            "title": "Expectedresult",
+            "type": "string"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "inputNotes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputnotes"
+          },
+          "startUrl": {
+            "title": "Starturl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "goal",
+          "startUrl",
+          "expectedResult"
+        ],
+        "title": "WorkflowBrowserIntent",
+        "type": "object"
+      },
+      "WorkflowBrowserRun": {
+        "additionalProperties": false,
+        "properties": {
+          "bundleId": {
+            "title": "Bundleid",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowBrowserEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "executionId": {
+            "title": "Executionid",
+            "type": "string"
+          },
+          "failureCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failurecode"
+          },
+          "inputSha256": {
+            "title": "Inputsha256",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "replayModelCalls": {
+            "minimum": 0.0,
+            "title": "Replaymodelcalls",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "canceled",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowBrowserStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "executionId",
+          "bundleId",
+          "inputSha256",
+          "status",
+          "replayModelCalls",
+          "steps",
+          "outputs",
+          "evidence"
+        ],
+        "title": "WorkflowBrowserRun",
+        "type": "object"
+      },
+      "WorkflowBrowserStep": {
+        "additionalProperties": false,
+        "properties": {
+          "durationMs": {
+            "minimum": 0.0,
+            "title": "Durationms",
+            "type": "integer"
+          },
+          "status": {
+            "maxLength": 32,
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 400,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "durationMs"
+        ],
+        "title": "WorkflowBrowserStep",
+        "type": "object"
+      },
       "WorkflowCommandRequest": {
         "additionalProperties": false,
         "properties": {
@@ -15222,12 +15509,48 @@
                 "pause",
                 "resume",
                 "cancel",
-                "retry"
+                "retry",
+                "replay"
               ],
               "type": "string"
             },
             "title": "Availableactions",
             "type": "array"
+          },
+          "browserInputRequest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowBrowserInputRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "browserIntent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowBrowserIntent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "browserRun": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowBrowserRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "browserRunUnavailable": {
+            "default": false,
+            "title": "Browserrununavailable",
+            "type": "boolean"
           },
           "budgetLimit": {
             "additionalProperties": {
@@ -15333,11 +15656,32 @@
               }
             ]
           },
+          "replayOfTaskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayoftaskid"
+          },
           "status": {
             "$ref": "#/components/schemas/WorkflowStatus"
           },
           "taskId": {
             "title": "Taskid",
+            "type": "string"
+          },
+          "taskKind": {
+            "default": "native",
+            "enum": [
+              "native",
+              "browser",
+              "observed"
+            ],
+            "title": "Taskkind",
             "type": "string"
           }
         },
@@ -15374,7 +15718,8 @@
                 "pause",
                 "resume",
                 "cancel",
-                "retry"
+                "retry",
+                "replay"
               ],
               "type": "string"
             },
@@ -15443,11 +15788,32 @@
               }
             ]
           },
+          "replayOfTaskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayoftaskid"
+          },
           "status": {
             "$ref": "#/components/schemas/WorkflowStatus"
           },
           "taskId": {
             "title": "Taskid",
+            "type": "string"
+          },
+          "taskKind": {
+            "default": "native",
+            "enum": [
+              "native",
+              "browser",
+              "observed"
+            ],
+            "title": "Taskkind",
             "type": "string"
           }
         },
@@ -28548,6 +28914,86 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/workflows/{task_id}/browser-evidence/{evidence_id}": {
+      "get": {
+        "operationId": "workflow_browser_evidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Browser evidence unavailable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Browser Evidence",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/workflows/{task_id}/commands": {
       "post": {
         "operationId": "workflow_command",
@@ -28915,6 +29361,80 @@
           }
         },
         "summary": "Logs",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/{task_id}/replay": {
+      "post": {
+        "operationId": "workflow_replay",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowTaskSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Project scope or authorization denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replay",
         "tags": [
           "workflows"
         ]

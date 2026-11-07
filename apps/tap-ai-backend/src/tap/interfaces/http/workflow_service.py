@@ -9,7 +9,7 @@ from typing import cast
 
 from tap.contracts.workflows import WorkflowCommandRequest, WorkflowCreateRequest
 from tap.interfaces.http.conversation_selection import freeze_conversation_selection
-from tap.interfaces.http.dependencies import HttpServices
+from tap.interfaces.http.dependencies import HttpServices, browser_available
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.models import ModelCapability, ModelNotSelectable
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
@@ -104,6 +104,12 @@ class WorkflowHttpService:
         snapshot = await self.queries.snapshot(scope, task_id)
         if snapshot["origin"] == "observed":
             raise WorkflowControlUnavailable("observed task has no native controls")
+        if snapshot.get("taskKind") == "browser" and (
+            body.kind != "cancel"
+            or body.target_node_id is not None
+            or snapshot["status"] != "running"
+        ):
+            raise WorkflowControlUnavailable("browser task only accepts running task cancel")
         material = json.dumps(
             (scope.enterprise_id, scope.project_id, task_id, key), separators=(",", ":")
         )
@@ -143,3 +149,21 @@ class WorkflowHttpService:
             "reason": receipt.get("reason"),
             "appliedPlanRevision": receipt.get("applied_plan_revision"),
         }
+
+    async def replay(self, scope: ProjectScopeContext, task_id: str, key: str) -> dict[str, object]:
+        if not browser_available(self._services, scope):
+            raise WorkflowControlUnavailable("browser automation is not configured")
+        snapshot = await self.queries.snapshot(scope, task_id)
+        if snapshot.get("taskKind") != "browser" or "replay" not in snapshot["availableActions"]:
+            raise WorkflowControlUnavailable("browser frozen replay is unavailable")
+        material = json.dumps(
+            (scope.enterprise_id, scope.project_id, task_id, "replay", key), separators=(",", ":")
+        )
+        rerun_key = hashlib.sha256(material.encode()).hexdigest()
+        task = await self._store.rerun_task(scope, task_id, rerun_key)
+        if self._services.workflow_events is not None:
+            committed = await self._store.snapshot(scope, task.task_id)
+            await cast(WorkflowWakeups, self._services.workflow_events).notify(
+                scope, task.task_id, committed["last_sequence"]
+            )
+        return await self.queries.snapshot(scope, task.task_id)

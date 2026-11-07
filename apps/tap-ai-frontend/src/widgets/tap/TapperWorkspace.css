@@ -668,6 +668,75 @@
   border-color: var(--tap-line-strong);
 }
 
+.tap-browser-composer {
+  padding: 2px 4px 8px;
+  color: var(--tap-muted);
+  font-size: 12px;
+}
+
+.tap-browser-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tap-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tap-browser-toggle input {
+  accent-color: var(--tap-accent);
+}
+
+.tap-browser-toggle:has(input:disabled) {
+  color: var(--tap-muted);
+  cursor: not-allowed;
+}
+
+.tap-browser-unavailable {
+  margin-left: 10px;
+}
+
+.tap-browser-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--tap-line);
+  border-radius: 9px;
+  background: var(--tap-canvas);
+}
+
+.tap-browser-options label {
+  margin-top: 5px;
+  color: var(--tap-ink);
+  font-weight: 600;
+}
+
+.tap-browser-options input,
+.tap-browser-options textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--tap-line-strong);
+  border-radius: 6px;
+  background: #fff;
+  padding: 7px 9px;
+  color: var(--tap-ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.tap-browser-options :is(input, textarea):focus-visible,
+.tap-browser-toggle input:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 2px;
+}
+
+.tap-browser-options p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .tap-context-chips {
   display: flex;
   flex-wrap: wrap;

@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from tap.contracts.workflows import (
     WorkflowCommandRequest,
@@ -23,6 +23,8 @@ from tap.interfaces.http.scope import project_authorization
 from tap.interfaces.http.workflow_service import WorkflowControlUnavailable, WorkflowHttpService
 from tap.modules.knowledge.adapters.pattern_redaction import PatternEgressRedactor
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
+from tap.modules.workflows.adapters.browser_client import BrowserApiClient, BrowserApiError
+from tap.modules.workflows.application.browser_artifacts import BrowserArtifactAdapter
 from tap.modules.workflows.application.queries import SnapshotRequired, WorkflowQueries, replay_from
 
 router = APIRouter(
@@ -46,6 +48,11 @@ def workflow_service(request: Request) -> WorkflowHttpService:
             store,
             redactor=PatternEgressRedactor(personal_data=True),
             native_controls_enabled=services.workflow_enabled,
+            browser_artifacts=(
+                BrowserArtifactAdapter(store, services.browser_client)
+                if isinstance(services.browser_client, BrowserApiClient)
+                else None
+            ),
         ),
     )
 
@@ -192,6 +199,41 @@ async def events(
     return StreamingResponse(
         generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
     )
+
+
+@router.post(
+    "/{task_id}/replay",
+    operation_id="workflow_replay",
+    response_model=WorkflowTaskSnapshot,
+    status_code=202,
+)
+async def replay(
+    task_id: str,
+    request: Request,
+    key: str = Depends(source_command_key),
+    service: WorkflowHttpService = Depends(workflow_service),
+):
+    try:
+        return await service.replay(request.state.project_scope, task_id, key)
+    except (LookupError, ValueError) as error:
+        return _problem(request, error)
+
+
+@router.get(
+    "/{task_id}/browser-evidence/{evidence_id}",
+    operation_id="workflow_browser_evidence",
+    responses={404: problem_response_metadata("Browser evidence unavailable")},
+)
+async def browser_evidence(task_id: str, evidence_id: str, request: Request):
+    services = request.app.state.http_services
+    if not isinstance(services.browser_client, BrowserApiClient) or services.workflow_store is None:
+        return problem_response("workflow-control-unavailable", request)
+    adapter = BrowserArtifactAdapter(services.workflow_store, services.browser_client)
+    try:
+        data, media_type = await adapter.read(request.state.project_scope, task_id, evidence_id)
+    except (LookupError, BrowserApiError, ValueError, TimeoutError, OSError):
+        return problem_response("workflow-not-found", request)
+    return Response(data, media_type=media_type, headers={"Cache-Control": "private, max-age=300"})
 
 
 @router.post(

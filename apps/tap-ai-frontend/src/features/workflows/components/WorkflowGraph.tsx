@@ -4,14 +4,17 @@ import { layoutWorkflow } from "../model/layout";
 
 type Node = components["schemas"]["WorkflowNodeView"];
 type Edge = components["schemas"]["WorkflowEdgeView"];
+type Status = components["schemas"]["WorkflowStatus"];
 const kindName = { agent: "Agent", service: "Service", approval: "Approval" };
 export function WorkflowGraph({
   nodes,
   edges,
+  status,
   onSelect,
 }: {
   nodes: readonly Node[];
   edges: readonly Edge[];
+  status: Status;
   onSelect: (nodeId: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -66,7 +69,13 @@ export function WorkflowGraph({
   if (layout.error)
     return <p role="alert">Workflow data is inconsistent. Refresh the task.</p>;
   if (visible.length === 0)
-    return <p className="tap-workflow-empty">Tapper is handling this task.</p>;
+    return (
+      <p className="tap-workflow-empty">
+        {["succeeded", "failed", "canceled", "skipped"].includes(status)
+          ? "No specialist nodes were recorded for this task."
+          : "Tapper is handling this task."}
+      </p>
+    );
   const byId = new Map(visible.map((node) => [node.nodeId, node]));
   return (
     <div

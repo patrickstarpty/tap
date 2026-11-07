@@ -95,6 +95,9 @@ export function RunList({
                     : task.goalSummary || task.displayName}
                 </strong>
                 <small>Run {task.taskId}</small>
+                {task.taskKind === "browser" && task.replayOfTaskId ? (
+                  <small>Replay of {task.replayOfTaskId}</small>
+                ) : null}
                 {!node && (task.matchingRuns?.length ?? 0) > 0 ? (
                   <small>
                     Agents:{" "}

@@ -110,6 +110,15 @@ export function createWorkflowClient(
         }),
       );
     },
+    replay(taskId: string, key: string, signal?: AbortSignal) {
+      return json<WorkflowTaskSnapshot>(
+        new Request(path(`/${encodeURIComponent(taskId)}/replay`), {
+          method: "POST",
+          signal,
+          headers: { "Idempotency-Key": key },
+        }),
+      );
+    },
     async *stream(
       taskId: string,
       cursor: number,

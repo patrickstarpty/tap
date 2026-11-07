@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from tap.modules.ai.domain.skill_activation import SkillCatalogEntry
 from tap.modules.ai.domain.tools import known_tool_ids
@@ -114,6 +115,47 @@ class FrozenResource:
 
 
 @dataclass(frozen=True, slots=True)
+class FrozenBrowserIntent:
+    start_url: str
+    expected_result: str
+    allowed_origins: tuple[str, ...]
+    input_data_json: str
+    input_sha256: str
+    source_task_id: str | None = None
+
+    def __post_init__(self) -> None:
+        url = urlsplit(self.start_url)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username is not None
+            or url.password is not None
+            or url.fragment
+            or len(self.start_url) > 2048
+            or not self.expected_result.strip()
+            or len(self.expected_result) > 4000
+            or self.allowed_origins != (f"{url.scheme}://{url.netloc}",)
+            or (
+                self.source_task_id is not None
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", self.source_task_id) is None
+            )
+        ):
+            raise ValueError("invalid frozen browser destination or expected result")
+        try:
+            data = json.loads(self.input_data_json)
+            canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError("invalid frozen browser input") from error
+        if (
+            not isinstance(data, dict)
+            or canonical != self.input_data_json
+            or len(canonical.encode()) > 32768
+            or hashlib.sha256(canonical.encode()).hexdigest() != self.input_sha256
+        ):
+            raise ValueError("frozen browser input digest mismatch")
+
+
+@dataclass(frozen=True, slots=True)
 class TurnInput:
     message: str
     actor_id: str
@@ -172,6 +214,7 @@ class TurnInput:
     # persisted digest does not retroactively change when this field is
     # added; a pinned version is part of the digest.
     persona_version: str | None = None
+    browser: FrozenBrowserIntent | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.message, str) or not self.message.strip():
@@ -180,6 +223,8 @@ class TurnInput:
             raise ValueError("message must be bounded")
         if self.identity_mode not in {"validation", "product"}:
             raise ValueError("invalid identity mode")
+        if self.browser is not None and self.workflow_root is None:
+            raise ValueError("browser intent requires a frozen workflow root")
         if bool(self.agent_revision_id) != bool(self.agent_revision_digest):
             raise ValueError("agent revision identity and digest must be paired")
         if len(self.skill_revision_ids) != len(self.skill_revision_digests):
@@ -305,6 +350,8 @@ class TurnInput:
             value.pop("insights_report_refs")
         if self.persona_version is None:
             value.pop("persona_version")
+        if self.browser is None:
+            value.pop("browser")
         return {"projectId": project_id, "turnId": turn_id, **value}
 
 

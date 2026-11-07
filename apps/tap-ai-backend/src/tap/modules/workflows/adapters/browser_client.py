@@ -44,6 +44,7 @@ class BrowserApiClient:
         ):
             raise ValueError("browser API requires a loopback origin and project credential")
         self._base = f"http://127.0.0.1:{parsed.port}/api/projects/{project_id}/browser"
+        self.project_id = project_id
         self._token = token
         self._timeout = timeout_seconds
 
@@ -86,6 +87,24 @@ class BrowserApiClient:
         self, method: str, path: str, body: object | None = None, key: str | None = None
     ) -> dict[str, Any]:
         return await asyncio.to_thread(self._sync_request, method, path, body, key)
+
+    def _sync_evidence(self, evidence_id: str) -> tuple[bytes, str]:
+        request = Request(
+            self._base + f"/evidence/{self._id(evidence_id)}",
+            headers={"Authorization": f"Bearer {self._token}"},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=self._timeout) as response:
+                data = response.read(10_000_001)
+                if len(data) > 10_000_000:
+                    raise ValueError("browser evidence exceeds client cap")
+                return data, response.headers.get_content_type()
+        except HTTPError as error:
+            raise BrowserApiError(error.code, "evidence unavailable") from None
+
+    async def read_evidence(self, evidence_id: str) -> tuple[bytes, str]:
+        return await asyncio.to_thread(self._sync_evidence, evidence_id)
 
     async def poll(self, path: str, statuses: frozenset[str], *, deadline: float) -> dict[str, Any]:
         while time.monotonic() < deadline:

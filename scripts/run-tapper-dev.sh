@@ -37,6 +37,11 @@ export TAPPER_API_HOST="${TAPPER_API_HOST:-127.0.0.1}"
 export TAPPER_API_PORT="${TAPPER_API_PORT:-8000}"
 export TAPPER_WEB_HOST="${TAPPER_WEB_HOST:-127.0.0.1}"
 export TAPPER_WEB_PORT="${TAPPER_WEB_PORT:-5173}"
+export TAP_BROWSER_SERVICE_MODE="${TAP_BROWSER_SERVICE_MODE:-managed}"
+case "$TAP_BROWSER_SERVICE_MODE" in
+  managed|external) ;;
+  *) echo "TAP_BROWSER_SERVICE_MODE must be managed or external" >&2; exit 2 ;;
+esac
 
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE
 unset DASHSCOPE_API_KEY DASHSCOPE_BASE_URL DASHSCOPE_API_BASE
@@ -82,6 +87,8 @@ tapper_dev_langfuse_pid=""
 tapper_dev_test_design_pid=""
 tapper_dev_generation_pid=""
 tapper_dev_workflow_pid=""
+tapper_dev_browser_api_pid=""
+tapper_dev_browser_worker_pid=""
 tapper_dev_web_pid=""
 tapper_dev_ready_file=""
 tapper_dev_cleanup_started=0
@@ -110,7 +117,7 @@ cleanup() {
     tapper_dev_ready_file=""
   fi
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     terminate_pid "$child_pid" || cleanup_failed=1
@@ -119,7 +126,7 @@ cleanup() {
   deadline=$(( SECONDS + tapper_dev_shutdown_grace_seconds ))
   while :; do
     live=0
-    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
+    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
       "$tapper_dev_worker_pid" \
       "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
       if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
@@ -131,14 +138,14 @@ cleanup() {
     sleep 0.1 || cleanup_failed=1
   done
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
       kill -KILL "$child_pid" 2>/dev/null || cleanup_failed=1
     fi
   done
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
+  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ]; then
@@ -222,6 +229,13 @@ if [ "${TAP_WORKFLOW_ENABLED:-false}" = "true" ]; then
   (exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_workflow_worker) &
   tapper_dev_workflow_pid=$!
 fi
+if [ "${TAP_BROWSER_CODING_ENABLED:-false}" = "true" ] && \
+  [ "$TAP_BROWSER_SERVICE_MODE" = "managed" ]; then
+  (exec bash "$tapper_dev_script_dir/run-tap-browser.sh" api) &
+  tapper_dev_browser_api_pid=$!
+  (exec bash "$tapper_dev_script_dir/run-tap-browser.sh" worker) &
+  tapper_dev_browser_worker_pid=$!
+fi
 (exec "$tapper_dev_vite_bin" "$tapper_dev_web_root" \
   --config "$tapper_dev_vite_config" \
   --host "$TAPPER_WEB_HOST" --port "$TAPPER_WEB_PORT" --strictPort) &
@@ -288,6 +302,20 @@ child_exit_status() {
     [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
     return "$status"
   fi
+  if [ -n "$tapper_dev_browser_api_pid" ] && \
+    ! kill -0 "$tapper_dev_browser_api_pid" 2>/dev/null; then
+    if wait "$tapper_dev_browser_api_pid"; then status=1; else status=$?; fi
+    tapper_dev_browser_api_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
+  if [ -n "$tapper_dev_browser_worker_pid" ] && \
+    ! kill -0 "$tapper_dev_browser_worker_pid" 2>/dev/null; then
+    if wait "$tapper_dev_browser_worker_pid"; then status=1; else status=$?; fi
+    tapper_dev_browser_worker_pid=""
+    [ "$status" -gt 0 ] && [ "$status" -le 255 ] || status=1
+    return "$status"
+  fi
   if [ -n "$tapper_dev_test_design_pid" ] && \
     ! kill -0 "$tapper_dev_test_design_pid" 2>/dev/null; then
     if wait "$tapper_dev_test_design_pid"; then status=1; else status=$?; fi
@@ -314,7 +342,10 @@ while [ "$SECONDS" -lt "$ready_deadline" ]; do
     status=$?
     exit "$status"
   fi
-  if curl --fail --silent --show-error --max-time 2 --max-filesize 65536 \
+  if { [ "${TAP_BROWSER_CODING_ENABLED:-false}" != "true" ] || \
+    curl --fail --silent --show-error --max-time 2 --max-filesize 65536 \
+      "${TAP_BROWSER_API_ORIGIN:-http://127.0.0.1:8002}/health/live" >/dev/null 2>&1; } && \
+    curl --fail --silent --show-error --max-time 2 --max-filesize 65536 \
     "http://$TAPPER_API_HOST:$TAPPER_API_PORT/health/ready" \
       >"$tapper_dev_ready_file" 2>/dev/null && \
     uv run --project apps/tap-ai-backend python - "$tapper_dev_ready_file" >/dev/null 2>&1 <<'PY'

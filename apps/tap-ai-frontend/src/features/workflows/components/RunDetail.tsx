@@ -9,11 +9,15 @@ export function RunDetail({
   onSelectNode,
   onCommand,
   onRetryConnection,
+  onReplay,
+  onProvideInput,
 }: {
   snapshot: WorkflowTaskSnapshot;
   connection: "idle" | "connecting" | "live" | "reconnecting" | "error";
   onSelectNode: (nodeId: string) => void;
   onRetryConnection?: () => void;
+  onReplay?: () => Promise<void>;
+  onProvideInput?: () => void;
   onCommand?: (
     kind: "pause" | "resume" | "cancel",
     nodeId?: string,
@@ -22,6 +26,7 @@ export function RunDetail({
   const [receipt, setReceipt] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [pending, setPending] = useState(false);
+  const [replayError, setReplayError] = useState(false);
   const request = async (kind: "pause" | "resume" | "cancel") => {
     if (!onCommand || pending) return;
     setPending(true);
@@ -55,6 +60,20 @@ export function RunDetail({
   const completed = snapshot.nodes.filter(
     (node) => node.agentId !== "orchestrator" && node.status === "succeeded",
   ).length;
+  const browser = snapshot.taskKind === "browser";
+  const browserRun = snapshot.browserRun;
+  const replay = async () => {
+    if (!onReplay || pending) return;
+    setPending(true);
+    setReplayError(false);
+    try {
+      await onReplay();
+    } catch {
+      setReplayError(true);
+    } finally {
+      setPending(false);
+    }
+  };
   return (
     <div className="tap-workflow-overview">
       <section className="tap-workflow-progress" aria-label="Task overview">
@@ -126,6 +145,18 @@ export function RunDetail({
               ))}
           </div>
         ) : null}
+        {browser && snapshot.availableActions.includes("replay") && onReplay ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => void replay()}
+          >
+            Replay frozen run
+          </button>
+        ) : null}
+        {replayError ? (
+          <p role="alert">Replay could not start. Try again.</p>
+        ) : null}
         {receipt ? (
           <p role="status">
             Request {receipt}. Task state will update when applied.
@@ -139,11 +170,122 @@ export function RunDetail({
           <p>Cancellation requested; work may still be running.</p>
         ) : null}
       </section>
+      {browser && snapshot.browserInputRequest ? (
+        <section
+          aria-label="Input needed"
+          className="tap-workflow-browser-section"
+        >
+          <h2>Input needed</h2>
+          <p>{snapshot.browserInputRequest.question}</p>
+          {onProvideInput ? (
+            <button type="button" onClick={onProvideInput}>
+              Provide input in a new run
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+      {browser && browserRun ? (
+        <section
+          aria-label="Browser result"
+          className="tap-workflow-browser-section"
+        >
+          <h2>Browser result</h2>
+          <p className="tap-workflow-status" data-status={browserRun.status}>
+            {browserRun.status === "passed"
+              ? "Passed"
+              : browserRun.status === "unknown"
+                ? "Outcome unknown"
+                : browserRun.status}
+          </p>
+          {snapshot.replayOfTaskId ? (
+            <p className="tap-workflow-meta">
+              Replay of run {snapshot.replayOfTaskId}
+            </p>
+          ) : null}
+          {browserRun.failureCode ? (
+            <p>Reason: {browserRun.failureCode}</p>
+          ) : null}
+          {browserRun.outputs.length > 0 ? (
+            <div className="tap-workflow-browser-values">
+              <h3>Extracted values</h3>
+              {browserRun.outputs.map((output, index) => (
+                <dl key={index}>
+                  {Object.entries(output).map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>
+                        {typeof value === "string"
+                          ? value
+                          : JSON.stringify(value)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ))}
+            </div>
+          ) : null}
+          {browserRun.steps.length > 0 ? (
+            <div>
+              <h3>Steps</h3>
+              <ol className="tap-workflow-browser-steps">
+                {browserRun.steps.map((step, index) => (
+                  <li key={`${index}-${step.title}`}>
+                    <span>{step.title}</span>
+                    <span>
+                      {step.status} · {step.durationMs} ms
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+          {browserRun.evidence.length > 0 ? (
+            <div>
+              <h3>Evidence</h3>
+              <ul className="tap-workflow-browser-evidence">
+                {browserRun.evidence.map((item) => (
+                  <li key={item.evidenceId}>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {item.kind === "screenshot"
+                        ? "Screenshot"
+                        : item.kind === "trace"
+                          ? "Trace"
+                          : "Result file"}
+                    </a>
+                    {item.kind === "screenshot" ? (
+                      <img
+                        src={item.url}
+                        alt="Browser run screenshot"
+                        loading="lazy"
+                      />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <p className="tap-workflow-meta">
+            Bundle {browserRun.bundleId} · Input{" "}
+            {browserRun.inputSha256.slice(0, 12)} · Replay model calls{" "}
+            {browserRun.replayModelCalls}
+          </p>
+        </section>
+      ) : browser && snapshot.browserRunUnavailable ? (
+        <p role="status">
+          Saved browser evidence is temporarily unavailable. Retry the
+          connection to load it.
+        </p>
+      ) : null}
       <section aria-label="Workflow">
         <h2>Workflow</h2>
         <WorkflowGraph
           nodes={snapshot.nodes}
           edges={snapshot.edges}
+          status={snapshot.status}
           onSelect={onSelectNode}
         />
       </section>

@@ -57,6 +57,7 @@ import {
 import { useConversationRuntime } from "../../features/conversations/model/useConversationRuntime";
 import { useWorkflowTask } from "../../features/workflows/api/queries";
 import { WorkflowSidebar } from "../../features/workflows/components/WorkflowSidebar";
+import { browserSendInput } from "../../features/workflows/model/browserInput";
 import { RunStatusLink } from "../../features/workflows/components/RunStatusLink";
 import {
   agentSelectionFields,
@@ -813,6 +814,7 @@ interface ResendContext {
   sourceIds: readonly string[];
   agentIds: readonly string[];
   skillIds: readonly string[];
+  browser?: AssistantTurn["browserIntent"];
 }
 
 const TERMINAL_TURN_STATUSES = [
@@ -1516,6 +1518,13 @@ export function TapperWorkspace() {
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
+  const [browserMode, setBrowserMode] = useState(false);
+  const [browserStartUrl, setBrowserStartUrl] = useState("");
+  const [browserNotes, setBrowserNotes] = useState("");
+  const [browserExpectedResult, setBrowserExpectedResult] = useState("");
+  const [browserSourceTaskId, setBrowserSourceTaskId] = useState<string | null>(
+    null,
+  );
   const [workflowTaskId, setWorkflowTaskId] = useState<string | null>(null);
   const [workflowNodeId, setWorkflowNodeId] = useState<string | null>(null);
   const [workflowAttempt, setWorkflowAttempt] = useState<number | null>(null);
@@ -1875,6 +1884,7 @@ export function TapperWorkspace() {
           locale,
           modelId: turn.input.modelAlias,
           prompt: turn.input.message,
+          browserIntent: turn.input.browser,
           ...(insightsQueryId == null ? {} : { insightsQueryId }),
           sourceReferences: resolvedResources.map((item) => ({
             id: item.sourceId,
@@ -2290,6 +2300,7 @@ export function TapperWorkspace() {
         },
         agentIds,
       ),
+      browser: turn.browserIntent,
     };
   };
   const activeConversation =
@@ -2731,6 +2742,28 @@ export function TapperWorkspace() {
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
       context?.agentIds ?? activeConversation.selectedAgentIds;
+    const browserRequest = context?.browser
+      ? {
+          startUrl: context.browser.startUrl,
+          ...(context.browser.expectedResult
+            ? { expectedResult: context.browser.expectedResult }
+            : {}),
+          ...(context.browser.inputNotes
+            ? { inputNotes: context.browser.inputNotes }
+            : {}),
+          ...(context.browser.sourceTaskId
+            ? { sourceTaskId: context.browser.sourceTaskId }
+            : {}),
+        }
+      : context === undefined && browserMode
+        ? browserSendInput({
+            goal: prompt,
+            startUrl: browserStartUrl,
+            notes: browserNotes,
+            expectedResult: browserExpectedResult,
+            sourceTaskId: browserSourceTaskId,
+          })
+        : null;
     if (
       agentSelectionProblem(
         runtime.data?.workflowEnabled === true,
@@ -2841,7 +2874,9 @@ export function TapperWorkspace() {
           }));
         const input = {
           message: prompt,
-          modelAlias: activeConversation.modelId,
+          modelAlias: browserRequest
+            ? (runtime.data?.browserModelAlias ?? activeConversation.modelId)
+            : activeConversation.modelId,
           sourceRevisionIds: currentPublished.items
             .filter((item) => futureSourceIds.includes(item.sourceId))
             .map((item) => item.revisionId),
@@ -2851,7 +2886,9 @@ export function TapperWorkspace() {
             selectedAgentIds,
             agentById,
           ),
-          ...(runtime.data?.workflowEnabled &&
+          ...(browserRequest ? { browser: browserRequest } : {}),
+          ...(!browserRequest &&
+          runtime.data?.workflowEnabled &&
           followUpTaskId(workflow.snapshot, activeConversation.id)
             ? {
                 workflowTaskId: followUpTaskId(
@@ -2868,6 +2905,7 @@ export function TapperWorkspace() {
       });
       if (accepted === null) return false;
       setWorkflowTaskId(null);
+      setBrowserSourceTaskId(null);
       setWorkflowNodeId(null);
       const optimistic = appendTurn(
         { ...activeConversation, id: accepted.conversationId },
@@ -3044,9 +3082,37 @@ export function TapperWorkspace() {
               }
               onPickSuggestion={pickSuggestion}
               onSend={(prompt) => sendMessage(prompt)}
+              browserMode={browserMode}
+              browserAvailable={runtime.data?.browserEnabled === true}
+              browserStartUrl={browserStartUrl}
+              browserNotes={browserNotes}
+              browserExpectedResult={browserExpectedResult}
+              browserSourceTaskId={browserSourceTaskId}
+              onBrowserModeChange={(enabled) => {
+                setBrowserMode(enabled);
+                if (enabled && runtime.data?.browserModelAlias) {
+                  updateActiveConversation((conversation) => ({
+                    ...conversation,
+                    modelId: runtime.data!.browserModelAlias!,
+                  }));
+                }
+                if (!enabled) setBrowserSourceTaskId(null);
+              }}
+              onBrowserStartUrlChange={setBrowserStartUrl}
+              onBrowserNotesChange={setBrowserNotes}
+              onBrowserExpectedResultChange={setBrowserExpectedResult}
               onEditTurn={(turn) => {
                 const context = resendContextOf(turn);
                 setMessageDraft(turn.prompt);
+                setBrowserMode(turn.browserIntent != null);
+                setBrowserStartUrl(turn.browserIntent?.startUrl ?? "");
+                setBrowserNotes(turn.browserIntent?.inputNotes ?? "");
+                setBrowserExpectedResult(
+                  turn.browserIntent?.expectedResult ?? "",
+                );
+                setBrowserSourceTaskId(
+                  turn.browserIntent?.sourceTaskId ?? null,
+                );
                 updateActiveConversation((conversation) => ({
                   ...conversation,
                   selectedSourceIds: context.sourceIds,
@@ -3228,6 +3294,21 @@ export function TapperWorkspace() {
                     scrollTop={workflowScrollTop}
                     onScrollTopChange={setWorkflowScrollTop}
                     onRetryConnection={workflow.retry}
+                    onReplayed={(taskId) => {
+                      setWorkflowTaskId(taskId);
+                      setWorkflowNodeId(null);
+                    }}
+                    onProvideInput={() => {
+                      const intent = workflow.snapshot?.browserIntent;
+                      if (!intent) return;
+                      setBrowserMode(true);
+                      setBrowserStartUrl(intent.startUrl);
+                      setBrowserNotes(intent.inputNotes ?? "");
+                      setBrowserExpectedResult(intent.expectedResult);
+                      setBrowserSourceTaskId(workflow.snapshot!.taskId);
+                      setMessageDraft(intent.goal);
+                      setWorkflowPanelOpen(false);
+                    }}
                     onClose={dismissKnowledgeSources}
                   />
                 ) : (

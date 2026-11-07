@@ -61,4 +61,17 @@ describe("workflow capability", () => {
       (await createRuntimeClient({ fetch: fetcher }).getMode()).workflowEnabled,
     ).toBe(true);
   });
+  it("accepts a project-bound browser capability and model alias", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      Response.json({
+        ...mode,
+        workflowEnabled: true,
+        browserEnabled: true,
+        browserModelAlias: "qwen-plus",
+      }),
+    );
+    const value = await createRuntimeClient({ fetch: fetcher }).getMode();
+    expect(value.browserEnabled).toBe(true);
+    expect(value.browserModelAlias).toBe("qwen-plus");
+  });
 });

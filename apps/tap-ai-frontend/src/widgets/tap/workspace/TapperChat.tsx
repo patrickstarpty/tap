@@ -42,6 +42,7 @@ import {
   PromptSuggestions,
   type PromptSuggestionsState,
 } from "./PromptSuggestions";
+import { startUrlFromGoal } from "../../../features/workflows/model/browserInput";
 
 type PickerKind = "library" | "agents" | "skills";
 
@@ -99,6 +100,16 @@ interface TapperChatProps {
    * dismissed or replaced. */
   composerNotice?: { text: string; onDismiss: () => void };
   agentSelectionIssue?: { text: string; onClear: () => void };
+  browserMode?: boolean;
+  browserAvailable?: boolean;
+  browserStartUrl?: string;
+  browserNotes?: string;
+  browserExpectedResult?: string;
+  browserSourceTaskId?: string | null;
+  onBrowserModeChange?: (enabled: boolean) => void;
+  onBrowserStartUrlChange?: (url: string) => void;
+  onBrowserNotesChange?: (notes: string) => void;
+  onBrowserExpectedResultChange?: (result: string) => void;
 }
 
 const QUESTION_RAIL_ROW_HEIGHT = 14;
@@ -178,6 +189,16 @@ export function TapperChat({
   skillBudget,
   composerNotice,
   agentSelectionIssue,
+  browserMode = false,
+  browserAvailable = false,
+  browserStartUrl = "",
+  browserNotes = "",
+  browserExpectedResult = "",
+  browserSourceTaskId = null,
+  onBrowserModeChange,
+  onBrowserStartUrlChange,
+  onBrowserNotesChange,
+  onBrowserExpectedResultChange,
 }: TapperChatProps) {
   const catalog = useModelCatalog(projectId);
   const catalogPage = catalog.isError ? undefined : catalog.data;
@@ -203,6 +224,7 @@ export function TapperChat({
       onModelChange(catalogDefault);
   }, [catalogDefault, conversation.id, modelAvailable, onModelChange]);
   const [submitError, setSubmitError] = useState(false);
+  const [browserInputError, setBrowserInputError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [picker, setPicker] = useState<PickerKind | null>(null);
@@ -499,6 +521,51 @@ export function TapperChat({
       agentSelectionIssue
     )
       return;
+    if (browserMode) {
+      if (!browserAvailable) {
+        setBrowserInputError(
+          "Browser automation is unavailable. Configure the local browser runtime first.",
+        );
+        return;
+      }
+      const url = browserStartUrl.trim() || startUrlFromGoal(prompt);
+      if (!url) {
+        setBrowserInputError(
+          "Add a Start URL to run this task in a browser. Your goal is saved here.",
+        );
+        return;
+      }
+      try {
+        const parsed = new URL(url);
+        if (
+          !["http:", "https:"].includes(parsed.protocol) ||
+          !parsed.hostname ||
+          parsed.username ||
+          parsed.password ||
+          parsed.hash
+        )
+          throw new Error("invalid");
+      } catch {
+        setBrowserInputError("Start URL must be an absolute HTTP(S) address.");
+        return;
+      }
+      if (
+        conversation.selectedAgentIds.length > 0 &&
+        !conversation.selectedAgentIds.some((id) =>
+          agents.some(
+            (agent) =>
+              agent.id === id &&
+              /\b(sde|sdet)\b/iu.test(`${agent.name} ${agent.id}`),
+          ),
+        )
+      ) {
+        setBrowserInputError(
+          "Select an SDE or SDET Agent to author this browser run.",
+        );
+        return;
+      }
+    }
+    setBrowserInputError("");
     setSubmitError(false);
     const accepted = await onSend(prompt);
     if (accepted) setMessage("");
@@ -660,6 +727,59 @@ export function TapperChat({
       <label className="tapper-visually-hidden" htmlFor="tap-message">
         {copy.chat.messageTapper}
       </label>
+      <div className="tap-browser-composer">
+        <label className="tap-browser-toggle">
+          <input
+            type="checkbox"
+            checked={browserMode}
+            disabled={!browserAvailable}
+            onChange={(event) => onBrowserModeChange?.(event.target.checked)}
+          />
+          Browser run
+        </label>
+        {!browserAvailable ? (
+          <span className="tap-browser-unavailable">
+            Browser automation unavailable · see local setup guide
+          </span>
+        ) : null}
+        {browserMode ? (
+          <div className="tap-browser-options">
+            {browserSourceTaskId ? (
+              <p>New run from blocked task {browserSourceTaskId}</p>
+            ) : null}
+            <label htmlFor="tap-browser-url">Start URL</label>
+            <input
+              id="tap-browser-url"
+              type="url"
+              value={browserStartUrl || startUrlFromGoal(message)}
+              onChange={(event) =>
+                onBrowserStartUrlChange?.(event.target.value)
+              }
+              placeholder="https://example.org/page"
+              autoComplete="url"
+            />
+            <label htmlFor="tap-browser-notes">Input details (optional)</label>
+            <textarea
+              id="tap-browser-notes"
+              value={browserNotes}
+              onChange={(event) => onBrowserNotesChange?.(event.target.value)}
+              placeholder="Values or context the browser task needs"
+              rows={2}
+            />
+            <label htmlFor="tap-browser-expected">
+              Expected result (optional)
+            </label>
+            <input
+              id="tap-browser-expected"
+              value={browserExpectedResult}
+              onChange={(event) =>
+                onBrowserExpectedResultChange?.(event.target.value)
+              }
+              placeholder="Defaults to your goal"
+            />
+          </div>
+        ) : null}
+      </div>
 
       {selectedSources.length +
         selectedAgents.length +
@@ -978,6 +1098,10 @@ export function TapperChat({
       {sendError ? (
         <p className="tap-context-notice" role="alert">
           {sendError}
+        </p>
+      ) : browserInputError ? (
+        <p className="tap-context-notice" role="alert">
+          {browserInputError}
         </p>
       ) : submitError ? (
         <p className="tap-context-notice" role="alert">

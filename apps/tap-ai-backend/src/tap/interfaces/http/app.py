@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, FastAPI, Path, Request, status
 from fastapi.routing import APIRoute
 
 from tap.contracts.http import ChatTurnAccepted, ChatTurnRequest, RuntimeMode
-from tap.interfaces.http.dependencies import HttpServices
+from tap.interfaces.http.dependencies import HttpServices, browser_available
 from tap.interfaces.http.middleware.origin import OriginPolicyMiddleware, validate_origins
 from tap.interfaces.http.problems import (
     problem_response,
@@ -101,6 +101,8 @@ def create_app(
             actor_id=scope.actor_id,
             identity_mode="validation",
             workflow_enabled=request.app.state.http_services.workflow_enabled,
+            browser_enabled=browser_available(request.app.state.http_services, scope),
+            browser_model_alias=request.app.state.http_services.browser_model_alias,
         )
 
     async def project_path(project_id: str = Path(min_length=1, max_length=128)) -> str:

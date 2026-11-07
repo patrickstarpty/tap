@@ -45,3 +45,20 @@ it("replays SSE after the snapshot cursor without consuming private fields", asy
   expect(request.headers.get("Last-Event-ID")).toBe("8");
   expect(new URL(request.url).searchParams.get("snapshotSequence")).toBe("8");
 });
+
+it("starts frozen replay as a new workflow task", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(Response.json({ taskId: "task-2" }));
+  const result = await createWorkflowClient("project-1", fetcher).replay(
+    "task-1",
+    "stable-key",
+  );
+  expect(result.taskId).toBe("task-2");
+  const request = fetcher.mock.calls[0]![0] as Request;
+  expect(request.method).toBe("POST");
+  expect(new URL(request.url).pathname).toBe(
+    "/api/v1/projects/project-1/workflows/task-1/replay",
+  );
+  expect(request.headers.get("Idempotency-Key")).toBe("stable-key");
+});

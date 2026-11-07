@@ -1856,6 +1856,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/workflows/{task_id}/browser-evidence/{evidence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Evidence */
+        get: operations["workflow_browser_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/workflows/{task_id}/commands": {
         parameters: {
             query?: never;
@@ -1918,6 +1935,23 @@ export interface paths {
         get: operations["workflow_node_logs"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/workflows/{task_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replay */
+        post: operations["workflow_replay"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2744,6 +2778,17 @@ export interface components {
              */
             upload: string;
         };
+        /** BrowserTaskRequest */
+        BrowserTaskRequest: {
+            /** Expectedresult */
+            expectedResult?: string | null;
+            /** Inputnotes */
+            inputNotes?: string | null;
+            /** Sourcetaskid */
+            sourceTaskId?: string | null;
+            /** Starturl */
+            startUrl: string;
+        };
         /**
          * ChatEventEnvelope
          * @description A recoverable, ordered event persisted for one chat turn.
@@ -2946,6 +2991,7 @@ export interface components {
         ConversationCreateRequest: {
             /** Agentrevisionid */
             agentRevisionId?: string | null;
+            browser?: components["schemas"]["BrowserTaskRequest"] | null;
             /**
              * Documentrevisionids
              * @default []
@@ -3087,6 +3133,7 @@ export interface components {
             agentLabel?: string | null;
             /** Agentrevisionid */
             agentRevisionId?: string | null;
+            browser?: components["schemas"]["BrowserTaskRequest"] | null;
             /** Documentrevisionids */
             documentRevisionIds: string[];
             /** Insightsqueryid */
@@ -5694,6 +5741,16 @@ export interface components {
             /** Actorid */
             actorId: string;
             /**
+             * Browserenabled
+             * @default false
+             */
+            browserEnabled?: boolean;
+            /**
+             * Browsermodelalias
+             * @default null
+             */
+            browserModelAlias?: string | null;
+            /**
              * Identitymode
              * @constant
              */
@@ -7005,6 +7062,76 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** WorkflowBrowserEvidence */
+        WorkflowBrowserEvidence: {
+            /** Evidenceid */
+            evidenceId: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "screenshot" | "trace" | "result";
+            /** Sha256 */
+            sha256: string;
+            /** Url */
+            url: string;
+        };
+        /** WorkflowBrowserInputRequest */
+        WorkflowBrowserInputRequest: {
+            /** Question */
+            question: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "missing_input" | "external_block";
+        };
+        /** WorkflowBrowserIntent */
+        WorkflowBrowserIntent: {
+            /** Expectedresult */
+            expectedResult: string;
+            /** Goal */
+            goal: string;
+            /** Inputnotes */
+            inputNotes?: string | null;
+            /** Starturl */
+            startUrl: string;
+        };
+        /** WorkflowBrowserRun */
+        WorkflowBrowserRun: {
+            /** Bundleid */
+            bundleId: string;
+            /** Evidence */
+            evidence: components["schemas"]["WorkflowBrowserEvidence"][];
+            /** Executionid */
+            executionId: string;
+            /** Failurecode */
+            failureCode?: string | null;
+            /** Inputsha256 */
+            inputSha256: string;
+            /** Outputs */
+            outputs: {
+                [key: string]: unknown;
+            }[];
+            /** Replaymodelcalls */
+            replayModelCalls: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "canceled" | "unknown";
+            /** Steps */
+            steps: components["schemas"]["WorkflowBrowserStep"][];
+        };
+        /** WorkflowBrowserStep */
+        WorkflowBrowserStep: {
+            /** Durationms */
+            durationMs: number;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+        };
         /** WorkflowCommandRequest */
         WorkflowCommandRequest: {
             /** Expectedplanrevision */
@@ -7237,7 +7364,15 @@ export interface components {
             /** Artifacts */
             artifacts: components["schemas"]["WorkflowArtifactView"][];
             /** Availableactions */
-            availableActions: ("steer" | "pause" | "resume" | "cancel" | "retry")[];
+            availableActions: ("steer" | "pause" | "resume" | "cancel" | "retry" | "replay")[];
+            browserInputRequest?: components["schemas"]["WorkflowBrowserInputRequest"] | null;
+            browserIntent?: components["schemas"]["WorkflowBrowserIntent"] | null;
+            browserRun?: components["schemas"]["WorkflowBrowserRun"] | null;
+            /**
+             * Browserrununavailable
+             * @default false
+             */
+            browserRunUnavailable?: boolean;
             /** Budgetlimit */
             budgetLimit: {
                 [key: string]: number;
@@ -7279,14 +7414,22 @@ export interface components {
             /** Projectid */
             projectId: string;
             recentEvent?: components["schemas"]["WorkflowRecentEvent"] | null;
+            /** Replayoftaskid */
+            replayOfTaskId?: string | null;
             status: components["schemas"]["WorkflowStatus"];
             /** Taskid */
             taskId: string;
+            /**
+             * Taskkind
+             * @default native
+             * @enum {string}
+             */
+            taskKind?: "native" | "browser" | "observed";
         };
         /** WorkflowTaskView */
         WorkflowTaskView: {
             /** Availableactions */
-            availableActions: ("steer" | "pause" | "resume" | "cancel" | "retry")[];
+            availableActions: ("steer" | "pause" | "resume" | "cancel" | "retry" | "replay")[];
             /** Conversationid */
             conversationId: string | null;
             /**
@@ -7312,9 +7455,17 @@ export interface components {
             /** Projectid */
             projectId: string;
             recentEvent?: components["schemas"]["WorkflowRecentEvent"] | null;
+            /** Replayoftaskid */
+            replayOfTaskId?: string | null;
             status: components["schemas"]["WorkflowStatus"];
             /** Taskid */
             taskId: string;
+            /**
+             * Taskkind
+             * @default native
+             * @enum {string}
+             */
+            taskKind?: "native" | "browser" | "observed";
         };
         /** BddAnchor */
         tap__contracts__chat_stream__BddAnchor: {
@@ -15104,6 +15255,57 @@ export interface operations {
             };
         };
     };
+    workflow_browser_evidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+                evidence_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Browser evidence unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     workflow_command: {
         parameters: {
             query?: never;
@@ -15272,6 +15474,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowLogPage"];
+                };
+            };
+            /** @description Project scope or authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workflow_replay: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key": string;
+            };
+            path: {
+                task_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowTaskSnapshot"];
                 };
             };
             /** @description Project scope or authorization denied */

@@ -119,7 +119,9 @@ class WorkflowTaskView(WorkflowContract):
     plan_revision: int
     last_sequence: int
     origin: Literal["native", "observed"]
-    available_actions: list[Literal["steer", "pause", "resume", "cancel", "retry"]]
+    task_kind: Literal["native", "browser", "observed"] = "native"
+    replay_of_task_id: str | None = None
+    available_actions: list[Literal["steer", "pause", "resume", "cancel", "retry", "replay"]]
     display_name: str
     goal_summary: str = Field(max_length=200)
     created_at: datetime
@@ -132,6 +134,52 @@ class WorkflowTaskPage(WorkflowContract):
     next_cursor: str | None = None
 
 
+class WorkflowNodeDetail(WorkflowNodeView):
+    artifacts: list[WorkflowArtifactView]
+
+
+class WorkflowLogPage(WorkflowContract):
+    items: list[WorkflowEventEnvelope]
+    next_cursor: int | None = None
+
+
+class WorkflowBrowserStep(WorkflowContract):
+    title: str = Field(max_length=400)
+    status: str = Field(max_length=32)
+    duration_ms: int = Field(ge=0)
+
+
+class WorkflowBrowserEvidence(WorkflowContract):
+    evidence_id: str
+    kind: Literal["screenshot", "trace", "result"]
+    sha256: str
+    url: str
+
+
+class WorkflowBrowserRun(WorkflowContract):
+    execution_id: str
+    bundle_id: str
+    input_sha256: str
+    status: Literal["passed", "failed", "canceled", "unknown"]
+    failure_code: str | None = None
+    replay_model_calls: int = Field(ge=0)
+    steps: list[WorkflowBrowserStep]
+    outputs: list[dict[str, object]]
+    evidence: list[WorkflowBrowserEvidence]
+
+
+class WorkflowBrowserIntent(WorkflowContract):
+    goal: str
+    start_url: str
+    expected_result: str
+    input_notes: str | None = None
+
+
+class WorkflowBrowserInputRequest(WorkflowContract):
+    question: str
+    reason: Literal["missing_input", "external_block"]
+
+
 class WorkflowTaskSnapshot(WorkflowTaskView):
     nodes: list[WorkflowNodeView]
     edges: list[WorkflowEdgeView]
@@ -140,12 +188,7 @@ class WorkflowTaskSnapshot(WorkflowTaskView):
     events: list[WorkflowEventEnvelope]
     budget_limit: dict[str, int]
     budget_used: dict[str, int]
-
-
-class WorkflowNodeDetail(WorkflowNodeView):
-    artifacts: list[WorkflowArtifactView]
-
-
-class WorkflowLogPage(WorkflowContract):
-    items: list[WorkflowEventEnvelope]
-    next_cursor: int | None = None
+    browser_run: WorkflowBrowserRun | None = None
+    browser_run_unavailable: bool = False
+    browser_intent: WorkflowBrowserIntent | None = None
+    browser_input_request: WorkflowBrowserInputRequest | None = None

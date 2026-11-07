@@ -101,6 +101,22 @@ class WorkflowAdmissionCoordinator:
             "skill_instruction_digests": list(frozen.skill_instruction_template_digests),
             "skill_catalog": [asdict(item) for item in frozen.skill_catalog],
         }
+        if frozen.browser is not None:
+            if self.max_cost_micros <= 0:
+                raise ValueError("browser workflow requires a finite positive cost cap")
+            request["kind"] = "browser"
+            request["browser"] = {
+                "start_url": frozen.browser.start_url,
+                "expected_result": frozen.browser.expected_result,
+                "allowed_origins": list(frozen.browser.allowed_origins),
+                "input_data": json.loads(frozen.browser.input_data_json),
+                "input_sha256": frozen.browser.input_sha256,
+                **(
+                    {"input_from_task_id": frozen.browser.source_task_id}
+                    if frozen.browser.source_task_id is not None
+                    else {}
+                ),
+            }
         request.update(self._limits(turn.input_snapshot.created_at))
         key = self._key(turn.turn_id)
         task = await self._store.task_by_key(scope, key)
