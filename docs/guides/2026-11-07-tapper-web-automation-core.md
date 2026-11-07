@@ -60,3 +60,5 @@ uv run --project apps/tap-ai-backend python scripts/run-browser-core-e2e.py \
 上述 v5 真实模型验收使用历史编码镜像 `sha256:fae707f8bfa133c1f838d89109a6eb752f53d98aecef781b7a1771233e6021b3`。后续生命周期修复的当前编码镜像为 `sha256:b1f5c4df0c79e4e46ab1ac15de56e9bcff9cc2b0d505f5206be9149442e2e811`；它经过针对性的无模型 daemon/serve 进程树到期停机和回归验证，未重跑完整付费 Chat 验收，也未以该次停机探针证明 OpenCode 已就绪。浏览器镜像仍为 `sha256:dd59168b4e82204c55f28ba1ac5c269600a0c4e28e4f21faa639485630a1feb1`。
 
 代码已具备上述核心能力，但当前默认配置仍关闭 `TAP_WORKFLOW_ENABLED` 和 `TAP_BROWSER_CODING_ENABLED`，共享应用没有因本次验收自动启用；按[本地运行指南](2026-11-08-tapper-browser-automation-local.md)配置服务、镜像、项目作用域与开关后才能使用。首版范围止于这一核心闭环；复杂暂停/恢复、多轮补料、完整测试资产管理和生产网络/身份加固另行设计。当前 Demo 保持本机回环、无认证，不对局域网或生产安全作承诺。
+
+2026-11-08 收尾：整体分支审查后的创建归属、取消、默认期限与 daemon 生命周期修复提交为 `c08af943`，一次范围复核确认原六项发现已处理；复核新增的早期取消停机事件遗漏由 `1aef6c18` 定向修正并由统筹核对。此前 `make test` 与分段完成的 `make check`、确定性核心 E2E 及真实模型证据保留；修复覆盖的 84 项 Python、8 项 Node 测试通过，最后早期取消修正的 20 项相关测试通过，Ruff/mypy/格式与 diff 检查通过。新镜像的无模型独立到期验证设为 20 秒，实际约 20.318 秒退出，子进程消失且无该验证任务遗留容器。现有构建体积警告和嵌套结果显示紧凑仍为非阻塞项；未重跑新镜像完整付费闭环。
