@@ -37,13 +37,16 @@ def ready_for_runtime(
     )
 
 
-def verified_provenance(sample: Mapping[str, Any]) -> bool:
+def verified_provenance(
+    sample: Mapping[str, Any], *, allow_failed_terminal: bool = False
+) -> bool:
     """Reject copied fixtures, missing counters and nonterminal live samples."""
     if (
         sample.get("source") != "opencode-real"
         or sample.get("cli_version") != "1.19.5"
         or sample.get("model") != "litellm/qwen-plus"
-        or sample.get("terminal") != "complete"
+        or sample.get("terminal")
+        not in ({"complete", "failed"} if allow_failed_terminal else {"complete"})
     ):
         return False
     digest = sample.get("config_digest")
@@ -73,9 +76,16 @@ def evaluate_samples(
 ) -> tuple[CapabilityResult, ...]:
     """Adjudicate eight required gates from sanitized live-only samples."""
 
-    def live(name: str) -> Mapping[str, Any] | None:
+    def live(
+        name: str, *, allow_failed_terminal: bool = False
+    ) -> Mapping[str, Any] | None:
         sample = samples.get(name)
-        return sample if sample is not None and verified_provenance(sample) else None
+        return (
+            sample
+            if sample is not None
+            and verified_provenance(sample, allow_failed_terminal=allow_failed_terminal)
+            else None
+        )
 
     def ref(name: str) -> tuple[str, ...]:
         sample = samples.get(name)
@@ -203,19 +213,30 @@ def evaluate_samples(
         in facts(reconcile).get("assistant_parent_ids", [])
         and "recovered.txt" in reconcile.get("artifacts", {})
     )
-    permissions = live("permissions")
+    permissions = live("permissions", allow_failed_terminal=True)
     permission_children = facts(permissions).get("children")
+    permission_target = permissions.get("permission_target") if permissions else None
     permission_ok = bool(
         permissions
         and isinstance(permission_children, list)
+        and isinstance(permission_target, dict)
+        and "before" in permission_target
+        and "after" in permission_target
+        and permission_target["before"] == permission_target["after"]
+        and permission_target["before"] != "unsafe"
+        and child_matches(permissions, "qae")
         and "denied.txt" not in permissions.get("artifacts", {})
         and any(
             isinstance(child, dict)
             and child.get("agent") == "qae"
+            and child.get("parent_id") == permissions.get("root_session_id")
             and any(
                 isinstance(tool, dict)
                 and tool.get("tool") == "write"
                 and tool.get("status") == "error"
+                and tool.get("file") == "denied.txt"
+                and tool.get("target_is_denied_workspace_file") is True
+                and tool.get("denial_category") == "opencode_permission_denied"
                 for tool in child.get("tools", [])
             )
             for child in permission_children

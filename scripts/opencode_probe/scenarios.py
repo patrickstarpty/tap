@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -15,6 +16,8 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -98,6 +101,19 @@ def _profiles(
     return core + fillers
 
 
+def _profile_provenance(
+    agents: tuple[ProbeAgent, ...], hashes: dict[str, str]
+) -> dict[str, object]:
+    revisions = {agent.agent_id: agent.revision_id for agent in agents if agent.enabled}
+    identity = {"revisions": revisions, "hashes": hashes}
+    return {
+        "revisions": revisions,
+        "aggregate_digest": hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
 def _safe_square_script(source: str) -> bool:
     if len(source.encode()) > 4096:
         return False
@@ -167,7 +183,7 @@ def _process_group_children(leader_pid: int | None) -> int | None:
     return count
 
 
-def _owned_marker_status(workspace: Path) -> dict[str, object]:
+def _owned_marker_status(workspace: Path, owner_group: int | None) -> dict[str, object]:
     marker = workspace / "owned.pid"
     if not marker.is_file() or marker.is_symlink():
         return {"marker_present": False, "identity_verified": False, "alive": False}
@@ -175,21 +191,91 @@ def _owned_marker_status(workspace: Path) -> dict[str, object]:
     if not re.fullmatch(r"[1-9][0-9]{0,7}", raw):
         return {"marker_present": True, "identity_verified": False, "alive": False}
     pid = int(raw)
-    result = subprocess.run(
-        ("ps", "-p", str(pid), "-o", "command="),
-        capture_output=True,
-        text=True,
-        timeout=3,
-        check=False,
-    )
-    alive = result.returncode == 0 and bool(result.stdout.strip())
-    identity = alive and "waiter.py" in result.stdout
-    return {
+    base: dict[str, object] = {
         "marker_present": True,
         "pid": pid,
-        "identity_verified": identity,
-        "alive": alive,
+        "identity_verified": False,
+        "alive": False,
     }
+    if type(owner_group) is not int or owner_group < 1:
+        return base
+    try:
+        process = subprocess.run(
+            ("ps", "-p", str(pid), "-o", "pid=,pgid=,lstart=,comm=,command="),
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if process.returncode != 0 or len(process.stdout.splitlines()) != 1:
+            return base
+        fields = process.stdout.strip().split(maxsplit=8)
+        if len(fields) != 9 or not fields[0].isdigit() or not fields[1].isdigit():
+            return base
+        base["alive"] = int(fields[0]) == pid
+        command = shlex.split(fields[8])
+        if not command:
+            return base
+        script = workspace / "waiter.py"
+        executable = Path(fields[7]).name
+        command_executable = Path(command[0]).name
+        if (
+            not base["alive"]
+            or int(fields[1]) != owner_group
+            or not re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable)
+            or command_executable != executable
+            or script.is_symlink()
+            or not script.is_file()
+            or len(command) != 2
+            or (workspace / command[1]).resolve() != script.resolve()
+        ):
+            return base
+        cwd = subprocess.run(
+            ("lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"),
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        cwd_lines = cwd.stdout.splitlines()
+        if (
+            cwd.returncode != 0
+            or f"p{pid}" not in cwd_lines
+            or "fcwd" not in cwd_lines
+            or sum(line.startswith("n") for line in cwd_lines) != 1
+        ):
+            return base
+        cwd_path = Path(next(line[1:] for line in cwd_lines if line.startswith("n")))
+        if cwd_path.is_symlink() or cwd_path.resolve() != workspace.resolve():
+            return base
+        base.update(
+            identity_verified=True,
+            owner_group=owner_group,
+            start_identity=" ".join(fields[2:7]),
+            executable=executable,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return base
+    return base
+
+
+def _signal_owned_waiter(
+    workspace: Path, owner_group: int | None, prior: dict[str, object]
+) -> bool:
+    pid = prior.get("pid")
+    if prior.get("identity_verified") is not True or type(pid) is not int:
+        return False
+    current = _owned_marker_status(workspace, owner_group)
+    for field in ("pid", "owner_group", "start_identity", "executable"):
+        if current.get(field) != prior.get(field):
+            return False
+    if current.get("identity_verified") is not True:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
 
 
 async def _lost_controller_prompt(
@@ -305,6 +391,72 @@ async def _await_terminal(
     return "incomplete"
 
 
+@contextmanager
+def _accounted_gate(
+    gate: BudgetGate,
+    ledger: ProbeLedger,
+    reservation_id: str,
+    worst_case_per_attempt_usd: float,
+    report: dict[str, Any],
+) -> Iterator[BudgetGate]:
+    """Settle only after owned gateway handlers have closed and been joined."""
+    entered = False
+    try:
+        with gate:
+            entered = True
+            yield gate
+    finally:
+        if entered and gate._closed and gate._server is None and gate._thread is None:
+            with gate._lock:
+                calls = gate.calls
+                records = tuple(gate.records)
+                denials = tuple(gate.denials)
+                budget_exceeded = gate.budget_exceeded
+            missing = calls - len(records)
+            if missing < 0:
+                raise ValueError("gateway records exceed admitted calls")
+            report["gate"] = {
+                "calls": calls,
+                "budget_exceeded": budget_exceeded,
+                "unrecorded_calls": missing,
+                "records": [
+                    {
+                        "gate_request_id": record.gate_request_id,
+                        "upstream_request_id": record.request_id,
+                        "claimed_session_id": record.claimed_session_id,
+                        "status": record.status,
+                        "usage_verified": record.usage_verified,
+                        "prompt_tokens": record.prompt_tokens,
+                        "completion_tokens": record.completion_tokens,
+                        "estimated_cost_usd": record.estimated_cost_usd,
+                    }
+                    for record in records
+                ],
+                "denials": [
+                    {
+                        "status": item.status,
+                        "reason": item.reason,
+                        "claimed_session_id": item.claimed_session_id,
+                        "payload_fields": item.payload_fields,
+                        "requested_output_tokens": item.requested_output_tokens,
+                    }
+                    for item in denials
+                ],
+                "reservation_per_attempt_usd": worst_case_per_attempt_usd,
+            }
+            if missing:
+                report["status"] = "unverified"
+                report["terminal"] = "incomplete"
+                report["reason"] = "admitted_call_without_final_gateway_record"
+            cost = missing * worst_case_per_attempt_usd + sum(
+                record.estimated_cost_usd
+                if record.usage_verified and record.estimated_cost_usd is not None
+                else worst_case_per_attempt_usd
+                for record in records
+            )
+            ledger.settle(reservation_id, calls, cost)
+
+
 async def run_freeze_experiment(
     *,
     binary: Path,
@@ -352,19 +504,26 @@ async def run_freeze_experiment(
         old_profiles = export_profiles(
             old_workspace, old_agents, frozenset(agent.agent_id for agent in old_agents)
         )
+        report["old_profile_provenance"] = _profile_provenance(old_agents, old_profiles)
         old_config = export_probe_config(old_workspace)
         report["config_digest"] = old_config
         old_hash = old_profiles[".opencode/agents/orchestrator.md"]
-        with BudgetGate(
-            origin,
-            key,
-            max_calls=call_limit,
-            max_seconds=min(max_seconds, 180),
-            max_cost_usd=cost_limit,
-            input_price_per_million=input_price,
-            output_price_per_million=output_price,
-            max_input_tokens=input_ceiling,
-            max_output_tokens=512,
+        with _accounted_gate(
+            BudgetGate(
+                origin,
+                key,
+                max_calls=call_limit,
+                max_seconds=min(max_seconds, 180),
+                max_cost_usd=cost_limit,
+                input_price_per_million=input_price,
+                output_price_per_million=output_price,
+                max_input_tokens=input_ceiling,
+                max_output_tokens=512,
+            ),
+            ledger,
+            reservation_id,
+            reservation,
+            report,
         ) as gate:
             try:
                 old_env = make_child_env(
@@ -424,6 +583,9 @@ async def run_freeze_experiment(
                             new_workspace,
                             new_agents,
                             frozenset(agent.agent_id for agent in new_agents),
+                        )
+                        report["new_profile_provenance"] = _profile_provenance(
+                            new_agents, new_profiles
                         )
                         new_config = export_probe_config(new_workspace)
                         report["freeze"].update(
@@ -507,36 +669,6 @@ async def run_freeze_experiment(
                         old_events.close()
             except Exception as error:
                 report["reason"] = "probe_error:" + type(error).__name__
-            report["gate"] = {
-                "calls": gate.calls,
-                "budget_exceeded": gate.budget_exceeded,
-                "records": [
-                    {
-                        "gate_request_id": record.gate_request_id,
-                        "claimed_session_id": record.claimed_session_id,
-                        "status": record.status,
-                        "usage_verified": record.usage_verified,
-                        "prompt_tokens": record.prompt_tokens,
-                        "completion_tokens": record.completion_tokens,
-                        "estimated_cost_usd": record.estimated_cost_usd,
-                    }
-                    for record in gate.records
-                ],
-                "denials": [
-                    {"status": item.status, "reason": item.reason}
-                    for item in gate.denials
-                ],
-            }
-            ledger.settle(
-                reservation_id,
-                gate.calls,
-                sum(
-                    record.estimated_cost_usd
-                    if record.usage_verified and record.estimated_cost_usd is not None
-                    else reservation
-                    for record in gate.records
-                ),
-            )
     finally:
         shutil.rmtree(temporary)
     calls, charged = ledger.totals()
@@ -607,7 +739,46 @@ def _model_metadata(origin: str, key: str) -> tuple[float, float, int, int]:
     )
 
 
-def _facts(client: LegacyClient, session_id: str) -> dict[str, Any]:
+def _tool_denial_category(state: object) -> str | None:
+    if not isinstance(state, dict) or state.get("status") != "error":
+        return None
+    error = state.get("error")
+    if isinstance(error, dict) and (
+        error.get("name") == "PermissionDeniedError"
+        or error.get("code") == "PERMISSION_DENIED"
+        or error.get("type") == "permission_denied"
+    ):
+        return "opencode_permission_denied"
+    return None
+
+
+def _tool_target_matches(raw_path: object, workspace: Path) -> bool:
+    if not isinstance(raw_path, str) or not raw_path:
+        return False
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    return (
+        not candidate.is_symlink()
+        and candidate.resolve() == (workspace / "denied.txt").resolve()
+    )
+
+
+def _permission_target_digest(workspace: Path) -> str | None:
+    target = workspace / "denied.txt"
+    if target.is_symlink():
+        return "unsafe"
+    if not target.exists():
+        return None
+    if not target.is_file():
+        return "unsafe"
+    try:
+        return hashlib.sha256(target.read_bytes()).hexdigest()
+    except OSError:
+        return "unsafe"
+
+
+def _facts(client: LegacyClient, session_id: str, workspace: Path) -> dict[str, Any]:
     root_status, messages = client._request("GET", f"/session/{session_id}/message")
     child_status, children = client._request("GET", f"/session/{session_id}/children")
     if (
@@ -680,6 +851,12 @@ def _facts(client: LegacyClient, session_id: str) -> dict[str, Any]:
                         "file": basename
                         if basename in {"one.py", "two.py", "square.py", "denied.txt"}
                         else None,
+                        "target_is_denied_workspace_file": _tool_target_matches(
+                            raw_path, workspace
+                        )
+                        if part.get("tool") == "write"
+                        else False,
+                        "denial_category": _tool_denial_category(state),
                     }
                 )
         starts = [
@@ -810,20 +987,27 @@ async def run_scenario(
         profiles = export_profiles(
             workspace, roster, frozenset(agent.agent_id for agent in roster)
         )
+        report["profile_provenance"] = _profile_provenance(roster, profiles)
         config_digest = export_probe_config(workspace)
         report["config_digest"] = config_digest
         if scenario.startswith("roster-"):
             report["roster"] = {"allowed_agents": roster_count}
-        with BudgetGate(
-            origin,
-            key,
-            max_calls=remaining_calls,
-            max_seconds=min(max_seconds, 180),
-            max_cost_usd=remaining_cost,
-            input_price_per_million=input_price,
-            output_price_per_million=output_price,
-            max_input_tokens=input_ceiling,
-            max_output_tokens=512,
+        with _accounted_gate(
+            BudgetGate(
+                origin,
+                key,
+                max_calls=remaining_calls,
+                max_seconds=min(max_seconds, 180),
+                max_cost_usd=remaining_cost,
+                input_price_per_million=input_price,
+                output_price_per_million=output_price,
+                max_input_tokens=input_ceiling,
+                max_output_tokens=512,
+            ),
+            ledger,
+            reservation_id,
+            reservation,
+            report,
         ) as gate:
             env = make_child_env(
                 workspace,
@@ -856,6 +1040,10 @@ async def run_scenario(
                     report["last_stage"] = "event_subscribe"
                     collector.start()
                     report["last_stage"] = "prompt_admission"
+                    if scenario == "permissions":
+                        report["permission_target"] = {
+                            "before": _permission_target_digest(workspace)
+                        }
                     if scenario == "reconcile":
                         user_id, loss = await _lost_controller_prompt(
                             client, env, workspace, session_id
@@ -937,7 +1125,7 @@ async def run_scenario(
                                 == "running"
                                 for event in events
                             )
-                            marker = _owned_marker_status(workspace)
+                            marker = _owned_marker_status(workspace, client.serve_pid)
                             if (
                                 first_path.is_file()
                                 and not second_path.exists()
@@ -996,7 +1184,9 @@ async def run_scenario(
                                 report["resume"][
                                     "process_group_children_after_abort"
                                 ] = _process_group_children(client.serve_pid)
-                                after_marker = _owned_marker_status(workspace)
+                                after_marker = _owned_marker_status(
+                                    workspace, client.serve_pid
+                                )
                                 report["resume"]["owned_marker_after_abort"] = (
                                     after_marker
                                 )
@@ -1004,13 +1194,20 @@ async def run_scenario(
                                     after_marker.get("identity_verified") is True
                                     and after_marker.get("alive") is True
                                 ):
-                                    marker_pid = after_marker.get("pid")
-                                    if type(marker_pid) is not int:
-                                        raise ValueError("owned process marker missing")
-                                    os.kill(marker_pid, signal.SIGTERM)
                                     report["resume"][
                                         "owned_process_terminated_by_supervisor"
-                                    ] = True
+                                    ] = _signal_owned_waiter(
+                                        workspace, client.serve_pid, after_marker
+                                    )
+                                    if not report["resume"][
+                                        "owned_process_terminated_by_supervisor"
+                                    ]:
+                                        report["reason"] = (
+                                            "owned_process_identity_changed"
+                                        )
+                                    break
+                                if after_marker.get("alive") is True:
+                                    report["reason"] = "owned_process_unverified"
                                     break
                                 try:
                                     continuation_id = await asyncio.to_thread(
@@ -1056,7 +1253,12 @@ async def run_scenario(
                                 for error in root_errors
                             )
                         )
-                        if root_idle and root_errors and not expected_abort:
+                        if (
+                            root_idle
+                            and root_errors
+                            and not expected_abort
+                            and scenario != "permissions"
+                        ):
                             report["reason"] = "native_session_error"
                             break
                         if (
@@ -1095,6 +1297,9 @@ async def run_scenario(
                                 if outcome == "complete":
                                     report["terminal"] = "complete"
                                     break
+                                if scenario == "permissions" and outcome == "failed":
+                                    report["terminal"] = "failed"
+                                    break
                             except OSError:
                                 pass
                         if gate.budget_exceeded:
@@ -1109,8 +1314,14 @@ async def run_scenario(
                     report["event_count"] = len(events)
                     report["invalid_events"] = invalid + collector.invalid
                     report["event_error"] = collector.error
-                    facts = await asyncio.to_thread(_facts, client, session_id)
+                    facts = await asyncio.to_thread(
+                        _facts, client, session_id, workspace
+                    )
                     report["session_facts"] = facts
+                    if scenario == "permissions":
+                        report["permission_target"]["after"] = (
+                            _permission_target_digest(workspace)
+                        )
                     if scenario.startswith("roster-") and isinstance(facts, dict):
                         report["roster"]["selected_agent"] = [
                             child.get("agent")
@@ -1190,52 +1401,11 @@ async def run_scenario(
             finally:
                 if collector is not None:
                     collector.close()
-            records = [
-                {
-                    "gate_request_id": record.gate_request_id,
-                    "upstream_request_id": record.request_id,
-                    "claimed_session_id": record.claimed_session_id,
-                    "status": record.status,
-                    "usage_verified": record.usage_verified,
-                    "prompt_tokens": record.prompt_tokens,
-                    "completion_tokens": record.completion_tokens,
-                    "estimated_cost_usd": record.estimated_cost_usd,
-                }
-                for record in gate.records
-            ]
-            denials = [
-                {
-                    "status": item.status,
-                    "reason": item.reason,
-                    "claimed_session_id": item.claimed_session_id,
-                    "payload_fields": item.payload_fields,
-                    "requested_output_tokens": item.requested_output_tokens,
-                }
-                for item in gate.denials
-            ]
-            report["gate"] = {
-                "calls": gate.calls,
-                "budget_exceeded": gate.budget_exceeded,
-                "records": records,
-                "denials": denials,
-                "reservation_per_attempt_usd": reservation,
-            }
-            if scenario.startswith("roster-"):
-                report["roster"]["input_tokens_observed"] = sum(
-                    record.prompt_tokens
-                    for record in gate.records
-                    if record.prompt_tokens is not None
-                )
-            verified_cost = sum(
-                record.estimated_cost_usd or 0
-                for record in gate.records
-                if record.usage_verified
-            )
-            unknown_reservation = sum(
-                reservation for record in gate.records if not record.usage_verified
-            )
-            ledger.settle(
-                reservation_id, gate.calls, verified_cost + unknown_reservation
+        if scenario.startswith("roster-") and "gate" in report:
+            report["roster"]["input_tokens_observed"] = sum(
+                record["prompt_tokens"]
+                for record in report["gate"]["records"]
+                if record["prompt_tokens"] is not None
             )
     finally:
         if os.environ.get("TAP_OPENCODE_RETAIN_DIAGNOSTICS") == "1":

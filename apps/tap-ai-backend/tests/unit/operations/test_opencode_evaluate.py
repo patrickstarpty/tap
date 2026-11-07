@@ -1,5 +1,9 @@
 """Fail-closed OpenCode capability adjudication."""
 
+import copy
+import json
+from pathlib import Path
+
 import pytest
 from scripts.opencode_probe.evaluate import (
     REQUIRED,
@@ -101,9 +105,6 @@ def test_square_output_accepts_labelled_values_without_accepting_wrong_results()
 
 
 def test_real_fixture_matrix_requires_execution_side_proof() -> None:
-    import json
-    from pathlib import Path
-
     directory = Path(__file__).resolve().parents[2] / "fixtures/opencode/real"
     samples = {path.stem: json.loads(path.read_text()) for path in directory.glob("*.json")}
     results = {result.name: result for result in evaluate_samples(samples)}
@@ -115,3 +116,55 @@ def test_real_fixture_matrix_requires_execution_side_proof() -> None:
     assert results["resume_workspace"].status == "unverified"
     assert results["budget_enforcement"].status == "unverified"
     assert not ready_for_runtime(tuple(results.values()), REQUIRED)
+
+
+def _negative_permission_sample() -> dict[str, object]:
+    directory = Path(__file__).resolve().parents[2] / "fixtures/opencode/real"
+    sample = copy.deepcopy(json.loads((directory / "permissions.json").read_text()))
+    sample["terminal"] = "failed"
+    sample["permission_target"] = {"before": None, "after": None}
+    sample["session_facts"]["children"][0]["tools"] = [
+        {
+            "tool": "write",
+            "status": "error",
+            "file": "denied.txt",
+            "target_is_denied_workspace_file": True,
+            "denial_category": "opencode_permission_denied",
+        }
+    ]
+    return sample
+
+
+def test_expected_negative_terminal_with_linked_execution_denial_supports_permissions() -> None:
+    sample = _negative_permission_sample()
+    result = {item.name: item for item in evaluate_samples({"permissions": sample})}
+    assert result["permissions"].status == "supported"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        ("denial_category", "runtime_error"),
+        ("target_is_denied_workspace_file", False),
+        ("file", "unrelated.txt"),
+    ],
+)
+def test_unrelated_or_generic_write_error_cannot_prove_permissions(change) -> None:
+    sample = _negative_permission_sample()
+    sample["terminal"] = "complete"
+    field, value = change
+    sample["session_facts"]["children"][0]["tools"][0][field] = value
+    result = {item.name: item for item in evaluate_samples({"permissions": sample})}
+    assert result["permissions"].status == "unverified"
+
+
+def test_permission_denial_requires_unchanged_target_and_linked_child() -> None:
+    changed = _negative_permission_sample()
+    changed["terminal"] = "complete"
+    changed["permission_target"]["after"] = "changed"
+    unlinked = _negative_permission_sample()
+    unlinked["terminal"] = "complete"
+    unlinked["session_facts"]["children"][0]["parent_id"] = "ses_other"
+    for sample in (changed, unlinked):
+        result = {item.name: item for item in evaluate_samples({"permissions": sample})}
+        assert result["permissions"].status == "unverified"
