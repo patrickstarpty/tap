@@ -136,6 +136,8 @@ class CallRecord:
     prompt_tokens: int | None
     completion_tokens: int | None
     estimated_cost_usd: float | None
+    admitted_elapsed_ms: int = 0
+    reserved_cost_usd: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,7 @@ class DenialRecord:
     claimed_session_id: str | None
     payload_fields: tuple[str, ...] = ()
     requested_output_tokens: int | None = None
+    elapsed_ms: int = 0
 
 
 class BudgetGate:
@@ -192,7 +195,9 @@ class BudgetGate:
         self._upstream_port = parsed.port
         self._upstream_key = upstream_key
         self._max_calls = max_calls
-        self._deadline = time.monotonic() + max_seconds
+        self._started = time.monotonic()
+        self._max_seconds = max_seconds
+        self._deadline = self._started + max_seconds
         self._max_cost = max_cost_usd
         self._input_price = input_price_per_million
         self._output_price = output_price_per_million
@@ -202,20 +207,61 @@ class BudgetGate:
         self._max_output_tokens = max_output_tokens
         self._reserved_cost = 0.0
         self._lock = threading.Lock()
+        self._forward_condition = threading.Condition(self._lock)
         self.calls = 0
+        self._forwarded = 0
+        self._pending_forwards = 0
+        self._blocked_after_cutoff = 0
+        self._cutoff: dict[str, object] | None = None
+        self.upstream_failure = False
         self.budget_exceeded = False
         self.records: list[CallRecord] = []
         self.denials: list[DenialRecord] = []
         self.token = secrets.token_urlsafe(32)
+        self.task_budget_id = "budget_" + secrets.token_hex(12)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._timer: threading.Timer | None = None
         self._sockets: set[socket.socket] = set()
         self._closed = False
 
-    def _track(self, connection: socket.socket) -> None:
+    def _elapsed_ms(self) -> int:
+        return max(0, int((time.monotonic() - self._started) * 1000))
+
+    def _set_cutoff_locked(self, cause: str) -> None:
+        if self._cutoff is None:
+            self._cutoff = {
+                "cause": cause,
+                "elapsed_ms": self._elapsed_ms(),
+                "calls_at_cutoff": self.calls,
+                "reserved_cost_usd_at_cutoff": self._reserved_cost,
+                "forwarded_at_cutoff": self._forwarded,
+            }
+        self.budget_exceeded = True
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            return {
+                "task_budget_id": self.task_budget_id,
+                "limits": {
+                    "max_calls": self._max_calls,
+                    "max_seconds": self._max_seconds,
+                    "max_cost_usd": self._max_cost,
+                },
+                "calls": self.calls,
+                "reserved_cost_usd": self._reserved_cost,
+                "elapsed_ms": self._elapsed_ms(),
+                "forwarded": self._forwarded,
+                "blocked_after_cutoff": self._blocked_after_cutoff,
+                "cutoff": dict(self._cutoff) if self._cutoff is not None else None,
+                "upstream_failure": self.upstream_failure,
+            }
+
+    def _track(self, connection: socket.socket, *, inbound: bool = False) -> None:
         with self._lock:
             if self._closed:
+                if inbound and self._cutoff is not None:
+                    self._blocked_after_cutoff += 1
                 try:
                     connection.shutdown(socket.SHUT_RDWR)
                 except OSError:
@@ -235,7 +281,8 @@ class BudgetGate:
                 return
             self._closed = True
             if expired:
-                self.budget_exceeded = True
+                self._set_cutoff_locked("deadline")
+            self._forward_condition.notify_all()
             connections = tuple(self._sockets)
         for connection in connections:
             try:
@@ -259,7 +306,7 @@ class BudgetGate:
         class Handler(BaseHTTPRequestHandler):
             def setup(self) -> None:
                 super().setup()
-                gate._track(self.connection)
+                gate._track(self.connection, inbound=True)
                 self.connection.settimeout(max(0.1, gate._deadline - time.monotonic()))
 
             def finish(self) -> None:
@@ -289,6 +336,7 @@ class BudgetGate:
                             claimed,
                             payload_fields,
                             requested_output_tokens,
+                            gate._elapsed_ms(),
                         )
                     )
                 self.send_response(status)
@@ -379,20 +427,39 @@ class BudgetGate:
                     gate._max_input_tokens * gate._input_price
                     + requested * gate._output_price
                 ) / 1_000_000
-                with gate._lock:
-                    denied = (
-                        time.monotonic() >= gate._deadline
-                        or gate.budget_exceeded
-                        or gate.calls >= gate._max_calls
-                        or gate._reserved_cost + reservation > gate._max_cost
-                    )
-                    if denied:
-                        gate.budget_exceeded = True
+                with gate._forward_condition:
+                    while (
+                        gate._pending_forwards
+                        and gate._cutoff is None
+                        and not gate.upstream_failure
+                        and time.monotonic() < gate._deadline
+                    ):
+                        gate._forward_condition.wait(
+                            timeout=max(0, gate._deadline - time.monotonic())
+                        )
+                    if gate._cutoff is not None:
+                        denial_reason = "budget_" + str(gate._cutoff["cause"])
+                    elif time.monotonic() >= gate._deadline:
+                        gate._set_cutoff_locked("deadline")
+                        denial_reason = "budget_deadline"
+                    elif gate.upstream_failure or gate._closed:
+                        denial_reason = "upstream_failure"
+                    elif gate.calls >= gate._max_calls:
+                        gate._set_cutoff_locked("calls")
+                        denial_reason = "budget_calls"
+                    elif gate._reserved_cost + reservation > gate._max_cost:
+                        gate._set_cutoff_locked("cost")
+                        denial_reason = "budget_cost"
                     else:
+                        denial_reason = None
+                        admitted_elapsed_ms = gate._elapsed_ms()
                         gate.calls += 1
                         gate._reserved_cost += reservation
-                if denied:
-                    self._reject(429, "budget")
+                        gate._pending_forwards += 1
+                    if gate._cutoff is not None:
+                        gate._blocked_after_cutoff += 1
+                if denial_reason is not None:
+                    self._reject(429, denial_reason)
                     return
                 connection: http.client.HTTPConnection | None = None
                 upstream_status: int | None = None
@@ -409,18 +476,27 @@ class BudgetGate:
                         gate._upstream_port,
                         timeout=max(0.1, gate._deadline - time.monotonic()),
                     )
-                    connection.connect()
-                    if connection.sock is not None:
-                        gate._track(connection.sock)
-                    connection.request(
-                        "POST",
-                        "/v1/chat/completions",
-                        body=forwarded,
-                        headers={
-                            "Authorization": f"Bearer {gate._upstream_key}",
-                            "Content-Type": "application/json",
-                        },
-                    )
+                    try:
+                        connection.connect()
+                        if connection.sock is not None:
+                            gate._track(connection.sock)
+                        with gate._lock:
+                            if gate._cutoff is not None or gate._closed:
+                                raise TimeoutError("gate closed before forward")
+                            connection.request(
+                                "POST",
+                                "/v1/chat/completions",
+                                body=forwarded,
+                                headers={
+                                    "Authorization": f"Bearer {gate._upstream_key}",
+                                    "Content-Type": "application/json",
+                                },
+                            )
+                            gate._forwarded += 1
+                    finally:
+                        with gate._forward_condition:
+                            gate._pending_forwards -= 1
+                            gate._forward_condition.notify_all()
                     response = connection.getresponse()
                     upstream_status = response.status
                     request_id = response.getheader("x-request-id")
@@ -474,6 +550,7 @@ class BudgetGate:
                 except Exception:
                     with gate._lock:
                         gate.budget_exceeded = True
+                        gate.upstream_failure = True
                     content = bytearray()
                 finally:
                     if connection is not None:
@@ -490,6 +567,8 @@ class BudgetGate:
                                 prompt_tokens,
                                 completion_tokens,
                                 estimated_cost_usd,
+                                admitted_elapsed_ms,
+                                reservation,
                             )
                         )
                 try:
@@ -506,6 +585,7 @@ class BudgetGate:
                 except OSError:
                     with gate._lock:
                         gate.budget_exceeded = True
+                        gate.upstream_failure = True
 
         class OwnedServer(ThreadingHTTPServer):
             daemon_threads = False

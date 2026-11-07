@@ -766,10 +766,12 @@ def _accounted_gate(
                 records = tuple(gate.records)
                 denials = tuple(gate.denials)
                 budget_exceeded = gate.budget_exceeded
+            snapshot = gate.snapshot()
             missing = calls - len(records)
             if missing < 0:
                 raise ValueError("gateway records exceed admitted calls")
             report["gate"] = {
+                **snapshot,
                 "calls": calls,
                 "budget_exceeded": budget_exceeded,
                 "unrecorded_calls": missing,
@@ -783,6 +785,8 @@ def _accounted_gate(
                         "prompt_tokens": record.prompt_tokens,
                         "completion_tokens": record.completion_tokens,
                         "estimated_cost_usd": record.estimated_cost_usd,
+                        "admitted_elapsed_ms": record.admitted_elapsed_ms,
+                        "reserved_cost_usd": record.reserved_cost_usd,
                     }
                     for record in records
                 ],
@@ -793,6 +797,7 @@ def _accounted_gate(
                         "claimed_session_id": item.claimed_session_id,
                         "payload_fields": item.payload_fields,
                         "requested_output_tokens": item.requested_output_tokens,
+                        "elapsed_ms": item.elapsed_ms,
                     }
                     for item in denials
                 ],
@@ -809,6 +814,12 @@ def _accounted_gate(
                 for record in records
             )
             ledger.settle(reservation_id, calls, cost)
+            report["ledger_settlement"] = {
+                "reservation_id": reservation_id,
+                "calls": calls,
+                "charged_cost_usd": cost,
+                "settled": True,
+            }
 
 
 async def run_freeze_experiment(

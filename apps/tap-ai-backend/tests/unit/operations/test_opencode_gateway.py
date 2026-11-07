@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+from scripts.opencode_probe import gateway as gateway_module
 from scripts.opencode_probe.gateway import BudgetGate
 
 
@@ -629,3 +630,169 @@ def test_gate_exit_joins_active_upstream_handler(
     assert len(gate.records) == 1
     assert gate.budget_exceeded
     assert outcome
+
+
+def test_call_cutoff_snapshot_is_first_and_blocks_new_forward(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=1,
+        max_seconds=5,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        before = gate.snapshot()
+        assert send(gate) == 200
+        assert send(gate) == 429
+        after = gate.snapshot()
+        assert before["task_budget_id"] == after["task_budget_id"]
+        assert after["cutoff"]["cause"] == "calls"
+        assert after["calls"] == after["forwarded"] == 1
+        assert after["cutoff"]["forwarded_at_cutoff"] == 1
+        assert after["blocked_after_cutoff"] == 1
+        assert gate.records[0].admitted_elapsed_ms >= 0
+        assert gate.records[0].reserved_cost_usd > 0
+        assert gate.denials[-1].elapsed_ms >= gate.records[0].admitted_elapsed_ms
+    assert Upstream.calls == 1
+
+
+def test_cost_cutoff_preserves_reservation_and_blocks_forward(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=3,
+        max_seconds=5,
+        max_cost_usd=0.0011,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+        max_output_tokens=8,
+    ) as gate:
+        assert send(gate) == 200
+        assert send(gate) == 429
+        snapshot = gate.snapshot()
+        assert snapshot["cutoff"]["cause"] == "cost"
+        assert snapshot["reserved_cost_usd"] == pytest.approx(0.001016)
+        assert snapshot["calls"] == snapshot["forwarded"] == 1
+    assert Upstream.calls == 1
+
+
+def test_deadline_cutoff_records_a_real_closed_attempt(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=2,
+        max_seconds=1,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        time.sleep(1.1)
+        with pytest.raises((OSError, http.client.RemoteDisconnected)):
+            send(gate)
+        snapshot = gate.snapshot()
+        assert snapshot["cutoff"]["cause"] == "deadline"
+        assert snapshot["blocked_after_cutoff"] > 0
+        assert snapshot["forwarded"] == 0
+    assert Upstream.calls == 0
+
+
+def test_upstream_failure_does_not_create_budget_cutoff(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    Upstream.reply_status = 429
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=3,
+        max_seconds=5,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        assert send(gate) == 502
+        assert send(gate) == 429
+        snapshot = gate.snapshot()
+        assert snapshot["cutoff"] is None
+        assert snapshot["upstream_failure"] is True
+    assert Upstream.calls == 1
+
+
+def test_closed_upstream_socket_is_not_a_post_cutoff_client_attempt(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    gate = BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=2,
+        max_seconds=5,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    )
+    gate._expire()
+    upstream_socket, peer = socket.socketpair()
+    try:
+        gate._track(upstream_socket)
+        assert gate.snapshot()["blocked_after_cutoff"] == 0
+    finally:
+        upstream_socket.close()
+        peer.close()
+
+
+def test_concurrent_cutoff_waits_for_previously_admitted_forward(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread], monkeypatch
+) -> None:
+    server, _ = upstream
+    original_connect = gateway_module.http.client.HTTPConnection.connect
+    connecting = threading.Event()
+    release = threading.Event()
+
+    def delayed_connect(connection) -> None:
+        if connection.port == server.server_port:
+            connecting.set()
+            assert release.wait(2)
+        original_connect(connection)
+
+    monkeypatch.setattr(gateway_module.http.client.HTTPConnection, "connect", delayed_connect)
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=1,
+        max_seconds=5,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        results: list[int] = []
+        first = threading.Thread(target=lambda: results.append(send(gate)))
+        second = threading.Thread(target=lambda: results.append(send(gate)))
+        first.start()
+        assert connecting.wait(2)
+        second.start()
+        time.sleep(0.05)
+        release.set()
+        first.join(2)
+        second.join(2)
+        assert not first.is_alive() and not second.is_alive()
+        assert sorted(results) == [200, 429]
+        snapshot = gate.snapshot()
+        assert snapshot["forwarded"] == snapshot["cutoff"]["forwarded_at_cutoff"] == 1
+    assert Upstream.calls == 1

@@ -39,6 +39,23 @@ class ClosingGate:
         self._server = None
         self._thread = None
 
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "task_budget_id": "budget_test",
+            "limits": {
+                "max_calls": 2,
+                "max_seconds": 10,
+                "max_cost_usd": 0.20,
+            },
+            "calls": self.calls,
+            "reserved_cost_usd": self.calls * 0.052224,
+            "elapsed_ms": 5,
+            "forwarded": self.calls,
+            "blocked_after_cutoff": 0,
+            "cutoff": None,
+            "upstream_failure": False,
+        }
+
 
 @pytest.mark.parametrize("scenario", ["simple-question", "config-freeze"])
 def test_admitted_call_without_record_keeps_worst_case_after_close(tmp_path, scenario: str) -> None:
@@ -65,6 +82,24 @@ def test_gateway_close_record_is_included_before_settlement(tmp_path, scenario: 
     assert report["gate"]["records"][0]["gate_request_id"] == "probe_test"
     assert report["gate"]["unrecorded_calls"] == 0
     assert ledger.totals() == (1, 0.01)
+
+
+def test_accounted_gate_records_single_settlement_and_final_snapshot(tmp_path) -> None:
+    ledger = ProbeLedger(tmp_path / "ledger.jsonl")
+    reservation_id = ledger.reserve("budget-cost", 2, 0.20)
+    report: dict[str, object] = {}
+    gate = ClosingGate(append_on_close=True)
+    with scenarios._accounted_gate(gate, ledger, reservation_id, 0.052224, report):
+        gate.calls = 1
+    assert report["gate"]["task_budget_id"] == "budget_test"
+    assert report["gate"]["forwarded"] == 1
+    assert report["gate"]["records"][0]["admitted_elapsed_ms"] == 0
+    assert report["ledger_settlement"] == {
+        "reservation_id": reservation_id,
+        "calls": 1,
+        "charged_cost_usd": 0.01,
+        "settled": True,
+    }
 
 
 def test_permission_category_comes_from_structured_tool_error() -> None:
