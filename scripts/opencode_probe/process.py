@@ -12,6 +12,7 @@ from pathlib import Path
 
 from scripts.opencode_probe.legacy import LegacyClient
 from scripts.opencode_probe.cli import validate_effective_config, validate_snapshot
+from scripts.opencode_probe.process_identity import capture_serve_identity
 
 _MAX_LINE = 4096
 _MAX_LINES = 512
@@ -194,6 +195,9 @@ async def serve_probe(
     )
     client.serve_pid = process.pid
     try:
+        client.serve_identity = await asyncio.to_thread(
+            capture_serve_identity, process.pid, lambda: process.returncode is None
+        )
         async with asyncio.timeout(timeout_seconds):
             while True:
                 if process.returncode is not None:

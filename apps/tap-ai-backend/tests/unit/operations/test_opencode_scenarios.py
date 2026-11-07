@@ -12,6 +12,7 @@ import pytest
 from scripts.opencode_probe import scenarios
 from scripts.opencode_probe.gateway import CallRecord
 from scripts.opencode_probe.ledger import ProbeLedger
+from scripts.opencode_probe.process_identity import ServeIdentity, capture_serve_identity
 
 
 class ClosingGate:
@@ -271,6 +272,10 @@ def test_generated_script_preserves_bounded_square_outputs(tmp_path, source, exp
     assert scenarios._run_square_script(script, tmp_path) == (0, expected, None)
 
 
+def _mock_serve() -> ServeIdentity:
+    return ServeIdentity(44, "Sat Nov 7 12:34:56 2026", lambda: True)
+
+
 def _mock_waiter_process(
     monkeypatch,
     workspace,
@@ -278,6 +283,7 @@ def _mock_waiter_process(
     pgid: int = 44,
     ppid: int = 44,
     started: str = "Sat Nov  7 12:34:56 2026",
+    serve_started: str = "Sat Nov  7 12:34:56 2026",
     executable: str = "/usr/bin/python3",
     cwd=None,
     script=None,
@@ -292,7 +298,7 @@ def _mock_waiter_process(
             field = args[-1]
             if observed_pid == 44:
                 assert field == "pid=,ppid=,pgid=,lstart="
-                return subprocess.CompletedProcess(args, 0, f"44 1 44 {started}\n", "")
+                return subprocess.CompletedProcess(args, 0, f"44 1 44 {serve_started}\n", "")
             if observed_pid == 1:
                 return subprocess.CompletedProcess(args, 0, f"1 0 1 {started}\n", "")
             assert observed_pid == 123
@@ -314,12 +320,16 @@ def test_owned_marker_rejects_unrelated_same_basename_and_group(tmp_path, monkey
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path, script=tmp_path.parent / "other" / "waiter.py")
     assert (
-        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")[
+            "identity_verified"
+        ]
         is False
     )
     _mock_waiter_process(monkeypatch, tmp_path, pgid=99)
     assert (
-        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")[
+            "identity_verified"
+        ]
         is False
     )
 
@@ -328,7 +338,9 @@ def test_owned_marker_rejects_unrelated_cwd(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path, cwd=tmp_path.parent)
     assert (
-        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")[
+            "identity_verified"
+        ]
         is False
     )
 
@@ -351,15 +363,19 @@ def test_owned_marker_accepts_real_fixed_path_python_in_owned_group(tmp_path) ->
         assert (tmp_path / "owned.pid").exists()
         trusted = scenarios._trusted_python_image(tmp_path)
         assert trusted is not None
-        marker = scenarios._owned_marker_status(tmp_path, owner.pid, trusted)
+        serve_identity = capture_serve_identity(owner.pid, lambda: owner.poll() is None)
+        assert serve_identity is not None
+        marker = scenarios._owned_marker_status(tmp_path, serve_identity, trusted)
         assert marker["identity_verified"] is True, marker
         assert marker["pgid_matches"] is True
         assert (
-            scenarios._owned_marker_status(tmp_path, owner.pid + 1, trusted)["identity_verified"]
+            scenarios._owned_marker_status(
+                tmp_path, ServeIdentity(owner.pid + 1, serve_identity.start, lambda: True), trusted
+            )["identity_verified"]
             is False
         )
         assert (
-            scenarios._owned_marker_status(tmp_path, owner.pid, "/unknown/python")[
+            scenarios._owned_marker_status(tmp_path, serve_identity, "/unknown/python")[
                 "identity_verified"
             ]
             is False
@@ -398,16 +414,21 @@ def test_owned_marker_binds_detached_group_only_through_live_serve_ancestry(tmp_
         shell_pid = int((tmp_path / "shell.pid").read_text())
         trusted = scenarios._trusted_python_image(tmp_path)
         assert trusted is not None
-        marker = scenarios._owned_marker_status(tmp_path, serve.pid, trusted)
+        serve_identity = capture_serve_identity(serve.pid, lambda: serve.poll() is None)
+        unrelated_identity = capture_serve_identity(unrelated.pid, lambda: unrelated.poll() is None)
+        assert serve_identity is not None and unrelated_identity is not None
+        marker = scenarios._owned_marker_status(tmp_path, serve_identity, trusted)
         assert marker["identity_verified"] is True, marker
         assert marker["owner_group"] == shell_pid
         assert marker["owner_group"] != serve.pid
         assert (
-            scenarios._owned_marker_status(tmp_path, unrelated.pid, trusted)["identity_verified"]
+            scenarios._owned_marker_status(tmp_path, unrelated_identity, trusted)[
+                "identity_verified"
+            ]
             is False
         )
         assert (
-            scenarios._owned_marker_status(tmp_path, serve.pid, "/unknown/python")[
+            scenarios._owned_marker_status(tmp_path, serve_identity, "/unknown/python")[
                 "identity_verified"
             ]
             is False
@@ -461,7 +482,7 @@ def test_resume_event_state_uses_latest_root_and_part_status() -> None:
             },
         }
     )
-    assert scenarios._resume_event_state(events, "root") == ("idle", "completed", False)
+    assert scenarios._resume_event_state(events, "root") == ("idle", "unknown", False)
 
 
 def test_resume_event_state_does_not_retain_running_on_partial_part_update() -> None:
@@ -479,6 +500,59 @@ def test_resume_event_state_does_not_retain_running_on_partial_part_update() -> 
         },
     ]
     assert scenarios._resume_event_state(events, "root") == (None, "unknown", False)
+
+
+def test_resume_event_state_missing_id_invalidates_prior_running() -> None:
+    events = [
+        {"type": "session.status", "properties": {"sessionID": "root", "status": {"type": "busy"}}},
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"id": "part1", "tool": "bash", "state": {"status": "running"}},
+            },
+        },
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"tool": "bash", "state": {"status": "completed"}},
+            },
+        },
+    ]
+    assert scenarios._resume_event_state(events, "root") == ("busy", "unknown", False)
+    events.append(
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"id": "part1", "tool": "bash", "state": {"status": "running"}},
+            },
+        }
+    )
+    assert scenarios._resume_event_state(events, "root") == ("busy", "running", True)
+
+
+def test_waiter_binding_rejects_reused_or_exited_serve_root(tmp_path, monkeypatch) -> None:
+    (tmp_path / "owned.pid").write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    live = [True]
+    serve = ServeIdentity(44, "Sat Nov 7 12:34:56 2026", lambda: live[0])
+    assert (
+        scenarios._owned_marker_status(tmp_path, serve, "/usr/bin/python3")["identity_verified"]
+        is True
+    )
+    _mock_waiter_process(monkeypatch, tmp_path, serve_started="Sat Nov  7 12:35:57 2026")
+    assert (
+        scenarios._owned_marker_status(tmp_path, serve, "/usr/bin/python3")["identity_verified"]
+        is False
+    )
+    _mock_waiter_process(monkeypatch, tmp_path)
+    live[0] = False
+    assert (
+        scenarios._owned_marker_status(tmp_path, serve, "/usr/bin/python3")["identity_verified"]
+        is False
+    )
 
 
 def test_resume_observation_is_redacted_and_truncates_at_64_changes() -> None:
@@ -518,31 +592,35 @@ def test_resume_observation_is_redacted_and_truncates_at_64_changes() -> None:
 def test_owned_marker_revalidates_start_identity_before_signal(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert prior["identity_verified"] is True
     _mock_waiter_process(monkeypatch, tmp_path, started="Sat Nov  7 12:35:57 2026")
     signalled = []
     monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
-    assert scenarios._signal_owned_waiter(tmp_path, 44, "/usr/bin/python3", prior) is False
+    assert (
+        scenarios._signal_owned_waiter(tmp_path, _mock_serve(), "/usr/bin/python3", prior) is False
+    )
     assert signalled == []
 
 
 def test_bound_waiter_allows_reparent_only_with_same_full_identity(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert prior["identity_verified"] is True
     bound = prior["_binding"]
     _mock_waiter_process(monkeypatch, tmp_path, ppid=1)
-    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3", bound)
+    current = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3", bound)
     assert current["identity_verified"] is True
     assert scenarios._post_abort_action(prior, current) == "terminate"
     assert (
-        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")[
+            "identity_verified"
+        ]
         is False
     )
     _mock_waiter_process(monkeypatch, tmp_path, ppid=1, executable="/other/python3")
-    changed = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3", bound)
+    changed = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3", bound)
     assert changed["identity_verified"] is False
     assert scenarios._post_abort_action(prior, changed) == "unknown"
 
@@ -550,9 +628,11 @@ def test_bound_waiter_allows_reparent_only_with_same_full_identity(tmp_path, mon
 def test_changed_marker_pid_cannot_reuse_binding(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     (tmp_path / "owned.pid").write_text("124")
-    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3", prior["_binding"])
+    current = scenarios._owned_marker_status(
+        tmp_path, _mock_serve(), "/usr/bin/python3", prior["_binding"]
+    )
     assert current["identity_verified"] is False
     assert scenarios._post_abort_action(prior, current) == "unknown"
 
@@ -560,10 +640,12 @@ def test_changed_marker_pid_cannot_reuse_binding(tmp_path, monkeypatch) -> None:
 def test_owned_marker_signals_only_revalidated_process(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     signalled = []
     monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
-    assert scenarios._signal_owned_waiter(tmp_path, 44, "/usr/bin/python3", prior) is True
+    assert (
+        scenarios._signal_owned_waiter(tmp_path, _mock_serve(), "/usr/bin/python3", prior) is True
+    )
     assert signalled == [(123, signal.SIGTERM)]
 
 
@@ -572,7 +654,7 @@ def test_failed_process_observation_never_authorizes_resume(tmp_path, monkeypatc
     marker = tmp_path / "owned.pid"
     marker.write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert prior["identity_verified"] is True
 
     def failed_ps(args, **_kwargs):
@@ -583,7 +665,7 @@ def test_failed_process_observation_never_authorizes_resume(tmp_path, monkeypatc
         return subprocess.CompletedProcess(args, 0, "malformed\n", "")
 
     monkeypatch.setattr(scenarios.subprocess, "run", failed_ps)
-    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    current = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert current["alive"] is None
     assert scenarios._post_abort_action(prior, current) == "unknown"
 
@@ -595,12 +677,12 @@ def test_missing_or_invalid_marker_never_authorizes_resume(
     marker = tmp_path / "owned.pid"
     marker.write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     if marker_text is None:
         marker.unlink()
     else:
         marker.write_text(marker_text)
-    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    current = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert current["alive"] is None
     assert scenarios._post_abort_action(prior, current) == "unknown"
 
@@ -608,7 +690,7 @@ def test_missing_or_invalid_marker_never_authorizes_resume(
 def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert prior["identity_verified"] is True
     monkeypatch.setattr(
         scenarios.subprocess,
@@ -622,7 +704,7 @@ def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch)
         raise ProcessLookupError("no such process")
 
     monkeypatch.setattr(scenarios.os, "kill", no_process)
-    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    current = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert current["alive"] is False
     assert scenarios._post_abort_action(prior, current) == "continue"
     assert probed == [(123, 0)]
@@ -631,7 +713,7 @@ def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch)
 def test_ps_missing_without_esrch_does_not_authorize_resume(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    prior = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     monkeypatch.setattr(
         scenarios.subprocess,
         "run",
@@ -639,7 +721,7 @@ def test_ps_missing_without_esrch_does_not_authorize_resume(tmp_path, monkeypatc
     )
     probed = []
     monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: probed.append((pid, sig)))
-    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    current = scenarios._owned_marker_status(tmp_path, _mock_serve(), "/usr/bin/python3")
     assert current["alive"] is None
     assert scenarios._post_abort_action(prior, current) == "unknown"
     assert probed == [(123, 0)]

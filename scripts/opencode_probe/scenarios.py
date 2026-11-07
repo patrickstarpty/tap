@@ -33,6 +33,7 @@ from scripts.opencode_probe.ledger import ProbeLedger
 from scripts.opencode_probe.legacy import LegacyClient, classify_session, parse_sse
 from scripts.opencode_probe.models import ProbeAgent
 from scripts.opencode_probe.process import serve_probe
+from scripts.opencode_probe.process_identity import ServeIdentity
 from scripts.opencode_probe.profiles import export_probe_config, export_profiles
 from scripts.opencode_probe.resume_fixture import prepare_resume_fixture
 
@@ -364,11 +365,16 @@ def _ps_snapshot(
 
 
 def _bind_waiter(
-    waiter: _ProcessMetadata, serve_pid: int, deadline: float, executable_digest: str
+    waiter: _ProcessMetadata,
+    serve: ServeIdentity,
+    deadline: float,
+    executable_digest: str,
 ) -> _WaiterBinding | None:
+    if not serve.is_live():
+        return None
     chain: list[_ProcessMetadata] = [waiter]
     seen = {waiter.pid}
-    while chain[-1].pid != serve_pid and len(chain) < 16:
+    while chain[-1].pid != serve.pid and len(chain) < 16:
         parent_pid = chain[-1].ppid
         if parent_pid < 1 or parent_pid in seen:
             return None
@@ -377,16 +383,19 @@ def _bind_waiter(
             return None
         chain.append(parent)
         seen.add(parent_pid)
-    if chain[-1].pid != serve_pid:
+    if chain[-1].pid != serve.pid or chain[-1].start != serve.start:
         return None
     leader = next((item for item in chain if item.pid == waiter.pgid), None)
     if leader is None or leader.pgid != waiter.pgid:
         return None
     # A second pass rejects reused PIDs or a chain that changed while being walked.
-    if any(_ps_metadata(item.pid, deadline) != item for item in chain):
+    if (
+        any(_ps_metadata(item.pid, deadline) != item for item in chain)
+        or not serve.is_live()
+    ):
         return None
     return _WaiterBinding(
-        serve_pid,
+        serve.pid,
         chain[-1].start,
         leader.pid,
         leader.start,
@@ -430,7 +439,7 @@ def _trusted_python_image(workspace: Path) -> str | None:
 
 def _owned_marker_status(
     workspace: Path,
-    serve_pid: int | None,
+    serve: ServeIdentity | None,
     trusted_executable: str | None,
     bound: _WaiterBinding | None = None,
 ) -> dict[str, object]:
@@ -466,12 +475,16 @@ def _owned_marker_status(
         "alive": None,
         "failure": "owner_unknown",
     }
-    if type(serve_pid) is not int or serve_pid < 1:
+    if serve is None or serve.pid < 1:
         return base
     if not trusted_executable or not Path(trusted_executable).is_absolute():
         base["failure"] = "trusted_image_unknown"
         return base
-    if bound is not None and (bound.waiter_pid != pid or bound.serve_pid != serve_pid):
+    if bound is not None and (
+        bound.waiter_pid != pid
+        or bound.serve_pid != serve.pid
+        or bound.serve_start != serve.start
+    ):
         base["failure"] = "bound_identity_changed"
         base["pid_matches"] = False
         return base
@@ -518,12 +531,13 @@ def _owned_marker_status(
             return base
         executable_digest = hashlib.sha256(executable.encode()).hexdigest()
         if bound is None:
-            bound = _bind_waiter(metadata, serve_pid, deadline, executable_digest)
+            bound = _bind_waiter(metadata, serve, deadline, executable_digest)
             if bound is None:
                 base["failure"] = "ancestry_unverified"
                 return base
         elif (
-            bound.serve_pid != serve_pid
+            bound.serve_pid != serve.pid
+            or bound.serve_start != serve.start
             or bound.waiter_pid != pid
             or bound.waiter_start != metadata.start
             or bound.waiter_pgid != metadata.pgid
@@ -593,7 +607,7 @@ def _post_abort_action(prior: dict[str, object], current: dict[str, object]) -> 
 
 def _signal_owned_waiter(
     workspace: Path,
-    serve_pid: int | None,
+    serve: ServeIdentity | None,
     trusted_executable: str | None,
     prior: dict[str, object],
 ) -> bool:
@@ -605,7 +619,7 @@ def _signal_owned_waiter(
         or not isinstance(bound, _WaiterBinding)
     ):
         return False
-    current = _owned_marker_status(workspace, serve_pid, trusted_executable, bound)
+    current = _owned_marker_status(workspace, serve, trusted_executable, bound)
     for field in ("pid", "owner_group", "start_identity", "executable"):
         if current.get(field) != prior.get(field):
             return False
@@ -1343,6 +1357,9 @@ def _resume_event_state(
                 continue
             part_id = part.get("id")
             state = part.get("state")
+            if (type(part_id) is not str or not part_id) and part.get("tool") == "bash":
+                bash_parts.clear()
+                continue
             if (
                 type(part_id) is str
                 and part_id
@@ -1632,7 +1649,7 @@ async def run_scenario(
                             active_root = root_status == "busy"
                             marker = _owned_marker_status(
                                 workspace,
-                                client.serve_pid,
+                                client.serve_identity,
                                 trusted_executable,
                                 bound_waiter if aborted else None,
                             )
@@ -1742,7 +1759,7 @@ async def run_scenario(
                                 ] = _process_group_children(client.serve_pid)
                                 after_marker = _owned_marker_status(
                                     workspace,
-                                    client.serve_pid,
+                                    client.serve_identity,
                                     trusted_executable,
                                     bound_waiter,
                                 )
@@ -1761,7 +1778,7 @@ async def run_scenario(
                                         "owned_process_terminated_by_supervisor"
                                     ] = _signal_owned_waiter(
                                         workspace,
-                                        client.serve_pid,
+                                        client.serve_identity,
                                         trusted_executable,
                                         after_marker,
                                     )

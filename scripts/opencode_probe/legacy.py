@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from collections.abc import Iterable
 from urllib.parse import urlsplit
 
+from scripts.opencode_probe.process_identity import ServeIdentity
+
 _SESSION_ID = re.compile(r"ses_[A-Za-z0-9_-]{1,100}\Z")
 _REQUIRED_PATHS = frozenset(
     {
@@ -173,6 +175,7 @@ class LegacyClient:
         self._timeout = timeout_seconds
         self._operations: dict[str, _Operation] = {}
         self.serve_pid: int | None = None
+        self.serve_identity: ServeIdentity | None = None
 
     def _request(
         self, method: str, path: str, body: object | None = None

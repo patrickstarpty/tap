@@ -2,7 +2,9 @@
 
 import asyncio
 import os
+import signal
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -123,8 +125,66 @@ async def test_serve_preflight_keeps_server_alive_until_context_exit(tmp_path: P
         assert (tmp_path / "serve.pid").exists()
         pid = int((tmp_path / "serve.pid").read_text())
         os.kill(pid, 0)
+        assert client.serve_identity is not None
+        assert client.serve_identity.pid == pid
+        assert client.serve_identity.is_live()
+        launch_identity = client.serve_identity
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+    assert not launch_identity.is_live()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_serve_identity_capture_reaps_owned_process(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from scripts.opencode_probe import process as probe_process
+    from scripts.opencode_probe.cli import make_child_env
+    from scripts.opencode_probe.models import ProbeAgent
+    from scripts.opencode_probe.profiles import export_probe_config, export_profiles
+
+    digest = export_probe_config(tmp_path)
+    profiles = export_profiles(
+        tmp_path,
+        (ProbeAgent("orchestrator", "r1", "fixture", "Inspect", ("read",), True),),
+        frozenset({"orchestrator"}),
+    )
+    env = make_child_env(tmp_path, "http://127.0.0.1:54321", "scoped", "fixture-password")
+    monkeypatch.setattr(probe_process, "capture_serve_identity", lambda *_: time.sleep(0.5))
+
+    async def run() -> None:
+        async with probe_process.serve_probe(
+            (sys.executable, str(STUB)),
+            tmp_path,
+            env,
+            timeout_seconds=5,
+            profile_hashes=profiles,
+            config_digest=digest,
+        ):
+            pass
+
+    task = asyncio.create_task(run())
+    pid = None
+    try:
+        for _ in range(300):
+            if (tmp_path / "serve.pid").exists():
+                pid = int((tmp_path / "serve.pid").read_text())
+                break
+            await asyncio.sleep(0.01)
+        assert pid is not None
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        if not task.done():
+            task.cancel()
+        if pid is not None:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 @pytest.mark.asyncio
