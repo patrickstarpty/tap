@@ -212,6 +212,7 @@ class BrowserRuntime:
         self._inspector_deadlines: dict[str, float] = {}
         self._inspector_resources: dict[str, OwnedResources] = {}
         self._inspector_teardowns: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        self._inspector_pending: set[str] = set()
 
     async def _call(
         self,
@@ -287,7 +288,6 @@ class BrowserRuntime:
             setattr(resources, f"{kind}_attempted", True)
             result = await self._call(argv, deadline_at=deadline_at)
             if result.exit_code:
-                setattr(resources, f"{kind}_attempted", False)
                 raise RuntimeError(f"Docker command failed: {result.stderr[:200]}")
             setattr(resources, f"{kind}_id", result.stdout.strip())
             if state is not None and state.cancel_requested:
@@ -512,44 +512,64 @@ class BrowserRuntime:
     ) -> InspectorHandle:
         if not 1 <= deadline <= 600:
             raise ValueError("invalid deadline")
-        if task_id in self._handles:
+        if task_id in self._handles or task_id in self._inspector_pending:
             raise ValueError("inspector already active")
-        deadline_at = time.monotonic() + deadline
-        resources = OwnedResources.new(task_id)
-        network, proxy, browser = await self._create_environment(
-            task_id,
-            allowed_origins,
-            deadline,
-            deadline_at=deadline_at,
-            resources=resources,
-        )
+        self._inspector_pending.add(task_id)
         try:
-            await self._require(
-                ("docker", "exec", "-d", browser, "node", "/opt/browser/inspector.mjs"),
+            deadline_at = time.monotonic() + deadline
+            resources = OwnedResources.new(task_id)
+            network, proxy, browser = await self._create_environment(
+                task_id,
+                allowed_origins,
+                deadline,
                 deadline_at=deadline_at,
+                resources=resources,
             )
-            for attempt in range(20):
-                ready = await self._call(
-                    ("docker", "exec", browser, "test", "-S", "/tmp/inspector.sock"),
+            try:
+                await self._require(
+                    (
+                        "docker",
+                        "exec",
+                        "-d",
+                        browser,
+                        "node",
+                        "/opt/browser/inspector.mjs",
+                    ),
                     deadline_at=deadline_at,
                 )
-                if ready.exit_code == 0:
-                    break
-                await asyncio.sleep(min(0.25, max(0, deadline_at - time.monotonic())))
-            else:
-                raise RuntimeError("inspector did not become ready")
-        except BaseException:
-            await self._cleanup(resources)
-            raise
-        handle = InspectorHandle(task_id, browser, network, proxy, allowed_origins)
-        self._handles[task_id] = handle
-        self._inspector_resources[task_id] = resources
-        self._inspector_deadlines[task_id] = deadline_at
-        self._inspector_teardowns.pop(task_id, None)
-        self._inspector_expiries[task_id] = asyncio.create_task(
-            self._expire_inspector(handle, deadline_at)
-        )
-        return handle
+                for attempt in range(20):
+                    ready = await self._call(
+                        (
+                            "docker",
+                            "exec",
+                            browser,
+                            "test",
+                            "-S",
+                            "/tmp/inspector.sock",
+                        ),
+                        deadline_at=deadline_at,
+                    )
+                    if ready.exit_code == 0:
+                        break
+                    await asyncio.sleep(
+                        min(0.25, max(0, deadline_at - time.monotonic()))
+                    )
+                else:
+                    raise RuntimeError("inspector did not become ready")
+            except BaseException:
+                await self._cleanup(resources)
+                raise
+            handle = InspectorHandle(task_id, browser, network, proxy, allowed_origins)
+            self._handles[task_id] = handle
+            self._inspector_resources[task_id] = resources
+            self._inspector_deadlines[task_id] = deadline_at
+            self._inspector_teardowns.pop(task_id, None)
+            self._inspector_expiries[task_id] = asyncio.create_task(
+                self._expire_inspector(handle, deadline_at)
+            )
+            return handle
+        finally:
+            self._inspector_pending.discard(task_id)
 
     async def _expire_inspector(
         self, handle: InspectorHandle, deadline_at: float

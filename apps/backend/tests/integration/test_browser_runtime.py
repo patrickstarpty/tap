@@ -532,6 +532,99 @@ async def test_failed_initial_network_create_does_not_clean_existing_resources()
 
 
 @pytest.mark.asyncio
+async def test_nonzero_proxy_start_cleans_created_owned_container() -> None:
+    class PartialStartDocker(LifecycleDocker):
+        async def run(
+            self,
+            argv: tuple[str, ...],
+            stdin: bytes | None = None,
+            *,
+            max_stdout: int = 1_000_000,
+        ) -> CommandResult:
+            if argv[:3] == ("docker", "run", "-d") and argv[
+                argv.index("--name") + 1
+            ].endswith("-proxy"):
+                await super().run(argv, stdin, max_stdout=max_stdout)
+                return CommandResult(125, "", "container created but start failed")
+            if argv[:2] == ("docker", "stop"):
+                self.commands.append(argv)
+                return CommandResult(1, "", "container not running")
+            if argv[:3] == ("docker", "inspect", "--format"):
+                self.commands.append(argv)
+                return CommandResult(0, "false", "")
+            return await super().run(argv, stdin, max_stdout=max_stdout)
+
+    client = PartialStartDocker()
+    runtime = BrowserRuntime(client, "browser:test", evidence_sink=object())
+    result = await runtime.execute(
+        _lifecycle_bundle(),
+        {"task_id": "partial", "input_data": {}},
+        BrowserLimits(),
+        execution_id="partial-run",
+    )
+    assert result.status == "failed"
+    assert not client.containers
+    assert not client.networks
+    assert any(argv[:2] == ("docker", "rm") for argv in client.commands)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_task_inspector_start_reserves_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeDocker([])
+    runtime = BrowserRuntime(client, "browser:test")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    creations = 0
+
+    async def create(*args: object, **kwargs: object) -> tuple[str, str, str]:
+        nonlocal creations
+        creations += 1
+        entered.set()
+        await release.wait()
+        return "network", "proxy", "browser"
+
+    monkeypatch.setattr(runtime, "_create_environment", create)
+    first = asyncio.create_task(
+        runtime.start_inspector("same", ("http://example.test",), 60)
+    )
+    await asyncio.wait_for(entered.wait(), 1)
+    second = asyncio.create_task(
+        runtime.start_inspector("same", ("http://example.test",), 60)
+    )
+    await asyncio.sleep(0)
+    observed_creations = creations
+    release.set()
+    handle = await asyncio.wait_for(first, 1)
+    try:
+        with pytest.raises(ValueError, match="already active"):
+            await asyncio.wait_for(second, 1)
+        assert observed_creations == 1
+        assert runtime._handles["same"] is handle
+    finally:
+        if runtime._handles.get("same") is handle:
+            await runtime.cancel(handle)
+
+
+@pytest.mark.asyncio
+async def test_failed_inspector_setup_releases_task_reservation() -> None:
+    client = LifecycleDocker("create")
+    runtime = BrowserRuntime(client, "browser:test")
+    pending = asyncio.create_task(
+        runtime.start_inspector("retry", ("http://example.test",), 30)
+    )
+    await asyncio.wait_for(client.entered.wait(), 1)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert "retry" not in runtime._inspector_pending
+    client.block = ""
+    handle = await runtime.start_inspector("retry", ("http://example.test",), 30)
+    assert (await runtime.cancel(handle))["stopped"]
+
+
+@pytest.mark.asyncio
 async def test_expiry_and_user_cancel_share_inspector_teardown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
