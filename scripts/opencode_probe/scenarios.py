@@ -18,8 +18,9 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -297,34 +298,195 @@ def _process_group_children(leader_pid: int | None) -> int | None:
     return count
 
 
-def _owned_marker_status(workspace: Path, owner_group: int | None) -> dict[str, object]:
+@dataclass(frozen=True)
+class _ProcessMetadata:
+    pid: int
+    ppid: int
+    pgid: int
+    start: str
+
+
+@dataclass(frozen=True)
+class _WaiterBinding:
+    serve_pid: int
+    serve_start: str
+    leader_pid: int
+    leader_start: str
+    waiter_pid: int
+    waiter_start: str
+    waiter_pgid: int
+    executable_digest: str
+
+
+def _ps_line(pid: int, field: str, deadline: float) -> str | None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    result = subprocess.run(
+        ("ps", "-ww", "-p", str(pid), "-o", field),
+        capture_output=True,
+        text=True,
+        timeout=min(remaining, 1),
+        check=False,
+    )
+    if result.returncode != 0 or len(result.stdout) > 4096 or result.stderr:
+        return None
+    lines = result.stdout.splitlines()
+    return lines[0].strip() if len(lines) == 1 else None
+
+
+def _ps_metadata(pid: int, deadline: float) -> _ProcessMetadata | None:
+    line = _ps_line(pid, "pid=,ppid=,pgid=,lstart=", deadline)
+    if line is None:
+        return None
+    fields = line.split()
+    if len(fields) != 8 or not all(value.isdigit() for value in fields[:3]):
+        return None
+    if int(fields[0]) != pid:
+        return None
+    return _ProcessMetadata(pid, int(fields[1]), int(fields[2]), " ".join(fields[3:]))
+
+
+def _ps_snapshot(
+    pid: int, deadline: float
+) -> tuple[_ProcessMetadata, str, tuple[str, ...]] | None:
+    """Read complete image and command, bracketing split queries by start identity."""
+    first = _ps_metadata(pid, deadline)
+    executable = _ps_line(pid, "comm=", deadline)
+    command_line = _ps_line(pid, "command=", deadline)
+    last = _ps_metadata(pid, deadline)
+    if first is None or first != last or executable is None or command_line is None:
+        return None
+    command = tuple(shlex.split(command_line))
+    if not command or command[0] != executable:
+        return None
+    return first, executable, command
+
+
+def _bind_waiter(
+    waiter: _ProcessMetadata, serve_pid: int, deadline: float, executable_digest: str
+) -> _WaiterBinding | None:
+    chain: list[_ProcessMetadata] = [waiter]
+    seen = {waiter.pid}
+    while chain[-1].pid != serve_pid and len(chain) < 16:
+        parent_pid = chain[-1].ppid
+        if parent_pid < 1 or parent_pid in seen:
+            return None
+        parent = _ps_metadata(parent_pid, deadline)
+        if parent is None:
+            return None
+        chain.append(parent)
+        seen.add(parent_pid)
+    if chain[-1].pid != serve_pid:
+        return None
+    leader = next((item for item in chain if item.pid == waiter.pgid), None)
+    if leader is None or leader.pgid != waiter.pgid:
+        return None
+    # A second pass rejects reused PIDs or a chain that changed while being walked.
+    if any(_ps_metadata(item.pid, deadline) != item for item in chain):
+        return None
+    return _WaiterBinding(
+        serve_pid,
+        chain[-1].start,
+        leader.pid,
+        leader.start,
+        waiter.pid,
+        waiter.start,
+        waiter.pgid,
+        executable_digest,
+    )
+
+
+def _trusted_python_image(workspace: Path) -> str | None:
+    """Trust only the full image of a supervisor-owned fixed-PATH Python process."""
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            ("/usr/bin/python3", "-I", "-c", "import time; time.sleep(5)"),
+            cwd=workspace,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and process.poll() is None:
+            snapshot = _ps_snapshot(process.pid, deadline)
+            if snapshot is not None and snapshot[2][1:3] == ("-I", "-c"):
+                return snapshot[1]
+            time.sleep(0.02)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+    return None
+
+
+def _owned_marker_status(
+    workspace: Path,
+    serve_pid: int | None,
+    trusted_executable: str | None,
+    bound: _WaiterBinding | None = None,
+) -> dict[str, object]:
     marker = workspace / "owned.pid"
     if not marker.is_file() or marker.is_symlink():
-        return {"marker_present": False, "identity_verified": False, "alive": None}
+        return {
+            "marker_present": False,
+            "identity_verified": False,
+            "alive": None,
+            "failure": "marker_missing",
+        }
     try:
         raw = marker.read_text().strip()
     except OSError:
-        return {"marker_present": True, "identity_verified": False, "alive": None}
+        return {
+            "marker_present": True,
+            "identity_verified": False,
+            "alive": None,
+            "failure": "marker_read_failed",
+        }
     if not re.fullmatch(r"[1-9][0-9]{0,7}", raw):
-        return {"marker_present": True, "identity_verified": False, "alive": None}
+        return {
+            "marker_present": True,
+            "identity_verified": False,
+            "alive": None,
+            "failure": "marker_invalid",
+        }
     pid = int(raw)
     base: dict[str, object] = {
         "marker_present": True,
         "pid": pid,
         "identity_verified": False,
         "alive": None,
+        "failure": "owner_unknown",
     }
-    if type(owner_group) is not int or owner_group < 1:
+    if type(serve_pid) is not int or serve_pid < 1:
+        return base
+    if not trusted_executable or not Path(trusted_executable).is_absolute():
+        base["failure"] = "trusted_image_unknown"
+        return base
+    if bound is not None and (bound.waiter_pid != pid or bound.serve_pid != serve_pid):
+        base["failure"] = "bound_identity_changed"
+        base["pid_matches"] = False
         return base
     try:
-        process = subprocess.run(
-            ("ps", "-p", str(pid), "-o", "pid=,pgid=,lstart=,comm=,command="),
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-        if process.returncode != 0:
+        deadline = time.monotonic() + 2
+        snapshot = _ps_snapshot(pid, deadline)
+        if snapshot is None:
+            process = subprocess.run(
+                ("ps", "-ww", "-p", str(pid), "-o", "pid="),
+                capture_output=True,
+                text=True,
+                timeout=max(0.01, deadline - time.monotonic()),
+                check=False,
+            )
+            base["failure"] = "process_query_failed"
             if (
                 process.returncode == 1
                 and not process.stdout.strip()
@@ -335,65 +497,85 @@ def _owned_marker_status(workspace: Path, owner_group: int | None) -> dict[str, 
                 except ProcessLookupError:
                     base["alive"] = False
                     base["absence_verified"] = True
+                    base["failure"] = "process_absent"
                 except OSError:
                     pass
             return base
-        if len(process.stdout.splitlines()) != 1:
-            return base
-        fields = process.stdout.strip().split(maxsplit=8)
-        if len(fields) != 9 or not fields[0].isdigit() or not fields[1].isdigit():
-            return base
-        if int(fields[0]) != pid:
-            return base
+        metadata, executable, command = snapshot
         base["alive"] = True
-        command = shlex.split(fields[8])
-        if not command:
-            return base
+        base["pid_matches"] = True
+        base["pgid_matches"] = metadata.pgid == bound.waiter_pgid if bound else None
         script = workspace / "waiter.py"
-        executable = Path(fields[7]).name
-        command_executable = Path(command[0]).name
-        if (
-            not base["alive"]
-            or int(fields[1]) != owner_group
-            or not re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable)
-            or command_executable != executable
-            or script.is_symlink()
-            or not script.is_file()
-            or len(command) != 2
-            or (workspace / command[1]).resolve() != script.resolve()
-        ):
+        if executable != trusted_executable:
+            base["failure"] = "executable_mismatch"
             return base
+        if (
+            script.is_symlink()
+            or not script.is_file()
+            or command != (trusted_executable, "waiter.py")
+        ):
+            base["failure"] = "script_mismatch"
+            return base
+        executable_digest = hashlib.sha256(executable.encode()).hexdigest()
+        if bound is None:
+            bound = _bind_waiter(metadata, serve_pid, deadline, executable_digest)
+            if bound is None:
+                base["failure"] = "ancestry_unverified"
+                return base
+        elif (
+            bound.serve_pid != serve_pid
+            or bound.waiter_pid != pid
+            or bound.waiter_start != metadata.start
+            or bound.waiter_pgid != metadata.pgid
+            or bound.executable_digest != executable_digest
+        ):
+            base["failure"] = "bound_identity_changed"
+            return base
+        base["pgid_matches"] = True
         cwd = subprocess.run(
             ("lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"),
             capture_output=True,
             text=True,
-            timeout=3,
+            timeout=max(0.01, deadline - time.monotonic()),
             check=False,
         )
         cwd_lines = cwd.stdout.splitlines()
         if (
             cwd.returncode != 0
+            or len(cwd.stdout) > 4096
             or f"p{pid}" not in cwd_lines
             or "fcwd" not in cwd_lines
             or sum(line.startswith("n") for line in cwd_lines) != 1
         ):
+            base["failure"] = "cwd_query_failed"
             return base
         cwd_path = Path(next(line[1:] for line in cwd_lines if line.startswith("n")))
         if cwd_path.is_symlink() or cwd_path.resolve() != workspace.resolve():
+            base["failure"] = "cwd_mismatch"
+            return base
+        if _ps_snapshot(pid, deadline) != snapshot:
+            base["failure"] = "identity_changed"
             return base
         base.update(
             identity_verified=True,
-            owner_group=owner_group,
-            start_identity=" ".join(fields[2:7]),
-            executable=executable,
+            owner_group=metadata.pgid,
+            start_identity=metadata.start,
+            executable=executable_digest,
+            _binding=bound,
+            failure=None,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired):
+        base["failure"] = "process_query_failed"
         return base
     return base
 
 
 def _post_abort_action(prior: dict[str, object], current: dict[str, object]) -> str:
-    if prior.get("identity_verified") is not True or prior.get("alive") is not True:
+    if (
+        prior.get("identity_verified") is not True
+        or prior.get("alive") is not True
+        or not isinstance(prior.get("_binding"), _WaiterBinding)
+    ):
         return "unknown"
     if current.get("pid") != prior.get("pid"):
         return "unknown"
@@ -401,7 +583,7 @@ def _post_abort_action(prior: dict[str, object], current: dict[str, object]) -> 
         return "continue"
     if current.get("identity_verified") is not True or current.get("alive") is not True:
         return "unknown"
-    if all(
+    if current.get("_binding") == prior.get("_binding") and all(
         current.get(field) == prior.get(field)
         for field in ("owner_group", "start_identity", "executable")
     ):
@@ -410,12 +592,20 @@ def _post_abort_action(prior: dict[str, object], current: dict[str, object]) -> 
 
 
 def _signal_owned_waiter(
-    workspace: Path, owner_group: int | None, prior: dict[str, object]
+    workspace: Path,
+    serve_pid: int | None,
+    trusted_executable: str | None,
+    prior: dict[str, object],
 ) -> bool:
     pid = prior.get("pid")
-    if prior.get("identity_verified") is not True or type(pid) is not int:
+    bound = prior.get("_binding")
+    if (
+        prior.get("identity_verified") is not True
+        or type(pid) is not int
+        or not isinstance(bound, _WaiterBinding)
+    ):
         return False
-    current = _owned_marker_status(workspace, owner_group)
+    current = _owned_marker_status(workspace, serve_pid, trusted_executable, bound)
     for field in ("pid", "owner_group", "start_identity", "executable"):
         if current.get(field) != prior.get(field):
             return False
@@ -1123,6 +1313,132 @@ def _resume_preconditions(
     }
 
 
+def _resume_event_state(
+    events: Sequence[dict[str, Any]], session_id: str
+) -> tuple[str | None, str, bool]:
+    root_status: str | None = None
+    bash_parts: dict[str, str] = {}
+    for event in events:
+        properties = event.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        if (
+            event.get("type") == "session.status"
+            and properties.get("sessionID") == session_id
+        ):
+            status = properties.get("status")
+            root_status = (
+                status.get("type")
+                if isinstance(status, dict) and isinstance(status.get("type"), str)
+                else None
+            )
+        elif event.get("type") == "message.part.updated":
+            part = properties.get("part")
+            if not isinstance(part, dict):
+                continue
+            part_session = part.get("sessionID")
+            if properties.get(
+                "sessionID", part_session
+            ) != session_id or part_session not in (None, session_id):
+                continue
+            part_id = part.get("id")
+            state = part.get("state")
+            if (
+                type(part_id) is str
+                and part_id
+                and (part.get("tool") == "bash" or part_id in bash_parts)
+            ):
+                status = state.get("status") if isinstance(state, dict) else None
+                bash_parts[part_id] = status if type(status) is str else "unknown"
+    active = any(status == "running" for status in bash_parts.values())
+    bash_status = (
+        "running"
+        if active
+        else (
+            "completed"
+            if bash_parts
+            and all(status == "completed" for status in bash_parts.values())
+            else "unknown"
+        )
+    )
+    return root_status, bash_status, active
+
+
+def _record_resume_observation(
+    trace: list[dict[str, object]],
+    *,
+    at: float,
+    event_index: int,
+    root_status: str | None,
+    bash_status: str,
+    marker: dict[str, object],
+    conditions: dict[str, object],
+) -> bool:
+    allowed_failures = {
+        "marker_missing",
+        "marker_read_failed",
+        "marker_invalid",
+        "owner_unknown",
+        "trusted_image_unknown",
+        "process_query_failed",
+        "process_absent",
+        "executable_mismatch",
+        "script_mismatch",
+        "ancestry_unverified",
+        "bound_identity_changed",
+        "cwd_query_failed",
+        "cwd_mismatch",
+        "identity_changed",
+    }
+    failure = marker.get("failure")
+    snapshot: dict[str, object] = {
+        "root_status": root_status if root_status in ("busy", "idle") else "unknown",
+        "bash_part_status": bash_status
+        if bash_status in ("running", "completed")
+        else "unknown",
+        "marker_pid_matches": marker.get("pid_matches")
+        if type(marker.get("pid_matches")) is bool
+        else None,
+        "marker_pgid_matches": marker.get("pgid_matches")
+        if type(marker.get("pgid_matches")) is bool
+        else None,
+        "marker_failure": failure
+        if failure in allowed_failures
+        else (None if failure is None else "unknown"),
+        "first_present": conditions.get("first_present") is True,
+        "second_absent": conditions.get("second_absent") is True,
+        "first_action_count": conditions.get("first_action_count")
+        if type(conditions.get("first_action_count")) is int
+        else None,
+        "fixture_unchanged": conditions.get("fixture_unchanged") is True,
+    }
+    if trace and all(trace[-1].get(key) == value for key, value in snapshot.items()):
+        return False
+    if len(trace) >= 64:
+        return True
+    trace.append(
+        {"relative_seconds": round(at, 3), "event_index": event_index, **snapshot}
+    )
+    return False
+
+
+def _safe_marker(marker: dict[str, object]) -> dict[str, object]:
+    return {
+        key: marker.get(key)
+        for key in (
+            "marker_present",
+            "identity_verified",
+            "alive",
+            "absence_verified",
+            "pid_matches",
+            "pgid_matches",
+            "failure",
+            "executable",
+        )
+        if key in marker
+    }
+
+
 async def run_scenario(
     scenario: str,
     *,
@@ -1175,11 +1491,16 @@ async def run_scenario(
         report["profile_provenance"] = _profile_provenance(roster, profiles)
         config_digest = export_probe_config(workspace)
         report["config_digest"] = config_digest
+        trusted_executable: str | None = None
         if scenario == "resume-workspace":
             report["resume"] = {
                 "supervisor_fixture_sha256": prepare_resume_fixture(workspace),
                 "fixture_provenance": "supervisor_prepared_synthetic_waiter",
+                "observations": [],
+                "observation_truncated": False,
             }
+            trusted_executable = _trusted_python_image(workspace)
+            report["resume"]["trusted_image_preflight"] = trusted_executable is not None
         if scenario.startswith("roster-"):
             report["roster"] = {"allowed_agents": roster_count}
         with _accounted_gate(
@@ -1253,6 +1574,8 @@ async def run_scenario(
                     resumed = False
                     abort_at = 0.0
                     abort_event_index = 0
+                    bound_waiter: _WaiterBinding | None = None
+                    prior_marker: dict[str, object] | None = None
                     deadline = time.monotonic() + min(max_seconds, 180) - 5
                     while time.monotonic() < deadline:
                         events, invalid = collector.events()
@@ -1303,19 +1626,16 @@ async def run_scenario(
                         if scenario == "resume-workspace":
                             first_path = workspace / "first.txt"
                             second_path = workspace / "second.txt"
-                            active_bash = any(
-                                event.get("type") == "message.part.updated"
-                                and isinstance(event.get("properties"), dict)
-                                and isinstance(event["properties"].get("part"), dict)
-                                and event["properties"]["part"].get("tool") == "bash"
-                                and isinstance(
-                                    event["properties"]["part"].get("state"), dict
-                                )
-                                and event["properties"]["part"]["state"].get("status")
-                                == "running"
-                                for event in events
+                            root_status, bash_status, active_bash = _resume_event_state(
+                                events, session_id
                             )
-                            marker = _owned_marker_status(workspace, client.serve_pid)
+                            active_root = root_status == "busy"
+                            marker = _owned_marker_status(
+                                workspace,
+                                client.serve_pid,
+                                trusted_executable,
+                                bound_waiter if aborted else None,
+                            )
                             conditions = _resume_preconditions(
                                 workspace,
                                 active_root=active_root,
@@ -1327,6 +1647,18 @@ async def run_scenario(
                             )
                             if not aborted:
                                 report["resume"]["pre_abort_conditions"] = conditions
+                            if _record_resume_observation(
+                                report["resume"]["observations"],
+                                at=time.monotonic() - started_at,
+                                event_index=observed,
+                                root_status=root_status,
+                                bash_status=bash_status,
+                                marker=marker,
+                                conditions=conditions,
+                            ):
+                                report["resume"]["observation_truncated"] = True
+                                report["reason"] = "observation_truncated"
+                                break
                             if (
                                 conditions["first_present"]
                                 and conditions["second_absent"]
@@ -1353,9 +1685,18 @@ async def run_scenario(
                                         "process_group_children_before_abort": _process_group_children(
                                             client.serve_pid
                                         ),
-                                        "owned_marker_before_abort": marker,
+                                        "owned_marker_before_abort": _safe_marker(
+                                            marker
+                                        ),
                                     }
                                 )
+                                candidate_binding = marker.get("_binding")
+                                bound_waiter = (
+                                    candidate_binding
+                                    if isinstance(candidate_binding, _WaiterBinding)
+                                    else None
+                                )
+                                prior_marker = marker
                                 try:
                                     report["resume"][
                                         "abort_result"
@@ -1400,13 +1741,13 @@ async def run_scenario(
                                     "process_group_children_after_abort"
                                 ] = _process_group_children(client.serve_pid)
                                 after_marker = _owned_marker_status(
-                                    workspace, client.serve_pid
+                                    workspace,
+                                    client.serve_pid,
+                                    trusted_executable,
+                                    bound_waiter,
                                 )
                                 report["resume"]["owned_marker_after_abort"] = (
-                                    after_marker
-                                )
-                                prior_marker = report["resume"].get(
-                                    "owned_marker_before_abort"
+                                    _safe_marker(after_marker)
                                 )
                                 action = _post_abort_action(
                                     prior_marker
@@ -1419,7 +1760,10 @@ async def run_scenario(
                                     report["resume"][
                                         "owned_process_terminated_by_supervisor"
                                     ] = _signal_owned_waiter(
-                                        workspace, client.serve_pid, after_marker
+                                        workspace,
+                                        client.serve_pid,
+                                        trusted_executable,
+                                        after_marker,
                                     )
                                     if not report["resume"][
                                         "owned_process_terminated_by_supervisor"

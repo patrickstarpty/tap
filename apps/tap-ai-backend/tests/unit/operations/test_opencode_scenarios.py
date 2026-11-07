@@ -1,6 +1,7 @@
 """Deterministic failure boundaries for live OpenCode scenario supervision."""
 
 import hashlib
+import os
 import signal
 import subprocess
 import sys
@@ -275,7 +276,9 @@ def _mock_waiter_process(
     workspace,
     *,
     pgid: int = 44,
+    ppid: int = 44,
     started: str = "Sat Nov  7 12:34:56 2026",
+    executable: str = "/usr/bin/python3",
     cwd=None,
     script=None,
 ) -> None:
@@ -284,10 +287,22 @@ def _mock_waiter_process(
     cwd = cwd or workspace
 
     def fake_run(args, **_kwargs):
-        if args[:3] == ("ps", "-p", "123"):
-            return subprocess.CompletedProcess(
-                args, 0, f"123 {pgid} {started} python3 python3 {script}\n", ""
-            )
+        if args[:3] == ("ps", "-ww", "-p"):
+            observed_pid = int(args[3])
+            field = args[-1]
+            if observed_pid == 44:
+                assert field == "pid=,ppid=,pgid=,lstart="
+                return subprocess.CompletedProcess(args, 0, f"44 1 44 {started}\n", "")
+            if observed_pid == 1:
+                return subprocess.CompletedProcess(args, 0, f"1 0 1 {started}\n", "")
+            assert observed_pid == 123
+            script_arg = str(script) if script != workspace / "waiter.py" else "waiter.py"
+            output = {
+                "pid=,ppid=,pgid=,lstart=": f"123 {ppid} {pgid} {started}\n",
+                "comm=": f"{executable}\n",
+                "command=": f"{executable} {script_arg}\n",
+            }[field]
+            return subprocess.CompletedProcess(args, 0, output, "")
         if args[:5] == ("lsof", "-a", "-p", "123", "-d"):
             return subprocess.CompletedProcess(args, 0, f"p123\nfcwd\nn{cwd}\n", "")
         raise AssertionError(args)
@@ -298,36 +313,257 @@ def _mock_waiter_process(
 def test_owned_marker_rejects_unrelated_same_basename_and_group(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path, script=tmp_path.parent / "other" / "waiter.py")
-    assert scenarios._owned_marker_status(tmp_path, 44)["identity_verified"] is False
+    assert (
+        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        is False
+    )
     _mock_waiter_process(monkeypatch, tmp_path, pgid=99)
-    assert scenarios._owned_marker_status(tmp_path, 44)["identity_verified"] is False
+    assert (
+        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        is False
+    )
 
 
 def test_owned_marker_rejects_unrelated_cwd(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path, cwd=tmp_path.parent)
-    assert scenarios._owned_marker_status(tmp_path, 44)["identity_verified"] is False
+    assert (
+        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        is False
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS process image regression")
+def test_owned_marker_accepts_real_fixed_path_python_in_owned_group(tmp_path) -> None:
+    from scripts.opencode_probe.resume_fixture import prepare_resume_fixture
+
+    prepare_resume_fixture(tmp_path)
+    owner = subprocess.Popen(
+        ("/bin/sh", "-c", "python3 waiter.py & wait"),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not (tmp_path / "owned.pid").exists():
+            time.sleep(0.01)
+        assert (tmp_path / "owned.pid").exists()
+        trusted = scenarios._trusted_python_image(tmp_path)
+        assert trusted is not None
+        marker = scenarios._owned_marker_status(tmp_path, owner.pid, trusted)
+        assert marker["identity_verified"] is True, marker
+        assert marker["pgid_matches"] is True
+        assert (
+            scenarios._owned_marker_status(tmp_path, owner.pid + 1, trusted)["identity_verified"]
+            is False
+        )
+        assert (
+            scenarios._owned_marker_status(tmp_path, owner.pid, "/unknown/python")[
+                "identity_verified"
+            ]
+            is False
+        )
+    finally:
+        os.killpg(owner.pid, signal.SIGKILL)
+        owner.wait(timeout=3)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS detached process group regression")
+def test_owned_marker_binds_detached_group_only_through_live_serve_ancestry(tmp_path) -> None:
+    from scripts.opencode_probe.resume_fixture import prepare_resume_fixture
+
+    prepare_resume_fixture(tmp_path)
+    code = (
+        "import pathlib,subprocess,time\n"
+        "child=subprocess.Popen(['/bin/sh','-c','python3 waiter.py & wait'],"
+        "start_new_session=True)\n"
+        "pathlib.Path('shell.pid').write_text(str(child.pid))\n"
+        "time.sleep(5)\n"
+    )
+    serve = subprocess.Popen(
+        (sys.executable, "-c", code),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+        start_new_session=True,
+    )
+    unrelated = None
+    shell_pid = None
+    try:
+        unrelated = subprocess.Popen(("/bin/sleep", "5"), start_new_session=True)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not (tmp_path / "owned.pid").exists():
+            time.sleep(0.01)
+        assert (tmp_path / "owned.pid").exists()
+        shell_pid = int((tmp_path / "shell.pid").read_text())
+        trusted = scenarios._trusted_python_image(tmp_path)
+        assert trusted is not None
+        marker = scenarios._owned_marker_status(tmp_path, serve.pid, trusted)
+        assert marker["identity_verified"] is True, marker
+        assert marker["owner_group"] == shell_pid
+        assert marker["owner_group"] != serve.pid
+        assert (
+            scenarios._owned_marker_status(tmp_path, unrelated.pid, trusted)["identity_verified"]
+            is False
+        )
+        assert (
+            scenarios._owned_marker_status(tmp_path, serve.pid, "/unknown/python")[
+                "identity_verified"
+            ]
+            is False
+        )
+    finally:
+        for group in (shell_pid, serve.pid):
+            if group is not None:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        serve.wait(timeout=3)
+        if unrelated is not None:
+            unrelated.terminate()
+            unrelated.wait(timeout=3)
+
+
+def test_resume_event_state_uses_latest_root_and_part_status() -> None:
+    events = [
+        {"type": "session.status", "properties": {"sessionID": "root", "status": {"type": "busy"}}},
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"id": "part1", "tool": "bash", "state": {"status": "running"}},
+            },
+        },
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "other",
+                "part": {"id": "part2", "tool": "bash", "state": {"status": "running"}},
+            },
+        },
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"id": "part1", "tool": "bash", "state": {"status": "completed"}},
+            },
+        },
+        {"type": "session.status", "properties": {"sessionID": "root", "status": {"type": "idle"}}},
+    ]
+    assert scenarios._resume_event_state(events, "root") == ("idle", "completed", False)
+    events.append(
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"tool": "bash", "state": {"status": "running"}},
+            },
+        }
+    )
+    assert scenarios._resume_event_state(events, "root") == ("idle", "completed", False)
+
+
+def test_resume_event_state_does_not_retain_running_on_partial_part_update() -> None:
+    events = [
+        {
+            "type": "message.part.updated",
+            "properties": {
+                "sessionID": "root",
+                "part": {"id": "part1", "tool": "bash", "state": {"status": "running"}},
+            },
+        },
+        {
+            "type": "message.part.updated",
+            "properties": {"sessionID": "root", "part": {"id": "part1", "state": {}}},
+        },
+    ]
+    assert scenarios._resume_event_state(events, "root") == (None, "unknown", False)
+
+
+def test_resume_observation_is_redacted_and_truncates_at_64_changes() -> None:
+    trace = []
+    marker = {
+        "pid_matches": True,
+        "pgid_matches": False,
+        "failure": "ancestry_unverified",
+        "host_path": "/private/secret",
+    }
+    conditions = {
+        "first_present": True,
+        "second_absent": True,
+        "root_busy": True,
+        "bash_running": False,
+        "owned_process_verified": False,
+        "first_action_count": 1,
+        "fixture_unchanged": True,
+    }
+    for index in range(65):
+        truncated = scenarios._record_resume_observation(
+            trace,
+            at=0.1 * index,
+            event_index=index,
+            root_status="busy",
+            bash_status="running" if index % 2 else "unknown",
+            marker=marker,
+            conditions=conditions,
+        )
+    assert len(trace) == 64
+    assert truncated is True
+    assert trace[0]["marker_failure"] == "ancestry_unverified"
+    assert trace[0]["marker_pgid_matches"] is False
+    assert "/private/secret" not in str(trace)
 
 
 def test_owned_marker_revalidates_start_identity_before_signal(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert prior["identity_verified"] is True
     _mock_waiter_process(monkeypatch, tmp_path, started="Sat Nov  7 12:35:57 2026")
     signalled = []
     monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
-    assert scenarios._signal_owned_waiter(tmp_path, 44, prior) is False
+    assert scenarios._signal_owned_waiter(tmp_path, 44, "/usr/bin/python3", prior) is False
     assert signalled == []
+
+
+def test_bound_waiter_allows_reparent_only_with_same_full_identity(tmp_path, monkeypatch) -> None:
+    (tmp_path / "owned.pid").write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    assert prior["identity_verified"] is True
+    bound = prior["_binding"]
+    _mock_waiter_process(monkeypatch, tmp_path, ppid=1)
+    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3", bound)
+    assert current["identity_verified"] is True
+    assert scenarios._post_abort_action(prior, current) == "terminate"
+    assert (
+        scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")["identity_verified"]
+        is False
+    )
+    _mock_waiter_process(monkeypatch, tmp_path, ppid=1, executable="/other/python3")
+    changed = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3", bound)
+    assert changed["identity_verified"] is False
+    assert scenarios._post_abort_action(prior, changed) == "unknown"
+
+
+def test_changed_marker_pid_cannot_reuse_binding(tmp_path, monkeypatch) -> None:
+    (tmp_path / "owned.pid").write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
+    (tmp_path / "owned.pid").write_text("124")
+    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3", prior["_binding"])
+    assert current["identity_verified"] is False
+    assert scenarios._post_abort_action(prior, current) == "unknown"
 
 
 def test_owned_marker_signals_only_revalidated_process(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     signalled = []
     monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
-    assert scenarios._signal_owned_waiter(tmp_path, 44, prior) is True
+    assert scenarios._signal_owned_waiter(tmp_path, 44, "/usr/bin/python3", prior) is True
     assert signalled == [(123, signal.SIGTERM)]
 
 
@@ -336,7 +572,7 @@ def test_failed_process_observation_never_authorizes_resume(tmp_path, monkeypatc
     marker = tmp_path / "owned.pid"
     marker.write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert prior["identity_verified"] is True
 
     def failed_ps(args, **_kwargs):
@@ -347,7 +583,7 @@ def test_failed_process_observation_never_authorizes_resume(tmp_path, monkeypatc
         return subprocess.CompletedProcess(args, 0, "malformed\n", "")
 
     monkeypatch.setattr(scenarios.subprocess, "run", failed_ps)
-    current = scenarios._owned_marker_status(tmp_path, 44)
+    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert current["alive"] is None
     assert scenarios._post_abort_action(prior, current) == "unknown"
 
@@ -359,12 +595,12 @@ def test_missing_or_invalid_marker_never_authorizes_resume(
     marker = tmp_path / "owned.pid"
     marker.write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     if marker_text is None:
         marker.unlink()
     else:
         marker.write_text(marker_text)
-    current = scenarios._owned_marker_status(tmp_path, 44)
+    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert current["alive"] is None
     assert scenarios._post_abort_action(prior, current) == "unknown"
 
@@ -372,7 +608,7 @@ def test_missing_or_invalid_marker_never_authorizes_resume(
 def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert prior["identity_verified"] is True
     monkeypatch.setattr(
         scenarios.subprocess,
@@ -386,7 +622,7 @@ def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch)
         raise ProcessLookupError("no such process")
 
     monkeypatch.setattr(scenarios.os, "kill", no_process)
-    current = scenarios._owned_marker_status(tmp_path, 44)
+    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert current["alive"] is False
     assert scenarios._post_abort_action(prior, current) == "continue"
     assert probed == [(123, 0)]
@@ -395,7 +631,7 @@ def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch)
 def test_ps_missing_without_esrch_does_not_authorize_resume(tmp_path, monkeypatch) -> None:
     (tmp_path / "owned.pid").write_text("123")
     _mock_waiter_process(monkeypatch, tmp_path)
-    prior = scenarios._owned_marker_status(tmp_path, 44)
+    prior = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     monkeypatch.setattr(
         scenarios.subprocess,
         "run",
@@ -403,7 +639,7 @@ def test_ps_missing_without_esrch_does_not_authorize_resume(tmp_path, monkeypatc
     )
     probed = []
     monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: probed.append((pid, sig)))
-    current = scenarios._owned_marker_status(tmp_path, 44)
+    current = scenarios._owned_marker_status(tmp_path, 44, "/usr/bin/python3")
     assert current["alive"] is None
     assert scenarios._post_abort_action(prior, current) == "unknown"
     assert probed == [(123, 0)]
