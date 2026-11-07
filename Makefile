@@ -529,3 +529,11 @@ parser-build: ## build the pinned local parser image for an explicit platform
 
 parser-security: ## run real security checks in owned isolated parser containers
 	TAP_RUN_PARSER_SECURITY=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/security/test_owned_parser.py -v
+
+tap-browser-api: ## run isolated loopback Tapper browser API
+	bash scripts/run-tap-browser.sh api
+
+tap-browser-worker: ## run isolated Tapper browser worker
+	bash scripts/run-tap-browser.sh worker
+
+.PHONY: tap-browser-api tap-browser-worker

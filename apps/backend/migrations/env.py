@@ -9,6 +9,7 @@ from alembic import context
 from sqlalchemy import Connection, engine_from_config, inspect, pool, text
 
 from tap_platform.insights.adapters.mysql import metadata
+from tap_platform.browser_automation.store import metadata as browser_metadata
 
 
 config = context.config
@@ -19,7 +20,7 @@ database_url = os.environ.get("TAP_DATABASE_URL")
 if not database_url:
     raise RuntimeError("TAP_DATABASE_URL is required for TAP migrations")
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-target_metadata = metadata
+target_metadata = [metadata, browser_metadata]
 
 
 def _adopt_interim_version_table(connection: Connection) -> None:

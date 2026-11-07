@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from sqlalchemy import create_engine
 
 from tap_platform.access import AccessPrincipal
+from tap_platform.browser_automation.http import create_browser_router
+from tap_platform.browser_automation.service import BrowserService
 from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
 from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
 from tap_platform.insights.adapters.objects import FileReportObjectStore
@@ -33,6 +35,9 @@ def create_app(
     report_retry: ReportRetry | None = None,
     insights_authorizer: InsightsAuthorizer | None = None,
     query_service: InsightsQueryService | None = None,
+    browser_service: BrowserService | None = None,
+    browser_principal: AccessPrincipal | None = None,
+    browser_token: str | None = None,
 ) -> FastAPI:
     ledger: SqlAlchemyReportLedger | None = None
     if report_intake is None and report_ledger is None and report_objects is None:
@@ -120,6 +125,11 @@ def create_app(
             query_service=query_service,
         )
     )
+
+    if browser_service is not None:
+        app.include_router(
+            create_browser_router(browser_service, browser_principal, browser_token)
+        )
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
