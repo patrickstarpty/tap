@@ -222,7 +222,17 @@ async def replay(
 @router.get(
     "/{task_id}/browser-evidence/{evidence_id}",
     operation_id="workflow_browser_evidence",
-    responses={404: problem_response_metadata("Browser evidence unavailable")},
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Scoped browser evidence file",
+            "content": {
+                media_type: {"schema": {"type": "string", "format": "binary"}}
+                for media_type in ("image/png", "application/zip", "application/json")
+            },
+        },
+        404: problem_response_metadata("Browser evidence unavailable"),
+    },
 )
 async def browser_evidence(task_id: str, evidence_id: str, request: Request):
     services = request.app.state.http_services

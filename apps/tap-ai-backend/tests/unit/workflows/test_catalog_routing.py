@@ -197,6 +197,7 @@ class _TaskStore:
         self.created = 0
         self.commands = []
         self.revision = 2
+        self.request_kind = "native"
 
     async def snapshot(self, scope, task_id):
         assert scope == VALIDATION_SCOPE
@@ -207,6 +208,7 @@ class _TaskStore:
             "conversation_id": "conversation-1",
             "plan_revision": self.revision,
             "status": "running",
+            "request_json": {"kind": self.request_kind},
         }
 
     async def create_task(self, *_args):
@@ -298,6 +300,30 @@ async def test_follow_up_submits_idempotent_steer_for_same_task_and_frozen_messa
             replace(frozen, actor_id="other-actor"),
             "request-1",
         )
+
+
+@pytest.mark.asyncio
+async def test_direct_follow_up_refuses_persisted_browser_task_before_command():
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    await conversations.create(
+        "conversation-1",
+        "turn-1",
+        "first",
+        TurnInput("Start", VALIDATION_SCOPE.actor_id, "validation", "qwen-plus"),
+    )
+    store = _TaskStore()
+    store.request_kind = "browser"
+    selection = WorkflowSelection(conversations, store, WorkflowService(store))
+    frozen = TurnInput(
+        "Change the browser run",
+        VALIDATION_SCOPE.actor_id,
+        "validation",
+        "qwen-plus",
+        workflow_task_id="task-1",
+    )
+    with pytest.raises(ValueError, match="browser task cannot be continued"):
+        await selection.follow_up(VALIDATION_SCOPE, "conversation-1", frozen, "request-1")
+    assert store.commands == []
 
 
 @pytest.mark.asyncio

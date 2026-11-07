@@ -112,6 +112,93 @@ def test_append_turn_with_unselectable_model_is_non_retryable_client_error():
     assert response.json()["retryable"] is False
 
 
+def test_append_cannot_steer_persisted_browser_task_without_browser_field(monkeypatch):
+    from tap.modules.workflows.application.admission import WorkflowAdmissionCoordinator
+
+    class Allow:
+        async def authorize(self, *_args):
+            return AuthorizationDecision(True, "test")
+
+    conversations = ConversationService(InMemoryConversationRepository(), scope=VALIDATION_SCOPE)
+    asyncio.run(
+        conversations.create(
+            "browser-chat",
+            "original-turn",
+            "original-key",
+            TurnInput("Original goal", VALIDATION_SCOPE.actor_id, "validation", "qwen-plus"),
+        )
+    )
+
+    class Store:
+        commands = []
+
+        async def snapshot(self, _scope, _task_id):
+            return {
+                "task_id": "browser-task",
+                "project_id": VALIDATION_SCOPE.project_id,
+                "conversation_id": "browser-chat",
+                "status": "running",
+                "plan_revision": 1,
+                "request_json": {"kind": "browser"},
+            }
+
+        async def task_request(self, _scope, _task_id):
+            return {"kind": "browser", "requested_ids": []}
+
+        async def command(self, *_args):
+            return None
+
+        async def submit_command(self, _scope, command):
+            self.commands.append(command)
+            return {"status": "accepted", "command_id": command.command_id}
+
+    class Chat:
+        linked = []
+
+        async def link_task(self, conversation_id, turn_id, task_id):
+            self.linked.append((conversation_id, turn_id, task_id))
+            return False
+
+    async def frozen_follow_up(_body, _request, *, workflow=False):
+        assert workflow
+        return TurnInput(
+            "Try a different page",
+            VALIDATION_SCOPE.actor_id,
+            "validation",
+            "qwen-plus",
+            workflow_task_id="browser-task",
+        )
+
+    monkeypatch.setattr("tap.interfaces.http.routes.conversations._input", frozen_follow_up)
+    store, chat = Store(), Chat()
+    admission = WorkflowAdmissionCoordinator(conversations, chat, store)
+    services = replace(
+        validation_http_services(),
+        conversations=conversations,
+        workflow_admission=admission,
+        authorization_policy=Allow(),
+    )
+    origin = "http://127.0.0.1:15175"
+    client = TestClient(
+        create_app(services, validation_mode=True, allowed_origins=frozenset({origin})),
+        headers={"Origin": origin},
+    )
+    response = client.post(
+        "/api/v1/projects/tapper-demo/conversations/browser-chat/turns",
+        json={
+            "message": "Try a different page",
+            "modelAlias": "qwen-plus",
+            "workflowTaskId": "browser-task",
+        },
+        headers={"Idempotency-Key": "browser-follow-up"},
+    )
+    assert response.status_code == 422, response.text
+    assert "browser task cannot be continued" in response.json()["detail"]
+    assert len(asyncio.run(conversations.load("browser-chat")).turns) == 1
+    assert chat.linked == []
+    assert store.commands == []
+
+
 def test_conversation_model_catalog_outage_stays_retryable_503():
     class Outage:
         scope = VALIDATION_SCOPE
@@ -454,6 +541,7 @@ def test_conversation_detail_exposes_only_authorized_immutable_input_view():
         "agentLabel": None,
         "requestedAgentIds": [],
         "workflowTaskId": None,
+        "browser": None,
         "skillRevisionIds": [],
         "skillLabels": [],
         "skillNotices": [],

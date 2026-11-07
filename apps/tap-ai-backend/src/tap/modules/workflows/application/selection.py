@@ -53,6 +53,9 @@ class WorkflowSelection:
         if frozen.actor_id != scope.actor_id or frozen.identity_mode != scope.identity_mode.value:
             raise ValueError("conversation scope mismatch")
         snapshot = await self.progress(scope, conversation_id, task_id)
+        request = snapshot.get("request_json")
+        if isinstance(request, dict) and request.get("kind") == "browser":
+            raise ValueError("browser task cannot be continued; start a new frozen browser run")
         plan_revision = snapshot["plan_revision"]
         if type(plan_revision) is not int:
             raise ValueError("task plan revision unavailable")

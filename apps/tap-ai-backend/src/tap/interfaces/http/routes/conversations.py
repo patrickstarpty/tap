@@ -80,6 +80,7 @@ from tap.modules.knowledge.application.answers import DocumentStateChanged
 from tap.modules.knowledge.ports.errors import KnowledgeRuntimeUnavailable
 from tap.modules.workflows.adapters.asset_catalog import AssetWorkflowCatalog
 from tap.modules.workflows.adapters.browser_client import canonical_json_bytes
+from tap.modules.workflows.application.admission import BrowserContinuationUnavailable
 from tap.platform.telemetry import bind_trace, span, trace_id_of
 
 router = APIRouter(
@@ -679,9 +680,12 @@ async def append(
             if workflow:
                 assert admission is not None
                 if body.workflow_task_id is not None:
-                    turn = await admission.continue_task(
-                        conversation_id, turn_id, idempotency_key, frozen
-                    )
+                    try:
+                        turn = await admission.continue_task(
+                            conversation_id, turn_id, idempotency_key, frozen
+                        )
+                    except BrowserContinuationUnavailable as error:
+                        raise HTTPException(status_code=422, detail=str(error)) from error
                 else:
                     turn = await admission.append(conversation_id, turn_id, idempotency_key, frozen)
             else:

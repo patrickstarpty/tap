@@ -20,6 +20,10 @@ from tap.modules.workflows.ports.runtime import WorkflowWakeups
 from tap.modules.workflows.ports.store import WorkflowStore
 
 
+class BrowserContinuationUnavailable(ValueError):
+    """A frozen browser task cannot accept a Chat steer follow-up."""
+
+
 class WorkflowAdmissionCoordinator:
     def __init__(
         self,
@@ -237,6 +241,10 @@ class WorkflowAdmissionCoordinator:
         original = await self._store.task_request(
             self._conversations.scope, frozen.workflow_task_id
         )
+        if original.get("kind") == "browser":
+            raise BrowserContinuationUnavailable(
+                "browser task cannot be continued; start a new frozen browser run"
+            )
         selected = tuple(original.get("requested_ids") or ())
         if (frozen.delegate_ids and set(frozen.delegate_ids) != set(selected)) or (
             frozen.requested_agent_revision_id is not None

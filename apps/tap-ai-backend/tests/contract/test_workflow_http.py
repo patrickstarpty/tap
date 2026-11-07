@@ -21,6 +21,18 @@ def test_seven_workflow_operations_are_registered() -> None:
     assert "get" in paths[f"{base}/{{task_id}}/nodes/{{node_id}}/logs"]
 
 
+def test_browser_evidence_success_contract_lists_actual_file_types() -> None:
+    paths = create_app().openapi()["paths"]
+    operation = paths[
+        "/api/v1/projects/{project_id}/workflows/{task_id}/browser-evidence/{evidence_id}"
+    ]["get"]
+    success = operation["responses"]["200"]["content"]
+    assert set(success) == {"image/png", "application/zip", "application/json"}
+    assert all(
+        value["schema"] == {"type": "string", "format": "binary"} for value in success.values()
+    )
+
+
 def test_workflow_public_times_use_utc_for_mysql_naive_and_offset_values() -> None:
     from tap.modules.workflows.application.queries import _node, _task_view
 

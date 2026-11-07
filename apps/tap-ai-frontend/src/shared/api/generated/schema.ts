@@ -15268,13 +15268,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Scoped browser evidence file */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": string;
+                    "application/zip": string;
+                    "image/png": string;
                 };
             };
             /** @description Project scope or authorization denied */
