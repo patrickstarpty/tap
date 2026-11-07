@@ -11,6 +11,9 @@ from scripts.opencode_probe.legacy import LegacyClient, classify_session, parse_
 class LegacyStub(BaseHTTPRequestHandler):
     calls: list[tuple[str, str]] = []
     last_message_id = "msg_fixture"
+    include_task_part = True
+    include_task_link = True
+    extra_child = False
 
     def _json(self, status: int, value: object) -> None:
         body = json.dumps(value).encode()
@@ -43,7 +46,10 @@ class LegacyStub(BaseHTTPRequestHandler):
                 },
             )
         elif self.path == "/session/ses_root/children":
-            self._json(200, [{"id": "ses_child", "parentID": "ses_root"}])
+            children = [{"id": "ses_child", "parentID": "ses_root"}]
+            if type(self).extra_child:
+                children.append({"id": "ses_unlinked", "parentID": "ses_root"})
+            self._json(200, children)
         elif self.path == "/session/ses_root/message":
             message_id = type(self).last_message_id
             self._json(
@@ -63,10 +69,14 @@ class LegacyStub(BaseHTTPRequestHandler):
                                 "tool": "task",
                                 "state": {
                                     "status": "completed",
-                                    "metadata": {"sessionId": "ses_child"},
+                                    "metadata": {"sessionId": "ses_child"}
+                                    if type(self).include_task_link
+                                    else {},
                                 },
                             }
-                        ],
+                        ]
+                        if type(self).include_task_part
+                        else [],
                     },
                 ],
             )
@@ -106,6 +116,9 @@ class LegacyStub(BaseHTTPRequestHandler):
 def legacy_server() -> ThreadingHTTPServer:
     LegacyStub.calls = []
     LegacyStub.last_message_id = "msg_fixture"
+    LegacyStub.include_task_part = True
+    LegacyStub.include_task_link = True
+    LegacyStub.extra_child = False
     server = ThreadingHTTPServer(("127.0.0.1", 0), LegacyStub)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -226,3 +239,70 @@ def test_new_prompt_invalidates_old_idle_and_assistant_events(
         },
     )
     assert client.reconcile("ses_root") == "incomplete"
+
+
+def test_missing_current_task_child_link_cannot_complete(
+    legacy_server: ThreadingHTTPServer,
+) -> None:
+    client = LegacyClient(f"http://127.0.0.1:{legacy_server.server_port}", "pass")
+    message_id = client.prompt_async("ses_root", [{"type": "text", "text": "fixture"}])
+    LegacyStub.include_task_link = False
+    client.observe_event(
+        "ses_root",
+        {
+            "type": "message.updated",
+            "properties": {
+                "info": {"role": "assistant", "sessionID": "ses_root", "parentID": message_id}
+            },
+        },
+    )
+    for session_id in ("ses_root", "ses_child"):
+        client.observe_event(
+            "ses_root", {"type": "session.idle", "properties": {"sessionID": session_id}}
+        )
+    assert client.reconcile("ses_root") == "incomplete"
+
+
+def test_new_unlinked_child_cannot_complete_but_baseline_child_is_preserved(
+    legacy_server: ThreadingHTTPServer,
+) -> None:
+    client = LegacyClient(f"http://127.0.0.1:{legacy_server.server_port}", "pass")
+    message_id = client.prompt_async("ses_root", [{"type": "text", "text": "fixture"}])
+    client.observe_event(
+        "ses_root",
+        {
+            "type": "message.updated",
+            "properties": {
+                "info": {"role": "assistant", "sessionID": "ses_root", "parentID": message_id}
+            },
+        },
+    )
+    for session_id in ("ses_root", "ses_child"):
+        client.observe_event(
+            "ses_root", {"type": "session.idle", "properties": {"sessionID": session_id}}
+        )
+    assert client.reconcile("ses_root") == "complete"
+    LegacyStub.extra_child = True
+    assert client.reconcile("ses_root") == "incomplete"
+
+
+def test_preexisting_unlinked_child_is_excluded_by_operation_baseline(
+    legacy_server: ThreadingHTTPServer,
+) -> None:
+    client = LegacyClient(f"http://127.0.0.1:{legacy_server.server_port}", "pass")
+    message_id = client.prompt_async("ses_root", [{"type": "text", "text": "fixture"}])
+    LegacyStub.include_task_part = False
+    client.observe_event(
+        "ses_root",
+        {
+            "type": "message.updated",
+            "properties": {
+                "info": {"role": "assistant", "sessionID": "ses_root", "parentID": message_id}
+            },
+        },
+    )
+    client.observe_event(
+        "ses_root", {"type": "session.idle", "properties": {"sessionID": "ses_root"}}
+    )
+    assert client.reconcile("ses_root") == "complete"
+    assert ("GET", "/session/ses_child/message") not in LegacyStub.calls

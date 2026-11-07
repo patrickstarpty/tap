@@ -143,6 +143,7 @@ def classify_session(
 @dataclass
 class _Operation:
     user_message_id: str
+    baseline_children: frozenset[str]
     current_assistant_seen: bool = False
     idle_sessions: set[str] = field(default_factory=set)
 
@@ -219,8 +220,16 @@ class LegacyClient:
 
     def prompt_async(self, session_id: str, parts: list[dict[str, object]]) -> str:
         self._check_id(session_id)
+        baseline_status, baseline = self._request(
+            "GET", f"/session/{session_id}/children"
+        )
+        baseline_children = self._child_ids(baseline, session_id)
+        if baseline_status != 200 or baseline_children is None:
+            raise ValueError("child baseline unavailable before prompt")
         message_id = "msg_" + secrets.token_hex(12)
-        self._operations[session_id] = _Operation(message_id)
+        self._operations[session_id] = _Operation(
+            message_id, frozenset(baseline_children)
+        )
         try:
             status, _ = self._request(
                 "POST",
@@ -278,45 +287,50 @@ class LegacyClient:
         child_status, raw_children = self._request(
             "GET", f"/session/{session_id}/children"
         )
-        if (
-            status != 200
-            or not isinstance(messages, list)
-            or child_status != 200
-            or not isinstance(raw_children, list)
-        ):
+        if status != 200 or not isinstance(messages, list) or child_status != 200:
+            return "incomplete"
+        observed_children = self._child_ids(raw_children, session_id)
+        if observed_children is None:
             return "incomplete"
         linked_child_ids: set[str] = set()
         for entry in messages:
             if not isinstance(entry, dict) or not isinstance(entry.get("info"), dict):
                 continue
-            if entry["info"].get("parentID") != operation.user_message_id:
+            if (
+                entry["info"].get("role") != "assistant"
+                or entry["info"].get("parentID") != operation.user_message_id
+            ):
                 continue
-            for part in entry.get("parts", []):
+            parts = entry.get("parts")
+            if not isinstance(parts, list):
+                return "incomplete"
+            for part in parts:
                 if (
                     isinstance(part, dict)
                     and part.get("type") == "tool"
                     and part.get("tool") == "task"
                 ):
                     state = part.get("state")
-                    if isinstance(state, dict) and isinstance(
-                        state.get("metadata"), dict
+                    metadata = (
+                        state.get("metadata") if isinstance(state, dict) else None
+                    )
+                    child_id = (
+                        metadata.get("sessionId")
+                        if isinstance(metadata, dict)
+                        else None
+                    )
+                    if not isinstance(child_id, str) or not _SESSION_ID.fullmatch(
+                        child_id
                     ):
-                        child_id = state["metadata"].get("sessionId")
-                        if isinstance(child_id, str):
-                            linked_child_ids.add(child_id)
+                        return "incomplete"
+                    linked_child_ids.add(child_id)
+        if not observed_children.difference(operation.baseline_children).issubset(
+            linked_child_ids
+        ):
+            return "incomplete"
         children: list[dict[str, object]] = []
         for child_id in linked_child_ids:
-            raw = next(
-                (
-                    child
-                    for child in raw_children
-                    if isinstance(child, dict)
-                    and child.get("id") == child_id
-                    and child.get("parentID") == session_id
-                ),
-                None,
-            )
-            if raw is None or not _SESSION_ID.fullmatch(child_id):
+            if child_id not in observed_children:
                 return "incomplete"
             child_message_status, child_messages = self._request(
                 "GET", f"/session/{child_id}/message"
@@ -340,3 +354,17 @@ class LegacyClient:
     def _check_id(session_id: str) -> None:
         if not _SESSION_ID.fullmatch(session_id):
             raise ValueError("invalid session ID")
+
+    @staticmethod
+    def _child_ids(raw_children: object, parent_id: str) -> set[str] | None:
+        if not isinstance(raw_children, list):
+            return None
+        result: set[str] = set()
+        for child in raw_children:
+            if not isinstance(child, dict) or child.get("parentID") != parent_id:
+                return None
+            child_id = child.get("id")
+            if not isinstance(child_id, str) or not _SESSION_ID.fullmatch(child_id):
+                return None
+            result.add(child_id)
+        return result

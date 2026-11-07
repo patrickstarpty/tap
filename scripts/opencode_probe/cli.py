@@ -139,14 +139,14 @@ def make_child_env(
     return env
 
 
-def validate_effective_config(
+def validate_snapshot(
     root: Path,
-    env: dict[str, str],
-    effective: object,
     profile_hashes: dict[str, str],
     config_digest: str,
-) -> None:
-    """Check frozen files and the CLI-resolved V1 config before any prompt."""
+) -> dict[str, dict[str, object]]:
+    """Reject altered discovery inputs before OpenCode loads configuration."""
+    if root.is_symlink() or (root / ".opencode").is_symlink():
+        raise ValueError("effective config snapshot is symlinked")
     config_path = root / ".opencode/opencode.json"
     agent_dir = root / ".opencode/agents"
     if (
@@ -177,6 +177,18 @@ def validate_effective_config(
         if not isinstance(profile, dict) or profile.get("name") != path.stem:
             raise ValueError("effective profile snapshot mismatch")
         expected_profiles[path.stem] = profile
+    return expected_profiles
+
+
+def validate_effective_config(
+    root: Path,
+    env: dict[str, str],
+    effective: object,
+    profile_hashes: dict[str, str],
+    config_digest: str,
+) -> None:
+    """Check frozen files again and validate the CLI-resolved V1 config."""
+    expected_profiles = validate_snapshot(root, profile_hashes, config_digest)
     if not isinstance(effective, dict):
         raise ValueError("effective config is not an object")
     inline = json.loads(env["OPENCODE_CONFIG_CONTENT"])

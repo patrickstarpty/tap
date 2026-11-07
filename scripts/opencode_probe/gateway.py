@@ -219,10 +219,13 @@ class BudgetGate:
             with self._lock:
                 self._sockets.discard(connection)
 
-    def _expire(self) -> None:
+    def _close(self, *, expired: bool) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
-            self.budget_exceeded = True
+            if expired:
+                self.budget_exceeded = True
             connections = tuple(self._sockets)
         for connection in connections:
             try:
@@ -230,6 +233,9 @@ class BudgetGate:
             except OSError:
                 pass
             connection.close()
+
+    def _expire(self) -> None:
+        self._close(expired=True)
 
     @property
     def url(self) -> str:
@@ -462,7 +468,7 @@ class BudgetGate:
     def __exit__(self, *_args: object) -> None:
         if self._timer is not None:
             self._timer.cancel()
-        self._expire()
+        self._close(expired=False)
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.opencode_probe.legacy import LegacyClient
-from scripts.opencode_probe.cli import validate_effective_config
+from scripts.opencode_probe.cli import validate_effective_config, validate_snapshot
 
 _MAX_LINE = 4096
 _MAX_LINES = 512
@@ -141,6 +141,7 @@ async def serve_probe(
     """Start pinned legacy serve, verify /doc, then reap its process group."""
     if not binary_argv or not env.get("OPENCODE_SERVER_PASSWORD"):
         raise ValueError("serve requires explicit binary and task password")
+    validate_snapshot(cwd, profile_hashes, config_digest)
     version = await run_probe(
         ProbeRun(binary_argv + ("--version",), cwd, env, min(timeout_seconds, 10))
     )

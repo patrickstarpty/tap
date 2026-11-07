@@ -367,6 +367,46 @@ def test_usage_record_keeps_unknown_distinct_from_zero(
         assert gate.records[0].estimated_cost_usd == pytest.approx(0.000003)
 
 
+@pytest.mark.parametrize("make_call", [False, True])
+def test_clean_gate_exit_preserves_budget_status(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread], make_call: bool
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=2,
+        max_seconds=5,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        if make_call:
+            assert send(gate) == 200
+        assert not gate.budget_exceeded
+    assert not gate.budget_exceeded
+
+
+def test_actual_gate_deadline_marks_budget_exhausted(
+    upstream: tuple[ThreadingHTTPServer, threading.Thread],
+) -> None:
+    server, _ = upstream
+    with BudgetGate(
+        f"http://127.0.0.1:{server.server_port}",
+        "secret-upstream",
+        max_calls=2,
+        max_seconds=1,
+        max_cost_usd=0.05,
+        input_price_per_million=1.0,
+        output_price_per_million=2.0,
+        max_input_tokens=1000,
+    ) as gate:
+        time.sleep(1.1)
+        assert gate.budget_exceeded
+    assert gate.budget_exceeded
+
+
 @pytest.mark.parametrize(
     "extra",
     [

@@ -153,3 +153,46 @@ async def test_serve_rejects_unapproved_effective_config_before_launch(tmp_path:
         ):
             pytest.fail("unapproved config reached serve")
     assert not (tmp_path / "serve.pid").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation", ["config_changed", "config_symlink", "profile_changed", "profile_symlink"]
+)
+async def test_invalid_snapshot_never_reaches_config_loader(tmp_path: Path, mutation: str) -> None:
+    from scripts.opencode_probe.cli import make_child_env
+    from scripts.opencode_probe.models import ProbeAgent
+    from scripts.opencode_probe.process import serve_probe
+    from scripts.opencode_probe.profiles import export_probe_config, export_profiles
+
+    digest = export_probe_config(tmp_path)
+    profiles = export_profiles(
+        tmp_path,
+        (ProbeAgent("orchestrator", "r1", "fixture", "Inspect", ("read",), True),),
+        frozenset({"orchestrator"}),
+    )
+    env = make_child_env(tmp_path, "http://127.0.0.1:54321", "scoped", "fixture-password")
+    target = tmp_path / (
+        ".opencode/opencode.json"
+        if mutation.startswith("config")
+        else ".opencode/agents/orchestrator.md"
+    )
+    if mutation.endswith("symlink"):
+        outside = tmp_path / "unapproved-input"
+        outside.write_bytes(target.read_bytes())
+        target.unlink()
+        target.symlink_to(outside)
+    else:
+        target.write_text("unapproved")
+    with pytest.raises(ValueError, match="snapshot"):
+        async with serve_probe(
+            (sys.executable, str(STUB)),
+            tmp_path,
+            env,
+            timeout_seconds=5,
+            profile_hashes=profiles,
+            config_digest=digest,
+        ):
+            pytest.fail("invalid snapshot reached serve")
+    assert not (tmp_path / "debug.pid").exists()
+    assert not (tmp_path / "serve.pid").exists()

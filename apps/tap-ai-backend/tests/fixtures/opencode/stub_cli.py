@@ -59,6 +59,7 @@ elif mode == "--version":
 elif mode == "debug" and sys.argv[2:] == ["config"]:
     import yaml
 
+    Path("debug.pid").write_text(str(os.getpid()))
     config = json.loads(Path(".opencode/opencode.json").read_text())
     inline = json.loads(os.environ["OPENCODE_CONFIG_CONTENT"])
     config.update(inline)
