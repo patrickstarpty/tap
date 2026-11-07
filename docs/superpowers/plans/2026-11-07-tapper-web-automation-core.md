@@ -17,7 +17,7 @@
 - 首版不开放 pause/resume/steer/node retry，不把八项旧门禁改成通过；保留隔离、取消、执行端预算。
 - 生产代码不能 import scripts 探针。需要复用的纯运行组件移入适当生产模块并保留探针兼容入口，禁止两份分叉实现。
 - 模型 key 只在宿主监督端；浏览器无模型 key、Docker socket、编码邮箱或宿主个人目录。只管理带本任务所有权的资源。
-- 真实调用使用原 `/private/tmp/tap-opencode-task03-ledger.jsonl` 与原工作区 `.env`，不得打印或复制 key。当前累计123calls/USD0.1564932，剩余114calls/USD1.9931436；每次真实验证事先限定预算并结算，不盲目重试。
+- 真实调用使用原 `/private/tmp/tap-opencode-task03-ledger.jsonl` 与原工作区 `.env`，不得打印或复制 key。截至 Task 4 验收累计139calls/USD1.1749068（含一次未知用量的保守上限结算），剩余98calls/USD0.97473，无待结算授权；每次真实验证事先限定预算并结算，不盲目重试。
 - 不读取/修改原 `.env.bak-20261015` 或 `apps/tap-ai-backend/.quality/`。默认测试不访问外部网站。用户已允许清理未使用 Docker 镜像缓存，禁止据此清理容器/卷。
 
 ## Task 1：固定 Chromium 执行环境与浏览器引擎
@@ -59,10 +59,10 @@
 
 **Files:** Modify workflow contracts/store/service/http/chat bridge、`apps/tap-ai-frontend/src/features/workflows/{api,components}` 及 Chat 入口；Create artifact fetch adapter；regenerate contracts；frontend tests/e2e。
 
-- [ ] 自然语言任务进入同一 Chat/workflow上下文，补充URL/输入/目标不要求手写定位器。冻结browser任务kind及数据；缺必要信息等待输入。
-- [ ] snapshot投影真实步骤、结果、截图/trace链接和版本摘要；取证据始终服务端校验project作用域，不直连宿主路径。失败、阻塞、取消中、已取消和成功明确区分。
-- [ ] 服务端 availableActions 与UI均只开放运行中cancel、终态replay；拒绝pause/resume/steer/node retry。replay新task/execution引用同一冻结bundle/input，不触发模型；旧结果可查看。
-- [ ] 组件和契约 RED/GREEN，`make contracts`，隔离UI验证真实API与持久记录，不用localStorage模拟完成。更新现状架构与运行指南，提交并审查。
+- [x] 自然语言任务进入同一 Chat/workflow上下文，补充URL/输入/目标不要求手写定位器。冻结browser任务kind及数据；缺必要信息等待输入。
+- [x] snapshot投影真实步骤、结果、截图/trace链接和版本摘要；取证据始终服务端校验project作用域，不直连宿主路径。失败、阻塞、取消中、已取消和成功明确区分。
+- [x] 服务端 availableActions 与UI均只开放运行中cancel、终态replay；拒绝pause/resume/steer/node retry。replay新task/execution引用同一冻结bundle/input，不触发模型；旧结果可查看。
+- [x] 组件和契约 RED/GREEN，`make contracts`，隔离UI验证真实API与持久记录，不用localStorage模拟完成。更新现状架构与运行指南，提交并审查。
 
 ## Task 5：核心闭环真实验收与合入
 
