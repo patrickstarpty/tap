@@ -60,6 +60,17 @@ async def test_timeout_reaps_child_after_leader_exits(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_zero_exit_reaps_descendant_with_closed_stdio(tmp_path: Path) -> None:
+    result = await run_probe(spec(tmp_path, "closed_stdio_orphan"))
+    assert result.exit_code == 0
+    assert not result.timed_out
+    child_pid = int((tmp_path / "child.pid").read_text())
+    await asyncio.sleep(0.1)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+
+
+@pytest.mark.asyncio
 async def test_timeout_force_kills_term_ignoring_descendant(tmp_path: Path) -> None:
     result = await run_probe(spec(tmp_path, "stubborn", timeout=1))
     assert result.timed_out
@@ -88,13 +99,57 @@ async def test_cancellation_reaps_process_group(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_serve_preflight_keeps_server_alive_until_context_exit(tmp_path: Path) -> None:
+    from scripts.opencode_probe.cli import make_child_env
+    from scripts.opencode_probe.models import ProbeAgent
     from scripts.opencode_probe.process import serve_probe
+    from scripts.opencode_probe.profiles import export_probe_config, export_profiles
 
-    env = {"PATH": os.environ["PATH"], "OPENCODE_SERVER_PASSWORD": "fixture-password"}
-    async with serve_probe((sys.executable, str(STUB)), tmp_path, env, timeout_seconds=5) as client:
+    digest = export_probe_config(tmp_path)
+    profiles = export_profiles(
+        tmp_path,
+        (ProbeAgent("orchestrator", "r1", "fixture", "Inspect", ("read",), True),),
+        frozenset({"orchestrator"}),
+    )
+    env = make_child_env(tmp_path, "http://127.0.0.1:54321", "scoped", "fixture-password")
+    async with serve_probe(
+        (sys.executable, str(STUB)),
+        tmp_path,
+        env,
+        timeout_seconds=5,
+        profile_hashes=profiles,
+        config_digest=digest,
+    ) as client:
         client.verify_schema()
         assert (tmp_path / "serve.pid").exists()
         pid = int((tmp_path / "serve.pid").read_text())
         os.kill(pid, 0)
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+@pytest.mark.asyncio
+async def test_serve_rejects_unapproved_effective_config_before_launch(tmp_path: Path) -> None:
+    from scripts.opencode_probe.cli import make_child_env
+    from scripts.opencode_probe.models import ProbeAgent
+    from scripts.opencode_probe.process import serve_probe
+    from scripts.opencode_probe.profiles import export_probe_config, export_profiles
+
+    digest = export_probe_config(tmp_path)
+    profiles = export_profiles(
+        tmp_path,
+        (ProbeAgent("orchestrator", "r1", "fixture", "Inspect", ("read",), True),),
+        frozenset({"orchestrator"}),
+    )
+    env = make_child_env(tmp_path, "http://127.0.0.1:54321", "scoped", "fixture-password")
+    env["STUB_BAD_CONFIG"] = "1"
+    with pytest.raises(ValueError, match="effective"):
+        async with serve_probe(
+            (sys.executable, str(STUB)),
+            tmp_path,
+            env,
+            timeout_seconds=5,
+            profile_hashes=profiles,
+            config_digest=digest,
+        ):
+            pytest.fail("unapproved config reached serve")
+    assert not (tmp_path / "serve.pid").exists()

@@ -10,6 +10,7 @@ from scripts.opencode_probe.legacy import LegacyClient, classify_session, parse_
 
 class LegacyStub(BaseHTTPRequestHandler):
     calls: list[tuple[str, str]] = []
+    last_message_id = "msg_fixture"
 
     def _json(self, status: int, value: object) -> None:
         body = json.dumps(value).encode()
@@ -44,9 +45,42 @@ class LegacyStub(BaseHTTPRequestHandler):
         elif self.path == "/session/ses_root/children":
             self._json(200, [{"id": "ses_child", "parentID": "ses_root"}])
         elif self.path == "/session/ses_root/message":
-            self._json(200, [{"info": {"role": "assistant", "finish": "stop"}, "parts": []}])
+            message_id = type(self).last_message_id
+            self._json(
+                200,
+                [
+                    {"info": {"id": message_id, "role": "user"}, "parts": []},
+                    {
+                        "info": {
+                            "role": "assistant",
+                            "sessionID": "ses_root",
+                            "parentID": message_id,
+                            "finish": "stop",
+                        },
+                        "parts": [
+                            {
+                                "type": "tool",
+                                "tool": "task",
+                                "state": {
+                                    "status": "completed",
+                                    "metadata": {"sessionId": "ses_child"},
+                                },
+                            }
+                        ],
+                    },
+                ],
+            )
         elif self.path == "/session/ses_child/message":
-            self._json(200, [{"info": {"role": "assistant", "finish": "stop"}, "parts": []}])
+            self._json(
+                200,
+                [
+                    {"info": {"id": "msg_child", "role": "user"}, "parts": []},
+                    {
+                        "info": {"role": "assistant", "parentID": "msg_child", "finish": "stop"},
+                        "parts": [],
+                    },
+                ],
+            )
         else:
             self._json(404, {})
 
@@ -55,6 +89,8 @@ class LegacyStub(BaseHTTPRequestHandler):
         if self.path == "/session":
             self._json(200, {"id": "ses_root"})
         elif self.path == "/session/ses_root/prompt_async":
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            type(self).last_message_id = body["messageID"]
             self.send_response(204)
             self.end_headers()
         elif self.path == "/session/ses_root/abort":
@@ -69,6 +105,7 @@ class LegacyStub(BaseHTTPRequestHandler):
 @pytest.fixture
 def legacy_server() -> ThreadingHTTPServer:
     LegacyStub.calls = []
+    LegacyStub.last_message_id = "msg_fixture"
     server = ThreadingHTTPServer(("127.0.0.1", 0), LegacyStub)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -83,15 +120,31 @@ def test_schema_preflight_and_admission_are_distinct(legacy_server: ThreadingHTT
     client.verify_schema()
     root = client.create_session()
     assert root == "ses_root"
-    assert client.prompt_async(root, [{"type": "text", "text": "fixture"}]) == "admitted"
+    assert client.prompt_async(root, [{"type": "text", "text": "fixture"}]).startswith("msg_")
     assert client.abort(root) == "cancel_requested"
     assert classify_session(False, [], []) == "incomplete"
 
 
 def test_reconcile_requires_idle_and_child_terminal(legacy_server: ThreadingHTTPServer) -> None:
     client = LegacyClient(f"http://127.0.0.1:{legacy_server.server_port}", "pass")
-    assert client.reconcile("ses_root", idle_sessions={"ses_root", "ses_child"}) == "complete"
-    assert client.reconcile("ses_root", idle_sessions={"ses_root"}) == "incomplete"
+    message_id = client.prompt_async("ses_root", [{"type": "text", "text": "fixture"}])
+    client.observe_event(
+        "ses_root",
+        {
+            "type": "message.updated",
+            "properties": {
+                "info": {"role": "assistant", "sessionID": "ses_root", "parentID": message_id}
+            },
+        },
+    )
+    client.observe_event(
+        "ses_root", {"type": "session.idle", "properties": {"sessionID": "ses_root"}}
+    )
+    assert client.reconcile("ses_root") == "incomplete"
+    client.observe_event(
+        "ses_root", {"type": "session.idle", "properties": {"sessionID": "ses_child"}}
+    )
+    assert client.reconcile("ses_root") == "complete"
     assert ("GET", "/session/ses_child/message") in LegacyStub.calls
 
 
@@ -106,3 +159,70 @@ def test_sse_parser_handles_split_frames_and_malformed_json() -> None:
         {"id": "evt_1", "type": "session.idle", "properties": {"sessionID": "ses_root"}},
     )
     assert invalid == 1
+
+
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [
+            {"info": {"id": "msg_new", "role": "user"}, "parts": []},
+            {
+                "info": {"role": "assistant", "parentID": "msg_new", "finish": "stop"},
+                "parts": [{"type": "tool", "state": {"status": "running"}}],
+            },
+        ],
+        [
+            {"info": {"id": "msg_old", "role": "user"}, "parts": []},
+            {"info": {"role": "assistant", "parentID": "msg_old", "finish": "stop"}, "parts": []},
+            {"info": {"id": "msg_new", "role": "user"}, "parts": []},
+        ],
+        [
+            {"info": {"id": "msg_new", "role": "user"}, "parts": []},
+            {"info": {"role": "assistant", "parentID": "msg_new", "finish": "length"}, "parts": []},
+        ],
+        [
+            {"info": {"id": "msg_new", "role": "user"}, "parts": []},
+            {
+                "info": {"role": "assistant", "parentID": "msg_new", "finish": "tool-calls"},
+                "parts": [],
+            },
+        ],
+    ],
+)
+def test_current_operation_rejects_unfinished_or_stale_evidence(messages: list[object]) -> None:
+    assert classify_session(True, messages, [], expected_user_id="msg_new") == "incomplete"
+
+
+def test_new_prompt_invalidates_old_idle_and_assistant_events(
+    legacy_server: ThreadingHTTPServer,
+) -> None:
+    client = LegacyClient(f"http://127.0.0.1:{legacy_server.server_port}", "pass")
+    old_id = client.prompt_async("ses_root", [{"type": "text", "text": "old"}])
+    client.observe_event(
+        "ses_root",
+        {
+            "type": "message.updated",
+            "properties": {
+                "info": {"role": "assistant", "sessionID": "ses_root", "parentID": old_id}
+            },
+        },
+    )
+    client.observe_event(
+        "ses_root", {"type": "session.idle", "properties": {"sessionID": "ses_root"}}
+    )
+    new_id = client.prompt_async("ses_root", [{"type": "text", "text": "new"}])
+    assert new_id != old_id
+    client.observe_event(
+        "ses_root", {"type": "session.idle", "properties": {"sessionID": "ses_root"}}
+    )
+    assert client.reconcile("ses_root") == "incomplete"
+    client.observe_event(
+        "ses_root",
+        {
+            "type": "message.updated",
+            "properties": {
+                "info": {"role": "assistant", "sessionID": "ses_root", "parentID": old_id}
+            },
+        },
+    )
+    assert client.reconcile("ses_root") == "incomplete"

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.opencode_probe.cli import main
+from scripts.opencode_probe.cli import main, make_child_env
 
 
 def test_help_lists_bounded_admission_options(capsys: pytest.CaptureFixture[str]) -> None:
@@ -75,3 +75,49 @@ def test_child_env_is_isolated_and_uses_scoped_token(
     assert config["enabled_providers"] == ["litellm"]
     assert config["provider"]["litellm"]["options"]["baseURL"] == "http://127.0.0.1:54321/v1"
     assert config["provider"]["litellm"]["options"]["apiKey"] == "scoped-token"
+
+
+def test_reused_isolation_directories_are_rejected(tmp_path: Path) -> None:
+    from scripts.opencode_probe.cli import make_child_env
+
+    (tmp_path / "home").mkdir()
+    with pytest.raises(ValueError, match="fresh"):
+        make_child_env(tmp_path, "http://127.0.0.1:54321", "scoped", "password")
+
+
+def test_ancestor_project_config_is_rejected(tmp_path: Path) -> None:
+    from scripts.opencode_probe.cli import make_child_env
+
+    (tmp_path / ".opencode").mkdir()
+    child = tmp_path / "workspace"
+    child.mkdir()
+    with pytest.raises(ValueError, match="ancestor"):
+        make_child_env(child, "http://127.0.0.1:54321", "scoped", "password")
+
+
+def test_effective_config_rejects_extra_agent_and_changed_profile(tmp_path: Path) -> None:
+    from scripts.opencode_probe.cli import validate_effective_config
+    from scripts.opencode_probe.models import ProbeAgent
+    from scripts.opencode_probe.profiles import export_probe_config, export_profiles
+
+    digest = export_probe_config(tmp_path)
+    profiles = export_profiles(
+        tmp_path,
+        (ProbeAgent("orchestrator", "r1", "fixture", "Inspect", ("read",), True),),
+        frozenset({"orchestrator"}),
+    )
+    env = make_child_env(tmp_path, "http://127.0.0.1:54321", "scoped", "password")
+    config = json.loads((tmp_path / ".opencode/opencode.json").read_text())
+    config.update(json.loads(env["OPENCODE_CONFIG_CONTENT"]))
+    config["agent"]["orchestrator"] = {
+        "mode": "primary",
+        "model": "litellm/qwen-plus",
+        "permission": {
+            "*": "deny",
+            "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny"},
+            "task": "deny",
+        },
+    }
+    config["agent"]["sneaky"] = {"permission": {"*": "allow"}}
+    with pytest.raises(ValueError, match="effective"):
+        validate_effective_config(tmp_path, env, config, profiles, digest)

@@ -4,6 +4,8 @@ import base64
 import http.client
 import json
 import re
+import secrets
+from dataclasses import dataclass, field
 from collections.abc import Iterable
 from urllib.parse import urlsplit
 
@@ -54,36 +56,73 @@ def parse_sse(chunks: Iterable[bytes]) -> tuple[tuple[dict[str, object], ...], i
     return tuple(events), invalid
 
 
-def _messages_terminal(messages: list[object]) -> str:
-    finished = False
-    for entry in messages:
-        if not isinstance(entry, dict):
+def _latest_user_id(messages: list[object]) -> str | None:
+    for entry in reversed(messages):
+        if isinstance(entry, dict) and isinstance(entry.get("info"), dict):
+            info = entry["info"]
+            user_id = info.get("id")
+            if info.get("role") == "user" and isinstance(user_id, str):
+                return user_id
+    return None
+
+
+def _messages_terminal(messages: list[object], expected_user_id: str) -> str:
+    start = next(
+        (
+            i
+            for i, entry in enumerate(messages)
+            if isinstance(entry, dict)
+            and isinstance(entry.get("info"), dict)
+            and entry["info"].get("role") == "user"
+            and entry["info"].get("id") == expected_user_id
+        ),
+        None,
+    )
+    if start is None:
+        return "incomplete"
+    last_assistant: dict[str, object] | None = None
+    for entry in messages[start + 1 :]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("info"), dict):
             return "incomplete"
-        info = entry.get("info")
-        if not isinstance(info, dict):
+        info = entry["info"]
+        if info.get("role") == "user":
             return "incomplete"
         if info.get("error"):
             return "failed"
-        if info.get("role") == "assistant" and info.get("finish"):
-            finished = True
         parts = entry.get("parts")
         if not isinstance(parts, list):
             return "incomplete"
         for part in parts:
             if isinstance(part, dict) and part.get("type") == "tool":
                 state = part.get("state")
-                if isinstance(state, dict) and state.get("status") == "error":
+                if not isinstance(state, dict):
+                    return "incomplete"
+                if state.get("status") == "error":
                     return "failed"
-    return "complete" if finished else "incomplete"
+                if state.get("status") != "completed":
+                    return "incomplete"
+        if info.get("role") == "assistant":
+            if info.get("parentID") != expected_user_id:
+                return "incomplete"
+            last_assistant = info
+    return (
+        "complete"
+        if last_assistant and last_assistant.get("finish") == "stop"
+        else "incomplete"
+    )
 
 
 def classify_session(
-    idle_seen: bool, messages: list[object], children: list[dict[str, object]]
+    idle_seen: bool,
+    messages: list[object],
+    children: list[dict[str, object]],
+    *,
+    expected_user_id: str | None = None,
 ) -> str:
-    """Idle and terminal assistant facts are distinct requirements."""
-    if not idle_seen:
+    """Require current user input, fresh idle, and final assistant/tool facts."""
+    if not idle_seen or expected_user_id is None:
         return "incomplete"
-    root = _messages_terminal(messages)
+    root = _messages_terminal(messages, expected_user_id)
     if root != "complete":
         return root
     for child in children:
@@ -92,10 +131,20 @@ def classify_session(
         child_messages = child.get("messages")
         if not isinstance(child_messages, list):
             return "incomplete"
-        outcome = _messages_terminal(child_messages)
+        child_user_id = _latest_user_id(child_messages)
+        if child_user_id is None:
+            return "incomplete"
+        outcome = _messages_terminal(child_messages, child_user_id)
         if outcome != "complete":
             return outcome
     return "complete"
+
+
+@dataclass
+class _Operation:
+    user_message_id: str
+    current_assistant_seen: bool = False
+    idle_sessions: set[str] = field(default_factory=set)
 
 
 class LegacyClient:
@@ -121,6 +170,7 @@ class LegacyClient:
             "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
         )
         self._timeout = timeout_seconds
+        self._operations: dict[str, _Operation] = {}
 
     def _request(
         self, method: str, path: str, body: object | None = None
@@ -169,12 +219,48 @@ class LegacyClient:
 
     def prompt_async(self, session_id: str, parts: list[dict[str, object]]) -> str:
         self._check_id(session_id)
-        status, _ = self._request(
-            "POST", f"/session/{session_id}/prompt_async", {"parts": parts}
-        )
-        if status != 204:
-            raise ValueError("prompt admission failed")
-        return "admitted"
+        message_id = "msg_" + secrets.token_hex(12)
+        self._operations[session_id] = _Operation(message_id)
+        try:
+            status, _ = self._request(
+                "POST",
+                f"/session/{session_id}/prompt_async",
+                {"parts": parts, "messageID": message_id},
+            )
+            if status != 204:
+                raise ValueError("prompt admission failed")
+        except Exception:
+            self._operations.pop(session_id, None)
+            raise
+        return message_id
+
+    def observe_event(self, root_session_id: str, event: dict[str, object]) -> None:
+        """Accept live events only after the current operation was admitted."""
+        operation = self._operations.get(root_session_id)
+        if operation is None:
+            return
+        properties = event.get("properties")
+        if not isinstance(properties, dict):
+            return
+        if event.get("type") == "message.updated":
+            info = properties.get("info")
+            if (
+                isinstance(info, dict)
+                and info.get("role") == "assistant"
+                and info.get("sessionID") == root_session_id
+                and info.get("parentID") == operation.user_message_id
+            ):
+                operation.current_assistant_seen = True
+        elif operation.current_assistant_seen and (
+            event.get("type") == "session.idle"
+            or (
+                event.get("type") == "session.status"
+                and properties.get("status") == {"type": "idle"}
+            )
+        ):
+            session_id = properties.get("sessionID")
+            if isinstance(session_id, str) and _SESSION_ID.fullmatch(session_id):
+                operation.idle_sessions.add(session_id)
 
     def abort(self, session_id: str) -> str:
         self._check_id(session_id)
@@ -183,8 +269,11 @@ class LegacyClient:
             raise ValueError("abort request failed")
         return "cancel_requested"
 
-    def reconcile(self, session_id: str, *, idle_sessions: set[str]) -> str:
+    def reconcile(self, session_id: str) -> str:
         self._check_id(session_id)
+        operation = self._operations.get(session_id)
+        if operation is None or not operation.current_assistant_seen:
+            return "incomplete"
         status, messages = self._request("GET", f"/session/{session_id}/message")
         child_status, raw_children = self._request(
             "GET", f"/session/{session_id}/children"
@@ -196,12 +285,38 @@ class LegacyClient:
             or not isinstance(raw_children, list)
         ):
             return "incomplete"
+        linked_child_ids: set[str] = set()
+        for entry in messages:
+            if not isinstance(entry, dict) or not isinstance(entry.get("info"), dict):
+                continue
+            if entry["info"].get("parentID") != operation.user_message_id:
+                continue
+            for part in entry.get("parts", []):
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "tool"
+                    and part.get("tool") == "task"
+                ):
+                    state = part.get("state")
+                    if isinstance(state, dict) and isinstance(
+                        state.get("metadata"), dict
+                    ):
+                        child_id = state["metadata"].get("sessionId")
+                        if isinstance(child_id, str):
+                            linked_child_ids.add(child_id)
         children: list[dict[str, object]] = []
-        for raw in raw_children:
-            if not isinstance(raw, dict) or raw.get("parentID") != session_id:
-                return "incomplete"
-            child_id = raw.get("id")
-            if not isinstance(child_id, str) or not _SESSION_ID.fullmatch(child_id):
+        for child_id in linked_child_ids:
+            raw = next(
+                (
+                    child
+                    for child in raw_children
+                    if isinstance(child, dict)
+                    and child.get("id") == child_id
+                    and child.get("parentID") == session_id
+                ),
+                None,
+            )
+            if raw is None or not _SESSION_ID.fullmatch(child_id):
                 return "incomplete"
             child_message_status, child_messages = self._request(
                 "GET", f"/session/{child_id}/message"
@@ -209,9 +324,17 @@ class LegacyClient:
             if child_message_status != 200 or not isinstance(child_messages, list):
                 return "incomplete"
             children.append(
-                {"idle_seen": child_id in idle_sessions, "messages": child_messages}
+                {
+                    "idle_seen": child_id in operation.idle_sessions,
+                    "messages": child_messages,
+                }
             )
-        return classify_session(session_id in idle_sessions, messages, children)
+        return classify_session(
+            session_id in operation.idle_sessions,
+            messages,
+            children,
+            expected_user_id=operation.user_message_id,
+        )
 
     @staticmethod
     def _check_id(session_id: str) -> None:

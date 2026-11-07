@@ -1,5 +1,6 @@
 """Deterministic subprocess fixture for OpenCode process capture."""
 
+import json
 import os
 import subprocess
 import sys
@@ -25,6 +26,14 @@ elif mode == "orphan":
         stderr=sys.stderr,
     )
     Path("child.pid").write_text(str(child.pid))
+elif mode == "closed_stdio_orphan":
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    Path("child.pid").write_text(str(child.pid))
 elif mode == "stubborn":
     child = subprocess.Popen(
         [
@@ -47,8 +56,20 @@ elif mode == "hang":
     time.sleep(30)
 elif mode == "--version":
     print("1.19.5")
+elif mode == "debug" and sys.argv[2:] == ["config"]:
+    import yaml
+
+    config = json.loads(Path(".opencode/opencode.json").read_text())
+    inline = json.loads(os.environ["OPENCODE_CONFIG_CONTENT"])
+    config.update(inline)
+    config["provider"]["litellm"]["options"]["apiKey"] = "***"
+    for path in Path(".opencode/agents").glob("*.md"):
+        profile = yaml.safe_load(path.read_text().split("\n---\n", 1)[0].removeprefix("---\n"))
+        config["agent"][path.stem] = profile
+    if os.environ.get("STUB_BAD_CONFIG"):
+        config["agent"]["sneaky"] = {"permission": {"*": "allow"}}
+    print(json.dumps(config))
 elif mode == "serve":
-    import json
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class Handler(BaseHTTPRequestHandler):

@@ -1,6 +1,7 @@
 """Bounded, task-owned OpenCode subprocess capture."""
 
 import asyncio
+import json
 import os
 import signal
 import socket
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.opencode_probe.legacy import LegacyClient
+from scripts.opencode_probe.cli import validate_effective_config
 
 _MAX_LINE = 4096
 _MAX_LINES = 512
@@ -133,6 +135,8 @@ async def serve_probe(
     env: dict[str, str],
     *,
     timeout_seconds: int,
+    profile_hashes: dict[str, str],
+    config_digest: str,
 ) -> AsyncIterator[LegacyClient]:
     """Start pinned legacy serve, verify /doc, then reap its process group."""
     if not binary_argv or not env.get("OPENCODE_SERVER_PASSWORD"):
@@ -142,6 +146,20 @@ async def serve_probe(
     )
     if version.exit_code != 0 or version.stdout_lines != ("1.19.5",):
         raise ValueError("installed OpenCode version mismatch")
+    effective_capture = await run_probe(
+        ProbeRun(binary_argv + ("debug", "config"), cwd, env, min(timeout_seconds, 10))
+    )
+    if (
+        effective_capture.exit_code != 0
+        or effective_capture.timed_out
+        or effective_capture.truncated
+    ):
+        raise ValueError("effective config preflight failed")
+    try:
+        effective = json.loads("\n".join(effective_capture.stdout_lines))
+    except ValueError as error:
+        raise ValueError("effective config preflight is malformed") from error
+    validate_effective_config(cwd, env, effective, profile_hashes, config_digest)
     with socket.socket() as selector:
         selector.bind(("127.0.0.1", 0))
         port = selector.getsockname()[1]
