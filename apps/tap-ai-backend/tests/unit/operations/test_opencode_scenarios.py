@@ -149,10 +149,21 @@ def test_supervisor_waiter_has_one_durable_first_action_and_stops_before_second(
     process = subprocess.Popen((sys.executable, str(script)), cwd=tmp_path)
     try:
         deadline = time.monotonic() + 3
-        while not (tmp_path / "first.txt").exists() and time.monotonic() < deadline:
+        first_content = owned_pid = None
+        while time.monotonic() < deadline:
+            try:
+                first_content = (tmp_path / "first.txt").read_text()
+            except FileNotFoundError:
+                first_content = None
+            try:
+                owned_pid = (tmp_path / "owned.pid").read_text()
+            except FileNotFoundError:
+                owned_pid = None
+            if first_content == "first" and owned_pid == str(process.pid):
+                break
             time.sleep(0.01)
-        assert (tmp_path / "first.txt").read_text() == "first"
-        assert (tmp_path / "owned.pid").read_text() == str(process.pid)
+        assert first_content == "first"
+        assert owned_pid == str(process.pid)
         assert (tmp_path / "first-action.log").read_bytes() == b"start\n"
         assert scenarios._first_action_count(tmp_path) == 1
     finally:
