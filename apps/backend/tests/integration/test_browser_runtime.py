@@ -4,6 +4,7 @@ import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 import pytest
 
@@ -34,6 +35,14 @@ class FakeDocker:
         self.commands.append((argv, stdin))
         if argv[:2] == ("docker", "network") and "create" in argv:
             return CommandResult(0, "network-id", "")
+        if "/tmp/tapper-task-ca/ca.crt" in argv:
+            return CommandResult(
+                0, "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n", ""
+            )
+        if argv[:3] == ("docker", "network", "inspect"):
+            return CommandResult(
+                0, json.dumps([{"Labels": {"tap.browser.task": "t1"}}]), ""
+            )
         if argv[:2] == ("docker", "inspect"):
             if "--format" in argv:
                 return CommandResult(0, "true", "")
@@ -155,6 +164,181 @@ async def test_execution_limits_reach_container_creation() -> None:
     )
 
 
+class LifecycleDocker:
+    def __init__(self, block: str = "") -> None:
+        self.block = block
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.commands: list[tuple[str, ...]] = []
+        self.containers: set[str] = set()
+        self.networks: set[str] = set()
+
+    async def run(
+        self,
+        argv: tuple[str, ...],
+        stdin: bytes | None = None,
+        *,
+        max_stdout: int = 1_000_000,
+    ) -> CommandResult:
+        self.commands.append(argv)
+        if argv[:3] == ("docker", "network", "create"):
+            self.networks.add(argv[-1])
+            if self.block == "create":
+                self.entered.set()
+                await self.release.wait()
+            return CommandResult(0, "network-id", "")
+        if self.block and self.block in argv:
+            self.entered.set()
+            await self.release.wait()
+        if argv[:3] == ("docker", "network", "rm"):
+            self.networks.discard(argv[-1])
+            return CommandResult(0, argv[-1], "")
+        if argv[:3] == ("docker", "network", "inspect"):
+            return (
+                CommandResult(
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "Labels": {
+                                    "tap.browser.task": argv[-1].removeprefix(
+                                        "tapper-browser-"
+                                    )
+                                }
+                            }
+                        ]
+                    ),
+                    "",
+                )
+                if argv[-1] in self.networks
+                else CommandResult(1, "", "missing")
+            )
+        if argv[:3] == ("docker", "run", "-d"):
+            self.containers.add(argv[argv.index("--name") + 1])
+            return CommandResult(0, "container-id", "")
+        if argv[:2] == ("docker", "inspect"):
+            name = argv[-1]
+            if name not in self.containers:
+                return CommandResult(1, "", "missing")
+            task = (
+                name.removeprefix("tapper-browser-")
+                .removesuffix("-proxy")
+                .removesuffix("-runtime")
+            )
+            return CommandResult(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "Config": {"Labels": {"tap.browser.task": task}},
+                            "NetworkSettings": {
+                                "Networks": {
+                                    f"tapper-browser-{task}": {
+                                        "IPAddress": "172.30.0.2"
+                                    }
+                                }
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ("docker", "stop"):
+            return CommandResult(0, argv[-1], "")
+        if argv[:2] == ("docker", "rm"):
+            self.containers.discard(argv[-1])
+            return CommandResult(0, argv[-1], "")
+        if argv[:3] == ("docker", "exec", "-i") and "/opt/browser/runner.mjs" in argv:
+            return CommandResult(1, "", "stopped")
+        if argv[:3] == ("docker", "exec", "-i") and "/opt/browser/export.mjs" in argv:
+            return CommandResult(1, "", "stopped")
+        if argv[:2] == ("docker", "exec") and "test" in argv:
+            return CommandResult(0, "", "")
+        return CommandResult(0, "ok", "")
+
+
+def _lifecycle_bundle() -> BrowserBundle:
+    script = b"import { test } from '@playwright/test'; test('x', async () => {});"
+    return BrowserBundle(
+        "b",
+        "p",
+        hashlib.sha256(script).hexdigest(),
+        script,
+        hashlib.sha256(b"{}").hexdigest(),
+        ("http://example.test",),
+        "2026-11-07T00:00:00Z",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_setup_prevents_runner_launch() -> None:
+    client = LifecycleDocker("create")
+    runtime = BrowserRuntime(client, "browser:test", evidence_sink=object())
+    running = asyncio.create_task(
+        runtime.execute(
+            _lifecycle_bundle(),
+            {"task_id": "pending", "input_data": {}},
+            BrowserLimits(),
+            execution_id="known",
+        )
+    )
+    await asyncio.wait_for(client.entered.wait(), 1)
+    receipt = await asyncio.wait_for(runtime.cancel_execution("known", "pending"), 2)
+    result = await asyncio.wait_for(running, 2)
+    assert receipt["status"] == "canceled"
+    assert result.status == "canceled"
+    assert not any("/opt/browser/runner.mjs" in cmd for cmd in client.commands)
+    assert not client.networks
+
+
+@pytest.mark.asyncio
+async def test_deadline_bounds_setup_and_inspector_expiry_cleans_proxy() -> None:
+    client = LifecycleDocker("create")
+    runtime = BrowserRuntime(client, "browser:test", evidence_sink=object())
+    started = time.monotonic()
+    result = await asyncio.wait_for(
+        runtime.execute(
+            _lifecycle_bundle(),
+            {"task_id": "deadline", "input_data": {}},
+            BrowserLimits(deadline_seconds=1),
+            execution_id="deadline-run",
+        ),
+        3,
+    )
+    assert result.status != "passed"
+    assert time.monotonic() - started < 3
+    assert not client.networks
+    client.block = ""
+    handle = await runtime.start_inspector("expire", ("http://example.test",), 1)
+    await asyncio.sleep(1.2)
+    assert handle.task_id not in runtime._handles
+    assert not client.containers
+    assert not client.networks
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_export_has_one_confirmed_teardown() -> None:
+    client = LifecycleDocker("/opt/browser/export.mjs")
+    runtime = BrowserRuntime(client, "browser:test", evidence_sink=object())
+    running = asyncio.create_task(
+        runtime.execute(
+            _lifecycle_bundle(),
+            {"task_id": "export", "input_data": {}},
+            BrowserLimits(),
+            execution_id="export-run",
+        )
+    )
+    await asyncio.wait_for(client.entered.wait(), 1)
+    receipt = await asyncio.wait_for(
+        runtime.cancel_execution("export-run", "export"), 2
+    )
+    result = await asyncio.wait_for(running, 2)
+    assert receipt["status"] == "canceled"
+    assert result.status == "canceled"
+    assert not client.containers
+    assert not client.networks
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     os.environ.get("TAP_RUN_BROWSER_RUNTIME_INTEGRATION") != "1",
@@ -199,6 +383,9 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
             "no-new-privileges",
             "--user",
             "10001:10001",
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,size=16m,uid=10001,gid=10001",
             image,
             "node",
             "/opt/browser/synthetic-site.mjs",
@@ -210,6 +397,15 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
         site_ip = json.loads(inspected.stdout)[0]["NetworkSettings"]["Networks"][
             "bridge"
         ]["IPAddress"]
+        for _ in range(50):
+            site_cert = await client.run(
+                ("docker", "exec", site, "cat", "/tmp/site.crt")
+            )
+            if site_cert.exit_code == 0:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("owned HTTPS fixture certificate unavailable")
         runtime = BrowserRuntime(
             client,
             image,
@@ -292,6 +488,58 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
                 assert (await runtime.cancel(second))["stopped"]
         finally:
             assert (await runtime.cancel(inspector))["stopped"]
+        https_runtime = BrowserRuntime(
+            client,
+            image,
+            evidence_sink=Sink(),
+            project_id="p1",
+            test_target=f"https://{site_ip}:8443",
+            test_ca_pem=site_cert.stdout,
+        )
+        https_inspector = await https_runtime.start_inspector(
+            "integration-https", ("https://example.test",), 90
+        )
+        try:
+            secure = await https_runtime.observe(
+                https_inspector,
+                {"type": "navigate", "url": "https://example.test/"},
+            )
+            assert secure.title == "Synthetic Tapper Site", secure.error
+            host_probe = r"""
+const net=require('net'),tls=require('tls'),fs=require('fs');
+setTimeout(()=>process.exit(9),10000).unref();
+const p=new URL(process.env.TAP_BROWSER_PROXY);const raw=net.connect(Number(p.port),p.hostname);
+raw.on('connect',()=>raw.write('CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n'));
+let header='';raw.on('data',function collect(b){header+=b.toString();if(!header.includes('\r\n\r\n'))return;raw.off('data',collect);
+if(!header.startsWith('HTTP/1.1 200'))process.exit(2);
+const secure=tls.connect({socket:raw,servername:'example.test',ca:fs.readFileSync('/home/browser/ca.crt')});
+let response='';secure.on('secureConnect',()=>secure.write('GET / HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n'));
+secure.on('data',b=>response+=b.toString());secure.on('end',()=>process.exit(response.startsWith('HTTP/1.1 403')?0:3));
+secure.on('error',()=>process.exit(4));});
+"""
+            denied_host = await client.run(
+                ("docker", "exec", https_inspector.container, "node", "-e", host_probe)
+            )
+            assert denied_host.exit_code == 0, denied_host.stderr
+            sni_probe = r"""
+const net=require('net'),tls=require('tls'),fs=require('fs');
+setTimeout(()=>process.exit(9),10000).unref();
+const p=new URL(process.env.TAP_BROWSER_PROXY);const raw=net.connect(Number(p.port),p.hostname);
+raw.on('connect',()=>raw.write('CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n'));
+let header='';raw.on('data',function collect(b){header+=b.toString();if(!header.includes('\r\n\r\n'))return;raw.off('data',collect);
+if(!header.startsWith('HTTP/1.1 200'))process.exit(2);
+const secure=tls.connect({socket:raw,servername:'other.test',ca:fs.readFileSync('/home/browser/ca.crt'),
+checkServerIdentity:(_name,cert)=>tls.checkServerIdentity('example.test',cert)});
+let response='';secure.on('secureConnect',()=>secure.write('GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n'));
+secure.on('data',b=>response+=b.toString());secure.on('close',()=>process.exit(response.includes('Synthetic Tapper Site')?3:0));
+secure.on('error',()=>process.exit(0));});
+"""
+            denied_sni = await client.run(
+                ("docker", "exec", https_inspector.container, "node", "-e", sni_probe)
+            )
+            assert denied_sni.exit_code == 0, denied_sni.stderr
+        finally:
+            assert (await https_runtime.cancel(https_inspector))["stopped"]
         script = b"""import { test, expect } from '@playwright/test';
 test('lookup', async ({ page }) => {
   await page.goto('http://example.test/');

@@ -1,6 +1,8 @@
 import dns from 'node:dns/promises';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
+import { createTaskCertificates } from './proxy-cert.mjs';
 
 const privateV4 = (ip) => {
   const n = ip.split('.').map(Number);
@@ -24,10 +26,21 @@ export function validateTarget(raw, allowed) {
   return url;
 }
 
+export function validateInnerRequest(request, outerOrigin, allowed) {
+  const outer = validateTarget(outerOrigin, allowed);
+  if (outer.protocol !== 'https:' || request.servername !== outer.hostname ||
+      request.headers.host !== outer.host || request.headers[':authority'] !== undefined ||
+      !request.url?.startsWith('/') || request.url.startsWith('//') ||
+      /[\r\n]/.test(request.url) || !/^[A-Z]+$/.test(request.method || '')) {
+    throw new Error('HTTPS authority denied');
+  }
+  return true;
+}
+
 async function destination(url, policy) {
   if (policy.test_target) {
     const override = new URL(policy.test_target);
-    if (override.protocol !== 'http:' || net.isIP(override.hostname) !== 4 ||
+    if (override.protocol !== url.protocol || net.isIP(override.hostname) !== 4 ||
         isPublicIP(override.hostname) || !override.port) {
       throw new Error('invalid supervisor test target');
     }
@@ -42,10 +55,12 @@ async function destination(url, policy) {
 
 if (process.env.TAP_BROWSER_PROXY_POLICY) {
   const policy = JSON.parse(process.env.TAP_BROWSER_PROXY_POLICY);
+  const { certificates } = createTaskCertificates(policy.allowed_origins);
   const server = http.createServer(async (req, res) => {
     try {
       const url = validateTarget(req.url, policy.allowed_origins);
       if (url.protocol !== 'http:') throw new Error('HTTPS requires CONNECT');
+      if (req.headers.host !== url.host) throw new Error('HTTP authority denied');
       const target = await destination(url, policy);
       const outbound = http.request({ host: target.host, port: target.port, method: req.method,
         path: url.pathname + url.search, headers: { ...req.headers, host: url.host }, timeout: 15_000 },
@@ -58,12 +73,36 @@ if (process.env.TAP_BROWSER_PROXY_POLICY) {
     try {
       const url = validateTarget(`https://${req.url}`, policy.allowed_origins);
       const target = await destination(url, policy);
-      if (target.synthetic) throw new Error('synthetic HTTPS unsupported');
-      const upstream = net.connect(target.port, target.host);
-      upstream.setTimeout(15_000, () => upstream.destroy());
-      upstream.once('connect', () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-        if (head.length) upstream.write(head); client.pipe(upstream); upstream.pipe(client); });
-      upstream.on('error', () => client.destroy());
+      const identity = certificates.get(url.hostname);
+      if (!identity) throw new Error('HTTPS identity unavailable');
+      const inner = https.createServer({ ...identity, ALPNProtocols: ['http/1.1'],
+        handshakeTimeout: 10_000 }, (innerReq, innerRes) => {
+        try {
+          validateInnerRequest({ method: innerReq.method, url: innerReq.url,
+            headers: innerReq.headers, servername: innerReq.socket.servername }, url.origin,
+          policy.allowed_origins);
+          if (innerReq.rawHeaders.filter((_, i) => i % 2 === 0).filter(x => x.toLowerCase() === 'host').length !== 1) {
+            throw new Error('ambiguous Host');
+          }
+          const options = { host: target.host, port: target.port, servername: url.hostname,
+            rejectUnauthorized: true, method: innerReq.method, path: innerReq.url,
+            headers: { ...innerReq.headers, host: url.host }, timeout: 15_000,
+            ...(target.synthetic ? { ca: policy.test_ca_pem } : {}) };
+          const outbound = https.request(options, upstream => {
+            innerRes.writeHead(upstream.statusCode, upstream.headers); upstream.pipe(innerRes);
+          });
+          outbound.on('error', () => { if (!innerRes.headersSent) innerRes.writeHead(502); innerRes.end(); });
+          innerReq.pipe(outbound);
+        } catch { innerRes.writeHead(403); innerRes.end('destination denied'); }
+      });
+      inner.on('secureConnection', socket => {
+        if (socket.servername !== url.hostname) socket.destroy();
+      });
+      inner.on('tlsClientError', () => client.destroy());
+      client.on('error', () => client.destroy());
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length) client.unshift(head);
+      inner.emit('connection', client);
     } catch { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); }
   });
   server.listen(3128, '0.0.0.0');
