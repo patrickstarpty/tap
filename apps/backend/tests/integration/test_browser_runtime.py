@@ -1,10 +1,12 @@
 import asyncio
+import base64
 import json
 import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
 import time
+import threading
 
 import pytest
 
@@ -33,6 +35,20 @@ class FakeDocker:
         max_stdout: int = 1_000_000,
     ) -> CommandResult:
         self.commands.append((argv, stdin))
+        created = next(
+            (
+                command
+                for command, _ in self.commands
+                if command[:3] == ("docker", "network", "create")
+            ),
+            None,
+        )
+        network = created[-1] if created else ""
+        labels = {
+            created[index + 1].split("=", 1)[0]: created[index + 1].split("=", 1)[1]
+            for index, value in enumerate(created or ())
+            if value == "--label"
+        }
         if argv[:2] == ("docker", "network") and "create" in argv:
             return CommandResult(0, "network-id", "")
         if "/tmp/tapper-task-ca/ca.crt" in argv:
@@ -41,7 +57,7 @@ class FakeDocker:
             )
         if argv[:3] == ("docker", "network", "inspect"):
             return CommandResult(
-                0, json.dumps([{"Labels": {"tap.browser.task": "t1"}}]), ""
+                0, json.dumps([{"Id": "network-id", "Labels": labels}]), ""
             )
         if argv[:2] == ("docker", "inspect"):
             if "--format" in argv:
@@ -51,11 +67,10 @@ class FakeDocker:
                 json.dumps(
                     [
                         {
-                            "Config": {"Labels": {"tap.browser.task": "t1"}},
+                            "Id": "ok",
+                            "Config": {"Labels": labels},
                             "NetworkSettings": {
-                                "Networks": {
-                                    "tapper-browser-t1": {"IPAddress": "172.30.0.2"}
-                                }
+                                "Networks": {network: {"IPAddress": "172.30.0.2"}}
                             },
                         }
                     ]
@@ -152,7 +167,8 @@ async def test_execution_limits_reach_container_creation() -> None:
     browser = next(
         argv
         for argv, _ in client.commands
-        if argv[:3] == ("docker", "run", "-d") and "tapper-browser-t1-runtime" in argv
+        if argv[:3] == ("docker", "run", "-d")
+        and argv[argv.index("--name") + 1].endswith("-runtime")
     )
     assert ("--memory", "256m") == (
         browser[browser.index("--memory")],
@@ -172,6 +188,7 @@ class LifecycleDocker:
         self.commands: list[tuple[str, ...]] = []
         self.containers: set[str] = set()
         self.networks: set[str] = set()
+        self.labels: dict[str, dict[str, str]] = {}
 
     async def run(
         self,
@@ -182,6 +199,11 @@ class LifecycleDocker:
     ) -> CommandResult:
         self.commands.append(argv)
         if argv[:3] == ("docker", "network", "create"):
+            self.labels[argv[-1]] = {
+                argv[index + 1].split("=", 1)[0]: argv[index + 1].split("=", 1)[1]
+                for index, value in enumerate(argv)
+                if value == "--label"
+            }
             self.networks.add(argv[-1])
             if self.block == "create":
                 self.entered.set()
@@ -200,11 +222,8 @@ class LifecycleDocker:
                     json.dumps(
                         [
                             {
-                                "Labels": {
-                                    "tap.browser.task": argv[-1].removeprefix(
-                                        "tapper-browser-"
-                                    )
-                                }
+                                "Id": "network-id",
+                                "Labels": self.labels.get(argv[-1], {}),
                             }
                         ]
                     ),
@@ -214,29 +233,28 @@ class LifecycleDocker:
                 else CommandResult(1, "", "missing")
             )
         if argv[:3] == ("docker", "run", "-d"):
-            self.containers.add(argv[argv.index("--name") + 1])
+            name = argv[argv.index("--name") + 1]
+            self.containers.add(name)
+            self.labels[name] = {
+                argv[index + 1].split("=", 1)[0]: argv[index + 1].split("=", 1)[1]
+                for index, value in enumerate(argv)
+                if value == "--label"
+            }
             return CommandResult(0, "container-id", "")
         if argv[:2] == ("docker", "inspect"):
             name = argv[-1]
             if name not in self.containers:
                 return CommandResult(1, "", "missing")
-            task = (
-                name.removeprefix("tapper-browser-")
-                .removesuffix("-proxy")
-                .removesuffix("-runtime")
-            )
+            network = name.removesuffix("-proxy").removesuffix("-runtime")
             return CommandResult(
                 0,
                 json.dumps(
                     [
                         {
-                            "Config": {"Labels": {"tap.browser.task": task}},
+                            "Id": "container-id",
+                            "Config": {"Labels": self.labels.get(name, {})},
                             "NetworkSettings": {
-                                "Networks": {
-                                    f"tapper-browser-{task}": {
-                                        "IPAddress": "172.30.0.2"
-                                    }
-                                }
+                                "Networks": {network: {"IPAddress": "172.30.0.2"}}
                             },
                         }
                     ]
@@ -337,6 +355,208 @@ async def test_cancel_during_export_has_one_confirmed_teardown() -> None:
     assert result.status == "canceled"
     assert not client.containers
     assert not client.networks
+
+
+class SuccessfulOutputDocker:
+    async def run(
+        self,
+        argv: tuple[str, ...],
+        stdin: bytes | None = None,
+        *,
+        max_stdout: int = 1_000_000,
+    ) -> CommandResult:
+        if "/opt/browser/runner.mjs" in argv:
+            return CommandResult(0, '{"nonce":"n"}', "")
+        if "/opt/browser/export.mjs" in argv:
+            result = {
+                "nonce": "n",
+                "passed": 1,
+                "skipped": 0,
+                "steps": [],
+                "evidence": [
+                    {"kind": "screenshot", "name": "shot.png"},
+                    {"kind": "trace", "name": "trace.zip"},
+                ],
+            }
+            files = (
+                ("result.json", json.dumps(result).encode()),
+                ("shot.png", b"\x89PNG\r\n\x1a\nshot"),
+                ("trace.zip", b"PK\x03\x04trace"),
+            )
+            return CommandResult(
+                0,
+                json.dumps(
+                    [
+                        {"name": name, "data": base64.b64encode(data).decode()}
+                        for name, data in files
+                    ]
+                ),
+                "",
+            )
+        return CommandResult(0, "ok", "")
+
+
+def _fast_owned_environment(
+    monkeypatch: pytest.MonkeyPatch, runtime: BrowserRuntime
+) -> None:
+    async def create(*args: object, **kwargs: object) -> tuple[str, str, str]:
+        return (
+            "tapper-browser-fast",
+            "tapper-browser-fast-proxy",
+            "tapper-browser-fast-runtime",
+        )
+
+    async def cleanup(*args: object, **kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(runtime, "_create_environment", create)
+    monkeypatch.setattr(runtime, "_cleanup", cleanup)
+
+
+@pytest.mark.asyncio
+async def test_slow_sink_cannot_publish_passed_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SlowSink:
+        def persist(
+            self,
+            project_id: str,
+            task_id: str,
+            execution_id: str,
+            kind: str,
+            data: bytes,
+            max_bytes: int,
+        ) -> Evidence:
+            time.sleep(0.4)
+            return Evidence(
+                kind,
+                f"{project_id}/{task_id}/{kind}",
+                hashlib.sha256(data).hexdigest(),
+                len(data),
+            )
+
+    runtime = BrowserRuntime(
+        SuccessfulOutputDocker(), "browser:test", evidence_sink=SlowSink()
+    )
+    _fast_owned_environment(monkeypatch, runtime)
+    started = time.monotonic()
+    result = await asyncio.wait_for(
+        runtime.execute(
+            _lifecycle_bundle(),
+            {"task_id": "slow", "input_data": {}},
+            BrowserLimits(deadline_seconds=1),
+            execution_id="slow-run",
+        ),
+        2,
+    )
+    assert result.status != "passed"
+    assert time.monotonic() - started < 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_remains_responsive_during_synchronous_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+
+    class SlowSink:
+        def persist(
+            self,
+            project_id: str,
+            task_id: str,
+            execution_id: str,
+            kind: str,
+            data: bytes,
+            max_bytes: int,
+        ) -> Evidence:
+            entered.set()
+            time.sleep(1.5)
+            return Evidence(
+                kind,
+                f"{project_id}/{task_id}/{kind}",
+                hashlib.sha256(data).hexdigest(),
+                len(data),
+            )
+
+    runtime = BrowserRuntime(
+        SuccessfulOutputDocker(), "browser:test", evidence_sink=SlowSink()
+    )
+    _fast_owned_environment(monkeypatch, runtime)
+    running = asyncio.create_task(
+        runtime.execute(
+            _lifecycle_bundle(),
+            {"task_id": "sink", "input_data": {}},
+            BrowserLimits(deadline_seconds=5),
+            execution_id="sink-run",
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 1)
+    started = time.monotonic()
+    receipt = await asyncio.wait_for(runtime.cancel_execution("sink-run", "sink"), 1)
+    result = await asyncio.wait_for(running, 1)
+    assert time.monotonic() - started < 1
+    assert receipt["status"] == result.status == "canceled"
+
+
+@pytest.mark.asyncio
+async def test_failed_initial_network_create_does_not_clean_existing_resources() -> (
+    None
+):
+    class CollisionDocker(LifecycleDocker):
+        async def run(
+            self,
+            argv: tuple[str, ...],
+            stdin: bytes | None = None,
+            *,
+            max_stdout: int = 1_000_000,
+        ) -> CommandResult:
+            if argv[:3] == ("docker", "network", "create"):
+                self.commands.append(argv)
+                self.networks.add(argv[-1])
+                self.containers.update((f"{argv[-1]}-proxy", f"{argv[-1]}-runtime"))
+                return CommandResult(1, "", "network already exists")
+            return await super().run(argv, stdin, max_stdout=max_stdout)
+
+    client = CollisionDocker()
+    runtime = BrowserRuntime(client, "browser:test", evidence_sink=object())
+    result = await runtime.execute(
+        _lifecycle_bundle(),
+        {"task_id": "collision", "input_data": {}},
+        BrowserLimits(),
+        execution_id="known",
+    )
+    assert result.status != "passed"
+    assert not any(argv[:2] == ("docker", "stop") for argv in client.commands)
+    assert not any(argv[:3] == ("docker", "network", "rm") for argv in client.commands)
+    assert client.networks and client.containers
+
+
+@pytest.mark.asyncio
+async def test_expiry_and_user_cancel_share_inspector_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = LifecycleDocker()
+    runtime = BrowserRuntime(client, "browser:test")
+    handle = await runtime.start_inspector("joined", ("http://example.test",), 1)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def cleanup(*args: object, **kwargs: object) -> bool:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(runtime, "_cleanup", cleanup)
+    await asyncio.wait_for(entered.wait(), 2)  # expiry owns the first cleanup
+    user_cancel = asyncio.create_task(runtime.cancel(handle))
+    await asyncio.sleep(0)
+    release.set()
+    receipt = await asyncio.wait_for(user_cancel, 1)
+    assert receipt["status"] == "canceled"
+    assert calls == 1
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,12 @@ class DockerClient(Protocol):
 
 
 class EvidenceSink(Protocol):
+    """Write immutable evidence bytes only; calls run in a worker thread.
+
+    A call already in progress may finish after deadline/cancel, so the sink must
+    never publish or modify terminal execution status.
+    """
+
     def persist(
         self,
         project_id: str,
@@ -141,9 +147,32 @@ class InspectorHandle:
 
 
 @dataclass
+class OwnedResources:
+    task_id: str
+    attempt_id: str
+    network: str
+    proxy: str
+    browser: str
+    network_attempted: bool = False
+    proxy_attempted: bool = False
+    browser_attempted: bool = False
+    network_id: str | None = None
+    proxy_id: str | None = None
+    browser_id: str | None = None
+
+    @classmethod
+    def new(cls, task_id: str) -> OwnedResources:
+        attempt_id = uuid.uuid4().hex
+        network = f"tapper-browser-{attempt_id}"
+        return cls(
+            task_id, attempt_id, network, f"{network}-proxy", f"{network}-runtime"
+        )
+
+
+@dataclass
 class ExecutionState:
     task_id: str
-    resource_id: str
+    resources: OwnedResources
     deadline_at: float
     owner: asyncio.Task[Any]
     finished: asyncio.Future[tuple[bool, str]]
@@ -181,7 +210,8 @@ class BrowserRuntime:
         self._executions: dict[str, ExecutionState] = {}
         self._inspector_expiries: dict[str, asyncio.Task[None]] = {}
         self._inspector_deadlines: dict[str, float] = {}
-        self._inspector_locks: dict[str, asyncio.Lock] = {}
+        self._inspector_resources: dict[str, OwnedResources] = {}
+        self._inspector_teardowns: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     async def _call(
         self,
@@ -225,15 +255,24 @@ class BrowserRuntime:
         limits: BrowserLimits | None = None,
         deadline_at: float | None = None,
         state: ExecutionState | None = None,
+        resources: OwnedResources | None = None,
     ) -> tuple[str, str, str]:
         if not _ID.fullmatch(task_id):
             raise ValueError("invalid task ID")
         if not origins or any(validate_origin(origin) != origin for origin in origins):
             raise ValueError("invalid browser origins")
-        network = f"tapper-browser-{task_id}"
-        proxy = f"{network}-proxy"
-        browser = f"{network}-runtime"
-        label = ("--label", f"tap.browser.task={task_id}")
+        resources = resources or OwnedResources.new(task_id)
+        network, proxy, browser = (
+            resources.network,
+            resources.proxy,
+            resources.browser,
+        )
+        label = (
+            "--label",
+            f"tap.browser.task={task_id}",
+            "--label",
+            f"tap.browser.attempt={resources.attempt_id}",
+        )
         bounds = limits or BrowserLimits(deadline_seconds=deadline)
         deadline_at = deadline_at or time.monotonic() + deadline
 
@@ -242,8 +281,23 @@ class BrowserRuntime:
                 argv, stdin, deadline_at=deadline_at, state=state
             )
 
-        await require(("docker", "network", "create", "--internal", *label, network))
+        async def acquire(argv: tuple[str, ...], kind: str) -> None:
+            if state is not None and state.cancel_requested:
+                raise asyncio.CancelledError
+            setattr(resources, f"{kind}_attempted", True)
+            result = await self._call(argv, deadline_at=deadline_at)
+            if result.exit_code:
+                setattr(resources, f"{kind}_attempted", False)
+                raise RuntimeError(f"Docker command failed: {result.stderr[:200]}")
+            setattr(resources, f"{kind}_id", result.stdout.strip())
+            if state is not None and state.cancel_requested:
+                raise asyncio.CancelledError
+
         try:
+            await acquire(
+                ("docker", "network", "create", "--internal", *label, network),
+                "network",
+            )
             proxy_env = json.dumps(
                 {
                     "allowed_origins": origins,
@@ -252,7 +306,7 @@ class BrowserRuntime:
                 },
                 separators=(",", ":"),
             )
-            await require(
+            await acquire(
                 (
                     "docker",
                     "run",
@@ -286,7 +340,8 @@ class BrowserRuntime:
                     str(min(deadline + 30, 630)),
                     "node",
                     "/opt/browser/site-proxy.mjs",
-                )
+                ),
+                "proxy",
             )
             await require(("docker", "network", "connect", network, proxy))
             proxy_ca = ""
@@ -313,7 +368,7 @@ class BrowserRuntime:
             ]
             if not re.fullmatch(r"[0-9.]+", proxy_ip):
                 raise RuntimeError("proxy has no IPv4 address")
-            await require(
+            await acquire(
                 (
                     "docker",
                     "run",
@@ -355,7 +410,8 @@ class BrowserRuntime:
                     self.image,
                     "sleep",
                     str(min(deadline + 30, 630)),
-                )
+                ),
+                "browser",
             )
             # The helper only changes this browser container's network namespace.
             await require(
@@ -388,25 +444,39 @@ class BrowserRuntime:
             return network, proxy, browser
         except BaseException:
             if state is None:
-                await self._cleanup(network, proxy, browser)
+                await self._cleanup(resources)
             raise
 
-    async def _cleanup(self, network: str, proxy: str, browser: str) -> bool:
+    async def _cleanup(self, resources: OwnedResources) -> bool:
         grace_at = time.monotonic() + 25
-        expected_task = network.removeprefix("tapper-browser-")
 
         async def command(argv: tuple[str, ...]) -> CommandResult:
             return await self._call(argv, deadline_at=grace_at, cleanup=True)
 
+        def owned(
+            detail: dict[str, Any], expected_id: str | None, *, network: bool
+        ) -> bool:
+            labels = detail["Labels"] if network else detail["Config"]["Labels"]
+            return (
+                labels.get("tap.browser.task") == resources.task_id
+                and labels.get("tap.browser.attempt") == resources.attempt_id
+                and (not expected_id or detail["Id"] == expected_id)
+            )
+
         try:
-            for name in (browser, proxy):
+            for name, attempted, expected_id in (
+                (resources.browser, resources.browser_attempted, resources.browser_id),
+                (resources.proxy, resources.proxy_attempted, resources.proxy_id),
+            ):
+                if not attempted:
+                    continue
                 inspected = await command(("docker", "inspect", name))
                 if inspected.exit_code:
                     if "No such" in inspected.stderr or "missing" in inspected.stderr:
                         continue
                     return False
                 detail = json.loads(inspected.stdout)[0]
-                if detail["Config"]["Labels"].get("tap.browser.task") != expected_task:
+                if not owned(detail, expected_id, network=False):
                     return False
                 result = await command(("docker", "stop", "--time", "2", name))
                 if result.exit_code:
@@ -418,16 +488,22 @@ class BrowserRuntime:
                 removed = await command(("docker", "rm", name))
                 if removed.exit_code:
                     return False
-            inspected_network = await command(("docker", "network", "inspect", network))
+            if not resources.network_attempted:
+                return True
+            inspected_network = await command(
+                ("docker", "network", "inspect", resources.network)
+            )
             if inspected_network.exit_code:
                 return (
                     "No such" in inspected_network.stderr
                     or "missing" in inspected_network.stderr
                 )
             network_detail = json.loads(inspected_network.stdout)[0]
-            if network_detail["Labels"].get("tap.browser.task") != expected_task:
+            if not owned(network_detail, resources.network_id, network=True):
                 return False
-            return (await command(("docker", "network", "rm", network))).exit_code == 0
+            return (
+                await command(("docker", "network", "rm", resources.network))
+            ).exit_code == 0
         except (TimeoutError, ValueError, IndexError, KeyError, TypeError):
             return False
 
@@ -436,9 +512,16 @@ class BrowserRuntime:
     ) -> InspectorHandle:
         if not 1 <= deadline <= 600:
             raise ValueError("invalid deadline")
+        if task_id in self._handles:
+            raise ValueError("inspector already active")
         deadline_at = time.monotonic() + deadline
+        resources = OwnedResources.new(task_id)
         network, proxy, browser = await self._create_environment(
-            task_id, allowed_origins, deadline, deadline_at=deadline_at
+            task_id,
+            allowed_origins,
+            deadline,
+            deadline_at=deadline_at,
+            resources=resources,
         )
         try:
             await self._require(
@@ -456,12 +539,13 @@ class BrowserRuntime:
             else:
                 raise RuntimeError("inspector did not become ready")
         except BaseException:
-            await self._cleanup(network, proxy, browser)
+            await self._cleanup(resources)
             raise
         handle = InspectorHandle(task_id, browser, network, proxy, allowed_origins)
         self._handles[task_id] = handle
+        self._inspector_resources[task_id] = resources
         self._inspector_deadlines[task_id] = deadline_at
-        self._inspector_locks[task_id] = asyncio.Lock()
+        self._inspector_teardowns.pop(task_id, None)
         self._inspector_expiries[task_id] = asyncio.create_task(
             self._expire_inspector(handle, deadline_at)
         )
@@ -480,6 +564,43 @@ class BrowserRuntime:
     def _owned(self, handle: InspectorHandle) -> None:
         if self._handles.get(handle.task_id) is not handle:
             raise ValueError("cross-task or stale browser handle")
+
+    async def _persist(
+        self,
+        project_id: str,
+        task_id: str,
+        execution_id: str,
+        kind: str,
+        data: bytes,
+        max_bytes: int,
+        *,
+        deadline_at: float,
+        state: ExecutionState | None = None,
+    ) -> Evidence:
+        if self.evidence_sink is None:
+            raise RuntimeError("browser evidence sink required")
+        if state is not None and state.cancel_requested:
+            raise asyncio.CancelledError
+        remaining = deadline_at - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("browser deadline exceeded")
+        stored = await asyncio.wait_for(
+            asyncio.to_thread(
+                self.evidence_sink.persist,
+                project_id,
+                task_id,
+                execution_id,
+                kind,
+                data,
+                max_bytes,
+            ),
+            timeout=remaining,
+        )
+        if state is not None and state.cancel_requested:
+            raise asyncio.CancelledError
+        if time.monotonic() >= deadline_at:
+            raise TimeoutError("browser deadline exceeded")
+        return stored
 
     async def observe(
         self, handle: InspectorHandle, action: dict[str, Any]
@@ -510,30 +631,41 @@ class BrowserRuntime:
             image = base64.b64decode(screenshot_data, validate=True)
             if len(image) > 2_000_000:
                 raise RuntimeError("inspector screenshot too large")
-            stored = self.evidence_sink.persist(
+            stored = await self._persist(
                 self.project_id,
                 handle.task_id,
                 handle.task_id,
                 "screenshot",
                 image,
                 2_000_000,
+                deadline_at=deadline_at,
             )
             data["screenshot_ref"] = stored.object_ref
         return BrowserObservation(**data)
 
     async def cancel(self, handle: InspectorHandle) -> dict[str, Any]:
         self._owned(handle)
-        async with self._inspector_locks[handle.task_id]:
-            stopped = await self._cleanup(
-                handle.network, handle.proxy, handle.container
-            )
-            if stopped:
-                del self._handles[handle.task_id]
-                self._inspector_deadlines.pop(handle.task_id, None)
-                self._inspector_locks.pop(handle.task_id, None)
-                expiry = self._inspector_expiries.pop(handle.task_id, None)
-                if expiry is not None and expiry is not asyncio.current_task():
-                    expiry.cancel()
+        teardown = self._inspector_teardowns.get(handle.task_id)
+        if teardown is None:
+            teardown = asyncio.create_task(self._teardown_inspector(handle))
+            self._inspector_teardowns[handle.task_id] = teardown
+        return await asyncio.shield(teardown)
+
+    async def _teardown_inspector(self, handle: InspectorHandle) -> dict[str, Any]:
+        resources = self._inspector_resources[handle.task_id]
+        try:
+            stopped = await self._cleanup(resources)
+        except Exception:
+            stopped = False
+        if stopped:
+            self._handles.pop(handle.task_id, None)
+            self._inspector_resources.pop(handle.task_id, None)
+            self._inspector_deadlines.pop(handle.task_id, None)
+            expiry = self._inspector_expiries.pop(handle.task_id, None)
+            if expiry is not None and expiry is not asyncio.current_task():
+                expiry.cancel()
+        else:
+            self._inspector_teardowns.pop(handle.task_id, None)
         return {
             "task_id": handle.task_id,
             "stopped": stopped,
@@ -587,10 +719,10 @@ class BrowserRuntime:
         started_at = datetime.now(UTC).isoformat()
         owner = asyncio.current_task()
         assert owner is not None
-        resource_id = f"{task_id[:40]}-{execution_id[:12]}"
+        resources = OwnedResources.new(task_id)
         state = ExecutionState(
             task_id,
-            resource_id,
+            resources,
             time.monotonic() + limits.deadline_seconds,
             owner,
             asyncio.get_running_loop().create_future(),
@@ -628,11 +760,8 @@ class BrowserRuntime:
             result = receipt("failed", "runtime_error")
         finally:
             state.finalizing = True
-            network = f"tapper-browser-{resource_id}"
             try:
-                stopped = state.stopped or await self._cleanup(
-                    network, f"{network}-proxy", f"{network}-runtime"
-                )
+                stopped = state.stopped or await self._cleanup(resources)
             except Exception:
                 stopped = False
             if not stopped:
@@ -669,21 +798,21 @@ class BrowserRuntime:
             (frozen / "policy.json").write_text(
                 json.dumps({"allowed_origins": bundle.allowed_origins})
             )
-            resource_id = state.resource_id
             mounts = (
                 "--mount",
                 f"type=bind,src={frozen},dst=/opt/browser/frozen,readonly",
                 "--tmpfs",
                 "/opt/browser/output:rw,nosuid,nodev,size=16m,nr_inodes=256,uid=10001,gid=10001",
             )
-            network, proxy, browser = await self._create_environment(
-                resource_id,
+            _, _, browser = await self._create_environment(
+                task_id,
                 bundle.allowed_origins,
                 limits.deadline_seconds,
                 mounts,
                 limits=limits,
                 deadline_at=state.deadline_at,
                 state=state,
+                resources=state.resources,
             )
             # A distinct execution container receives only this frozen entry and output directory.
             result: CommandResult | None = None
@@ -745,7 +874,7 @@ class BrowserRuntime:
                     raise RuntimeError("browser evidence exceeds limit")
                 with path.open("xb") as stream:
                     stream.write(data)
-            state.stopped = await self._cleanup(network, proxy, browser)
+            state.stopped = await self._cleanup(state.resources)
             if not state.stopped:
                 raise RuntimeError("browser cleanup unconfirmed")
             if time.monotonic() >= state.deadline_at:
@@ -785,13 +914,15 @@ class BrowserRuntime:
                     raise RuntimeError("invalid screenshot evidence")
                 if kind == "trace" and not content.startswith(b"PK\x03\x04"):
                     raise RuntimeError("invalid trace evidence")
-                stored = self.evidence_sink.persist(
+                stored = await self._persist(
                     bundle.project_id,
                     task_id,
                     execution_id,
                     kind,
                     content,
                     limits.max_output_bytes,
+                    deadline_at=state.deadline_at,
+                    state=state,
                 )
                 if (
                     stored.sha256 != hashlib.sha256(content).hexdigest()
@@ -799,13 +930,15 @@ class BrowserRuntime:
                 ):
                     raise RuntimeError("evidence sink returned invalid receipt")
                 evidence.append(stored)
-            stored_result = self.evidence_sink.persist(
+            stored_result = await self._persist(
                 bundle.project_id,
                 task_id,
                 execution_id,
                 "result",
                 result_bytes,
                 limits.max_output_bytes,
+                deadline_at=state.deadline_at,
+                state=state,
             )
             if stored_result.sha256 != hashlib.sha256(
                 result_bytes
@@ -817,6 +950,10 @@ class BrowserRuntime:
             passed = int(receipt.get("passed", 0))
             skipped = int(receipt.get("skipped", 0))
             success = execution_succeeded(result.exit_code, passed, skipped, complete)
+            if state.cancel_requested:
+                raise asyncio.CancelledError
+            if time.monotonic() >= state.deadline_at:
+                raise TimeoutError("browser deadline exceeded")
             return BrowserExecution(
                 execution_id,
                 bundle.project_id,
