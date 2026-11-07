@@ -26,6 +26,7 @@ def test_browser_http_rejects_cross_project_and_conflicting_keys(tmp_path):
             {
                 "browser.sessions.create",
                 "browser.sessions.read",
+                "browser.sessions.cancel",
                 "browser.actions.create",
                 "browser.actions.read",
                 "browser.bundles.create",
@@ -74,3 +75,10 @@ def test_browser_http_rejects_cross_project_and_conflicting_keys(tmp_path):
     assert again.json() == first.json()
     assert conflict.status_code == 409
     assert cross.status_code == 403
+    canceled = client.post(
+        f"/api/projects/project-a/browser/sessions/{first.json()['session_id']}/cancel",
+        headers=headers,
+    )
+    assert canceled.status_code == 202
+    assert canceled.json()["cancel_requested"] is True
+    assert canceled.json()["status"] == "pending"

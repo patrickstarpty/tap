@@ -23,6 +23,7 @@ def principal(project_id):
         actions=frozenset(
             {
                 "browser.sessions.create",
+                "browser.actions.create",
                 "browser.bundles.create",
                 "browser.executions.create",
             }
@@ -146,3 +147,37 @@ def test_conflicting_bundle_key_does_not_write_new_task_files(tmp_path):
         )
     after = sorted(p.name for p in (tmp_path / "objects").rglob("*") if p.is_file())
     assert after == before
+
+
+def test_distinct_concurrent_actions_get_unique_ordered_sequences(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    browser = service(tmp_path)
+    actor = principal("project-a")
+    session = browser.create_session(
+        actor,
+        {
+            "task_id": "task-a",
+            "allowed_origins": ["https://example.com"],
+            "deadline_seconds": 60,
+        },
+        "session-key",
+    )
+
+    def create(i):
+        return browser.create_action(
+            actor,
+            session["session_id"],
+            {"type": "snapshot", "marker": i},
+            f"action-{i}",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(create, (1, 2)))
+    assert sorted(item["sequence"] for item in results) == [1, 2]
+    assert (
+        browser.create_action(
+            actor, session["session_id"], {"type": "snapshot", "marker": 1}, "action-1"
+        )["sequence"]
+        == results[0]["sequence"]
+    )

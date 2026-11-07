@@ -625,6 +625,22 @@ async def test_failed_inspector_setup_releases_task_reservation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pending_inspector_cancel_returns_cleanup_receipt() -> None:
+    client = LifecycleDocker("create")
+    runtime = BrowserRuntime(client, "browser:test")
+    pending = asyncio.create_task(
+        runtime.start_inspector("pending", ("http://example.test",), 30)
+    )
+    await asyncio.wait_for(client.entered.wait(), 1)
+    receipt = await asyncio.wait_for(runtime.cancel_inspector("pending"), 2)
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert receipt == {"task_id": "pending", "stopped": True, "status": "canceled"}
+    assert not client.networks
+    assert not client.containers
+
+
+@pytest.mark.asyncio
 async def test_expiry_and_user_cancel_share_inspector_teardown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -148,6 +148,9 @@ class BrowserService:
                 observation=None,
                 owner=None,
                 lease_until=None,
+                next_action_sequence=1,
+                cancel_requested=False,
+                stop_receipt=None,
             ),
         )
         return self._session(row)
@@ -161,6 +164,17 @@ class BrowserService:
             raise Forbidden("browser session unavailable")
         return self._session(row)
 
+    def cancel_session(
+        self, principal: AccessPrincipal, session_id: str
+    ) -> dict[str, Any]:
+        project = self._project(principal, "browser.sessions.cancel")
+        session_id = self._id(session_id, "session_id")
+        row = self.store.get("session", project, session_id)
+        if row is None:
+            raise Forbidden("browser session unavailable")
+        self.store.request_session_cancel(project, session_id)
+        return self._session(self.store.get("session", project, session_id) or row)
+
     @staticmethod
     def _session(row: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -169,6 +183,8 @@ class BrowserService:
             "task_id": row["task_id"],
             "status": row["status"],
             "observation": row["observation"],
+            "cancel_requested": row["cancel_requested"],
+            "stop_receipt": row["stop_receipt"],
             "created_at": row["created_at"],
         }
 
@@ -190,20 +206,18 @@ class BrowserService:
             raise Invalid("invalid browser action")
         if session["status"] not in {"pending", "running", "active"}:
             raise Conflict("browser session unavailable")
-        row = self._insert(
-            "action",
-            project,
-            key,
-            {"session_id": session_id, **body},
-            dict(
-                session_id=session_id,
-                sequence=self.store.next_sequence(project, session_id),
-                status="pending",
-                request=body,
-                observation=None,
-                owner=None,
-            ),
-        )
+        try:
+            row = self.store.insert_action_idempotent(
+                project,
+                session_id,
+                self._key(key),
+                digest({"session_id": session_id, **body}),
+                body,
+            )
+        except ValueError as exc:
+            if str(exc) in {"idempotency conflict", "browser session unavailable"}:
+                raise Conflict(str(exc)) from None
+            raise
         return self._action(row)
 
     def get_action(
@@ -383,22 +397,10 @@ class BrowserService:
         )
         if row is None:
             raise Forbidden("browser execution unavailable")
-        result = self._execution(row)
-        if result["status"] == "passed":
-            try:
-                self.verify_evidence(
-                    project,
-                    row["evidence"] or [],
-                    task_id=row["task_id"],
-                    execution_id=row["id"],
-                )
-            except (ValueError, FileNotFoundError, Forbidden):
-                result.update(status="unknown", failure_code="evidence_unavailable")
-        return result
+        return self._execution(row)
 
-    @staticmethod
-    def _execution(row: dict[str, Any]) -> dict[str, Any]:
-        return {
+    def _execution(self, row: dict[str, Any]) -> dict[str, Any]:
+        result = {
             "execution_id": row["id"],
             "project_id": row["project_id"],
             "task_id": row["task_id"],
@@ -412,6 +414,17 @@ class BrowserService:
             "evidence": row["evidence"] or [],
             "failure_code": row["failure_code"],
         }
+        if result["status"] == "passed":
+            try:
+                self.verify_evidence(
+                    row["project_id"],
+                    row["evidence"] or [],
+                    task_id=row["task_id"],
+                    execution_id=row["id"],
+                )
+            except (ValueError, FileNotFoundError, Forbidden):
+                result.update(status="unknown", failure_code="evidence_unavailable")
+        return result
 
     def cancel_execution(
         self, principal: AccessPrincipal, execution_id: str
@@ -456,6 +469,27 @@ class BrowserService:
             kinds.add(row["kind"])
         if not {"screenshot", "trace", "result"}.issubset(kinds):
             raise ValueError("incomplete browser evidence")
+
+    def verify_inspector_evidence(
+        self, project: str, task_id: str, session_id: str, evidence_id: str
+    ) -> None:
+        session = self.store.get("session", project, session_id)
+        row = self.store.get("evidence", project, evidence_id)
+        if (
+            session is None
+            or session["task_id"] != task_id
+            or row is None
+            or row["task_id"] != task_id
+            or row["session_id"] != session_id
+            or row["execution_id"] is not None
+            or row["kind"] != "screenshot"
+        ):
+            raise Forbidden("browser evidence unavailable")
+        content = self.objects.read(
+            row["object_ref"], row["sha256"], max_bytes=2_000_000
+        )
+        if len(content) != row["size_bytes"]:
+            raise ValueError("browser evidence size mismatch")
 
     def read_evidence(
         self, principal: AccessPrincipal, evidence_id: str

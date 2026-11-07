@@ -87,6 +87,20 @@ class BrowserEvidenceSink:
     def __init__(self, store: BrowserStore, objects: BrowserObjectStore) -> None:
         self.store = store
         self.objects = objects
+        self._lock = threading.RLock()
+        self._sessions: dict[tuple[str, str], str] = {}
+
+    def bind_session(self, project_id: str, task_id: str, session_id: str) -> None:
+        session = self.store.get("session", project_id, session_id)
+        if session is None or session["task_id"] != task_id:
+            raise ValueError("browser session authority unavailable")
+        with self._lock:
+            self._sessions[(project_id, task_id)] = session_id
+
+    def unbind_session(self, project_id: str, task_id: str, session_id: str) -> None:
+        with self._lock:
+            if self._sessions.get((project_id, task_id)) == session_id:
+                self._sessions.pop((project_id, task_id), None)
 
     def persist(
         self,
@@ -97,12 +111,21 @@ class BrowserEvidenceSink:
         data: bytes,
         max_bytes: int,
     ) -> Evidence:
+        with self._lock:
+            session_id = (
+                self._sessions.get((project_id, task_id))
+                if kind == "screenshot" and execution_id == task_id
+                else None
+            )
+        if kind == "screenshot" and execution_id == task_id and session_id is None:
+            raise ValueError("inspector session authority unavailable")
         ref, sha, size = self.objects.persist(data, kind=kind, max_bytes=max_bytes)
         row = self.store.append_evidence(
             dict(
                 project_id=project_id,
                 task_id=task_id,
-                execution_id=execution_id,
+                execution_id=None if session_id else execution_id,
+                session_id=session_id,
                 kind=kind,
                 sha256=sha,
                 object_ref=ref,

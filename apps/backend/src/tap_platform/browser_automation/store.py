@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+import threading
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -36,6 +38,9 @@ sessions = Table(
     Column("observation", JSON),
     Column("owner", String(80)),
     Column("lease_until", String(40)),
+    Column("next_action_sequence", Integer, nullable=False, server_default="1"),
+    Column("cancel_requested", Boolean, nullable=False, server_default="0"),
+    Column("stop_receipt", JSON),
     Column("created_at", String(40), nullable=False),
 )
 actions = Table(
@@ -93,7 +98,8 @@ evidence = Table(
     Column("id", String(36), primary_key=True),
     Column("project_id", String(128), nullable=False),
     Column("task_id", String(80), nullable=False),
-    Column("execution_id", String(36), nullable=False),
+    Column("execution_id", String(36)),
+    Column("session_id", String(36)),
     Column("kind", String(20), nullable=False),
     Column("sha256", String(64), nullable=False),
     Column("object_ref", String(128), nullable=False),
@@ -134,6 +140,7 @@ def now() -> str:
 class BrowserStore:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
+        self._sqlite_action_lock = threading.RLock()
 
     def get(
         self, kind: str, project_id: str, resource_id: str
@@ -237,6 +244,262 @@ class BrowserStore:
             connection.execute(insert(evidence).values(**row))
         return row
 
+    def insert_action_idempotent(
+        self,
+        project_id: str,
+        session_id: str,
+        key: str,
+        digest: str,
+        request: dict[str, Any],
+    ) -> dict[str, Any]:
+        guard = (
+            self._sqlite_action_lock
+            if self.engine.dialect.name == "sqlite"
+            else nullcontext()
+        )
+        with guard:
+            with self.engine.begin() as connection:
+                session = (
+                    connection.execute(
+                        select(sessions)
+                        .where(
+                            sessions.c.id == session_id,
+                            sessions.c.project_id == project_id,
+                        )
+                        .with_for_update()
+                    )
+                    .mappings()
+                    .first()
+                )
+                if (
+                    session is None
+                    or session["status"] not in {"pending", "running", "active"}
+                    or session.get("cancel_requested", False)
+                ):
+                    raise ValueError("browser session unavailable")
+                prior = (
+                    connection.execute(
+                        select(idempotency).where(
+                            idempotency.c.project_id == project_id,
+                            idempotency.c.kind == "action",
+                            idempotency.c.key == key,
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                if prior is not None:
+                    if prior["digest"] != digest:
+                        raise ValueError("idempotency conflict")
+                    existing = (
+                        connection.execute(
+                            select(actions).where(actions.c.id == prior["resource_id"])
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    return dict(existing)
+                sequence = int(session["next_action_sequence"])
+                action_id = uuid.uuid4().hex
+                connection.execute(
+                    update(sessions)
+                    .where(
+                        sessions.c.id == session_id, sessions.c.project_id == project_id
+                    )
+                    .values(next_action_sequence=sequence + 1)
+                )
+                connection.execute(
+                    insert(idempotency).values(
+                        project_id=project_id,
+                        kind="action",
+                        key=key,
+                        digest=digest,
+                        resource_id=action_id,
+                    )
+                )
+                row = dict(
+                    id=action_id,
+                    project_id=project_id,
+                    session_id=session_id,
+                    sequence=sequence,
+                    status="pending",
+                    request=request,
+                    observation=None,
+                    owner=None,
+                    lease_until=None,
+                    created_at=now(),
+                )
+                connection.execute(insert(actions).values(**row))
+                return row
+
+    def publish_owned(
+        self,
+        kind: str,
+        project_id: str,
+        resource_id: str,
+        owner: str,
+        *,
+        statuses: tuple[str, ...] = ("running",),
+        cancel_requested: bool | None = None,
+        **values: Any,
+    ) -> bool:
+        table = TABLES[kind]
+        conditions = [
+            table.c.id == resource_id,
+            table.c.project_id == project_id,
+            table.c.status.in_(statuses),
+            table.c.owner == owner,
+            table.c.lease_until >= now(),
+        ]
+        if cancel_requested is not None:
+            conditions.append(table.c.cancel_requested == cancel_requested)
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(table).where(*conditions).values(**values)
+            )
+            return bool(result.rowcount)
+
+    def cancel_requests(
+        self, kind: str, project_id: str, owner: str
+    ) -> list[dict[str, Any]]:
+        table = TABLES[kind]
+        with self.engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    select(table).where(
+                        table.c.project_id == project_id,
+                        table.c.owner == owner,
+                        table.c.status.in_(("running", "active")),
+                        table.c.cancel_requested.is_(True),
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    def settle_unstarted_execution(
+        self, project_id: str, execution_id: str, owner: str
+    ) -> bool:
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(executions)
+                .where(
+                    executions.c.id == execution_id,
+                    executions.c.project_id == project_id,
+                    executions.c.status == "running",
+                    executions.c.owner == owner,
+                    executions.c.lease_until >= now(),
+                    executions.c.cancel_requested.is_(True),
+                    executions.c.started_at.is_(None),
+                )
+                .values(
+                    status="canceled",
+                    finished_at=now(),
+                    failure_code="canceled_before_start",
+                )
+            )
+            return bool(result.rowcount)
+
+    def request_session_cancel(
+        self, project_id: str, session_id: str, owner: str | None = None
+    ) -> None:
+        with self.engine.begin() as connection:
+            conditions = [
+                sessions.c.id == session_id,
+                sessions.c.project_id == project_id,
+                sessions.c.status.in_(("pending", "running", "active")),
+            ]
+            if owner is not None:
+                conditions.extend(
+                    (sessions.c.owner == owner, sessions.c.lease_until >= now())
+                )
+            connection.execute(
+                update(sessions).where(*conditions).values(cancel_requested=True)
+            )
+
+    def request_owned_shutdown(self, project_id: str, owner: str) -> None:
+        with self.engine.begin() as connection:
+            for table in (sessions, executions):
+                connection.execute(
+                    update(table)
+                    .where(
+                        table.c.project_id == project_id,
+                        table.c.owner == owner,
+                        table.c.status.in_(("running", "active")),
+                        table.c.lease_until >= now(),
+                    )
+                    .values(cancel_requested=True)
+                )
+
+    def settle_session(
+        self,
+        project_id: str,
+        session_id: str,
+        owner: str,
+        receipt: dict[str, Any],
+        *,
+        pending: bool = False,
+    ) -> bool:
+        stopped = receipt.get("stopped") is True and receipt.get("status") == "canceled"
+        status = "canceled" if stopped else "unknown"
+        with self.engine.begin() as connection:
+            conditions = [
+                sessions.c.id == session_id,
+                sessions.c.project_id == project_id,
+                sessions.c.owner == owner,
+                sessions.c.lease_until >= now(),
+                sessions.c.cancel_requested.is_(True),
+                sessions.c.status.in_(
+                    ("running",) if pending else ("running", "active")
+                ),
+            ]
+            result = connection.execute(
+                update(sessions)
+                .where(*conditions)
+                .values(status=status, stop_receipt=receipt)
+            )
+            if not result.rowcount:
+                return False
+            connection.execute(
+                update(actions)
+                .where(
+                    actions.c.project_id == project_id,
+                    actions.c.session_id == session_id,
+                    actions.c.status.in_(("pending", "running")),
+                )
+                .values(status=status)
+            )
+            return True
+
+    def publish_action(
+        self, project_id: str, row: dict[str, Any], owner: str, **values: Any
+    ) -> bool:
+        stamp = now()
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(actions)
+                .where(
+                    actions.c.id == row["id"],
+                    actions.c.project_id == project_id,
+                    actions.c.status == "running",
+                    actions.c.owner == owner,
+                    actions.c.lease_until >= stamp,
+                    actions.c.session_id.in_(
+                        select(sessions.c.id).where(
+                            sessions.c.id == row["session_id"],
+                            sessions.c.project_id == project_id,
+                            sessions.c.status == "active",
+                            sessions.c.owner == owner,
+                            sessions.c.lease_until >= stamp,
+                            sessions.c.cancel_requested.is_(False),
+                        )
+                    ),
+                )
+                .values(**values)
+            )
+            return bool(result.rowcount)
+
     def claim(
         self, kind: str, project_id: str, owner: str, lease_seconds: int
     ) -> dict[str, Any] | None:
@@ -248,8 +511,40 @@ class BrowserStore:
                 .order_by(table.c.created_at)
                 .with_for_update(skip_locked=True)
             )
+            if kind == "action":
+                older = actions.alias("older_action")
+                query = query.where(
+                    ~select(older.c.id)
+                    .where(
+                        older.c.session_id == actions.c.session_id,
+                        older.c.sequence < actions.c.sequence,
+                        older.c.status != "completed",
+                    )
+                    .exists()
+                )
             rows = connection.execute(query).mappings()
             for row in rows:
+                if kind == "session" and row["cancel_requested"]:
+                    receipt = {
+                        "task_id": row["task_id"],
+                        "stopped": True,
+                        "status": "canceled",
+                        "reason": "never_started",
+                    }
+                    connection.execute(
+                        update(sessions)
+                        .where(sessions.c.id == row["id"])
+                        .values(status="canceled", stop_receipt=receipt)
+                    )
+                    connection.execute(
+                        update(actions)
+                        .where(
+                            actions.c.session_id == row["id"],
+                            actions.c.status == "pending",
+                        )
+                        .values(status="canceled")
+                    )
+                    continue
                 if kind == "action":
                     session = (
                         connection.execute(
@@ -265,6 +560,8 @@ class BrowserStore:
                         session is None
                         or session["owner"] != owner
                         or session["status"] != "active"
+                        or session["cancel_requested"]
+                        or session["lease_until"] < now()
                     ):
                         continue
                 if kind == "execution" and row["cancel_requested"]:
@@ -322,16 +619,3 @@ class BrowserStore:
                 )
                 .values(status="unknown")
             )
-
-    def next_sequence(self, project_id: str, session_id: str) -> int:
-        with self.engine.connect() as connection:
-            rows = connection.execute(
-                select(actions.c.sequence)
-                .where(
-                    actions.c.project_id == project_id,
-                    actions.c.session_id == session_id,
-                )
-                .order_by(actions.c.sequence.desc())
-                .limit(1)
-            ).first()
-            return int(rows[0]) + 1 if rows else 1

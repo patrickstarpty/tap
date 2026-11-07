@@ -21,6 +21,7 @@ _ACTIONS = frozenset(
     {
         "browser.sessions.create",
         "browser.sessions.read",
+        "browser.sessions.cancel",
         "browser.actions.create",
         "browser.actions.read",
         "browser.bundles.create",
@@ -127,6 +128,14 @@ def create_browser_router(
         actor = authorize(request, project_id)
         assert service is not None
         return invoke(lambda: service.get_session(actor, session_id))
+
+    @router.post("/sessions/{session_id}/cancel", status_code=202)
+    def cancel_session(
+        project_id: str, session_id: str, request: Request
+    ) -> dict[str, Any]:
+        actor = authorize(request, project_id)
+        assert service is not None
+        return invoke(lambda: service.cancel_session(actor, session_id))
 
     @router.post("/sessions/{session_id}/actions", status_code=202)
     def create_action(

@@ -159,6 +159,7 @@ class OwnedResources:
     network_id: str | None = None
     proxy_id: str | None = None
     browser_id: str | None = None
+    cleanup_confirmed: bool | None = None
 
     @classmethod
     def new(cls, task_id: str) -> OwnedResources:
@@ -213,6 +214,8 @@ class BrowserRuntime:
         self._inspector_resources: dict[str, OwnedResources] = {}
         self._inspector_teardowns: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._inspector_pending: set[str] = set()
+        self._inspector_starts: dict[str, asyncio.Task[Any]] = {}
+        self._inspector_start_receipts: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def _call(
         self,
@@ -444,7 +447,7 @@ class BrowserRuntime:
             return network, proxy, browser
         except BaseException:
             if state is None:
-                await self._cleanup(resources)
+                resources.cleanup_confirmed = await self._cleanup(resources)
             raise
 
     async def _cleanup(self, resources: OwnedResources) -> bool:
@@ -515,9 +518,16 @@ class BrowserRuntime:
         if task_id in self._handles or task_id in self._inspector_pending:
             raise ValueError("inspector already active")
         self._inspector_pending.add(task_id)
+        owner = asyncio.current_task()
+        assert owner is not None
+        self._inspector_starts[task_id] = owner
+        finished: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._inspector_start_receipts[task_id] = finished
+        resources = OwnedResources.new(task_id)
         try:
             deadline_at = time.monotonic() + deadline
-            resources = OwnedResources.new(task_id)
             network, proxy, browser = await self._create_environment(
                 task_id,
                 allowed_origins,
@@ -557,7 +567,7 @@ class BrowserRuntime:
                 else:
                     raise RuntimeError("inspector did not become ready")
             except BaseException:
-                await self._cleanup(resources)
+                resources.cleanup_confirmed = await self._cleanup(resources)
                 raise
             handle = InspectorHandle(task_id, browser, network, proxy, allowed_origins)
             self._handles[task_id] = handle
@@ -567,9 +577,37 @@ class BrowserRuntime:
             self._inspector_expiries[task_id] = asyncio.create_task(
                 self._expire_inspector(handle, deadline_at)
             )
+            finished.set_result(
+                {"task_id": task_id, "stopped": False, "status": "active"}
+            )
             return handle
+        except BaseException:
+            if resources.cleanup_confirmed is None:
+                resources.cleanup_confirmed = await self._cleanup(resources)
+            finished.set_result(
+                {
+                    "task_id": task_id,
+                    "stopped": resources.cleanup_confirmed,
+                    "status": "canceled" if resources.cleanup_confirmed else "unknown",
+                }
+            )
+            raise
         finally:
             self._inspector_pending.discard(task_id)
+            self._inspector_starts.pop(task_id, None)
+
+    async def cancel_inspector(self, task_id: str) -> dict[str, Any]:
+        handle = self._handles.get(task_id)
+        if handle is not None:
+            return await self.cancel(handle)
+        owner = self._inspector_starts.get(task_id)
+        finished = self._inspector_start_receipts.get(task_id)
+        if owner is not None and finished is not None:
+            owner.cancel()
+            return await asyncio.shield(finished)
+        if finished is not None and finished.done():
+            return finished.result()
+        return {"task_id": task_id, "stopped": False, "status": "unknown"}
 
     async def _expire_inspector(
         self, handle: InspectorHandle, deadline_at: float
