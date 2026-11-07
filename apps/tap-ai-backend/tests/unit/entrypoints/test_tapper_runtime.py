@@ -3339,6 +3339,32 @@ def test_native_workflow_settings_default_off_and_bounded():
             TapperSettings.from_mapping(S3_SETTINGS | {name: bad})
 
 
+def test_browser_coding_settings_require_finite_pricing_image_and_cost_cap():
+    settings = S3_SETTINGS | {
+        "TAP_BROWSER_CODING_ENABLED": "true",
+        "TAP_WORKFLOW_MAX_COST_MICROS": "500000",
+        "TAP_BROWSER_API_ORIGIN": "http://127.0.0.1:8002",
+        "TAP_BROWSER_PROJECT_ID": "project-a",
+        "TAP_BROWSER_ACCESS_TOKEN": "x" * 16,
+        "TAP_BROWSER_CODING_IMAGE_ID": "sha256:" + "a" * 64,
+        "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": "1.0",
+        "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": "2.0",
+    }
+    frozen = TapperSettings.from_mapping(settings)
+    assert frozen.browser_coding_enabled
+    assert frozen.browser_coding_max_input_tokens == 129024
+    assert frozen.browser_coding_max_output_tokens == 2048
+    for name, bad in (
+        ("TAP_WORKFLOW_MAX_COST_MICROS", "0"),
+        ("TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION", "0"),
+        ("TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION", "nan"),
+        ("TAP_BROWSER_CODING_IMAGE_ID", "sha256:short"),
+        ("TAP_BROWSER_API_ORIGIN", "https://example.com"),
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(settings | {name: bad})
+
+
 @pytest.mark.asyncio
 async def test_native_workflow_worker_requires_enabled_configuration():
     from tap.entrypoints.tapper_runtime import TapperSettings, create_workflow_worker_runtime

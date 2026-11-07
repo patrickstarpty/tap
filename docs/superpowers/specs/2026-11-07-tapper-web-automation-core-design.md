@@ -17,7 +17,7 @@ TAP 非 AI 后端新增 `browser_automation`，持有浏览器会话、不可变
 ## 进程与工具连接
 
 1. OpenCode 1.19.5 Linux arm64 在任务容器运行，`--network=none`、非 root、cap-drop ALL、no-new-privileges，只有任务工作目录和收发目录。保持 `--pure`、禁用默认插件和个人配置。初版不增加 `chat.headers` 插件；辅助调用的细分归属仍是完整八门禁的未验证项。
-2. 固定 Node HTTP shim 只在容器内 127.0.0.1 接收 `/v1/chat/completions`。它用唯一请求 ID 将有界请求原子写入私有请求目录；宿主监督器经同一任务 BudgetGate 转发到 LiteLLM，将状态、Content-Type 和原始响应字节写入只读响应目录。允许批量返回已验证的 SSE；前端不承诺逐 token 展示。模型原始正文仅存在临时私有传输中，结束立即清理，不进入日志或制品。并发 ID、过期响应、重复请求、符号链接和跨目录路径都必须拒绝。
+2. 固定 Node HTTP shim 只在容器内 127.0.0.1 接收 `/v1/chat/completions`。生产请求正文上限131072字节（128KiB），响应正文上限1048576字节（1MiB）；私有邮箱信封另计base64与元数据余量。它用唯一请求 ID 将有界请求原子写入私有请求目录；宿主监督器经同一任务 BudgetGate 转发到 LiteLLM，将状态、Content-Type 和原始响应字节写入只读响应目录。允许批量返回已验证的 SSE；前端不承诺逐 token 展示。模型原始正文仅存在临时私有传输中，结束立即清理，不进入日志或制品。并发 ID、过期响应、重复请求、符号链接和跨目录路径都必须拒绝。实测默认工具请求32313字节、必要工具裁减后24827字节，真实页面观察后请求13910字节；旧32768字节上限对后续上下文不足，故统一128KiB，且保留有限正数费用、调用及期限上限。
 3. OpenCode 通过固定 `browserctl` Node helper 的 bash 调用请求页面工具；同样走任务邮箱，宿主调用 TAP 浏览器 API。支持 navigate、snapshot、click、fill、select、press、wait、screenshot；只接受结构化参数，不提供任意 eval、shell 或宿主路径。工具返回有界真实 DOM/可访问性信息、当前 URL、标签/选项、截图引用和错误。脚本生成使用这些真实观察；站点定位器仅写入本次制品。
 4. 宿主通过固定 `docker exec -i` 客户端调用容器内认证的 OpenCode serve，采集持久 session/messages/children 与真实工具事件。宿主不开放新的外部监听端口。
 5. 浏览器 inspector 维持一个任务上下文供探索。冻结生成文件后，在全新 execution 容器运行 `@playwright/test` 1.62.1；始终产生受信 reporter、截图和 trace。脚本可以是普通业务流程，用户无需编写测试计划。全部跳过、零测试、缺结果/证据、超时或断言失败均不能显示成功。重跑不复用探索上下文。

@@ -225,6 +225,17 @@ class TapperSettings:
     workflow_max_cost_micros: int = 0
     workflow_max_seconds: int = 900
     workflow_max_attempts: int = 3
+    browser_coding_enabled: bool = False
+    browser_api_origin: str = ""
+    browser_project_id: str = ""
+    browser_access_token: str = field(default="", repr=False)
+    browser_coding_image: str = "tapper-coding-runtime:1.19.5-arm64"
+    browser_coding_image_id: str = ""
+    browser_coding_model_alias: str = "qwen-plus"
+    browser_coding_max_input_tokens: int = 129024
+    browser_coding_max_output_tokens: int = 2048
+    browser_coding_input_price_per_million: float = 0.0
+    browser_coding_output_price_per_million: float = 0.0
 
     def __post_init__(self) -> None:
         # The gateway rejects a request whose timeout exceeds its own; the
@@ -243,6 +254,29 @@ class TapperSettings:
             raise ValueError(
                 "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS is too short for "
                 "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS"
+            )
+        if self.browser_coding_enabled:
+            from tap.modules.workflows.adapters.browser_client import BrowserApiClient
+            from tap.modules.workflows.adapters.opencode_runtime import CodingConfig
+
+            if self.workflow_max_cost_micros <= 0:
+                raise ValueError("browser coding requires a finite positive workflow cost cap")
+            BrowserApiClient(
+                self.browser_api_origin, self.browser_project_id, self.browser_access_token
+            )
+            CodingConfig(
+                browser_origin=self.browser_api_origin,
+                browser_project_id=self.browser_project_id,
+                browser_token=self.browser_access_token,
+                image=self.browser_coding_image,
+                image_id=self.browser_coding_image_id,
+                model_origin=self.litellm_base_url,
+                model_key=self.litellm_api_key,
+                max_input_tokens=self.browser_coding_max_input_tokens,
+                max_output_tokens=self.browser_coding_max_output_tokens,
+                input_price_per_million=self.browser_coding_input_price_per_million,
+                output_price_per_million=self.browser_coding_output_price_per_million,
+                model_alias=self.browser_coding_model_alias,
             )
 
     @classmethod
@@ -763,6 +797,43 @@ class TapperSettings:
                 3,
                 minimum=1,
                 maximum=10,
+            ),
+            browser_coding_enabled=_fixed_choice(
+                values,
+                "TAP_BROWSER_CODING_ENABLED",
+                default="false",
+                choices=frozenset({"true", "false"}),
+            )
+            == "true",
+            browser_api_origin=_value(values, "TAP_BROWSER_API_ORIGIN", ""),
+            browser_project_id=_value(values, "TAP_BROWSER_PROJECT_ID", ""),
+            browser_access_token=_value(values, "TAP_BROWSER_ACCESS_TOKEN", ""),
+            browser_coding_image=_value(
+                values, "TAP_BROWSER_CODING_IMAGE", "tapper-coding-runtime:1.19.5-arm64"
+            ),
+            browser_coding_image_id=_value(values, "TAP_BROWSER_CODING_IMAGE_ID", ""),
+            browser_coding_model_alias=_model_name(
+                values, "TAP_BROWSER_CODING_MODEL_ALIAS", "qwen-plus"
+            ),
+            browser_coding_max_input_tokens=_integer(
+                values,
+                "TAP_BROWSER_CODING_MAX_INPUT_TOKENS",
+                129024,
+                minimum=1,
+                maximum=129024,
+            ),
+            browser_coding_max_output_tokens=_integer(
+                values,
+                "TAP_BROWSER_CODING_MAX_OUTPUT_TOKENS",
+                2048,
+                minimum=512,
+                maximum=8192,
+            ),
+            browser_coding_input_price_per_million=_browser_price(
+                values, "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION"
+            ),
+            browser_coding_output_price_per_million=_browser_price(
+                values, "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION"
             ),
         )
 
@@ -1321,6 +1392,7 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         append_tool_step,
     )
     from tap.modules.workflows.adapters.native_state import NativeStateStore
+    from tap.modules.workflows.adapters.opencode_runtime import CodingConfig, CodingRuntime
     from tap.modules.workflows.adapters.schema import workflow_task
     from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime, WorkflowProjection
 
@@ -1402,6 +1474,25 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         return revision.instruction_template + (revision.attached_references or "")
 
     owner = f"workflow:{gethostname()}:{getpid()}:{uuid4().hex}"
+    coding = None
+    if settings.browser_coding_enabled:
+        coding = CodingRuntime(
+            CodingConfig(
+                browser_origin=settings.browser_api_origin,
+                browser_project_id=settings.browser_project_id,
+                browser_token=settings.browser_access_token,
+                image=settings.browser_coding_image,
+                image_id=settings.browser_coding_image_id,
+                model_origin=settings.litellm_base_url,
+                model_key=settings.litellm_api_key,
+                max_input_tokens=settings.browser_coding_max_input_tokens,
+                max_output_tokens=settings.browser_coding_max_output_tokens,
+                input_price_per_million=settings.browser_coding_input_price_per_million,
+                output_price_per_million=settings.browser_coding_output_price_per_million,
+                model_alias=settings.browser_coding_model_alias,
+            ),
+            store=store,
+        )
     runtime = NativeWorkflowRuntime(
         store,
         NativeStateStore(sessions),
@@ -1439,6 +1530,7 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
         skill_loader=load_skill,
         wakeups=components.events,
         standalone_authorize=authorize_standalone,
+        coding=coding,
     )
     return WorkerRuntime(
         worker=WorkflowWorker(
@@ -3071,6 +3163,17 @@ def _ratio(values: Mapping[str, str], name: str, default: float) -> float:
     if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
         raise ValueError(f"{name} must be between 0 and 1")
     return parsed
+
+
+def _browser_price(values: Mapping[str, str], name: str) -> float:
+    raw = _value(values, name, "0")
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a finite price") from None
+    if not math.isfinite(value) or not 0 <= value <= 1000:
+        raise ValueError(f"{name} must be a finite bounded price")
+    return value
 
 
 def _loopback_host(values: Mapping[str, str], name: str, default: str) -> str:

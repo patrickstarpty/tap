@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from socket import gethostname
@@ -15,6 +17,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.skill_activation import SkillCatalogEntry, catalog_entry
 from tap.modules.chat.application.workflow_bridge import WorkflowChatPort
+from tap.modules.workflows.adapters.opencode_runtime import CodingRuntime
 from tap.modules.workflows.application.native_graph import NativeChatGateway, NativeWorkflowGraph
 from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked, WorkflowLimitExceeded
 from tap.modules.workflows.domain.delegation import DelegationRequest, child_result_summary
@@ -70,6 +73,7 @@ class NativeWorkflowRuntime:
         skill_loader: SkillLoader | None = None,
         wakeups: WorkflowWakeups | None = None,
         standalone_authorize: StandaloneAuthorize | None = None,
+        coding: CodingRuntime | None = None,
     ) -> None:
         if not 1 <= max_parallel_agents <= 20:
             raise ValueError("native parallel agent limit is outside the bound")
@@ -87,6 +91,7 @@ class NativeWorkflowRuntime:
         self._skill_loader = skill_loader
         self._wakeups = wakeups
         self._standalone_authorize = standalone_authorize
+        self._coding = coding
         self._control_lock = asyncio.Lock()
 
     async def inspect(
@@ -349,6 +354,114 @@ class NativeWorkflowRuntime:
             except asyncio.CancelledError:
                 pass
 
+    async def _run_browser_node(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        token: str,
+        node_id: str,
+        attempt: int,
+        request: dict[str, Any],
+        snapshot: dict[str, Any],
+        authorize: Callable[[], Awaitable[bool]],
+    ) -> str:
+        if self._coding is None:
+            reason = "browser coding runtime unavailable"
+            await self._state.fail_node(scope, task_id, token, node_id, reason)
+            await self._state.fail_task(scope, task_id, token, reason)
+            return "failed"
+        if not await authorize():
+            return "stopped"
+        next_check = 0.0
+        stopped = False
+
+        async def stop_requested() -> bool:
+            nonlocal next_check, stopped
+            if stopped or time.monotonic() < next_check:
+                return stopped
+            next_check = time.monotonic() + 0.5
+            stopped = (
+                not await self._store.active_lease(scope, task_id, token)
+                or not await authorize()
+                or any(
+                    command.kind in ("cancel", "pause")
+                    and command.target_node_id in (None, node_id)
+                    for command in await self._store.pending_commands(scope, task_id)
+                )
+            )
+            return stopped
+
+        try:
+            result = await self._coding.run(
+                task_id,
+                request,
+                snapshot,
+                scope,
+                token,
+                node_id,
+                attempt,
+                stop_requested=stop_requested,
+            )
+        except (asyncio.CancelledError, WorkflowStopped, WorkflowDispatchBlocked):
+            return "stopped"
+        except WorkflowLimitExceeded as error:
+            return f"limit:{error}"
+        except RuntimeError:
+            return "stopped"  # termination or side effects are not confirmed
+        except (ValueError, TimeoutError) as error:
+            reason = str(error)[:2000]
+            await self._state.fail_node(scope, task_id, token, node_id, reason)
+            await self._state.fail_task(scope, task_id, token, reason)
+            return "failed"
+
+        receipt = result.terminal_evidence
+        outputs = (
+            receipt.get("result", {}).get("outputs", [])
+            if isinstance(receipt.get("result"), dict)
+            else []
+        )
+        if not isinstance(outputs, list) or len(json.dumps(outputs).encode()) > 32768:
+            raise ValueError("browser business output invalid")
+        payload: dict[str, object] = {
+            "node_id": node_id,
+            "attempt": attempt,
+            "status": result.status,
+            "provider_session_id": result.provider_session_id,
+            "bundle_ref": result.bundle_ref,
+            "execution_ref": result.execution_ref,
+            "usage": result.usage,
+            "replay_model_calls": result.replay_model_calls,
+        }
+        if result.input_request is not None:
+            payload["input_request"] = result.input_request
+        await self._store.append_event(
+            scope,
+            task_id,
+            token,
+            hashlib.sha256(f"browser-result:{task_id}:{node_id}:{attempt}".encode()).hexdigest(),
+            "browser.coding_result",
+            payload,
+        )
+        if result.status == "blocked":
+            question = (result.input_request or {}).get("question", "")
+            await self._state.await_input(scope, task_id, token, node_id, question)
+            return "awaiting_input"
+        if result.status in {"canceled", "unknown"}:
+            return "stopped"
+        if result.status == "failed":
+            failure = receipt.get("failure_code") or "browser execution failed"
+            reason = str(failure)[:2000]
+            await self._state.fail_node(scope, task_id, token, node_id, reason)
+            await self._state.fail_task(scope, task_id, token, reason)
+            return "failed"
+        answer = json.dumps(
+            {"status": "passed", "execution_ref": result.execution_ref, "outputs": outputs},
+            ensure_ascii=True,
+        )
+        await self._state.finish_node(scope, task_id, token, node_id, answer, "completed")
+        await self._state.finish_task(scope, task_id, token, answer, "completed")
+        return "finished"
+
     async def _run_node(
         self,
         scope: ProjectScopeContext,
@@ -361,7 +474,6 @@ class NativeWorkflowRuntime:
         root: bool,
     ) -> str:
         attempt = await self._state.start_node(scope, task_id, token, node_id)
-        graph_run_id, _ = await self._store.graph_lineage(scope, task_id, node_id, attempt)
         conversation_id = request.get("conversation_id")
         origin_turn_id = request.get("origin_turn_id")
 
@@ -378,6 +490,14 @@ class NativeWorkflowRuntime:
                     conversation_id, str(origin_turn_id), task_id
                 )
             )
+
+        if request.get("kind") == "browser":
+            if not root:
+                raise ValueError("browser coding must run in the root node")
+            return await self._run_browser_node(
+                scope, task_id, token, node_id, attempt, request, snapshot, authorize
+            )
+        graph_run_id, _ = await self._store.graph_lineage(scope, task_id, node_id, attempt)
 
         events = snapshot["events"]
         nodes = snapshot["nodes"]

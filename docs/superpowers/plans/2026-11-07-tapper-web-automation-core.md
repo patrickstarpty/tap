@@ -50,7 +50,7 @@
 **Interfaces:** coding start/observe/collect/cancel consume frozen workflow task+browser API client; same OpenCode session/model loop gets browser observations and creates script. A single task BudgetGate spans all generation/repair model requests; `CodingResult` includes provider session, bundle ref, execution ref, usage and terminal evidence. No outer LLM re-planning.
 
 - [ ] RED：mailbox请求/响应ID并发隔离、重复/过期/symlink/路径逃逸拒绝；原始正文不进日志制品；network-none编码容器无法直连目标或宿主。`assert replay_model_calls == 0` 在注入式 replay 测试中成立。
-- [ ] 固定模型 HTTP shim（32768-byte request、1048576-byte response，与gateway上限一致）经私有邮箱走宿主 BudgetGate，保留状态/content-type/body，支持原始已验证 bufferedSSE。过期关闭，私有正文处理后删除。provider/小模型均固定LiteLLM，启动配置冻结并 `--pure`。
+- [ ] 固定模型 HTTP shim（131072-byte request、1048576-byte response，与生产gateway上限一致）经私有邮箱走宿主 BudgetGate，保留状态/content-type/body，支持原始已验证 bufferedSSE。过期关闭，私有正文处理后删除。provider/小模型均固定LiteLLM，启动配置冻结并 `--pure`。无模型实测默认工具请求32313字节、必要工具裁减后24827字节，真实页面观察后请求13910字节；旧32768字节仅余455字节且无法稳定承载后续上下文，故统一提高到128KiB，费用/调用/期限上限不变。
 - [ ] `browserctl` 通过邮箱调用 Task2 真实 inspector；主Agent获当前获准专业Agent配置，SDE/SDET可写/执行，QAE只读。未知工具不变全权限。经固定 docker exec 客户端读取serve持久身份/终态，产物摘要校验后提交 Task2 并执行；允许有界修复新版本，保留失败。
 - [ ] 保留任务预算/lease/cancel；取消杀任务容器后确认停止，费用与调用落同一任务；未知用量保守结算。core能力明确列示，不能将旧完整八门禁标ready。无resume重启能力。
 - [ ] 相关 contracts/unit/隔离 integration、gateway回归、Ruff/mypy；通过无模型shim+浏览器合成旅程，再用一次限定真实模型调用验证生成与执行。提交并独立审查，不把独立CLI当产品验收。

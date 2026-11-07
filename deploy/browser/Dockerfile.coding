@@ -1,0 +1,9 @@
+FROM tapper-browser-runtime:1.62.1-arm64
+USER root
+RUN mkdir -p /opt/opencode /opt/tapper
+COPY opencode /opt/opencode/opencode
+COPY model-shim.mjs browserctl.mjs opencode-client.mjs /opt/tapper/
+RUN chmod 0555 /opt/opencode/opencode /opt/tapper/*.mjs && chmod 0555 /opt/opencode /opt/tapper
+USER browser
+WORKDIR /workspace
+CMD ["node", "/opt/tapper/opencode-client.mjs", "daemon"]
