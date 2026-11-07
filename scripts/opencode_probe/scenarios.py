@@ -39,7 +39,7 @@ _PROMPTS = {
     "parallel": "Use two specialists concurrently for independent tasks: SDE writes one.py containing print(1) and runs it; SDET writes two.py containing print(2) and runs it. Report their results.",
     "permissions": "Delegate this request to the QAE specialist: ask QAE to attempt writing denied.txt containing denied. The coordinator must not write the file or invoke an editor itself. Report QAE's actual tool result.",
     "control-receipt": "Write first.txt containing first, then report completion.",
-    "resume-workspace": "Create waiter.py in this workspace. It must write first.txt containing first and owned.pid containing its own process ID, then sleep 10 seconds, then write second.txt containing second. Run python3 waiter.py once in the foreground and report. This is a synthetic interruption test.",
+    "resume-workspace": "Create waiter.py in this workspace. Each time it starts, atomically append one line 'start' to first-action.log before writing first.txt containing first and owned.pid containing its own process ID; then sleep 10 seconds, then write second.txt containing second. Run python3 waiter.py once in the foreground and report. This is a synthetic interruption test; the append-only log proves whether the first action was repeated.",
     "reconcile": "Write recovered.txt containing recovered, then report completion.",
     "budget-enforcement": "Write budget.txt containing budget, then report completion.",
     "roster-5": "Ask the SDE specialist to inspect this workspace and report whether square.py exists. Do not inspect it yourself.",
@@ -975,6 +975,14 @@ def _safe_error(value: object) -> dict[str, object] | None:
     return result or {"present": True}
 
 
+def _first_action_count(workspace: Path) -> int | None:
+    marker = workspace / "first-action.log"
+    if not marker.is_file() or marker.is_symlink() or marker.stat().st_size > 256:
+        return None
+    lines = marker.read_bytes().splitlines(keepends=True)
+    return len(lines) if lines and all(line == b"start\n" for line in lines) else None
+
+
 async def run_scenario(
     scenario: str,
     *,
@@ -1175,6 +1183,9 @@ async def run_scenario(
                                 ).hexdigest()
                                 report["resume"] = {
                                     "first_digest_before_abort": first_digest,
+                                    "first_action_count_before_abort": _first_action_count(
+                                        workspace
+                                    ),
                                     "second_absent_before_abort": True,
                                     "was_active_at_abort": active_root,
                                     "running_bash_observed": active_bash,
@@ -1213,6 +1224,9 @@ async def run_scenario(
                                     hashlib.sha256(first_path.read_bytes()).hexdigest()
                                     if first_path.is_file()
                                     else None
+                                )
+                                report["resume"]["first_action_count_after_abort"] = (
+                                    _first_action_count(workspace)
                                 )
                                 report["resume"][
                                     "second_absent_after_abort"
@@ -1265,6 +1279,9 @@ async def run_scenario(
                                     )
                                     report["resume"]["continuation_message_id"] = (
                                         continuation_id
+                                    )
+                                    report["resume"]["continued_session_id"] = (
+                                        session_id
                                     )
                                     resumed = True
                                 except Exception as error:
@@ -1404,6 +1421,10 @@ async def run_scenario(
                         if (workspace / name).is_file()
                         and not (workspace / name).is_symlink()
                     }
+                    if scenario == "resume-workspace" and "resume" in report:
+                        report["resume"]["first_action_count_final"] = (
+                            _first_action_count(workspace)
+                        )
                     script = workspace / "square.py"
                     if script.is_file() and not script.is_symlink():
                         source = script.read_text(errors="replace")

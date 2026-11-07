@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.13.12、FastAPI、LangGraph 1.2.12、SQLAlchemy/MySQL、Redis、MinIO、LiteLLM、OpenCode CLI、React 19、TypeScript、Playwright 1.62.1。
 
-**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。阶段 1 的原生工程与确定性验收、独立评审及修复复核已完成并合入 `develop`（2026-11-07）；OpenCode 阶段 0、阶段 2/3 与真实模型验证未实施。旧 Copilot 确定性探针不计入新 provider 进度。
+**Spec:** [已确认的整体设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)。2026-11-06 用户最终指定 OpenCode + LiteLLM，替代 Copilot。阶段 1 的原生工程与确定性验收、独立评审及修复复核已完成并合入 `develop`（2026-11-07）；[OpenCode 阶段 0](../../guides/2026-11-06-opencode-capability-validation.md)已有真实能力记录（四项 supported、四项 unverified），阶段 2/3 编码运行未实施。旧 Copilot 确定性探针不计入新 provider 进度。
 
 ## Global Constraints
 

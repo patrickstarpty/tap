@@ -13,13 +13,13 @@
 ## Global Constraints
 
 - 沿用总计划全部约束；这是阶段 0，允许无产品 UI 的独立验收。
-- 当前 shell PATH 未找到 OpenCode；Task 0.1 先在隔离工具目录安装并固定 CLI 版本，核对分发来源和依赖，不改全局配置。帮助成功不算模型调用成功。
+- Task 0.1 已在隔离工具目录固定 OpenCode 1.19.5 并核对来源；无需全局 PATH。帮助成功不算模型调用成功。
 - 使用无租户数据的临时工作区、隔离 OpenCode 配置目录和专用 BYOK 凭据；不读用户个人 Agent/历史/凭据文件，不自动升级 CLI。
 - 运行真实模型需 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 与新开关 `TAP_RUN_OPENCODE_PROBE=1` 同时开启；缺少任意开关则 skip，不能显示 PASS。
 - `.opencode/agents/*.md` 无 `tap-` 前缀；只导出当前项目已启用且获准的全部 Agent。代码与日志不得包含密钥，输出报告仅存模型别名和配置摘要。
 - `scripts/opencode_probe/` 是验证工具，不作为后续生产运行时依赖；可复用验证样本与能力合同，生产实现由阶段 2 单独审查。
 
-旧 Copilot 探针已实现的确定性工作仍属于旧 provider；本计划全部未执行。下列 OpenCode 文件、开关和命令均为待实现项，不能直接当作现有命令运行。
+旧 Copilot 探针已实现的确定性工作仍属于旧 provider。阶段 0.1–0.3 已实施、评审并保存[真实能力记录](../../guides/2026-11-06-opencode-capability-validation.md)；0.4 的两个复现已运行但未完整通过，八项 required 仍有四项 unverified。以下保留原任务要求，checkbox 只记录实际完成的工作，不代表阶段 2 门禁通过。
 
 ## 文件与交付边界
 
@@ -40,8 +40,8 @@
 
 **Interfaces:** `ProbeAgent(agent_id: str, revision_id: str, description: str, instruction: str, tools: tuple[str, ...], enabled: bool)`；`export_profiles(root: Path, agents: tuple[ProbeAgent, ...], allowed_ids: frozenset[str]) -> dict[str, str]` 返回文件相对路径到 sha256 的映射。内置 ID 为 `orchestrator/ba/sde/qae/sdet`；其他 ID 仅允许 `[a-z0-9][a-z0-9_-]*`，重复、越界路径、无描述均抛 `ValueError`。根 orchestrator 使用 primary 模式，专业 Agent 使用 subagent 模式。先写临时目录，全部成功再原子替换；恢复时核对摘要，不重写旧快照。
 
-- [ ] 先安装固定 OpenCode 版本到隔离工具目录，核对 run/serve 帮助和配置 schema；记录版本及来源，再写独立阶段设计，固定下列场景、能力判定和 opt-in，不增加正式产品能力。
-- [ ] 写失败测试，另覆盖禁用、越权、重复 ID、换行/YAML 引号、同版本导出字节一致、生成失败不留下半份目录：
+- [x] 先安装固定 OpenCode 版本到隔离工具目录，核对 run/serve 帮助和配置 schema；记录版本及来源，再写独立阶段设计，固定下列场景、能力判定和 opt-in，不增加正式产品能力。
+- [x] 写失败测试，另覆盖禁用、越权、重复 ID、换行/YAML 引号、同版本导出字节一致、生成失败不留下半份目录：
 
 ```python
 from scripts.opencode_probe.models import ProbeAgent
@@ -55,9 +55,9 @@ def test_profiles_include_all_allowed_agents_without_prefix(tmp_path):
                           ".opencode/agents/qae.md"}
 ```
 
-- [ ] 执行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/operations/test_opencode_probe.py -q`，预期先因缺模块/函数失败。
-- [ ] 实现 OpenCode frontmatter（description/mode/model/permission）与正文编码；权限默认拒绝再按授权放行，未知平台工具映射拒绝。只读 QAE 同时限制 edit、bash 与其他可写工具；主 Agent 的 task 规则只允许获准专业 Agent，禁用未授权内置 Agent。TAP 显式 @ 请求另做服务端授权，不能只依赖 task 规则。
-- [ ] 同命令通过后，提交 `test: add frozen opencode probe profiles`。
+- [x] 执行 `uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/unit/operations/test_opencode_probe.py -q`，预期先因缺模块/函数失败。
+- [x] 实现 OpenCode frontmatter（description/mode/model/permission）与正文编码；权限默认拒绝再按授权放行，未知平台工具映射拒绝。只读 QAE 同时限制 edit、bash 与其他可写工具；主 Agent 的 task 规则只允许获准专业 Agent，禁用未授权内置 Agent。TAP 显式 @ 请求另做服务端授权，不能只依赖 task 规则。
+- [x] 同命令通过后，提交 `test: add frozen opencode probe profiles`。
 
 ### Task 0.2：进程、事件与协议发现
 
@@ -67,7 +67,7 @@ OpenCode run 的进程终止与 serve 的 session 终态分开判定；serve 是
 
 **Interfaces:** `ProbeRun(argv: tuple[str, ...], cwd: Path, env: dict[str, str], timeout_seconds: int)`；`run_probe(spec: ProbeRun) -> ProbeCapture`（async），`ProbeCapture` 含 `exit_code: int | None`、`stdout_lines: tuple[str, ...]`、`stderr_lines: tuple[str, ...]`、`timed_out: bool`。调用使用 argv 和显式 env，不使用 shell。stdout/stderr 并行读取，按行限额，超时先停止进程组再等待回收；原始数据仅在有界内存或临时受限目录，脱敏后才写证据。
 
-- [ ] 写失败测试：stub 分别输出交错 stdout/stderr、拆包 JSON、无效 JSON、超长行、非零退出及派生长活进程；确认不死锁、不把 EOF 视为成功、取消后无存活子进程。代表性分类函数定义为 `classify_capture(exit_code: int | None, timed_out: bool, terminal_seen: bool) -> str`：
+- [x] 写失败测试：stub 分别输出交错 stdout/stderr、拆包 JSON、无效 JSON、超长行、非零退出及派生长活进程；确认不死锁、不把 EOF 视为成功、取消后无存活子进程。代表性分类函数定义为 `classify_capture(exit_code: int | None, timed_out: bool, terminal_seen: bool) -> str`：
 
 ```python
 from scripts.opencode_probe.process import classify_capture
@@ -78,10 +78,10 @@ def test_zero_exit_without_terminal_is_incomplete():
     assert classify_capture(0, False, True) == "complete"
 ```
 
-- [ ] 运行 0.1 单测命令，确认新增断言失败；实现进程封装，stub 用标准库生成这些行为。
-- [ ] CLI 实现 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`；每个场景只使用预定义无敏感样本；额度达到后停止后续调用并记录预算超限。没有可信模型调用计数和执行端限额时拒绝真实运行，不能把 token 统计当作调用次数。
-- [ ] 帮助输出与单测通过。仅在 opt-in 下采集一个真实任务的 JSONL/可用监控事件，记录启动模式、CLI 版本、事件名称、字段及父子关联来源，不先假定 JSONL 含完整子 Agent 生命周期。当前未安装、未采集；真实字段与关联保持 unverified。
-- [ ] 提交 `test: capture opencode lifecycle evidence`。
+- [x] 运行 0.1 单测命令，确认新增断言失败；实现进程封装，stub 用标准库生成这些行为。
+- [x] CLI 实现 `--scenario`、`--output`、`--max-seconds`、`--max-model-calls`；每个场景只使用预定义无敏感样本；额度达到后停止后续调用并记录预算超限。没有可信模型调用计数和执行端限额时拒绝真实运行，不能把 token 统计当作调用次数。
+- [x] 帮助输出与单测通过。随后在 0.3 的显式 opt-in 下采集真实任务的可用监控事件，记录启动模式、CLI 版本、事件名称、字段及父子关联来源；`run` JSON 不含完整子 Agent 生命周期。
+- [x] 提交 `test: capture opencode lifecycle evidence`。
 
 ### Task 0.3：能力矩阵与真实场景
 
@@ -105,7 +105,7 @@ def test_zero_exit_without_terminal_is_incomplete():
 | 执行端预算 | 超时、调用数和费用超限，含子任务与恢复 | 全任务累计不重置，执行端停止；超限不再发起模型请求 |
 | 配置冻结 | 运行中改目录；新会话重新载入 | 老任务版本不变，新任务版本可核对；不依赖热加载 |
 
-- [ ] 写门禁测试并先失败：
+- [x] 写门禁测试并先失败：
 
 ```python
 from scripts.opencode_probe.evaluate import ready_for_runtime
@@ -116,15 +116,15 @@ def test_unverified_event_identity_blocks_runtime():
     assert not ready_for_runtime((result,), frozenset({"child_identity"}))
 ```
 
-- [ ] 实现确定性矩阵评估、provider provenance 校验及双 opt-in；缺可信计数与终态时阻断，拒绝用旧 Copilot fixture 解锁。required 固定为 `byok_all_calls/child_identity/parallel/permissions/control_receipt/resume_workspace/reconcile/budget_enforcement`；`control_receipt` 允许已证实的边界交付，报告必须显示该限制。
-- [ ] 执行确定性单测通过，再运行：
+- [x] 实现确定性矩阵评估、provider provenance 校验及双 opt-in；缺可信计数与终态时阻断，拒绝用旧 Copilot fixture 解锁。required 固定为 `byok_all_calls/child_identity/parallel/permissions/control_receipt/resume_workspace/reconcile/budget_enforcement`；`control_receipt` 允许已证实的边界交付，报告必须显示该限制。
+- [x] 执行确定性单测通过；双 opt-in 真实烟测于 Task 0.4 运行：
 
 ```bash
 TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 TAP_RUN_OPENCODE_PROBE=1 uv run --project apps/tap-ai-backend pytest apps/tap-ai-backend/tests/smoke/test_opencode_capabilities.py -v
 ```
 
-- [ ] 将原始记录脱敏并存入 fixture；记录样本来源、CLI/模型/配置摘要、采集时间、脱敏方法。guide 中逐项填真实证据；无法验证填写 unverified 和原因，不能写推测的通过结果。
-- [ ] 提交 `test: verify opencode workflow capabilities`。
+- [x] 将原始记录脱敏并存入 fixture；记录样本来源、CLI/模型/配置摘要、采集时间、脱敏方法。guide 中逐项填真实证据；无法验证填写 unverified 和原因，不能写推测的通过结果。
+- [x] 提交 `test: verify opencode workflow capabilities`。
 
 ### Task 0.4：确定接入方式与阶段交接
 
@@ -132,9 +132,9 @@ TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1 TAP_RUN_OPENCODE_PROBE=1 uv run --project apps
 
 **Interfaces:** 交付一个固定组合：CLI 版本、模型别名、BYOK 配置方式、进程模式、事件来源、续接方式、已知限制，以及 phase-2 使用的 fixture。最小基线使用 opencode run JSON，实时交互候选使用 opencode serve 的回环 HTTP/SSE；按真实控制、事件与恢复证据选择接口，不额外引入 SDK/MCP 代理。
 
-- [ ] 对照所有 required 结果；八项均无真实证据，维持阻塞，不修改 UI 造事件。
-- [ ] 将阶段 2 adapter 所需的实际字段类别和证据来源写入计划，并确认单次运行不同时由外层 LangGraph 和 OpenCode 规划子任务。
-- [ ] 根据真实脱敏 fixture 将观察到的字段名和事件 schema 映射进阶段 2 adapter；当前无 OpenCode 真实记录，不能预填。
-- [ ] 复跑一条自动委派与一条恢复场景，确认固定组合可复现；保存报告引用。
-- [ ] 对变更文档进行链接、Markdown 与差异检查；路线图记为“能力验证存在具体缺口”，未标记编码运行已交付。
-- [ ] 提交 `docs: record opencode integration capability gate`，满足门禁后进入阶段 2。
+- [x] 对照所有 required 结果；四项 supported、四项 unverified，维持阻塞，不修改 UI 造事件。
+- [x] 将阶段 2 adapter 所需的实际字段类别和证据来源写入计划，并确认单次运行不同时由外层 LangGraph 和 OpenCode 规划子任务。
+- [x] 根据真实脱敏 fixture 将观察到的字段名和事件 schema 映射进阶段 2 adapter；未知的事件键与辅助调用类型留待验证。
+- [ ] 复跑一条自动委派与一条恢复场景，确认固定组合可复现；保存报告引用。两条已按限额运行并保存部分样本，完整复现未确认；见[真实能力记录](../../guides/2026-11-06-opencode-capability-validation.md)。
+- [x] 对变更文档进行链接、Markdown 与差异检查；路线图记为“能力验证存在具体缺口”，未标记编码运行已交付。
+- [x] 提交 `docs: record opencode integration capability gate`；只有全部门禁满足后才能进入阶段 2，本次未满足。

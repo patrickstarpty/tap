@@ -1,0 +1,229 @@
+{
+  "artifacts": {
+    "square.py": "166c83cd99bf5ec1762993b4423770f150092aeac95a915616f14a6b07cf040b"
+  },
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T07:30:40.465465+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 109,
+    "charged_cost_usd": 0.1356608
+  },
+  "event_count": 225,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "file.edited",
+    "file.watcher.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "server.heartbeat",
+    "session.created",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "gate": {
+    "budget_exceeded": true,
+    "calls": 7,
+    "denials": [
+      {
+        "claimed_session_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+        "payload_fields": [],
+        "reason": "budget",
+        "requested_output_tokens": null,
+        "status": 429
+      }
+    ],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+        "completion_tokens": 11,
+        "estimated_cost_usd": 0.00023719999999999997,
+        "gate_request_id": "probe_1f6beee3d87d14cd45a51a42",
+        "prompt_tokens": 560,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+        "completion_tokens": 133,
+        "estimated_cost_usd": 0.0017219999999999998,
+        "gate_request_id": "probe_87ac98f4437c375dff51a6aa",
+        "prompt_tokens": 3906,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b153a42ffeUJna9y1RCgvWU5",
+        "completion_tokens": 66,
+        "estimated_cost_usd": 0.001296,
+        "gate_request_id": "probe_aed830bac3464df7a315ea7a",
+        "prompt_tokens": 3042,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b153a42ffeUJna9y1RCgvWU5",
+        "completion_tokens": 108,
+        "estimated_cost_usd": 0.0013796,
+        "gate_request_id": "probe_a66e7a80223906760c4ddeb4",
+        "prompt_tokens": 3125,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b153a42ffeUJna9y1RCgvWU5",
+        "completion_tokens": 58,
+        "estimated_cost_usd": 0.0013699999999999997,
+        "gate_request_id": "probe_0c93566b325db709b65b6cae",
+        "prompt_tokens": 3251,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+        "completion_tokens": 90,
+        "estimated_cost_usd": 0.0017688,
+        "gate_request_id": "probe_9c1a979a27a8d0d97ff498d1",
+        "prompt_tokens": 4152,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+        "completion_tokens": 34,
+        "estimated_cost_usd": 0.0017831999999999998,
+        "gate_request_id": "probe_5c9bdea24497599739619c9c",
+        "prompt_tokens": 4356,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224,
+    "unrecorded_calls": 0
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 102,
+    "charged_cost_usd": 0.126104
+  },
+  "profile_provenance": {
+    "aggregate_digest": "2e7970ff90ec15075577f293496934c13567b6b99f7af2fe3c31efe8a2b8ec9e",
+    "revisions": {
+      "orchestrator": "probe-0.3-r2",
+      "qae": "probe-0.3",
+      "sde": "probe-0.3",
+      "sdet": "probe-0.3"
+    }
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+  "scenario": "auto-delegation",
+  "script_check": {
+    "exit_code": 0,
+    "expected_output": true,
+    "safe_ast": true,
+    "synthetic_stdout": "The square of 2 is 4\nThe square of 3 is 9"
+  },
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null,
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      null
+    ],
+    "assistant_parent_ids": [
+      "msg_c095b7d5517892e7cc610409",
+      "msg_c095b7d5517892e7cc610409",
+      "msg_c095b7d5517892e7cc610409",
+      "msg_c095b7d5517892e7cc610409"
+    ],
+    "children": [
+      {
+        "agent": "sde",
+        "assistant_errors": [
+          null,
+          null,
+          null
+        ],
+        "assistant_finishes": [
+          "tool-calls",
+          "tool-calls",
+          "stop"
+        ],
+        "ended_ms": 1794036665442,
+        "id": "ses_e4b153a42ffeUJna9y1RCgvWU5",
+        "message_count": 4,
+        "parent_id": "ses_e4b154b35ffeHshhvST0Xl782K",
+        "started_ms": 1794036647368,
+        "tools": [
+          {
+            "denial_category": null,
+            "file": null,
+            "status": "completed",
+            "target_is_denied_workspace_file": false,
+            "tool": "glob"
+          },
+          {
+            "denial_category": null,
+            "file": "square.py",
+            "status": "completed",
+            "target_is_denied_workspace_file": false,
+            "tool": "write"
+          }
+        ]
+      }
+    ],
+    "readable": true,
+    "root_message_count": 5,
+    "tools": [
+      {
+        "child_session_id": "ses_e4b153a42ffeUJna9y1RCgvWU5",
+        "status": "completed",
+        "tool": "task"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "read"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "bash"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b154b35ffeHshhvST0Xl782K",
+    "ses_e4b153a42ffeUJna9y1RCgvWU5"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "incomplete",
+  "user_message_id": "msg_c095b7d5517892e7cc610409"
+}

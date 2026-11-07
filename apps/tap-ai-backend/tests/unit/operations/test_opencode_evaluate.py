@@ -118,6 +118,33 @@ def test_real_fixture_matrix_requires_execution_side_proof() -> None:
     assert not ready_for_runtime(tuple(results.values()), REQUIRED)
 
 
+def test_resume_requires_unchanged_durable_action_count_and_parent_link() -> None:
+    directory = Path(__file__).resolve().parents[2] / "fixtures/opencode/real"
+    sample = json.loads((directory / "resume.json").read_text())
+    sample["resume"].update(
+        first_action_count_before_abort=1,
+        first_action_count_after_abort=1,
+        first_action_count_final=1,
+        continued_session_id=sample["root_session_id"],
+        post_abort_process_action="continue",
+    )
+    assert {r.name: r for r in evaluate_samples({"resume": sample})}[
+        "resume_workspace"
+    ].status == "supported"
+    for field, value in (
+        ("first_action_count_before_abort", 2),
+        ("first_action_count_after_abort", 2),
+        ("first_action_count_final", 2),
+        ("continued_session_id", "ses_other"),
+        ("post_abort_process_action", "unknown"),
+    ):
+        changed = copy.deepcopy(sample)
+        changed["resume"][field] = value
+        assert {r.name: r for r in evaluate_samples({"resume": changed})}[
+            "resume_workspace"
+        ].status == "unverified"
+
+
 def _negative_permission_sample() -> dict[str, object]:
     directory = Path(__file__).resolve().parents[2] / "fixtures/opencode/real"
     sample = copy.deepcopy(json.loads((directory / "permissions.json").read_text()))

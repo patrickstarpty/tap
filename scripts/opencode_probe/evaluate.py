@@ -249,11 +249,22 @@ def evaluate_samples(
         and isinstance(resume_data, dict)
         and resume_data.get("owned_marker_before_abort", {}).get("identity_verified")
         is True
+        and resume_data.get("owned_marker_before_abort", {}).get("alive") is True
         and resume_data.get("owned_marker_after_abort", {}).get("alive") is False
+        and resume_data.get("was_active_at_abort") is True
+        and resume_data.get("running_bash_observed") is True
+        and resume_data.get("post_abort_process_action") == "continue"
         and resume_data.get("first_digest_before_abort")
         == resume_data.get("first_digest_after_abort")
+        and resume_data.get("first_digest_after_abort")
+        == resume.get("artifacts", {}).get("first.txt")
         and resume_data.get("second_absent_after_abort") is True
-        and resume_data.get("first_action_count") == 1
+        and resume_data.get("first_action_count_before_abort") == 1
+        and resume_data.get("first_action_count_after_abort") == 1
+        and resume_data.get("first_action_count_final") == 1
+        and resume_data.get("continued_session_id") == resume.get("root_session_id")
+        and resume_data.get("continuation_message_id")
+        in facts(resume).get("assistant_parent_ids", [])
         and "second.txt" in resume.get("artifacts", {})
     )
 

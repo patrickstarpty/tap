@@ -1,0 +1,213 @@
+{
+  "artifacts": {
+    "first.txt": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+    "second.txt": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4"
+  },
+  "cli_version": "1.19.5",
+  "collected_at": "2026-11-07T07:31:43.254556+00:00",
+  "config_digest": "2b6c5f9f7ee85fcf960524c3fd34c4b96d5f33fb1a53d996056a9d093c0ee437",
+  "cumulative_ledger": {
+    "calls": 117,
+    "charged_cost_usd": 0.1496368
+  },
+  "event_count": 237,
+  "event_error": null,
+  "event_types": [
+    "catalog.updated",
+    "file.edited",
+    "file.watcher.updated",
+    "integration.updated",
+    "message.part.delta",
+    "message.part.updated",
+    "message.updated",
+    "plugin.added",
+    "reference.updated",
+    "server.connected",
+    "server.heartbeat",
+    "session.diff",
+    "session.idle",
+    "session.status",
+    "session.updated"
+  ],
+  "gate": {
+    "budget_exceeded": true,
+    "calls": 8,
+    "denials": [],
+    "records": [
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 9,
+        "estimated_cost_usd": 0.00025719999999999996,
+        "gate_request_id": "probe_20b1fc5a56a699a995f6f71a",
+        "prompt_tokens": 616,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 342,
+        "estimated_cost_usd": 0.0019947999999999997,
+        "gate_request_id": "probe_fb2abf00d652a55fe1f2bf26",
+        "prompt_tokens": 3961,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 46,
+        "estimated_cost_usd": 0.0017836,
+        "gate_request_id": "probe_a67c35a20479d10fe8d7bb8f",
+        "prompt_tokens": 4321,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 79,
+        "estimated_cost_usd": 0.0018479999999999998,
+        "gate_request_id": "probe_0553b67cf00718c8ef9ff1d3",
+        "prompt_tokens": 4383,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 63,
+        "estimated_cost_usd": 0.0018975999999999997,
+        "gate_request_id": "probe_b404abcb2e3cf9035c346495",
+        "prompt_tokens": 4555,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 63,
+        "estimated_cost_usd": 0.0019592,
+        "gate_request_id": "probe_76b438e4977ff0cd08a43a24",
+        "prompt_tokens": 4709,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 63,
+        "estimated_cost_usd": 0.0020227999999999995,
+        "gate_request_id": "probe_a1d56ad15620367fac5e7b8f",
+        "prompt_tokens": 4868,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      },
+      {
+        "claimed_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+        "completion_tokens": 170,
+        "estimated_cost_usd": 0.0022127999999999996,
+        "gate_request_id": "probe_fdad672f99629c5369d9727f",
+        "prompt_tokens": 5022,
+        "status": 200,
+        "upstream_request_id": null,
+        "usage_verified": true
+      }
+    ],
+    "reservation_per_attempt_usd": 0.052224,
+    "unrecorded_calls": 0
+  },
+  "invalid_events": 0,
+  "last_stage": "complete",
+  "model": "litellm/qwen-plus",
+  "prior_ledger": {
+    "calls": 109,
+    "charged_cost_usd": 0.1356608
+  },
+  "profile_provenance": {
+    "aggregate_digest": "2e7970ff90ec15075577f293496934c13567b6b99f7af2fe3c31efe8a2b8ec9e",
+    "revisions": {
+      "orchestrator": "probe-0.3-r2",
+      "qae": "probe-0.3",
+      "sde": "probe-0.3",
+      "sdet": "probe-0.3"
+    }
+  },
+  "reason": "real_evidence_incomplete",
+  "redaction": "only session IDs, event types, tool states, artifact SHA-256, gate counts and usage retained; prompts, responses and credentials omitted",
+  "root_session_id": "ses_e4b1455c0ffeVI1AEVh7vBU7mS",
+  "scenario": "resume-workspace",
+  "session_facts": {
+    "answer_is_42": false,
+    "assistant_errors": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "assistant_finishes": [
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      "tool-calls",
+      "stop"
+    ],
+    "assistant_parent_ids": [
+      "msg_105ff282c1936665c73bf23f",
+      "msg_105ff282c1936665c73bf23f",
+      "msg_105ff282c1936665c73bf23f",
+      "msg_105ff282c1936665c73bf23f",
+      "msg_105ff282c1936665c73bf23f",
+      "msg_105ff282c1936665c73bf23f",
+      "msg_105ff282c1936665c73bf23f"
+    ],
+    "children": [],
+    "readable": true,
+    "root_message_count": 8,
+    "tools": [
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "write"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "bash"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "read"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "read"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "read"
+      },
+      {
+        "child_session_id": null,
+        "status": "completed",
+        "tool": "read"
+      }
+    ]
+  },
+  "sessions": [
+    "ses_e4b1455c0ffeVI1AEVh7vBU7mS"
+  ],
+  "source": "opencode-real",
+  "status": "unverified",
+  "terminal": "incomplete",
+  "user_message_id": "msg_105ff282c1936665c73bf23f"
+}

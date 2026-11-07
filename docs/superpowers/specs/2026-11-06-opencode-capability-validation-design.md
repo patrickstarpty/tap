@@ -1,10 +1,10 @@
 # OpenCode 能力验证阶段设计
 
-日期：2026-11-07。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径阶段 0，并按[能力验证计划](../plans/2026-11-06-opencode-capability-validation.md)实施。阶段 0 是独立验证工具，不是 Tapper 编码运行时交付；全部真实能力仍待实验。
+日期：2026-11-07。本文细化[整体设计](2026-11-06-agent-workflows-and-test-loop-design.md)的编码路径阶段 0，并按[能力验证计划](../plans/2026-11-06-opencode-capability-validation.md)实施。阶段 0 是独立验证工具，不是 Tapper 编码运行时交付；[真实能力记录](../../guides/2026-11-06-opencode-capability-validation.md)已有四项 supported、四项 unverified，阶段 2 门禁仍阻塞。
 
 ## 固定版本与隔离边界
 
-使用 OpenCode V1 `1.19.5`、macOS arm64 官方[非预发布资产](https://github.com/anomalyco/opencode/releases/tag/v1.19.5)。`opencode-darwin-arm64.zip` 的 GitHub release SHA-256 与下载结果均为 `c1c9e62521192192ef4c3ed1355ada2144055bddb61682217e997b03c55203c1`。二进制放在 worktree 已忽略的 `.superpowers/tools/opencode-1.19.5/opencode`，不写全局配置，不自动升级。隔离 `HOME`、XDG 配置/数据/缓存目录及无租户数据工作区中，`--version` 返回 `1.19.5`，`run --help` 和 `serve --help` 成功；这不是模型调用证据。
+使用 OpenCode V1 `1.19.5`、macOS arm64 官方[非预发布资产](https://github.com/anomalyco/opencode/releases/tag/v1.19.5)。`opencode-darwin-arm64.zip` 的 GitHub release SHA-256 与下载结果均为 `c1c9e62521192192ef4c3ed1355ada2144055bddb61682217e997b03c55203c1`；解压后的二进制 SHA-256 为 `feaafead8cd563af0c2dcb386b0757e4355e327ebb6bd1aaad5440fe2f83596c`。二进制已放在 worktree 和原仓库各自已忽略的 `.superpowers/tools/opencode-1.19.5/opencode`，不写全局配置，不自动升级。隔离 `HOME`、XDG 配置/数据/缓存目录及无租户数据工作区中，`--version` 返回 `1.19.5`，`run --help` 和 `serve --help` 成功；这本身不是模型调用证据。
 
 配置按此版本的[主配置 schema](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/core/src/v1/config/config.ts)、[Agent schema](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/core/src/v1/config/agent.ts)和[权限 schema](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/core/src/v1/config/permission.ts)生成。V1 使用 `agent`、`permission`、`bash` 和 `task`；现行 OpenCode V2 文档的 `agents`、`permissions`、`shell` 和 `subagent` 不能套用。任务配置设 `autoupdate: false`、`default_agent: orchestrator`、`model` 与 `small_model` 均为 `litellm/qwen-plus`，并仅启用 `litellm` provider。自定义 provider 的连接参数与任务专属凭据将在后续探针进程中派生；不得写进 Agent 文件或报告。
 
@@ -36,6 +36,6 @@
 | 预算 | 全任务超时、调用数、费用上限在子任务与恢复间累计，超限后执行端停止请求 |
 | 配置冻结 | 运行中修改不改变老任务；新任务可核对新快照 |
 
-required 门禁固定为 `byok_all_calls`、`child_identity`、`parallel`、`permissions`、`control_receipt`、`resume_workspace`、`reconcile`、`budget_enforcement`。每项结果只可为 `supported`、`unsupported`、`unverified`；未知、缺可信计数、缺终态或缺引用均不能解锁阶段 2。`control_receipt` 若仅支持边界交付，报告必须注明限制。上述八项当前均为 `unverified`。
+required 门禁固定为 `byok_all_calls`、`child_identity`、`parallel`、`permissions`、`control_receipt`、`resume_workspace`、`reconcile`、`budget_enforcement`。每项结果只可为 `supported`、`unsupported`、`unverified`；未知、缺可信计数、缺终态或缺引用均不能解锁阶段 2。当前 `child_identity`、`parallel`、`control_receipt`（安全回合边界）、`reconcile`（仅控制进程失联）有真实 supported 证据；其余四项 unverified。Task 0.4 的自动委派与恢复复现均保留为独立部分样本，不能补足门禁；未复现不等于能力不支持。
 
-真实模型实验必须同时设置 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 与 `TAP_RUN_OPENCODE_PROBE=1`，缺任一开关则 skip。后续探针须在任务自有、回环绑定的限额转发边界下派生最小 BYOK 凭据，且不能把共享主密钥或原仓库 `.env` 暴露给 Agent 工具；LiteLLM 用量、价格和停机回执需逐项实测。原生路径仍通过 ModelGateway → LiteLLM，编码路径才使用 OpenCode → LiteLLM。未来的 `run --format json` 与 `serve` 会话/事件实验分别判定，不把 HTTP 接收视为指令已应用或取消完成。
+真实模型实验必须同时设置 `TAP_RUN_TAPPER_REAL_MODEL_SMOKE=1` 与 `TAP_RUN_OPENCODE_PROBE=1`，缺任一开关则 skip；双开关真实烟测已经通过。探针在任务自有、回环绑定的限额转发边界派生最小 BYOK 凭据，原仓库 `.env` 只由监督端读取，Agent 工具不获得上游密钥。主/子真实请求及用量可核对，但辅助子类型和未观察路径的全覆盖仍未证实。原生路径仍通过 ModelGateway → LiteLLM，编码路径才使用 OpenCode → LiteLLM。实测选择 V1 `serve` 会话与 SSE 加持久 message/children 核对作为阶段 2 候选；`run --format json` 仅给选择性根事件，不能独立满足子实例实时证据。HTTP 接收不是指令已应用或取消完成。SSE 无已验证重放游标，需按持久 session/message/part 标识对账；具体字段与限制见[记录](../../guides/2026-11-06-opencode-capability-validation.md)。

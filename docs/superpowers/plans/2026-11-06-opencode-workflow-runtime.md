@@ -12,11 +12,11 @@
 
 ## 阶段 0 实际门禁与 adapter 输入
 
-[OpenCode 阶段 0](2026-11-06-opencode-capability-validation.md)尚未实施；当前 PATH 未找到 CLI，未固定版本/模型组合，八项 required 全部 unverified。旧 Copilot 确定性探针不能作为新 provider 证据。阶段 1 可独立推进，阶段 2 必须等真实能力门禁与运行合同就绪。
+[OpenCode 阶段 0](2026-11-06-opencode-capability-validation.md)已固定隔离 CLI 1.19.5、`litellm/qwen-plus`、自定义 provider 与任务自有回环限额网关；[真实记录与脱敏 fixture](../../guides/2026-11-06-opencode-capability-validation.md)显示八项 required 中四项 supported、四项 unverified。缺口是全调用 BYOK 关联、实际执行端权限拒绝、无重复动作的暂停恢复、跨子任务和恢复的累计预算。Task 0.4 双开关烟测通过，自动委派和恢复复现则留下部分样本；不能将部分样本算作通过。旧 Copilot 确定性探针不计新 provider 证据。阶段 1 已独立交付；阶段 2 仍待全部真实门禁与运行合同满足。
 
-在 Task 2.1–2.3 编码前，从 OpenCode 真实脱敏 fixture 映射 CodingCapabilities、CodingHandle、ProviderEventKey、normalize_event 与控制/恢复回执：CLI/模型/配置摘要、主/子 session 与 Agent 身份、父子关系、终态、稳定事件键或源游标、LiteLLM 全调用关联、指令接收/应用及会话/工作区/进程恢复。缺可信计数、执行端限额、真实子实例或恢复证据时保持阻塞；不能复制旧字段。主模型、小模型及标题/压缩等辅助路径均不得绕过 LiteLLM。
+Task 2.1–2.3 的字段映射仅从[真实 fixture](../../../apps/tap-ai-backend/tests/fixtures/opencode/real/)和固定 V1 路由出发：`CodingHandle` 保存 CLI/模型/配置及 profile 摘要、根 `session.id`、任务工作区引用；子身份由 `/session/{id}/children` 的 `id/parentID/agent/time` 与根 `task` part 的 `state.metadata.sessionId` 交叉确认。`message.info.id/sessionID/role/parentID/finish/error` 和 `part.type/tool/state.status` 支持消息、工具与终态映射；SSE `type/properties.sessionID/status.type` 仅用于实时提示，断线从持久 message/children 对账。阶段 0 未在脱敏 fixture 中保留 part ID，也未验证 SSE 重放游标或全局稳定事件 ID，因此 `ProviderEventKey`/`events(cursor)` 不能预设源游标已可用；应在阶段 2 开始前验证原始持久 message/part 标识，以任务本地序号和去重测试兜底。用户 `prompt_async` 回执 ID 与 assistant `parentID` 及产物共同构成安全边界应用证据；`abort` 回执仅表示请求。模型网关的 `gate_request_id`、可选 `upstream_request_id`、`x-opencode-session-id` 是不同标识，不能推断为同一模型消息。主/子请求能按 session 关联，标题等根辅助调用的具体子类型未知；全调用路由门禁未通过。缺可信计数、执行端限额、权限拒绝或恢复非重复证据时保持阻塞；不能复制旧字段或推出编码运行已可用。
 
-批处理候选为 opencode run JSON；实时候选为 opencode serve 的回环 HTTP/SSE。阶段 0 固定实际接口；HTTP 认证、监听与配置隔离是运行边界的一部分。外层 LangGraph 不重复规划 OpenCode 内部子任务。
+当前实测候选为 `opencode serve` 的认证回环 HTTP/SSE，加持久 session/message/children 核对；`opencode run --format json` 只见选择性根事件，不能独立支持所需子生命周期。HTTP 认证、监听与配置隔离是运行边界的一部分。外层 LangGraph 只管理父任务生命周期与交接，不重复规划 OpenCode 内部子任务。阶段 2 容器化后必须在容器中重跑核心能力门禁，宿主探针不是容器交付证据。
 
 ## Global Constraints
 

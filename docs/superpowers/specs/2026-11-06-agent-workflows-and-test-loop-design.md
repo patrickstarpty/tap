@@ -111,7 +111,7 @@ flowchart TD
 
 Coding provider 适配接口覆盖启动、事件读取、输入提交、中断、恢复、状态核对和产物导出，报告实际支持的能力及版本。OpenCode、Claude Code、Codex 可以有不同恢复粒度；公共接口不承诺它们支持完全相同的行为。
 
-当前 shell PATH 未找到 `opencode`，因此尚未核对本机版本或运行真实模型。阶段 0 先在隔离工具目录安装并固定版本，记录分发来源、版本及依赖，再验证 LiteLLM 组合；不修改用户全局配置。
+阶段 0 已在隔离工具目录安装并固定 OpenCode 1.19.5，不修改用户全局配置；本机真实 LiteLLM 组合的[能力记录](../../guides/2026-11-06-opencode-capability-validation.md)有四项 supported、四项 unverified。阶段 2 编码运行仍阻塞，原生阶段 1 的进度另计。
 
 实现前必须验证：OpenCode → LiteLLM 的工具调用/流式兼容与主/子/辅助调用覆盖；专业 Agent 与工具权限；可关联的子实例事件；并行；定向输入接收和应用；停止、恢复及失联核对；执行端调用/时间/费用预算。八项 required 门禁以新 OpenCode 计划为准。旧 Copilot 探针不能转记为 OpenCode 通过；失败时保留具体阻塞，不静默换 provider。
 

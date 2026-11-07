@@ -123,6 +123,17 @@ def test_permission_facts_keep_only_linked_target_and_denial_category(tmp_path) 
     }
 
 
+def test_first_action_count_is_strict_append_only_marker(tmp_path) -> None:
+    marker = tmp_path / "first-action.log"
+    assert scenarios._first_action_count(tmp_path) is None
+    marker.write_bytes(b"start\n")
+    assert scenarios._first_action_count(tmp_path) == 1
+    marker.write_bytes(b"start\nstart\n")
+    assert scenarios._first_action_count(tmp_path) == 2
+    marker.write_bytes(b"start\ninvalid\n")
+    assert scenarios._first_action_count(tmp_path) is None
+
+
 def _mock_waiter_process(
     monkeypatch,
     workspace,
