@@ -15,6 +15,97 @@ async def _trusted_test_authorize(scope, task_id):
 
 
 @pytest.mark.asyncio
+async def test_browser_stop_proof_rejects_foreign_lease_and_stale_attempt_after_settlement(
+    owned_project_mysql,
+):
+    """A settled model action must not mask an invalid browser stop proof."""
+    from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+    from tap.modules.ai.application.assets import workflow_asset_seed
+    from tap.modules.workflows.adapters.native_state import NativeStateStore
+
+    engine = create_async_engine(owned_project_database_url(owned_project_mysql))
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        seed = workflow_asset_seed(VALIDATION_SCOPE)
+        await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed)
+        store = MysqlWorkflowStore(sessions)
+        task = await store.create_task(
+            VALIDATION_SCOPE,
+            {
+                "kind": "browser",
+                "goal": "Inspect owned page",
+                "root": {
+                    "agent_id": seed.agents[0].asset_id,
+                    "revision_id": seed.agents[0].revision_id,
+                    "description": seed.agents[0].description,
+                    "instruction": seed.agents[0].system_instruction,
+                },
+                "budget_limit": {"model_calls": 2, "cost_micros": 10_000},
+            },
+            "browser-proof-after-settlement",
+        )
+        token = await store.claim_task(VALIDATION_SCOPE, task.task_id, "worker")
+        state = NativeStateStore(sessions)
+        node_id = await state.ensure_root(VALIDATION_SCOPE, task.task_id, token)
+        await state.start_node(VALIDATION_SCOPE, task.task_id, token, node_id)
+        assert (
+            await store.reserve_action(
+                VALIDATION_SCOPE,
+                task.task_id,
+                token,
+                "settled-model",
+                "model",
+                node_id=node_id,
+                attempt=1,
+            )
+            == "reserved"
+        )
+        await store.settle_action(
+            VALIDATION_SCOPE,
+            task.task_id,
+            token,
+            "settled-model",
+            {"status": "completed", "cost_usd": 0.001},
+            node_id=node_id,
+            attempt=1,
+        )
+        for event_id, attempt, proof_token in (
+            ("foreign-proof", 1, "foreign-lease"),
+            ("stale-proof", 2, token),
+        ):
+            await store.append_event(
+                VALIDATION_SCOPE,
+                task.task_id,
+                token,
+                event_id,
+                "browser.stop_confirmed",
+                {
+                    "node_id": node_id,
+                    "attempt": attempt,
+                    "execution_token": proof_token,
+                    "stop_confirmed": True,
+                },
+            )
+            assert not await store.stop_evidence(VALIDATION_SCOPE, task.task_id, token, node_id)
+        await store.append_event(
+            VALIDATION_SCOPE,
+            task.task_id,
+            token,
+            "current-proof",
+            "browser.stop_confirmed",
+            {
+                "node_id": node_id,
+                "attempt": 1,
+                "execution_token": token,
+                "stop_confirmed": True,
+            },
+        )
+        assert await store.stop_evidence(VALIDATION_SCOPE, task.task_id, token, node_id)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_chat_origin_task_cannot_be_claimed_before_link_activation(owned_project_mysql):
     engine = create_async_engine(owned_project_database_url(owned_project_mysql))
     try:

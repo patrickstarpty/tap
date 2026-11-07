@@ -7,13 +7,19 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from pathlib import Path
 
 BINARY_SHA256 = "dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c"
+RIPGREP_VERSION = "15.1.0"
+RIPGREP_ARCHIVE_SHA256 = (
+    "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e"
+)
+RIPGREP_MEMBER = "ripgrep-15.1.0-aarch64-unknown-linux-gnu/rg"
 BROWSER_IMAGE = "tapper-browser-runtime:1.62.1-arm64"
 BROWSER_IMAGE_ID = (
-    "sha256:516c8d85a71714bb7ee24510cb0b57f05ab7c7d61323597f1c0ebe98ae0ed9f8"
+    "sha256:dd59168b4e82204c55f28ba1ac5c269600a0c4e28e4f21faa639485630a1feb1"
 )
 CODING_IMAGE = "tapper-coding-runtime:1.19.5-arm64"
 FILES = ("model-shim.mjs", "browserctl.mjs", "opencode-client.mjs")
@@ -27,11 +33,28 @@ def validate_binary(path: Path) -> None:
         raise ValueError("OpenCode binary digest mismatch")
 
 
+def validate_ripgrep_archive(path: Path) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("ripgrep archive must be a real file")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != RIPGREP_ARCHIVE_SHA256:
+        raise ValueError("ripgrep archive digest mismatch")
+    with tarfile.open(path, "r:gz") as archive:
+        member = archive.getmember(RIPGREP_MEMBER)
+        if not member.isfile() or not 0 < member.size <= 8000000:
+            raise ValueError("ripgrep binary archive member invalid")
+        binary = archive.extractfile(member)
+        if binary is None:
+            raise ValueError("ripgrep binary archive member unavailable")
+        return binary.read()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--opencode-binary", type=Path, required=True)
+    parser.add_argument("--ripgrep-archive", type=Path, required=True)
     args = parser.parse_args()
     validate_binary(args.opencode_binary)
+    ripgrep_binary = validate_ripgrep_archive(args.ripgrep_archive)
     root = Path(__file__).resolve().parents[1]
     inspected = subprocess.run(
         ["docker", "image", "inspect", BROWSER_IMAGE, "--format", "{{.Id}}"],
@@ -44,6 +67,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="tapper-coding-build-") as temporary:
         context = Path(temporary)
         shutil.copyfile(args.opencode_binary, context / "opencode")
+        (context / "rg").write_bytes(ripgrep_binary)
         shutil.copyfile(
             root / "deploy/browser/Dockerfile.coding", context / "Dockerfile"
         )
@@ -74,6 +98,8 @@ def main() -> None:
                 "image_id": image_id,
                 "base_image_id": BROWSER_IMAGE_ID,
                 "opencode_binary_sha256": BINARY_SHA256,
+                "ripgrep_version": RIPGREP_VERSION,
+                "ripgrep_archive_sha256": RIPGREP_ARCHIVE_SHA256,
             }
         )
     )

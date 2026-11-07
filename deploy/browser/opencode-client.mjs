@@ -20,22 +20,56 @@ export function parseInputRequest(raw) {
   return value;
 }
 
+export function validateFrozenInput(data, digest) {
+  if (!Buffer.isBuffer(data) || !data.length || data.length > 32768 ||
+      typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest) ||
+      crypto.createHash('sha256').update(data).digest('hex') !== digest) {
+    throw new Error('invalid frozen input');
+  }
+  let value;
+  try { value = JSON.parse(data.toString('utf8')); } catch { throw new Error('invalid frozen input'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid frozen input');
+  return data;
+}
+
 export function terminalMessages(messages, expectedUserId) {
   if (!Array.isArray(messages)) return 'incomplete';
   const start = messages.findIndex(item => item?.info?.role === 'user' && item.info.id === expectedUserId);
   if (start < 0) return 'incomplete';
   let assistant = false;
   for (const item of messages.slice(start + 1)) {
-    if (!item?.info || !Array.isArray(item.parts) || item.info.role === 'user') return 'incomplete';
+    if (item?.info?.role !== 'assistant' || item.info.parentID !== expectedUserId || !Array.isArray(item.parts)) return 'incomplete';
     if (item.info.error) return 'failed';
-    if (item.parts.some(part => part?.type === 'tool' && part.state?.status === 'error')) return 'failed';
-    if (item.parts.some(part => part?.type === 'tool' && part.state?.status !== 'completed')) return 'incomplete';
-    if (item.info.role === 'assistant') {
-      if (item.info.parentID !== expectedUserId) return 'incomplete';
-      assistant = item.info.finish === 'stop';
-    }
+    if (item.parts.some(part => part?.type === 'tool' && !['completed', 'error'].includes(part.state?.status))) return 'incomplete';
+    assistant = item.info.finish === 'stop';
   }
   return assistant ? 'complete' : 'incomplete';
+}
+
+export function terminalFailure(messages, expectedUserId) {
+  if (!Array.isArray(messages)) return null;
+  const start = messages.findIndex(item => item?.info?.role === 'user' && item.info.id === expectedUserId);
+  if (start < 0) return null;
+  for (const item of messages.slice(start + 1)) {
+    if (item?.info?.role === 'assistant' && item.info.parentID === expectedUserId && item.info.error) {
+      return { category: 'assistant_error', tool: null, summary: 'OpenCode assistant reported an error.' };
+    }
+  }
+  for (const item of messages.slice(start + 1)) {
+    if (item?.info?.role !== 'assistant' || item.info.parentID !== expectedUserId) continue;
+    for (const part of item?.parts || []) {
+      if (part?.type !== 'tool' || part.state?.status !== 'error') continue;
+      const tool = typeof part.tool === 'string' && /^[a-z][a-z0-9_-]{0,39}$/.test(part.tool) ? part.tool : 'unknown';
+      const error = typeof part.state.error === 'string' ? part.state.error : '';
+      if (error.includes('/opt/browser/frozen/inputs.json') && /ENOENT|No such file or directory|File not found/i.test(error)) {
+        return { category: 'missing_frozen_input', tool, summary: 'Frozen browser inputs are unavailable in the coding container.' };
+      }
+      if (/EACCES|permission denied/i.test(error)) return { category: 'permission_denied', tool, summary: 'OpenCode tool was denied access.' };
+      if (/timed? out|timeout/i.test(error)) return { category: 'tool_timeout', tool, summary: 'OpenCode tool timed out.' };
+      return { category: 'tool_error', tool, summary: 'OpenCode tool reported an error.' };
+    }
+  }
+  return null;
 }
 
 export function linkedChildren(messages, children, rootId, baseline) {
@@ -158,7 +192,8 @@ async function run() {
       const children = linkedChildren(messages.value, rawChildren.value, sessionId, baseline);
       if (children !== null) {
         const root = terminalMessages(messages.value, messageId);
-        if (root === 'failed') return { session_id: sessionId, message_id: messageId, terminal: 'failed' };
+        if (root === 'failed') return { session_id: sessionId, message_id: messageId, terminal: 'failed',
+          failure: terminalFailure(messages.value, messageId) || { category: 'unknown', tool: null, summary: 'OpenCode failed without classified error.' } };
         if (root === 'complete' && idle.has(sessionId)) {
           let finished = true;
           for (const childId of children) {
@@ -214,6 +249,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       for await (const chunk of process.stdin) { size += chunk.length; if (size > 20000) throw new Error('goal size invalid'); chunks.push(chunk); }
       if (size === 0) throw new Error('empty goal');
       fs.writeFileSync('/workspace/goal.txt', Buffer.concat(chunks), { mode: 0o600 });
+      process.stdout.write('{}\n');
+    }
+    else if (process.argv[2] === 'set-input') {
+      verifiedIdentity();
+      const chunks = []; let size = 0;
+      for await (const chunk of process.stdin) { size += chunk.length; if (size > 32768) throw new Error('invalid frozen input'); chunks.push(chunk); }
+      const data = validateFrozenInput(Buffer.concat(chunks), process.argv[3]);
+      fs.writeFileSync('/workspace/frozen-inputs.json', data, { flag: 'wx', mode: 0o600 });
       process.stdout.write('{}\n');
     }
     else throw new Error('unsupported fixed client mode');

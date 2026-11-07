@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -120,12 +121,16 @@ class MailContainer:
         self.wait_forever = wait_forever
         self.stopped = False
         self.response_status = None
+        self.frozen_input = None
 
     async def start(self, *_args):
         pass
 
     async def set_goal(self, _text):
         pass
+
+    async def set_frozen_input(self, data, digest):
+        self.frozen_input = (data, digest)
 
     async def run_prompt(self):
         if self.wait_forever:
@@ -152,7 +157,15 @@ class MailContainer:
         self.response_status = json.loads((self.root / "responses" / "model-a.json").read_text())[
             "status"
         ]
-        return {"terminal": "failed", "session_id": "ses_test"}
+        return {
+            "terminal": "failed",
+            "session_id": "ses_test",
+            "failure": {
+                "category": "tool_error",
+                "tool": "bash",
+                "summary": "OpenCode tool reported an error.",
+            },
+        }
 
     async def collect(self):
         return {}
@@ -160,6 +173,164 @@ class MailContainer:
     async def stop(self):
         self.stopped = True
         return True
+
+
+class CompletedScriptContainer(MailContainer):
+    def __init__(self, root):
+        super().__init__(root)
+        self.goals = []
+
+    async def set_goal(self, text):
+        self.goals.append(text)
+
+    async def run_prompt(self):
+        return {"terminal": "complete", "session_id": "ses_test"}
+
+    async def collect(self):
+        script = b"import { test } from '@playwright/test'; test('task', () => {});"
+        return {
+            "script_base64": base64.b64encode(script).decode(),
+            "script_sha256": hashlib.sha256(script).hexdigest(),
+        }
+
+
+class ReceiptBrowser(SessionBrowser):
+    def __init__(self, receipts):
+        super().__init__()
+        self.receipts = list(receipts)
+        self.limits = []
+
+    async def bundle(self, _task_id, _script, _inputs, _origins, _key):
+        return {"bundle_id": "bundle-a", "input_sha256": hashlib.sha256(b"{}").hexdigest()}
+
+    async def execute(self, _task_id, _bundle_id, _input_sha256, limits, _key, **_kwargs):
+        self.limits.append(limits)
+        return self.receipts.pop(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_code", "failed_tests", "explicit_cap"),
+    [
+        ("runtime_error", 0, False),
+        ("evidence_limit", 0, True),
+        ("execution_failed", 0, False),
+    ],
+)
+async def test_coding_runtime_does_not_repair_without_actual_test_failure(
+    failure_code, failed_tests, explicit_cap
+):
+    browser = ReceiptBrowser(
+        [
+            {
+                "status": "failed",
+                "failure_code": failure_code,
+                "execution_id": "execution-a",
+                "bundle_id": "bundle-a",
+                "result": {"failed": failed_tests} if failed_tests else {},
+                "steps": [],
+                "evidence": [],
+            }
+        ]
+    )
+    built = []
+
+    def make_container(_config, root):
+        container = CompletedScriptContainer(root)
+        built.append(container)
+        return container
+
+    frozen = request(replay=False)
+    if explicit_cap:
+        frozen["browser"]["execution_limits"] = {"max_output_bytes": 1_000_000}
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=browser,
+        store=Journal(),
+        container_factory=make_container,
+    )
+    result = await runtime.run("task-a", frozen, {}, None, "lease", "node", 1)
+    assert result.status == "failed"
+    assert result.terminal_evidence["failure_code"] == failure_code
+    assert len(built[0].goals) == len(browser.limits) == 1
+    assert browser.limits[0]["max_output_bytes"] == (1_000_000 if explicit_cap else 5_000_000)
+    assert built[0].stopped and browser.canceled
+
+
+@pytest.mark.asyncio
+async def test_coding_runtime_repairs_actual_assertion_failure():
+    browser = ReceiptBrowser(
+        [
+            {
+                "status": "failed",
+                "failure_code": "execution_failed",
+                "execution_id": "execution-a",
+                "bundle_id": "bundle-a",
+                "result": {"failed": 1, "tests": [{"status": "failed"}]},
+                "steps": [{"title": "Expect toHaveText", "status": "failed"}],
+                "evidence": [],
+            },
+            {
+                "status": "passed",
+                "failure_code": None,
+                "execution_id": "execution-b",
+                "bundle_id": "bundle-a",
+                "result": {"passed": 1, "failed": 0},
+                "steps": [],
+                "evidence": [],
+            },
+        ]
+    )
+    built = []
+
+    def make_container(_config, root):
+        container = CompletedScriptContainer(root)
+        built.append(container)
+        return container
+
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=browser,
+        store=Journal(),
+        container_factory=make_container,
+    )
+    result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert result.status == "passed"
+    assert result.execution_ref == "execution-b"
+    assert len(browser.limits) == len(built[0].goals) == 2
+    assert built[0].goals[1].startswith("Repair flow.spec.ts")
+    assert built[0].stopped and browser.canceled
+
+
+@pytest.mark.asyncio
+async def test_coding_generation_receives_exact_frozen_input_before_prompt():
+    payload = {"notes": "customer=Ada; region=west; unique=only-in-input"}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    frozen = request(replay=False)
+    frozen["browser"]["input_data"] = payload
+    frozen["browser"]["input_sha256"] = hashlib.sha256(encoded).hexdigest()
+    built = []
+
+    def make_container(_config, root):
+        container = MailContainer(root, wait_forever=True)
+        built.append(container)
+        return container
+
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=SessionBrowser(),
+        store=Journal(),
+        container_factory=make_container,
+    )
+
+    async def cancel():
+        return True
+
+    result = await runtime.run(
+        "task-a", frozen, {}, None, "lease", "node", 1, stop_requested=cancel
+    )
+    assert result.status == "canceled"
+    assert built[0].frozen_input == (encoded, hashlib.sha256(encoded).hexdigest())
 
 
 @pytest.mark.asyncio
@@ -214,6 +385,11 @@ async def test_coding_runtime_journals_reservation_before_forward_and_settles_us
         )
         result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
         assert result.status == "failed"
+        assert result.terminal_evidence["model_terminal"]["failure"] == {
+            "category": "tool_error",
+            "tool": "bash",
+            "summary": "OpenCode tool reported an error.",
+        }
         assert Upstream.calls == 1
         assert journal.events[0][0] == "reserved"
         assert journal.events[1][0] == "settled"
@@ -321,6 +497,65 @@ async def test_session_start_time_does_not_extend_absolute_coding_deadline():
     with pytest.raises(TimeoutError, match="deadline"):
         await runtime.run("task-a", frozen, {}, None, "lease", "node", 1)
     assert time.monotonic() - start < 3.6
+
+
+@pytest.mark.asyncio
+async def test_coding_command_accepts_successful_docker_stdout_with_verbose_stderr(
+    monkeypatch,
+):
+    started = {}
+
+    class SuccessfulProcess:
+        returncode = 0
+
+        async def communicate(self, _data):
+            return b"sha256:owned-image\n", b"fork diagnostic\n" * 400
+
+    async def create_process(*_args, **kwargs):
+        started.update(kwargs)
+        kwargs["stdout"].write(b"sha256:owned-image\n")
+        return SuccessfulProcess()
+
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    assert await DockerCodingContainer._command(("docker", "image", "inspect", "owned")) == (
+        b"sha256:owned-image\n"
+    )
+    assert started["stderr"] == asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "max_stdout"),
+    [(125, b"", 100), (0, b"too many bytes", 4)],
+)
+async def test_coding_command_rejects_failed_exit_or_oversize_stdout(
+    monkeypatch,
+    returncode,
+    stdout,
+    max_stdout,
+):
+    class Process:
+        async def communicate(self, _data):
+            return stdout, b""
+
+    process = Process()
+    process.returncode = returncode
+
+    async def create_process(*_args, **kwargs):
+        kwargs["stdout"].write(stdout)
+        return process
+
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    with pytest.raises(RuntimeError, match="coding container command failed"):
+        await DockerCodingContainer._command(
+            ("docker", "image", "inspect", "owned"), max_stdout=max_stdout
+        )
 
 
 @pytest.mark.asyncio
@@ -467,3 +702,57 @@ async def test_gate_shutdown_waits_for_inflight_durable_settlement_before_termin
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@pytest.mark.asyncio
+async def test_coding_command_cancel_does_not_wait_for_inherited_stdout_pipe():
+    import sys
+
+    # A grandchild keeps the stdout descriptor open after the command process dies.
+    # Docker exec can exhibit the same pipe-drain condition during cancellation.
+    code = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'], "
+        "stdout=sys.stdout); time.sleep(2)"
+    )
+    running = asyncio.create_task(
+        DockerCodingContainer._command((sys.executable, "-c", code), timeout=5)
+    )
+    await asyncio.sleep(0.1)
+    running.cancel()
+    done, pending = await asyncio.wait({running}, timeout=0.5)
+    if pending:
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+    assert done, "canceled command waited for inherited stdout pipe"
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_failure", ["kill_race", "reap_timeout"])
+async def test_coding_command_cleanup_keeps_original_cancel(monkeypatch, cleanup_failure):
+    class Process:
+        returncode = None
+
+        async def communicate(self, _data):
+            raise asyncio.CancelledError("original cancel")
+
+        def kill(self):
+            if cleanup_failure == "kill_race":
+                raise ProcessLookupError("already exited")
+
+        async def wait(self):
+            if cleanup_failure == "reap_timeout":
+                raise TimeoutError("reap delayed")
+            return -9
+
+    async def create_process(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    with pytest.raises(asyncio.CancelledError, match="original cancel"):
+        await DockerCodingContainer._command(("docker", "exec", "owned"))

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -49,6 +50,37 @@ OrdinaryTool = Callable[
 ]
 SkillLoader = Callable[[ProjectScopeContext, str], Awaitable[str]]
 StandaloneAuthorize = Callable[[ProjectScopeContext, str], Awaitable[bool]]
+
+_CODING_FAILURE_SUMMARIES = {
+    "assistant_error": "OpenCode assistant reported an error.",
+    "missing_frozen_input": "Frozen browser inputs are unavailable in the coding container.",
+    "permission_denied": "OpenCode tool was denied access.",
+    "tool_timeout": "OpenCode tool timed out.",
+    "tool_error": "OpenCode tool reported an error.",
+    "unknown": "OpenCode failed without classified error.",
+}
+
+
+def _safe_coding_failure(receipt: dict[str, Any]) -> dict[str, str | None] | None:
+    terminal = receipt.get("model_terminal")
+    if not isinstance(terminal, dict) or terminal.get("terminal") != "failed":
+        return None
+    raw = terminal.get("failure")
+    category = raw.get("category") if isinstance(raw, dict) else None
+    if not isinstance(category, str) or category not in _CODING_FAILURE_SUMMARIES:
+        category = "unknown"
+    tool = raw.get("tool") if isinstance(raw, dict) else None
+    if (
+        category in {"unknown", "assistant_error"}
+        or not isinstance(tool, str)
+        or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", tool)
+    ):
+        tool = None
+    return {
+        "category": category,
+        "tool": tool,
+        "summary": _CODING_FAILURE_SUMMARIES[category],
+    }
 
 
 class WorkflowStopped(Exception):
@@ -444,6 +476,9 @@ class NativeWorkflowRuntime:
             "usage": result.usage,
             "replay_model_calls": result.replay_model_calls,
         }
+        coding_failure = _safe_coding_failure(receipt) if status == "failed" else None
+        if coding_failure is not None:
+            payload["coding_failure"] = coding_failure
         if result.input_request is not None:
             payload["input_request"] = result.input_request
         await self._store.append_event(
@@ -475,7 +510,16 @@ class NativeWorkflowRuntime:
         if status in {"canceled", "unknown"}:
             return "stopped"
         if status == "failed":
-            failure = output_error or receipt.get("failure_code") or "browser execution failed"
+            failure = (
+                output_error
+                or (
+                    f"OpenCode failed: {coding_failure['summary']}"
+                    if coding_failure is not None
+                    else None
+                )
+                or receipt.get("failure_code")
+                or "browser execution failed"
+            )
             reason = str(failure)[:2000]
             await self._state.fail_node(scope, task_id, token, node_id, reason)
             await self._state.fail_task(scope, task_id, token, reason)

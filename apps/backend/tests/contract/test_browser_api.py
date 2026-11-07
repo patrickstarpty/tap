@@ -75,6 +75,11 @@ def test_browser_http_rejects_cross_project_and_conflicting_keys(tmp_path):
     assert again.json() == first.json()
     assert conflict.status_code == 409
     assert cross.status_code == 403
+    cross_cancel = client.post(
+        f"/api/projects/project-b/browser/sessions/{first.json()['session_id']}/cancel",
+        headers=headers,
+    )
+    assert cross_cancel.status_code == 403
     canceled = client.post(
         f"/api/projects/project-a/browser/sessions/{first.json()['session_id']}/cancel",
         headers=headers,

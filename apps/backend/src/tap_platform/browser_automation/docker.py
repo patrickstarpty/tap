@@ -845,6 +845,13 @@ class BrowserRuntime:
             result = receipt("canceled", "canceled")
         except TimeoutError:
             result = receipt("failed", "timeout")
+        except RuntimeError as error:
+            result = receipt(
+                "failed",
+                "evidence_limit"
+                if str(error) == "browser evidence exceeds limit"
+                else "runtime_error",
+            )
         except Exception:
             result = receipt("failed", "runtime_error")
         finally:

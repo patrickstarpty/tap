@@ -15,7 +15,7 @@ class BrowserLimits:
     memory_mb: int = 1024
     cpus: float = 1.0
     pids: int = 128
-    max_output_bytes: int = 1_000_000
+    max_output_bytes: int = 5_000_000
 
     def __post_init__(self) -> None:
         if not (1 <= self.deadline_seconds <= 600 and 128 <= self.memory_mb <= 4096):

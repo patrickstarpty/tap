@@ -5,8 +5,8 @@
 ## 准备服务和镜像
 
 1. 按现有 Tapper 本地流程启动 MySQL、Redis、MinIO、LiteLLM 等依赖。为 TAP AI workflow 和 TAP Browser API 分别配置数据库与迁移：AI 使用 `TAP_DATABASE_URL=mysql+asyncmy://…` 执行 `make tap-ai-migrate`；Browser API 使用单独数据库的 `TAP_BROWSER_DATABASE_URL=mysql+pymysql://…` 执行 `TAP_DATABASE_URL="$TAP_BROWSER_DATABASE_URL" make tap-backend-migrate`。不要把两个 URL 指向同一库。
-2. 在 arm64 主机构建浏览器镜像：`python3 scripts/build-browser-runtime.py`。验收镜像 ID 为 `sha256:516c8d85a71714bb7ee24510cb0b57f05ab7c7d61323597f1c0ebe98ae0ed9f8`；若本机重建 ID 不同，先核对锁定输入和实际构建报告，不能悄悄替换运行时 pin。
-3. 提供经校验的 OpenCode 1.19.5 Linux arm64 可执行文件，再运行 `python3 scripts/build_coding_image.py --opencode-binary /path/to/opencode`。构建器核对该文件 SHA-256 `dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c` 和浏览器基础镜像 ID；当前编码镜像 ID 为 `sha256:1e3b18e1f38b56fe9b67564593ad31ab2807ad61c07de6fc55bded7128aa4a0b`。被忽略的本机开发目录不是产品启动依赖。
+2. 在 arm64 主机构建浏览器镜像：`python3 scripts/build-browser-runtime.py`。验收镜像 ID 为 `sha256:dd59168b4e82204c55f28ba1ac5c269600a0c4e28e4f21faa639485630a1feb1`；若本机重建 ID 不同，先核对锁定输入和实际构建报告，不能悄悄替换运行时 pin。
+3. 提供经校验的 OpenCode 1.19.5 Linux arm64 可执行文件，以及 [ripgrep 15.1.0 官方 aarch64 GNU 发行归档](https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz)，运行 `python3 scripts/build_coding_image.py --opencode-binary /path/to/opencode --ripgrep-archive /path/to/ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz`。构建器核对 OpenCode SHA-256 `dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c`、ripgrep 官方归档 SHA-256 `2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e` 和浏览器基础镜像 ID；当前编码镜像 ID 为 `sha256:fae707f8bfa133c1f838d89109a6eb752f53d98aecef781b7a1771233e6021b3`。被忽略的本机开发目录不是产品启动依赖。
 
 ## 配置和启动
 
@@ -16,4 +16,4 @@
 
 在 Chat 勾选 **Browser run**，输入自然语言目标和起始 URL；若目标中已有明确 URL，表单会自动带入并允许修改。预期结果默认取目标，输入资料可用普通文字填写。缺 URL 会在发送前提示且保留目标。提交后在会话侧栏或 **Agents → Runs** 查看持久任务、步骤、结果和截图/trace；刷新后仍从 API 读取。运行中可取消，终态可 **Replay**，新任务在 Runs 显示来源任务，沿用冻结 bundle 与输入且不再调用模型。执行中若返回 `input_request`，应提供补充资料创建新的冻结请求；当前接口不支持原执行的 resume/steer。
 
-隔离自有站验收可由测试监督器在确认自己的容器 ID/labels 并从 inspect 取得地址后，构造 `BrowserRuntime(test_target=固定owned地址)`；这只属于测试 composition，不改变上述正式启动或开放 HTTP 私网目标。完整真实模型产品流程和跨站泛化验收另行记录。
+隔离自有站验收可由测试监督器在确认自己的容器 ID/labels 并从 inspect 取得地址后，构造 `BrowserRuntime(test_target=固定owned地址)`；这只属于测试 composition，不改变上述正式启动或开放 HTTP 私网目标。自有站和独立公共站的有界真实模型核心闭环结果、历史失败及适用边界见[核心验收指南](2026-11-07-tapper-web-automation-core.md)；上述能力仍须按本指南配置并显式启用，当前共享应用没有自动开启。

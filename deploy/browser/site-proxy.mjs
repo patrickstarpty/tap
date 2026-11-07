@@ -37,6 +37,15 @@ export function validateInnerRequest(request, outerOrigin, allowed) {
   return true;
 }
 
+export async function resolvePublicIPv4(hostname, lookup = dns.lookup) {
+  const addresses = await lookup(hostname, { family: 4, all: true, verbatim: true });
+  if (!Array.isArray(addresses) || !addresses.length ||
+      addresses.some(({ address, family }) => family !== 4 || !isPublicIP(address))) {
+    throw new Error('resolved destination denied');
+  }
+  return addresses[0].address;
+}
+
 async function destination(url, policy) {
   if (policy.test_target) {
     const override = new URL(policy.test_target);
@@ -46,11 +55,8 @@ async function destination(url, policy) {
     }
     return { host: override.hostname, port: Number(override.port), synthetic: true };
   }
-  const addresses = await dns.lookup(url.hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(({ address }) => !isPublicIP(address))) {
-    throw new Error('resolved destination denied');
-  }
-  return { host: addresses[0].address, port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)), synthetic: false };
+  const host = await resolvePublicIPv4(url.hostname);
+  return { host, port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)), synthetic: false };
 }
 
 if (process.env.TAP_BROWSER_PROXY_POLICY) {

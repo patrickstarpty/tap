@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from tap_platform.browser_automation.contracts import BrowserBundle
+from tap_platform.browser_automation.contracts import BrowserBundle, BrowserLimits
+from tap_platform.browser_automation.docker import (
+    BrowserRuntime,
+    SubprocessDockerClient,
+)
 from tap_platform.browser_automation.policy import (
     execution_succeeded,
     validate_origin,
@@ -58,6 +62,45 @@ def test_bundle_requires_single_frozen_entry_and_digest() -> None:
             allowed_origins=("https://example.com",),
             created_at="2026-11-07T00:00:00Z",
         )
+
+
+def test_browser_evidence_default_handles_bounded_page_trace() -> None:
+    assert BrowserLimits().max_output_bytes == 5_000_000
+    assert BrowserLimits(max_output_bytes=1_000_000).max_output_bytes == 1_000_000
+    with pytest.raises(ValueError, match="browser output limit"):
+        BrowserLimits(max_output_bytes=10_000_001)
+
+
+@pytest.mark.asyncio
+async def test_evidence_overflow_has_distinct_failure_receipt(monkeypatch) -> None:
+    script = b"import { test } from '@playwright/test'; test('ok', () => {});"
+    bundle = BrowserBundle(
+        "b1",
+        "p1",
+        hashlib.sha256(script).hexdigest(),
+        script,
+        hashlib.sha256(b"{}").hexdigest(),
+        ("https://example.com",),
+        "2026-11-07T00:00:00Z",
+    )
+    runtime = BrowserRuntime(
+        SubprocessDockerClient(),
+        "browser:test",
+        evidence_sink=object(),
+        project_id="p1",
+    )
+
+    async def overflow(*_args, **_kwargs):
+        raise RuntimeError("browser evidence exceeds limit")
+
+    monkeypatch.setattr(runtime, "_execute_work", overflow)
+    result = await runtime.execute(
+        bundle, {"task_id": "t1", "input_data": {}}, BrowserLimits(), execution_id="e1"
+    )
+    assert result.status == "failed"
+    assert result.failure_code == "evidence_limit"
+    assert result.result == {}
+    assert result.evidence == ()
 
 
 def test_evidence_path_cannot_escape_or_follow_symlink(tmp_path: Path) -> None:

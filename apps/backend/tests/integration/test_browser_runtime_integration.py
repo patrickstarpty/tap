@@ -916,6 +916,41 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
                 assert (await runtime.cancel(second))["stopped"]
         finally:
             assert (await runtime.cancel(inspector))["stopped"]
+        unreachable_runtime = BrowserRuntime(
+            client, image, evidence_sink=Sink(), project_id="p1"
+        )
+        unreachable = await unreachable_runtime.start_inspector(
+            "integration-unreachable", ("http://example.invalid",), 45
+        )
+        try:
+            missing = await unreachable_runtime.observe(
+                unreachable, {"type": "navigate", "url": "http://example.invalid/"}
+            )
+            assert "destination denied" in missing.bounded_snapshot
+            assert not missing.title
+        finally:
+            assert (await unreachable_runtime.cancel(unreachable))["stopped"]
+        unreachable_script = b"""import { test, expect } from '@playwright/test';
+test('unreachable target is not a pass', async ({ page }) => {
+  await page.goto('http://example.invalid/');
+  await expect(page.getByRole('heading', { name: 'Order result' })).toBeVisible({ timeout: 1000 });
+});
+"""
+        unreachable_bundle = BrowserBundle(
+            "unreachable-bundle",
+            "p1",
+            hashlib.sha256(unreachable_script).hexdigest(),
+            unreachable_script,
+            hashlib.sha256(b"{}").hexdigest(),
+            ("http://example.invalid",),
+            "2026-11-07T00:00:00Z",
+        )
+        unreachable_result = await unreachable_runtime.execute(
+            unreachable_bundle,
+            {"task_id": "integration-unreachable-run", "input_data": {}},
+            BrowserLimits(deadline_seconds=45),
+        )
+        assert unreachable_result.status == "failed"
         https_runtime = BrowserRuntime(
             client,
             image,

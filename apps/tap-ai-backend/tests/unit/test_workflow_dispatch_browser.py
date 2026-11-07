@@ -195,3 +195,58 @@ async def test_browser_cancel_only_persists_current_stop_proof_when_confirmed(co
             "execution_token": "lease-a",
             "stop_confirmed": True,
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "category", "summary"),
+    [
+        (
+            {
+                "category": "missing_frozen_input",
+                "tool": "bash",
+                "summary": "sk-secret raw tool output",
+            },
+            "missing_frozen_input",
+            "Frozen browser inputs are unavailable in the coding container.",
+        ),
+        (
+            {"category": "sk-secret", "tool": "bash secret", "summary": "sk-secret"},
+            "unknown",
+            "OpenCode failed without classified error.",
+        ),
+        (
+            {"category": ["sk-secret"], "tool": ["sk-secret"], "summary": "sk-secret"},
+            "unknown",
+            "OpenCode failed without classified error.",
+        ),
+    ],
+)
+async def test_browser_failed_terminal_persists_only_bounded_safe_diagnostic(
+    failure, category, summary
+):
+    selected, state, store, _ = runtime(
+        CodingResult(
+            "failed",
+            terminal_evidence={"model_terminal": {"terminal": "failed", "failure": failure}},
+        )
+    )
+    status = await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    assert status == "failed"
+    diagnostic = store.events[0][1]["coding_failure"]
+    assert diagnostic == {
+        "category": category,
+        "tool": "bash" if category != "unknown" else None,
+        "summary": summary,
+    }
+    assert ("fail_task", f"OpenCode failed: {summary}") in state.calls
+    assert "sk-secret" not in json.dumps(store.events)
+    assert "sk-secret" not in json.dumps(state.calls)

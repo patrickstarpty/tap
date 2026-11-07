@@ -6,7 +6,7 @@ TAP_INSIGHTS_COMPOSE_PROJECT ?= tap-insights-local
 export TAP_INSIGHTS_COMPOSE_PROJECT
 override TAP_REPO_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e workflow-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real quality-chat-relations-real graph-sample-export graph-bench quality-answers quality-answers-corpus quality-answers-real quality-intents quality-intents-real quality-skill-activation quality-skill-activation-real
+.PHONY: schema-drift migration-check bootstrap check brand-check test contracts tap-ai-bootstrap tap-ai-check tap-ai-test tap-ai-migrate tap-ai-dev tap-ai-api tap-ai-web tap-web-dev tap-backend-dev tap-insights-e2e task14-acceptance quality-kb quality-kb-real quality-kb-trusted-real quality-graph quality-graph-candidate-real quality-graph-real quality-test-design quality-test-design-candidate-real quality-test-design-real milvus-preflight milvus-up milvus-down milvus-bootstrap milvus-health research-embeddings test-milvus test-milvus-rebuild-empty demo-up demo-check demo-dev demo-e2e workflow-e2e browser-core-e2e demo-down demo-reset quality-graph-relations quality-graph-relations-real quality-chat-relations-real graph-sample-export graph-bench quality-answers quality-answers-corpus quality-answers-real quality-intents quality-intents-real quality-skill-activation quality-skill-activation-real
 .PHONY: tap-backend-check tap-backend-migrate tap-insights-worker tap-insights-up tap-insights-down tap-insights-check langfuse-up langfuse-down
 
 bootstrap: ## install frozen Python and Node dependencies
@@ -54,13 +54,16 @@ test-core:
 		apps/tap-ai-backend/tests/unit/ai/test_tool_calls.py \
 		apps/tap-ai-backend/tests/unit/chat/test_skill_selection.py \
 		apps/tap-ai-backend/tests/unit/chat/test_turn_processor.py \
-		apps/tap-ai-backend/tests/unit/knowledge/test_inline_citations.py
+		apps/tap-ai-backend/tests/unit/knowledge/test_inline_citations.py \
+		apps/tap-ai-backend/tests/unit/test_opencode_runtime.py \
+		apps/tap-ai-backend/tests/unit/test_workflow_dispatch_browser.py \
+		apps/tap-ai-backend/tests/unit/workflows/test_browser_artifacts.py
 	corepack pnpm --filter @tap/ai-frontend exec vitest run --maxWorkers=2 \
 		src/features/conversations/model/stream.test.ts \
 		src/widgets/tap/workspace/agents/AgentForm.test.tsx \
 		src/widgets/tap/workspace/skills/SkillImportDialog.test.tsx \
 		src/widgets/tap/TapperWorkspace.conversations.test.tsx
-	uv run --project apps/backend pytest -q apps/backend/tests/unit/test_insights_query_boundaries.py apps/backend/tests/contract/test_insights_authorization.py
+	uv run --project apps/backend pytest -q apps/backend/tests/unit/test_insights_query_boundaries.py apps/backend/tests/contract/test_insights_authorization.py apps/backend/tests/unit/test_browser_runtime.py apps/backend/tests/unit/test_browser_service.py apps/backend/tests/unit/test_browser_core_supervisor.py apps/backend/tests/contract/test_browser_api.py
 	corepack pnpm --filter @tap/web exec vitest run --maxWorkers=2 src/App.test.tsx
 
 test-full: ## all unit, integration, and contract tests; E2E remains separate
@@ -481,6 +484,9 @@ demo-e2e: ## run the isolated deterministic browser and persistence journey
 
 workflow-e2e: ## run the isolated deterministic real-stack workflow browser journey
 	uv run --project apps/tap-ai-backend python scripts/run-workflow-e2e.py
+
+browser-core-e2e: ## run isolated Tapper Chat to browser execution and replay acceptance
+	uv run --project apps/tap-ai-backend python scripts/run-browser-core-e2e.py
 
 demo-down: ## stop only the selected Tapper project and preserve named volumes
 	@set -eu; \

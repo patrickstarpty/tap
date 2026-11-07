@@ -108,6 +108,7 @@ class CodingContainer(Protocol):
     async def start(
         self, config: dict[str, Any], shim_token: str, deadline_seconds: int
     ) -> None: ...
+    async def set_frozen_input(self, data: bytes, digest: str) -> None: ...
     async def set_goal(self, text: str) -> None: ...
     async def run_prompt(self) -> dict[str, Any]: ...
     async def collect(self) -> dict[str, Any]: ...
@@ -154,21 +155,34 @@ class DockerCodingContainer:
         timeout: float = 30,
         max_stdout: int = 600_000,
     ) -> bytes:
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(data), timeout)
-        except BaseException:
-            process.kill()
-            await process.communicate()
-            raise
-        if len(stdout) > max_stdout or len(stderr) > 4000 or process.returncode != 0:
-            raise RuntimeError(f"coding container command failed ({process.returncode})")
-        return stdout
+        # A canceled docker exec can leave its stdout pipe open after the CLI is
+        # killed. A temporary file lets us reap the CLI without waiting for EOF
+        # from that pipe; output is still read with the existing byte limit.
+        with tempfile.TemporaryFile() as output:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=output,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(process.communicate(data), timeout)
+            except BaseException:
+                try:
+                    if process.returncode is None:
+                        process.kill()
+                except BaseException:
+                    pass  # A kill race must not replace the original failure.
+                try:
+                    await asyncio.wait_for(process.wait(), 3)
+                except BaseException:
+                    pass  # The caller still owns container/inspector stop confirmation.
+                raise
+            output.seek(0)
+            stdout = output.read(max_stdout + 1)
+            if len(stdout) > max_stdout or process.returncode != 0:
+                raise RuntimeError(f"coding container command failed ({process.returncode})")
+            return stdout
 
     async def start(self, config: dict[str, Any], shim_token: str, deadline_seconds: int) -> None:
         if os.getuid() == 0:
@@ -278,6 +292,29 @@ class DockerCodingContainer:
                 "set-goal",
             ),
             data=text.encode(),
+            timeout=5,
+            max_stdout=100,
+        )
+
+    async def set_frozen_input(self, data: bytes, digest: str) -> None:
+        if (
+            self.container_id is None
+            or not 0 < len(data) <= 32768
+            or hashlib.sha256(data).hexdigest() != digest
+        ):
+            raise ValueError("invalid frozen coding input")
+        await self._command(
+            (
+                "docker",
+                "exec",
+                "-i",
+                self.container_id,
+                "node",
+                "/opt/tapper/opencode-client.mjs",
+                "set-input",
+                digest,
+            ),
+            data=data,
             timeout=5,
             max_stdout=100,
         )
@@ -648,6 +685,7 @@ class CodingRuntime:
                     )
                     container = self.container_factory(self.config, mailbox.root)
                     await container.start(config, shim_token, seconds_left())
+                    await container.set_frozen_input(canonical_json_bytes(input_data), digest)
 
                     async def handle(item: MailItem) -> dict[str, Any]:
                         if item.kind == "model":
@@ -755,7 +793,7 @@ class CodingRuntime:
                                 "memory_mb": 1024,
                                 "cpus": 1.0,
                                 "pids": 128,
-                                "max_output_bytes": 1000000,
+                                "max_output_bytes": 5_000_000,
                             },
                         )
                         if not isinstance(limits, dict):
@@ -777,15 +815,21 @@ class CodingRuntime:
                         )
                         if latest_execution.get("status") in {"passed", "canceled", "unknown"}:
                             break
-                        if repair < self.config.max_repairs:
-                            actual = latest_execution.get("result")
-                            feedback = json.dumps(
-                                actual if isinstance(actual, dict) else {}, ensure_ascii=True
-                            )[:4000]
+                        actual = latest_execution.get("result")
+                        if (
+                            repair < self.config.max_repairs
+                            and latest_execution.get("failure_code") == "execution_failed"
+                            and isinstance(actual, dict)
+                            and type(actual.get("failed")) is int
+                            and actual["failed"] > 0
+                        ):
+                            feedback = json.dumps(actual, ensure_ascii=True)[:4000]
                             goal = (
                                 "Repair flow.spec.ts in the same session using this actual "
                                 "failed browser execution receipt: " + feedback
                             )
+                        else:
+                            break
                     assert latest_execution is not None
                     result = self._receipt_result(
                         latest_execution,
@@ -896,6 +940,8 @@ class CodingRuntime:
             raise ValueError("browser expected result invalid")
         return (
             "You are implementing a generic Playwright browser task. "
+            "Read the exact frozen user input JSON from /workspace/frozen-inputs.json "
+            "during generation; this is the only supplied input value source. "
             "First inspect the actual approved page with "
             '`node /opt/tapper/browserctl.mjs \'{"type":"navigate","url":"..."}\'` '
             "and snapshot/click/fill/select/press/wait/screenshot using the same fixed helper; "
