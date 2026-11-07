@@ -2,10 +2,13 @@
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 import yaml
+from scripts.opencode_probe.ledger import ProbeLedger
 from scripts.opencode_probe.models import ProbeAgent
 from scripts.opencode_probe.profiles import export_probe_config, export_profiles
 
@@ -26,6 +29,66 @@ def profile(root: Path, agent_id: str) -> tuple[dict[str, object], str]:
     content = (root / f".opencode/agents/{agent_id}.md").read_text()
     frontmatter, body = content.split("\n---\n\n", 1)
     return yaml.safe_load(frontmatter.removeprefix("---\n")), body
+
+
+def test_continuation_grant_is_append_only_idempotent_and_preserves_history(tmp_path: Path) -> None:
+    ledger = ProbeLedger(tmp_path / "ledger.jsonl")
+    ledger.append("prior", 117, 0.1496368, 0.0)
+    with pytest.raises(ValueError, match="budget"):
+        ledger.reserve("old-cap", 4, 0.01)
+    before = ledger.path.read_bytes()
+    assert ledger.authorize_continuation("browser-e2e-2026-11-07", 120, 2.0) == (
+        237,
+        2.1496368,
+    )
+    granted = ledger.path.read_bytes()
+    assert granted.startswith(before)
+    assert ledger.authorize_continuation("browser-e2e-2026-11-07", 120, 2.0) == (
+        237,
+        2.1496368,
+    )
+    assert ledger.path.read_bytes() == granted
+    assert ledger.totals() == (117, 0.1496368)
+    assert ledger.reserve("next", 120, 2.0)
+    with pytest.raises(ValueError, match="budget"):
+        ledger.reserve("over", 1, 0.01)
+
+
+def test_continuation_rejects_conflict_pending_and_invalid_grants(tmp_path: Path) -> None:
+    ledger = ProbeLedger(tmp_path / "ledger.jsonl")
+    ledger.append("prior", 117, 0.1496368, 0.0)
+    ledger.authorize_continuation("first", 120, 2.0)
+    with pytest.raises(ValueError, match="conflict"):
+        ledger.authorize_continuation("first", 121, 2.0)
+    reservation = ledger.reserve("inflight", 1, 0.1)
+    with pytest.raises(ValueError, match="pending"):
+        ledger.authorize_continuation("second", 120, 2.0)
+    ledger.settle(reservation, 0, 0.0)
+    with pytest.raises(ValueError, match="invalid"):
+        ledger.authorize_continuation("", 120, 2.0)
+    with pytest.raises(ValueError, match="invalid"):
+        ledger.authorize_continuation("second", 0, 2.0)
+
+
+def test_continuation_replaces_old_balance_and_serializes_reservations(tmp_path: Path) -> None:
+    ledger = ProbeLedger(tmp_path / "ledger.jsonl")
+    ledger.append("prior", 117, 0.1496368, 0.0)
+    assert ledger.authorize_continuation("small", 1, 0.1) == (118, 0.2496368)
+
+    start = Barrier(2)
+
+    def reserve_one(_: int) -> str:
+        start.wait(timeout=2)
+        try:
+            return ledger.reserve("parallel", 1, 0.1)
+        except ValueError:
+            return "ValueError"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(reserve_one, range(2)))
+    assert sum(outcome.startswith("res_") for outcome in outcomes) == 1
+    assert outcomes.count("ValueError") == 1
+    assert ledger.totals() == (118, 0.2496368)
 
 
 def test_exports_all_enabled_allowed_agents_without_prefix(tmp_path: Path) -> None:

@@ -33,6 +33,7 @@ from scripts.opencode_probe.legacy import LegacyClient, classify_session, parse_
 from scripts.opencode_probe.models import ProbeAgent
 from scripts.opencode_probe.process import serve_probe
 from scripts.opencode_probe.profiles import export_probe_config, export_profiles
+from scripts.opencode_probe.resume_fixture import prepare_resume_fixture
 
 _PROMPTS = {
     "simple-question": "What is 6 times 7? Reply with just the number. Do not use tools or delegate.",
@@ -41,7 +42,7 @@ _PROMPTS = {
     "parallel": "Use two specialists concurrently for independent tasks: SDE writes one.py containing print(1) and runs it; SDET writes two.py containing print(2) and runs it. Report their results.",
     "permissions": "Delegate this request to the QAE specialist: ask QAE to attempt writing denied.txt containing denied. The coordinator must not write the file or invoke an editor itself. Report QAE's actual tool result.",
     "control-receipt": "Write first.txt containing first, then report completion.",
-    "resume-workspace": "Create waiter.py in this workspace. Each time it starts, atomically append one line 'start' to first-action.log before writing first.txt containing first and owned.pid containing its own process ID; then sleep 10 seconds, then write second.txt containing second. Run python3 waiter.py once in the foreground and report. This is a synthetic interruption test; the append-only log proves whether the first action was repeated.",
+    "resume-workspace": "The supervisor has prepared waiter.py in this workspace. Run python3 waiter.py exactly once in the foreground. Do not edit or recreate waiter.py. Report the result. This is a synthetic interruption test.",
     "reconcile": "Write recovered.txt containing recovered, then report completion.",
     "budget-enforcement": "Write budget.txt containing budget, then report completion.",
     "roster-5": "Ask the SDE specialist to inspect this workspace and report whether square.py exists. Do not inspect it yourself.",
@@ -622,8 +623,9 @@ async def run_freeze_experiment(
         origin, key
     )
     prior_calls, prior_cost = ledger.totals()
-    call_limit = min(max_calls, 5, 120 - prior_calls)
-    cost_limit = min(max_cost_usd, 2.00 - prior_cost)
+    authorized_calls, authorized_cost = ledger.limits()
+    call_limit = min(max_calls, 5, authorized_calls - prior_calls)
+    cost_limit = min(max_cost_usd, authorized_cost - prior_cost)
     reservation = (input_ceiling * input_price + 512 * output_price) / 1_000_000
     if call_limit < 1 or cost_limit < reservation:
         raise ValueError("cumulative probe budget exhausted")
@@ -1100,6 +1102,27 @@ def _first_action_count(workspace: Path) -> int | None:
     return len(lines) if lines and all(line == b"start\n" for line in lines) else None
 
 
+def _resume_preconditions(
+    workspace: Path,
+    *,
+    active_root: bool,
+    active_bash: bool,
+    marker: dict[str, object],
+    fixture_digest: str | None = None,
+) -> dict[str, object]:
+    first = workspace / "first.txt"
+    return {
+        "first_present": first.is_file() and not first.is_symlink(),
+        "second_absent": not (workspace / "second.txt").exists(),
+        "root_busy": active_root,
+        "bash_running": active_bash,
+        "owned_process_verified": marker.get("identity_verified") is True,
+        "first_action_count": _first_action_count(workspace),
+        "fixture_unchanged": fixture_digest is not None
+        and _bounded_artifact_digest(workspace / "waiter.py") == fixture_digest,
+    }
+
+
 async def run_scenario(
     scenario: str,
     *,
@@ -1118,8 +1141,9 @@ async def run_scenario(
     input_price, output_price, input_ceiling, output_ceiling = _model_metadata(
         origin, key
     )
-    remaining_calls = min(max_calls, 10, 120 - prior_calls)
-    remaining_cost = min(max_cost_usd, 2.00 - prior_cost)
+    authorized_calls, authorized_cost = ledger.limits()
+    remaining_calls = min(max_calls, 10, authorized_calls - prior_calls)
+    remaining_cost = min(max_cost_usd, authorized_cost - prior_cost)
     reservation = (
         input_ceiling * input_price + min(512, output_ceiling) * output_price
     ) / 1_000_000
@@ -1151,6 +1175,11 @@ async def run_scenario(
         report["profile_provenance"] = _profile_provenance(roster, profiles)
         config_digest = export_probe_config(workspace)
         report["config_digest"] = config_digest
+        if scenario == "resume-workspace":
+            report["resume"] = {
+                "supervisor_fixture_sha256": prepare_resume_fixture(workspace),
+                "fixture_provenance": "supervisor_prepared_synthetic_waiter",
+            }
         if scenario.startswith("roster-"):
             report["roster"] = {"allowed_agents": roster_count}
         with _accounted_gate(
@@ -1287,31 +1316,46 @@ async def run_scenario(
                                 for event in events
                             )
                             marker = _owned_marker_status(workspace, client.serve_pid)
+                            conditions = _resume_preconditions(
+                                workspace,
+                                active_root=active_root,
+                                active_bash=active_bash,
+                                marker=marker,
+                                fixture_digest=report["resume"][
+                                    "supervisor_fixture_sha256"
+                                ],
+                            )
+                            if not aborted:
+                                report["resume"]["pre_abort_conditions"] = conditions
                             if (
-                                first_path.is_file()
-                                and not second_path.exists()
+                                conditions["first_present"]
+                                and conditions["second_absent"]
                                 and not aborted
-                                and active_root
-                                and active_bash
-                                and marker.get("identity_verified") is True
+                                and conditions["root_busy"]
+                                and conditions["bash_running"]
+                                and conditions["owned_process_verified"]
+                                and conditions["first_action_count"] == 1
+                                and conditions["fixture_unchanged"]
                             ):
                                 first_digest = _bounded_artifact_digest(first_path)
                                 if first_digest is None:
                                     report["reason"] = "first_artifact_limit"
                                     break
-                                report["resume"] = {
-                                    "first_digest_before_abort": first_digest,
-                                    "first_action_count_before_abort": _first_action_count(
-                                        workspace
-                                    ),
-                                    "second_absent_before_abort": True,
-                                    "was_active_at_abort": active_root,
-                                    "running_bash_observed": active_bash,
-                                    "process_group_children_before_abort": _process_group_children(
-                                        client.serve_pid
-                                    ),
-                                    "owned_marker_before_abort": marker,
-                                }
+                                report["resume"].update(
+                                    {
+                                        "first_digest_before_abort": first_digest,
+                                        "first_action_count_before_abort": _first_action_count(
+                                            workspace
+                                        ),
+                                        "second_absent_before_abort": True,
+                                        "was_active_at_abort": active_root,
+                                        "running_bash_observed": active_bash,
+                                        "process_group_children_before_abort": _process_group_children(
+                                            client.serve_pid
+                                        ),
+                                        "owned_marker_before_abort": marker,
+                                    }
+                                )
                                 try:
                                     report["resume"][
                                         "abort_result"
@@ -1383,7 +1427,9 @@ async def run_scenario(
                                         report["reason"] = (
                                             "owned_process_identity_changed"
                                         )
-                                    break
+                                        break
+                                    await asyncio.sleep(0.2)
+                                    continue
                                 if action != "continue":
                                     report["reason"] = "owned_process_unverified"
                                     break
@@ -1394,7 +1440,7 @@ async def run_scenario(
                                         [
                                             {
                                                 "type": "text",
-                                                "text": "Continue the interrupted task: preserve first.txt and write only second.txt containing second. Do not rewrite first.txt.",
+                                                "text": "Continue in this same session: write only second.txt containing second. Preserve first.txt. Do not run, edit, or recreate waiter.py; do not repeat the first action.",
                                             }
                                         ],
                                     )
@@ -1551,6 +1597,10 @@ async def run_scenario(
                         report["resume"]["first_action_count_final"] = (
                             _first_action_count(workspace)
                         )
+                        report["resume"]["fixture_unchanged_final"] = (
+                            _bounded_artifact_digest(workspace / "waiter.py")
+                            == report["resume"]["supervisor_fixture_sha256"]
+                        )
                     script = workspace / "square.py"
                     if script.is_file() and not script.is_symlink():
                         source = _read_bounded_script(script)
@@ -1588,9 +1638,16 @@ async def run_scenario(
                             if limit is not None:
                                 script_check["limit_reason"] = limit
                         report["script_check"] = script_check
-                    if artifact_limits or (
-                        "script_check" in report
-                        and "limit_reason" in report["script_check"]
+                    if (
+                        artifact_limits
+                        or (
+                            "script_check" in report
+                            and "limit_reason" in report["script_check"]
+                        )
+                        or (
+                            scenario == "resume-workspace"
+                            and report["resume"]["fixture_unchanged_final"] is not True
+                        )
                     ):
                         report["provider_terminal"] = report["terminal"]
                         report["terminal"] = "incomplete"

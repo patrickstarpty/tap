@@ -1,7 +1,9 @@
 """Deterministic failure boundaries for live OpenCode scenario supervision."""
 
+import hashlib
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -133,6 +135,75 @@ def test_first_action_count_is_strict_append_only_marker(tmp_path) -> None:
     assert scenarios._first_action_count(tmp_path) == 2
     marker.write_bytes(b"start\ninvalid\n")
     assert scenarios._first_action_count(tmp_path) is None
+
+
+def test_supervisor_waiter_has_one_durable_first_action_and_stops_before_second(tmp_path) -> None:
+    from scripts.opencode_probe.resume_fixture import prepare_resume_fixture
+
+    digest = prepare_resume_fixture(tmp_path)
+    script = tmp_path / "waiter.py"
+    assert digest == hashlib.sha256(script.read_bytes()).hexdigest()
+    before = script.stat().st_mtime_ns
+    assert prepare_resume_fixture(tmp_path) == digest
+    assert script.stat().st_mtime_ns == before
+    process = subprocess.Popen((sys.executable, str(script)), cwd=tmp_path)
+    try:
+        deadline = time.monotonic() + 3
+        while not (tmp_path / "first.txt").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (tmp_path / "first.txt").read_text() == "first"
+        assert (tmp_path / "owned.pid").read_text() == str(process.pid)
+        assert (tmp_path / "first-action.log").read_bytes() == b"start\n"
+        assert scenarios._first_action_count(tmp_path) == 1
+    finally:
+        process.terminate()
+        process.wait(timeout=3)
+    assert not (tmp_path / "second.txt").exists()
+    assert scenarios._first_action_count(tmp_path) == 1
+    script.write_text("changed")
+    with pytest.raises(ValueError, match="differs"):
+        prepare_resume_fixture(tmp_path)
+    assert script.read_text() == "changed"
+
+
+def test_resume_conditions_record_missing_observations(tmp_path) -> None:
+    conditions = scenarios._resume_preconditions(
+        tmp_path, active_root=True, active_bash=False, marker={"identity_verified": False}
+    )
+    assert conditions == {
+        "first_present": False,
+        "second_absent": True,
+        "root_busy": True,
+        "bash_running": False,
+        "owned_process_verified": False,
+        "first_action_count": None,
+        "fixture_unchanged": False,
+    }
+
+
+def test_resume_conditions_reject_changed_supervisor_fixture(tmp_path) -> None:
+    from scripts.opencode_probe.resume_fixture import prepare_resume_fixture
+
+    digest = prepare_resume_fixture(tmp_path)
+    (tmp_path / "first.txt").write_text("first")
+    (tmp_path / "first-action.log").write_text("start\n")
+    good = scenarios._resume_preconditions(
+        tmp_path,
+        active_root=True,
+        active_bash=True,
+        marker={"identity_verified": True},
+        fixture_digest=digest,
+    )
+    assert good["fixture_unchanged"] is True
+    (tmp_path / "waiter.py").write_text("changed")
+    bad = scenarios._resume_preconditions(
+        tmp_path,
+        active_root=True,
+        active_bash=True,
+        marker={"identity_verified": True},
+        fixture_digest=digest,
+    )
+    assert bad["fixture_unchanged"] is False
 
 
 def test_generated_script_source_and_artifact_digest_are_bounded(tmp_path) -> None:
