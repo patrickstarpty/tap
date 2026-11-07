@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "platform": "linux/arm64",
+  "node": "22.22.0",
+  "base_index_digest": "sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94",
+  "base_manifest_digest": "sha256:5e22e6fb4448236070fdb260662e49fd58779876855baf95388534475c3dcd11",
+  "playwright": "1.62.1",
+  "browser": "chromium",
+  "chromium_revision": "1234",
+  "chromium_version": "151.0.7922.34",
+  "opencode_linux_arm64_archive_sha256": "fae5be262d693b7c5e562856cc473e59e741772936db0c0600ac0d5ed5bd088b",
+  "opencode_linux_arm64_binary_sha256": "dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c"
+}
