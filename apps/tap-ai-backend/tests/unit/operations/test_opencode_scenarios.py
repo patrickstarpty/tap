@@ -184,6 +184,84 @@ def test_owned_marker_signals_only_revalidated_process(tmp_path, monkeypatch) ->
     assert signalled == [(123, signal.SIGTERM)]
 
 
+@pytest.mark.parametrize("failure", ["timeout", "oserror", "malformed"])
+def test_failed_process_observation_never_authorizes_resume(tmp_path, monkeypatch, failure) -> None:
+    marker = tmp_path / "owned.pid"
+    marker.write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    prior = scenarios._owned_marker_status(tmp_path, 44)
+    assert prior["identity_verified"] is True
+
+    def failed_ps(args, **_kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, 3)
+        if failure == "oserror":
+            raise OSError("ps unavailable")
+        return subprocess.CompletedProcess(args, 0, "malformed\n", "")
+
+    monkeypatch.setattr(scenarios.subprocess, "run", failed_ps)
+    current = scenarios._owned_marker_status(tmp_path, 44)
+    assert current["alive"] is None
+    assert scenarios._post_abort_action(prior, current) == "unknown"
+
+
+@pytest.mark.parametrize("marker_text", [None, "invalid"])
+def test_missing_or_invalid_marker_never_authorizes_resume(
+    tmp_path, monkeypatch, marker_text
+) -> None:
+    marker = tmp_path / "owned.pid"
+    marker.write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    prior = scenarios._owned_marker_status(tmp_path, 44)
+    if marker_text is None:
+        marker.unlink()
+    else:
+        marker.write_text(marker_text)
+    current = scenarios._owned_marker_status(tmp_path, 44)
+    assert current["alive"] is None
+    assert scenarios._post_abort_action(prior, current) == "unknown"
+
+
+def test_confirmed_absent_prior_process_authorizes_resume(tmp_path, monkeypatch) -> None:
+    (tmp_path / "owned.pid").write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    prior = scenarios._owned_marker_status(tmp_path, 44)
+    assert prior["identity_verified"] is True
+    monkeypatch.setattr(
+        scenarios.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(args, 1, "", ""),
+    )
+    probed = []
+
+    def no_process(pid, sig):
+        probed.append((pid, sig))
+        raise ProcessLookupError("no such process")
+
+    monkeypatch.setattr(scenarios.os, "kill", no_process)
+    current = scenarios._owned_marker_status(tmp_path, 44)
+    assert current["alive"] is False
+    assert scenarios._post_abort_action(prior, current) == "continue"
+    assert probed == [(123, 0)]
+
+
+def test_ps_missing_without_esrch_does_not_authorize_resume(tmp_path, monkeypatch) -> None:
+    (tmp_path / "owned.pid").write_text("123")
+    _mock_waiter_process(monkeypatch, tmp_path)
+    prior = scenarios._owned_marker_status(tmp_path, 44)
+    monkeypatch.setattr(
+        scenarios.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(args, 1, "", ""),
+    )
+    probed = []
+    monkeypatch.setattr(scenarios.os, "kill", lambda pid, sig: probed.append((pid, sig)))
+    current = scenarios._owned_marker_status(tmp_path, 44)
+    assert current["alive"] is None
+    assert scenarios._post_abort_action(prior, current) == "unknown"
+    assert probed == [(123, 0)]
+
+
 def test_profile_provenance_changes_with_revision() -> None:
     old = scenarios._profiles(orchestrator_revision="r1")
     new = scenarios._profiles(orchestrator_revision="r2")

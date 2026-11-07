@@ -186,16 +186,19 @@ def _process_group_children(leader_pid: int | None) -> int | None:
 def _owned_marker_status(workspace: Path, owner_group: int | None) -> dict[str, object]:
     marker = workspace / "owned.pid"
     if not marker.is_file() or marker.is_symlink():
-        return {"marker_present": False, "identity_verified": False, "alive": False}
-    raw = marker.read_text().strip()
+        return {"marker_present": False, "identity_verified": False, "alive": None}
+    try:
+        raw = marker.read_text().strip()
+    except OSError:
+        return {"marker_present": True, "identity_verified": False, "alive": None}
     if not re.fullmatch(r"[1-9][0-9]{0,7}", raw):
-        return {"marker_present": True, "identity_verified": False, "alive": False}
+        return {"marker_present": True, "identity_verified": False, "alive": None}
     pid = int(raw)
     base: dict[str, object] = {
         "marker_present": True,
         "pid": pid,
         "identity_verified": False,
-        "alive": False,
+        "alive": None,
     }
     if type(owner_group) is not int or owner_group < 1:
         return base
@@ -207,12 +210,28 @@ def _owned_marker_status(workspace: Path, owner_group: int | None) -> dict[str, 
             timeout=3,
             check=False,
         )
-        if process.returncode != 0 or len(process.stdout.splitlines()) != 1:
+        if process.returncode != 0:
+            if (
+                process.returncode == 1
+                and not process.stdout.strip()
+                and not process.stderr.strip()
+            ):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    base["alive"] = False
+                    base["absence_verified"] = True
+                except OSError:
+                    pass
+            return base
+        if len(process.stdout.splitlines()) != 1:
             return base
         fields = process.stdout.strip().split(maxsplit=8)
         if len(fields) != 9 or not fields[0].isdigit() or not fields[1].isdigit():
             return base
-        base["alive"] = int(fields[0]) == pid
+        if int(fields[0]) != pid:
+            return base
+        base["alive"] = True
         command = shlex.split(fields[8])
         if not command:
             return base
@@ -257,6 +276,23 @@ def _owned_marker_status(workspace: Path, owner_group: int | None) -> dict[str, 
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return base
     return base
+
+
+def _post_abort_action(prior: dict[str, object], current: dict[str, object]) -> str:
+    if prior.get("identity_verified") is not True or prior.get("alive") is not True:
+        return "unknown"
+    if current.get("pid") != prior.get("pid"):
+        return "unknown"
+    if current.get("alive") is False and current.get("absence_verified") is True:
+        return "continue"
+    if current.get("identity_verified") is not True or current.get("alive") is not True:
+        return "unknown"
+    if all(
+        current.get(field) == prior.get(field)
+        for field in ("owner_group", "start_identity", "executable")
+    ):
+        return "terminate"
+    return "unknown"
 
 
 def _signal_owned_waiter(
@@ -1190,10 +1226,17 @@ async def run_scenario(
                                 report["resume"]["owned_marker_after_abort"] = (
                                     after_marker
                                 )
-                                if (
-                                    after_marker.get("identity_verified") is True
-                                    and after_marker.get("alive") is True
-                                ):
+                                prior_marker = report["resume"].get(
+                                    "owned_marker_before_abort"
+                                )
+                                action = _post_abort_action(
+                                    prior_marker
+                                    if isinstance(prior_marker, dict)
+                                    else {},
+                                    after_marker,
+                                )
+                                report["resume"]["post_abort_process_action"] = action
+                                if action == "terminate":
                                     report["resume"][
                                         "owned_process_terminated_by_supervisor"
                                     ] = _signal_owned_waiter(
@@ -1206,7 +1249,7 @@ async def run_scenario(
                                             "owned_process_identity_changed"
                                         )
                                     break
-                                if after_marker.get("alive") is True:
+                                if action != "continue":
                                     report["reason"] = "owned_process_unverified"
                                     break
                                 try:
