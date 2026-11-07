@@ -13,16 +13,13 @@ export function boundedFailure(error) {
   return Buffer.from(withoutPaths).subarray(0, MAX_FAILURE_BYTES).toString('utf8').replace(/\uFFFD$/u, '');
 }
 
-export function collectBusinessOutputs(attachments) {
+export function collectBusinessOutputs(attachments, previous = []) {
   const outputs = [];
-  let total = 0;
   for (const attachment of attachments) {
     if (attachment.name !== 'tapper-result') continue;
     if (attachment.contentType !== 'application/json' || !Buffer.isBuffer(attachment.body)) {
       throw new Error('tapper-result requires an in-memory application/json body');
     }
-    total += attachment.body.length;
-    if (total > MAX_BUSINESS_BYTES) throw new Error('tapper-result exceeds 32768 bytes');
     let value;
     try {
       value = JSON.parse(attachment.body.toString('utf8'));
@@ -33,6 +30,9 @@ export function collectBusinessOutputs(attachments) {
       throw new Error('tapper-result must contain structured JSON');
     }
     outputs.push(value);
+    if (Buffer.byteLength(JSON.stringify([...previous, ...outputs])) > MAX_BUSINESS_BYTES) {
+      throw new Error('tapper-result outputs exceed 32768 bytes');
+    }
   }
   return outputs;
 }
@@ -53,7 +53,7 @@ export default class TrustedReporter {
     let outputs = [];
     let outputError;
     try {
-      outputs = collectBusinessOutputs(result.attachments);
+      outputs = collectBusinessOutputs(result.attachments, this.tests.flatMap(item => item.outputs));
     } catch (error) {
       outputError = boundedFailure(error);
     }

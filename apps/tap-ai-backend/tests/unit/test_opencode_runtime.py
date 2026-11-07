@@ -4,11 +4,15 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 
-from tap.modules.workflows.adapters.opencode_runtime import CodingConfig, CodingRuntime
+from tap.modules.workflows.adapters.opencode_runtime import (
+    CodingConfig,
+    CodingRuntime,
+    DockerCodingContainer,
+)
 
 
 class ReplayBrowser:
@@ -242,17 +246,18 @@ async def test_coding_runtime_cancel_confirms_container_and_inspector_stop():
     async def cancel():
         return True
 
-    with pytest.raises(asyncio.CancelledError):
-        await runtime.run(
-            "task-a",
-            request(replay=False),
-            {},
-            None,
-            "lease",
-            "node",
-            1,
-            stop_requested=cancel,
-        )
+    result = await runtime.run(
+        "task-a",
+        request(replay=False),
+        {},
+        None,
+        "lease",
+        "node",
+        1,
+        stop_requested=cancel,
+    )
+    assert result.status == "canceled"
+    assert result.terminal_evidence["stop_confirmed"] is True
     assert built[0].stopped and browser.canceled
 
 
@@ -316,3 +321,149 @@ async def test_session_start_time_does_not_extend_absolute_coding_deadline():
     with pytest.raises(TimeoutError, match="deadline"):
         await runtime.run("task-a", frozen, {}, None, "lease", "node", 1)
     assert time.monotonic() - start < 3.6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (1, b"", b"Error: No such object: " + b"a" * 64, True),
+        (1, b"", b"Cannot connect to the Docker daemon", False),
+        (0, b"a" * 64 + b" false\n", b"", True),
+        (0, b"a" * 64 + b" true\n", b"", False),
+    ],
+)
+async def test_coding_container_stop_requires_affirmative_exact_inspect(
+    monkeypatch, tmp_path, returncode, stdout, stderr, expected
+):
+    class Probe:
+        async def communicate(self):
+            return stdout, stderr
+
+        @property
+        def returncode(self):
+            return returncode
+
+    async def fail_command(*_args, **_kwargs):
+        raise RuntimeError("stop/remove failed")
+
+    async def create_probe(*_args, **_kwargs):
+        return Probe()
+
+    monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(fail_command))
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_probe,
+    )
+    container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
+    container.container_id = "a" * 64
+    assert await container.stop() is expected
+
+
+@pytest.mark.asyncio
+async def test_coding_container_inspect_timeout_is_unknown(monkeypatch, tmp_path):
+    class HungProbe:
+        returncode = None
+        killed = False
+
+        async def communicate(self):
+            if self.killed:
+                return b"", b""
+            await asyncio.Event().wait()
+
+        def kill(self):
+            self.killed = True
+
+    probe = HungProbe()
+
+    async def fail_command(*_args, **_kwargs):
+        raise RuntimeError("stop/remove failed")
+
+    async def create_probe(*_args, **_kwargs):
+        return probe
+
+    monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(fail_command))
+    monkeypatch.setattr(DockerCodingContainer, "_INSPECT_TIMEOUT", 0.01)
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_probe,
+    )
+    container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
+    container.container_id = "a" * 64
+    assert await container.stop() is False
+    assert probe.killed
+
+
+@pytest.mark.asyncio
+async def test_gate_shutdown_waits_for_inflight_durable_settlement_before_terminal():
+    entered, release = Event(), Event()
+
+    class SlowUpstream(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            entered.set()
+            release.wait(5)
+            body = b'{"usage":{"prompt_tokens":2,"completion_tokens":3},"choices":[]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    class SlowJournal(Journal):
+        def __init__(self):
+            super().__init__()
+            self.settled = asyncio.Event()
+
+        async def settle_action(self, *args, **kwargs):
+            await asyncio.sleep(0.05)
+            result = await super().settle_action(*args, **kwargs)
+            self.settled.set()
+            return result
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowUpstream)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    journal = SlowJournal()
+    try:
+        config = CodingConfig.for_test()
+        config = CodingConfig(
+            config.browser_origin,
+            config.browser_project_id,
+            config.browser_token,
+            config.image,
+            config.image_id,
+            f"http://127.0.0.1:{server.server_port}",
+            "synthetic-key",
+            config.max_input_tokens,
+            config.max_output_tokens,
+            config.input_price_per_million,
+            config.output_price_per_million,
+        )
+        runtime = CodingRuntime(
+            config,
+            browser=SessionBrowser(),
+            store=journal,
+            container_factory=lambda _config, root: MailContainer(root),
+        )
+        running = asyncio.create_task(
+            runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+        )
+        assert await asyncio.to_thread(entered.wait, 3)
+        started = time.monotonic()
+        running.cancel()
+        release.set()
+        result = await running
+        assert result.status == "canceled"
+        assert result.terminal_evidence["stop_confirmed"] is True
+        assert time.monotonic() - started < 4
+        assert journal.settled.is_set()
+        assert [event[0] for event in journal.events] == ["reserved", "settled"]
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join()

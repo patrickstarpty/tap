@@ -2855,7 +2855,35 @@ class MysqlWorkflowStore:
             }
             if reserved - settled:
                 return False
+            browser_stops: list[RowMapping] = []
+            if row["request_json"].get("kind") == "browser":
+                browser_stops = list(
+                    (
+                        (
+                            await session.execute(
+                                select(workflow_event).where(
+                                    *scope_predicates(workflow_event, scope),
+                                    workflow_event.c.task_id == task_id,
+                                    workflow_event.c.kind == "browser.stop_confirmed",
+                                    workflow_event.c.payload["execution_token"].as_string()
+                                    == lease_token,
+                                )
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                )
             for node in nodes:
+                if row["request_json"].get("kind") == "browser":
+                    if not any(
+                        event["node_id"] == node["node_id"]
+                        and event["attempt"] == node["attempt"]
+                        and event["payload"].get("stop_confirmed") is True
+                        for event in browser_stops
+                    ):
+                        return False
+                    continue
                 current_attempt = (
                     await session.execute(
                         select(workflow_attempt.c.graph_run_id).where(

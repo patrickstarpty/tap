@@ -13,7 +13,7 @@ from pathlib import Path
 BINARY_SHA256 = "dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c"
 BROWSER_IMAGE = "tapper-browser-runtime:1.62.1-arm64"
 BROWSER_IMAGE_ID = (
-    "sha256:cd0fa3b71dbced58e621d08a98fd3d9ee0f749a51c1c0ba73d5cb2bd273857d5"
+    "sha256:516c8d85a71714bb7ee24510cb0b57f05ab7c7d61323597f1c0ebe98ae0ed9f8"
 )
 CODING_IMAGE = "tapper-coding-runtime:1.19.5-arm64"
 FILES = ("model-shim.mjs", "browserctl.mjs", "opencode-client.mjs")

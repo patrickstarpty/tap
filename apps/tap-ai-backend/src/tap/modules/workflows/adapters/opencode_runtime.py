@@ -12,7 +12,11 @@ import os
 import re
 import secrets
 import tempfile
+import threading
 import time
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -110,8 +114,30 @@ class CodingContainer(Protocol):
     async def stop(self) -> bool: ...
 
 
+async def _finish_cleanup(work: Any) -> Any:
+    task = asyncio.create_task(work)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        return await task
+
+
+@asynccontextmanager
+async def _entered_gate(gate: BudgetGate, drain: Callable[[], Any]) -> Any:
+    gate.__enter__()
+    try:
+        yield gate
+    finally:
+        try:
+            await _finish_cleanup(asyncio.to_thread(gate.__exit__, None, None, None))
+        finally:
+            await _finish_cleanup(drain())
+
+
 class DockerCodingContainer:
     """Only the task-owned coding image and one private mailbox are mounted."""
+
+    _INSPECT_TIMEOUT = 3.0
 
     def __init__(self, config: CodingConfig, mailbox_root: Path) -> None:
         self.config = config
@@ -206,9 +232,13 @@ class DockerCodingContainer:
             "--tmpfs",
             f"/tmp:rw,nosuid,nodev,size=16m,uid={uid},gid={gid}",
             "--mount",
-            f"type=bind,src={self.mailbox_root},dst=/mailbox",
+            f"type=bind,src={self.mailbox_root},dst=/mailbox,readonly",
+            "--mount",
+            f"type=bind,src={self.mailbox_root / 'requests'},dst=/mailbox/requests",
             "--mount",
             f"type=bind,src={self.mailbox_root / 'responses'},dst=/mailbox/responses,readonly",
+            "--mount",
+            f"type=bind,src={self.mailbox_root / 'acks'},dst=/mailbox/acks",
             *(entry for key, value in env.items() for entry in ("--env", f"{key}={value}")),
             self.config.image,
         )
@@ -301,15 +331,33 @@ class DockerCodingContainer:
             await self._command(("docker", "rm", "-f", identity), timeout=10, max_stdout=200)
         except Exception:
             pass
-        probe = await asyncio.create_subprocess_exec(
-            "docker",
-            "inspect",
-            identity,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await probe.wait()
-        self._stopped = probe.returncode != 0
+        try:
+            probe = await asyncio.wait_for(
+                asyncio.create_subprocess_exec(
+                    "docker",
+                    "inspect",
+                    identity,
+                    "--format",
+                    "{{.Id}} {{.State.Running}}",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                ),
+                self._INSPECT_TIMEOUT,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(probe.communicate(), self._INSPECT_TIMEOUT)
+            except TimeoutError:
+                probe.kill()
+                await asyncio.wait_for(probe.communicate(), 1)
+                return False
+        except (OSError, TimeoutError):
+            return False
+        if probe.returncode == 0:
+            self._stopped = stdout.decode(errors="replace").strip() == f"{identity} false"
+        else:
+            self._stopped = (
+                stderr.decode(errors="replace").strip().endswith(f"No such object: {identity}")
+            )
         return self._stopped
 
 
@@ -424,6 +472,8 @@ class CodingRuntime:
                 deadline_seconds=seconds_left(),
                 stop_requested=stop_requested,
             )
+            if receipt.get("status") == "canceled":
+                receipt = {**receipt, "stop_confirmed": True}
             return self._receipt_result(receipt, replay_model_calls=0)
         if self.store is None:
             raise ValueError("durable workflow store unavailable")
@@ -457,9 +507,20 @@ class CodingRuntime:
         session_id = str(session["session_id"])
         loop = asyncio.get_running_loop()
         callback_timeout = max(1, min(10, int(deadline_monotonic - time.monotonic())))
+        callback_lock = threading.Lock()
+        callbacks: list[tuple[str, str, Future[Any]]] = []
+        late_reservations: set[str] = set()
+
+        def scheduled(kind: str, action_id: str, work: Any) -> Future[Any]:
+            future = asyncio.run_coroutine_threadsafe(work, loop)
+            with callback_lock:
+                callbacks.append((kind, action_id, future))
+            return future
 
         def reserve(action_id: str, _maximum: float) -> None:
-            future = asyncio.run_coroutine_threadsafe(
+            future = scheduled(
+                "reserve",
+                action_id,
                 store.reserve_action(
                     scope,
                     task_id,
@@ -469,9 +530,14 @@ class CodingRuntime:
                     node_id=node_id,
                     attempt=attempt,
                 ),
-                loop,
             )
-            if future.result(timeout=callback_timeout) not in {"reserved", "existing"}:
+            try:
+                status = future.result(timeout=callback_timeout)
+            except FutureTimeoutError:
+                with callback_lock:
+                    late_reservations.add(action_id)
+                raise
+            if status not in {"reserved", "existing"}:
                 raise ValueError("durable model reservation refused")
 
         def settle(record: CallRecord) -> None:
@@ -483,7 +549,9 @@ class CodingRuntime:
                 "completion_tokens": record.completion_tokens,
                 "cost_usd": cost,
             }
-            future = asyncio.run_coroutine_threadsafe(
+            future = scheduled(
+                "settle",
+                record.gate_request_id,
                 store.settle_action(
                     scope,
                     task_id,
@@ -493,13 +561,57 @@ class CodingRuntime:
                     node_id=node_id,
                     attempt=attempt,
                 ),
-                loop,
             )
             future.result(timeout=callback_timeout)
+
+        async def drain_callbacks() -> None:
+            with callback_lock:
+                scheduled_callbacks = list(callbacks)
+                delayed = set(late_reservations)
+            unconfirmed: list[BaseException] = []
+            for kind, action_id, future in scheduled_callbacks:
+                try:
+                    status = await asyncio.wait_for(
+                        asyncio.shield(asyncio.wrap_future(future)), timeout=30
+                    )
+                except (asyncio.CancelledError, Exception) as error:
+                    future.cancel()
+                    unconfirmed.append(error)
+                    continue
+                if (
+                    kind == "reserve"
+                    and action_id in delayed
+                    and status
+                    in {
+                        "reserved",
+                        "existing",
+                    }
+                ):
+                    try:
+                        await store.settle_action(
+                            scope,
+                            task_id,
+                            lease_token,
+                            action_id,
+                            {
+                                "status": 429,
+                                "usage_verified": False,
+                                "prompt_tokens": None,
+                                "completion_tokens": None,
+                                "cost_usd": 0.0,
+                            },
+                            node_id=node_id,
+                            attempt=attempt,
+                        )
+                    except Exception as error:
+                        unconfirmed.append(error)
+            if unconfirmed:
+                raise RuntimeError("durable model callback unconfirmed") from unconfirmed[0]
 
         provider_session: str | None = None
         latest_bundle: str | None = None
         latest_execution: dict[str, Any] | None = None
+        result: CodingResult | None = None
         stopped = False
         primary_error: BaseException | None = None
         gate: BudgetGate | None = None
@@ -507,22 +619,25 @@ class CodingRuntime:
             mailbox = CodingMailbox.create(Path(temporary) / "mailbox")
             container: CodingContainer | None = None
             try:
-                with BudgetGate(
-                    self.config.model_origin,
-                    self.config.model_key,
-                    max_calls=remaining_calls,
-                    max_seconds=seconds_left(),
-                    max_cost_usd=remaining_cost,
-                    input_price_per_million=self.config.input_price_per_million,
-                    output_price_per_million=self.config.output_price_per_million,
-                    max_input_tokens=self.config.max_input_tokens,
-                    max_input_bytes=131072,
-                    max_output_bytes=1048576,
-                    max_output_tokens=self.config.max_output_tokens,
-                    model_alias=str(request["model_alias"]),
-                    on_reserve=reserve,
-                    on_settle=settle,
-                    preserve_upstream_errors=True,
+                async with _entered_gate(
+                    BudgetGate(
+                        self.config.model_origin,
+                        self.config.model_key,
+                        max_calls=remaining_calls,
+                        max_seconds=seconds_left(),
+                        max_cost_usd=remaining_cost,
+                        input_price_per_million=self.config.input_price_per_million,
+                        output_price_per_million=self.config.output_price_per_million,
+                        max_input_tokens=self.config.max_input_tokens,
+                        max_input_bytes=131072,
+                        max_output_bytes=1048576,
+                        max_output_tokens=self.config.max_output_tokens,
+                        model_alias=str(request["model_alias"]),
+                        on_reserve=reserve,
+                        on_settle=settle,
+                        preserve_upstream_errors=True,
+                    ),
+                    drain_callbacks,
                 ) as gate:
                     shim_token = secrets.token_urlsafe(24)
                     config = build_config(
@@ -725,6 +840,26 @@ class CodingRuntime:
                                     ),
                                     "coding_stopped": stopped,
                                     "inspector_status": inspector_status,
+                                },
+                            )
+                        if isinstance(primary_error, asyncio.CancelledError) or (
+                            result is not None and result.status == "canceled"
+                        ):
+                            return CodingResult(
+                                "canceled",
+                                provider_session_id=provider_session,
+                                bundle_ref=latest_bundle,
+                                execution_ref=(
+                                    str(latest_execution.get("execution_id"))
+                                    if latest_execution is not None
+                                    else None
+                                ),
+                                usage=gate.snapshot() if gate is not None else {},
+                                terminal_evidence={
+                                    **(result.terminal_evidence if result is not None else {}),
+                                    "coding_stopped": True,
+                                    "inspector_status": "canceled",
+                                    "stop_confirmed": True,
                                 },
                             )
                     finally:

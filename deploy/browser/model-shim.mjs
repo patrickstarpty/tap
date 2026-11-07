@@ -16,8 +16,8 @@ export async function mailboxRequest(root, kind, payload, timeoutMs = 30000) {
   const requestPath = path.join(root, 'requests', `${id}.json`);
   const responsePath = path.join(root, 'responses', `${id}.json`);
   const ackPath = path.join(root, 'acks', `${id}.json`);
-  const ackTemporary = path.join(root, `${id}.ack.tmp`);
-  const temporary = path.join(root, `${id}.tmp`);
+  const ackTemporary = path.join(root, 'acks', `${id}.tmp`);
+  const temporary = path.join(root, 'requests', `${id}.tmp`);
   const deadlineAt = Date.now() + timeoutMs;
   const envelope = Buffer.from(JSON.stringify({ id, kind, deadline_at: deadlineAt / 1000, payload }));
   if (envelope.length > 196608) throw new Error('mailbox request exceeds size cap');

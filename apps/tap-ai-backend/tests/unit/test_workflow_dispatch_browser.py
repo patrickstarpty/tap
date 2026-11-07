@@ -127,3 +127,71 @@ async def test_browser_blocked_maps_to_await_input_without_success():
     assert ("await_input", "Which account?") in state.calls
     assert not any(item[0] == "finish_task" for item in state.calls)
     assert store.events[0][1]["status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_browser_outputs_use_compact_utf8_size_boundary():
+    value = {"value": "中" * 6000}
+    selected, state, _store, _ = runtime(
+        CodingResult("passed", terminal_evidence={"result": {"outputs": [value]}})
+    )
+    status = await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    assert status == "finished"
+    assert any(item[0] == "finish_task" for item in state.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outputs", [[{"value": "x" * 40000}], {"invalid": "shape"}])
+async def test_invalid_business_outputs_fail_explicitly(outputs):
+    selected, state, store, _ = runtime(
+        CodingResult("passed", terminal_evidence={"result": {"outputs": outputs}})
+    )
+    status = await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    assert status == "failed"
+    assert store.events[0][1]["status"] == "failed"
+    assert any(item[0] == "fail_task" for item in state.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmed", [True, False])
+async def test_browser_cancel_only_persists_current_stop_proof_when_confirmed(confirmed):
+    result = CodingResult(
+        "canceled",
+        terminal_evidence={"stop_confirmed": confirmed},
+    )
+    selected, _state, store, _coding = runtime(result)
+    status = await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    assert status == "stopped"
+    proof = [payload for kind, payload in store.events if kind == "browser.stop_confirmed"]
+    assert len(proof) == int(confirmed)
+    if proof:
+        assert proof[0] == {
+            "node_id": "node-a",
+            "attempt": 1,
+            "execution_token": "lease-a",
+            "stop_confirmed": True,
+        }

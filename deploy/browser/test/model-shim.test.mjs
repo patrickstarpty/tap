@@ -13,6 +13,24 @@ function fixture() {
   return root;
 }
 
+test('mailbox stages request and ack inside writable children when parent is read-only', async () => {
+  const root = fixture();
+  fs.chmodSync(root, 0o500);
+  const responder = setInterval(() => {
+    for (const name of fs.readdirSync(path.join(root, 'requests'))) {
+      fs.writeFileSync(path.join(root, 'responses', name), '{"ok":true}', { mode: 0o600 });
+    }
+  }, 5);
+  try {
+    assert.deepEqual(await mailboxRequest(root, 'browser', { marker: 'bounded' }, 1000), { ok: true });
+    assert.equal(fs.readdirSync(path.join(root, 'acks')).length, 1);
+  } finally {
+    clearInterval(responder);
+    fs.chmodSync(root, 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('mailbox request isolates concurrent IDs and acknowledges private responses', async () => {
   const root = fixture();
   try {

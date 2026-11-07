@@ -30,3 +30,23 @@ test('collection errors enter the failed receipt even when no tests ran', () => 
   assert.match(receipt.errors[0], /unknown parameter "testInfo"/);
   assert.doesNotMatch(receipt.errors[0], /\/opt\/browser\/frozen/);
 });
+
+test('aggregate business outputs over 32768 UTF-8 bytes cannot produce a passed receipt', () => {
+  const reporter = new TrustedReporter();
+  for (const index of [1, 2]) {
+    reporter.onTestEnd({ title: `part ${index}` }, {
+      status: 'passed', steps: [], error: null,
+      attachments: [{ name: 'tapper-result', contentType: 'application/json', body: Buffer.from(JSON.stringify({ value: 'x'.repeat(20000) })) }],
+    });
+  }
+  const receipt = reporter.buildReceipt([]);
+  assert.equal(receipt.status, 'failed');
+  assert.ok(Buffer.byteLength(JSON.stringify(receipt.outputs)) <= 32768);
+  assert.match(receipt.tests[1].output_error, /32768/);
+});
+
+test('non-ASCII outputs use the same compact UTF-8 bound as Python dispatch', () => {
+  const value = { value: '中'.repeat(6000) };
+  assert.ok(Buffer.byteLength(JSON.stringify([value])) < 32768);
+  assert.deepEqual(collectBusinessOutputs([{ name: 'tapper-result', contentType: 'application/json', body: Buffer.from(JSON.stringify(value)) }]), [value]);
+});

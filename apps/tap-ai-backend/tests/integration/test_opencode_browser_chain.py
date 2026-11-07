@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 import pytest
 import uvicorn
 from dotenv import dotenv_values
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tap_platform.browser_automation.docker import BrowserRuntime, SubprocessDockerClient
 from tap_platform.browser_automation.http import (
@@ -29,15 +30,21 @@ from tap_platform.browser_automation.objects import BrowserEvidenceSink
 from tap_platform.browser_automation.worker import BrowserWorker
 
 from tap.modules.access.adapters.validation import VALIDATION_SCOPE
+from tap.modules.ai.adapters.mysql import MysqlAssetCatalog
+from tap.modules.ai.application.assets import workflow_asset_seed
 from tap.modules.workflows.adapters.browser_client import BrowserApiClient, canonical_json_bytes
 from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox
 from tap.modules.workflows.adapters.mysql import MysqlWorkflowStore
+from tap.modules.workflows.adapters.native_state import NativeStateStore
 from tap.modules.workflows.adapters.opencode_profiles import build_config
 from tap.modules.workflows.adapters.opencode_runtime import (
     CodingConfig,
     CodingRuntime,
     DockerCodingContainer,
 )
+from tap.modules.workflows.adapters.schema import workflow_task
+from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
+from tap.modules.workflows.domain.commands import ControlCommand
 from tap.modules.workflows.ports.coding import CodingResult
 
 IMAGE = "tapper-browser-runtime:1.62.1-arm64"
@@ -566,6 +573,162 @@ test('lookup', async ({ page }, testInfo) => {
             assert synthetic_state["stage"] == 2 and synthetic_state["saw_page"]
             assert durable["budget_used"]["model_calls"] == synthetic_state["calls"]
             assert durable["budget_used"]["cost_micros"] > 0
+
+            # The same owned DB and production runtime must reconcile a real
+            # browser stop without a LangGraph checkpoint.
+            entered = asyncio.Event()
+
+            class HeldModel(BaseHTTPRequestHandler):
+                def do_POST(self):
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                    loop.call_soon_threadsafe(entered.set)
+                    release_thread.wait(8)
+                    payload = b'{"error":"synthetic cancellation"}'
+                    self.send_response(429)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+
+                def log_message(self, *_args):
+                    pass
+
+            loop = asyncio.get_running_loop()
+            from threading import Event
+
+            release_thread = Event()
+            held = ThreadingHTTPServer(("127.0.0.1", 0), HeldModel)
+            held_thread = Thread(target=held.serve_forever, daemon=True)
+            held_thread.start()
+            advancing = None
+            try:
+                sessions = async_sessionmaker(engine, expire_on_commit=False)
+                seed = workflow_asset_seed(VALIDATION_SCOPE)
+                await MysqlAssetCatalog(sessions, scope=VALIDATION_SCOPE).seed(seed)
+                cancel_request = {
+                    **frozen_synthetic,
+                    "goal": "Inspect the approved synthetic page and return its result.",
+                    "root": {
+                        "agent_id": seed.agents[0].asset_id,
+                        "revision_id": seed.agents[0].revision_id,
+                        "instruction": seed.agents[0].system_instruction,
+                        "description": seed.agents[0].description,
+                    },
+                    "budget_limit": {"model_calls": 3, "cost_micros": 100_000},
+                    "deadline_at": (datetime.now(UTC) + timedelta(seconds=90)).isoformat(),
+                }
+                cancel_task = await store.create_task(
+                    VALIDATION_SCOPE, cancel_request, "task3-no-model-cancel"
+                )
+                cancel_runtime = NativeWorkflowRuntime(
+                    store,
+                    NativeStateStore(sessions),
+                    object(),
+                    checkpointer_factory=lambda *_: (_ for _ in ()).throw(
+                        AssertionError("browser entered native graph")
+                    ),
+                    action_gateway_factory=lambda *_: (_ for _ in ()).throw(
+                        AssertionError("browser entered native model")
+                    ),
+                    owner="task3-cancel-worker",
+                    standalone_authorize=lambda *_: asyncio.sleep(0, result=True),
+                    coding=CodingRuntime(
+                        CodingConfig(
+                            f"http://127.0.0.1:{api_port}",
+                            "task3",
+                            "x" * 16,
+                            CODING_IMAGE,
+                            actual_image,
+                            f"http://127.0.0.1:{held.server_port}",
+                            "synthetic-key",
+                            129024,
+                            2048,
+                            0.4,
+                            1.2,
+                        ),
+                        browser=client,
+                        store=store,
+                    ),
+                )
+                advancing = asyncio.create_task(
+                    cancel_runtime.start(VALIDATION_SCOPE, cancel_task.task_id)
+                )
+                await asyncio.wait_for(entered.wait(), 30)
+                before = await store.snapshot(VALIDATION_SCOPE, cancel_task.task_id)
+                node = next(item for item in before["nodes"] if item["status"] == "running")
+                async with sessions() as session:
+                    token = await session.scalar(
+                        select(workflow_task.c.lease_token).where(
+                            workflow_task.c.task_id == cancel_task.task_id
+                        )
+                    )
+                assert isinstance(token, str)
+                assert not await store.stop_evidence(
+                    VALIDATION_SCOPE, cancel_task.task_id, token, node["node_id"]
+                )
+                for suffix, attempt, proof_token in (
+                    ("foreign", node["attempt"], "foreign-lease"),
+                    ("stale", node["attempt"] + 1, token),
+                ):
+                    await store.append_event(
+                        VALIDATION_SCOPE,
+                        cancel_task.task_id,
+                        token,
+                        f"task3-{suffix}-stop",
+                        "browser.stop_confirmed",
+                        {
+                            "node_id": node["node_id"],
+                            "attempt": attempt,
+                            "execution_token": proof_token,
+                            "stop_confirmed": True,
+                        },
+                    )
+                    assert not await store.stop_evidence(
+                        VALIDATION_SCOPE, cancel_task.task_id, token, node["node_id"]
+                    )
+                accepted = await store.submit_command(
+                    VALIDATION_SCOPE,
+                    ControlCommand(
+                        "task3-cancel-command",
+                        cancel_task.task_id,
+                        None,
+                        "cancel",
+                        1,
+                        None,
+                    ),
+                )
+                assert accepted["status"] == "accepted"
+                await asyncio.sleep(0.8)
+                release_thread.set()
+                await asyncio.wait_for(advancing, 30)
+                after = await store.snapshot(VALIDATION_SCOPE, cancel_task.task_id)
+                assert after["status"] == "canceled", after
+                assert any(
+                    event.kind == "browser.stop_confirmed"
+                    and event.payload.get("execution_token") == token
+                    and event.payload.get("attempt") == node["attempt"]
+                    for event in after["events"]
+                )
+                assert after["budget_used"]["model_calls"] == 1
+                assert any(event.kind == "action.settled" for event in after["events"])
+                print(
+                    "native_browser_cancel",
+                    {
+                        "status": after["status"],
+                        "node_id": node["node_id"],
+                        "attempt": node["attempt"],
+                        "budget_used": after["budget_used"],
+                    },
+                )
+            finally:
+                release_thread.set()
+                if advancing is not None:
+                    if not advancing.done():
+                        advancing.cancel()
+                    await asyncio.wait_for(asyncio.gather(advancing, return_exceptions=True), 30)
+                held.shutdown()
+                held.server_close()
+                held_thread.join()
         finally:
             await engine.dispose()
             synthetic.shutdown()

@@ -111,3 +111,39 @@ async def test_mailbox_host_cleans_response_only_after_exact_read_ack(tmp_path):
     assert not await box.serve_once(lambda _: asyncio.sleep(0))
     assert not response.exists()
     assert not ack.exists()
+
+
+@pytest.mark.asyncio
+async def test_mailbox_ignores_unpublished_request_and_ack_staging_files(tmp_path):
+    box = CodingMailbox.create(tmp_path / "box")
+    request_stage = box.root / "requests" / "one.tmp"
+    ack_stage = box.root / "acks" / "one.tmp"
+    request_stage.write_text("partial request")
+    ack_stage.write_text("partial ack")
+    request_stage.chmod(0o600)
+    ack_stage.chmod(0o600)
+    assert not await box.serve_once(lambda _: asyncio.sleep(0))
+    _request(box.root, "one")
+    assert await box.serve_once(lambda _: asyncio.sleep(0, result={"ok": True}))
+    assert (box.root / "responses" / "one.json").exists()
+    assert not await box.serve_once(lambda _: asyncio.sleep(0))
+    assert (box.root / "responses" / "one.json").exists()
+    assert request_stage.exists() and ack_stage.exists()
+
+
+@pytest.mark.parametrize("child", ["requests", "acks"])
+@pytest.mark.asyncio
+async def test_replaced_mailbox_parent_never_reads_or_deletes_owned_sentinel(tmp_path, child):
+    box = CodingMailbox.create(tmp_path / "box")
+    sentinel = tmp_path / "sentinel"
+    sentinel.mkdir(mode=0o700)
+    marker = sentinel / "one.json"
+    marker.write_text("one")
+    marker.chmod(0o600)
+    (box.root / child).rename(box.root / f"{child}-original")
+    (box.root / child).symlink_to(sentinel, target_is_directory=True)
+    with pytest.raises(MailboxViolation, match="mailbox"):
+        await box.serve_once(lambda _: asyncio.sleep(0, result={"ok": True}))
+    with pytest.raises(MailboxViolation, match="mailbox"):
+        box.close()
+    assert marker.read_text() == "one"

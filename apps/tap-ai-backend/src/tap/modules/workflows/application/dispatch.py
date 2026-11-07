@@ -420,12 +420,24 @@ class NativeWorkflowRuntime:
             if isinstance(receipt.get("result"), dict)
             else []
         )
-        if not isinstance(outputs, list) or len(json.dumps(outputs).encode()) > 32768:
-            raise ValueError("browser business output invalid")
+        status = result.status
+        output_error: str | None = None
+        if status == "passed":
+            try:
+                if (
+                    not isinstance(outputs, list)
+                    or len(json.dumps(outputs, ensure_ascii=False, separators=(",", ":")).encode())
+                    > 32768
+                ):
+                    raise ValueError("browser business output invalid")
+            except (TypeError, ValueError):
+                status = "failed"
+                output_error = "browser business output invalid"
+                outputs = []
         payload: dict[str, object] = {
             "node_id": node_id,
             "attempt": attempt,
-            "status": result.status,
+            "status": status,
             "provider_session_id": result.provider_session_id,
             "bundle_ref": result.bundle_ref,
             "execution_ref": result.execution_ref,
@@ -442,14 +454,28 @@ class NativeWorkflowRuntime:
             "browser.coding_result",
             payload,
         )
-        if result.status == "blocked":
+        if status == "canceled" and receipt.get("stop_confirmed") is True:
+            await self._store.append_event(
+                scope,
+                task_id,
+                token,
+                hashlib.sha256(f"browser-stop:{task_id}:{node_id}:{attempt}".encode()).hexdigest(),
+                "browser.stop_confirmed",
+                {
+                    "node_id": node_id,
+                    "attempt": attempt,
+                    "execution_token": token,
+                    "stop_confirmed": True,
+                },
+            )
+        if status == "blocked":
             question = (result.input_request or {}).get("question", "")
             await self._state.await_input(scope, task_id, token, node_id, question)
             return "awaiting_input"
-        if result.status in {"canceled", "unknown"}:
+        if status in {"canceled", "unknown"}:
             return "stopped"
-        if result.status == "failed":
-            failure = receipt.get("failure_code") or "browser execution failed"
+        if status == "failed":
+            failure = output_error or receipt.get("failure_code") or "browser execution failed"
             reason = str(failure)[:2000]
             await self._state.fail_node(scope, task_id, token, node_id, reason)
             await self._state.fail_task(scope, task_id, token, reason)
