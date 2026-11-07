@@ -628,7 +628,16 @@ class CodingRuntime:
             )
         if session.get("status") != "active":
             if session.get("status") == "canceled":
-                return CodingResult("canceled", terminal_evidence=session)
+                stop_receipt = session.get("stop_receipt")
+                return CodingResult(
+                    "canceled",
+                    terminal_evidence={
+                        **session,
+                        "stop_confirmed": (
+                            isinstance(stop_receipt, dict) and stop_receipt.get("stopped") is True
+                        ),
+                    },
+                )
             return CodingResult("unknown", terminal_evidence=session)
         session_id = str(session["session_id"])
         loop = asyncio.get_running_loop()

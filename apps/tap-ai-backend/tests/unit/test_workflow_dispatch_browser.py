@@ -1,10 +1,12 @@
 """Frozen browser tasks use the coding runtime before any native graph model."""
 
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
+from tap.modules.workflows.adapters.opencode_runtime import CodingConfig, CodingRuntime
 from tap.modules.workflows.application.dispatch import NativeWorkflowRuntime
 from tap.modules.workflows.ports.coding import CodingResult
 
@@ -195,6 +197,66 @@ async def test_browser_cancel_only_persists_current_stop_proof_when_confirmed(co
             "execution_token": "lease-a",
             "stop_confirmed": True,
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("session", "confirmed"),
+    [
+        ({"status": "canceled", "stop_receipt": {"stopped": True}}, True),
+        ({"status": "canceled", "stop_receipt": {"stopped": False}, "stop_confirmed": True}, False),
+        ({"status": "canceled"}, False),
+        ({"status": "unknown", "stop_receipt": {"stopped": False}}, False),
+    ],
+)
+async def test_early_browser_session_stop_proof_reaches_dispatch_only_when_authoritative(
+    session, confirmed
+):
+    class EarlySessionBrowser:
+        async def session(self, *_args):
+            return session
+
+    request = {
+        "kind": "browser",
+        "goal": "Read page",
+        "model_alias": "qwen-plus",
+        "root": {
+            "agent_id": "orchestrator",
+            "revision_id": "r1",
+            "description": "root",
+            "instruction": "work",
+        },
+        "candidates": [],
+        "requested_ids": [],
+        "browser": {
+            "start_url": "https://example.com/",
+            "allowed_origins": ["https://example.com"],
+            "expected_result": "Read page",
+            "input_data": {},
+            "input_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        },
+        "budget_limit": {"model_calls": 3, "cost_micros": 100000},
+        "deadline_at": (datetime.now(UTC) + timedelta(seconds=60)).isoformat(),
+    }
+    selected, _state, store, _ = runtime(CodingResult("failed"))
+    selected._coding = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=EarlySessionBrowser(),
+        store=store,
+        container_factory=lambda *_: (_ for _ in ()).throw(AssertionError("container started")),
+    )
+    status = await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        request,
+        {"events": (), "nodes": [], "budget_used": {}},
+        root=True,
+    )
+    assert status == "stopped"
+    assert store.events[0][0] == "browser.coding_result"
+    assert [kind for kind, _ in store.events].count("browser.stop_confirmed") == int(confirmed)
 
 
 @pytest.mark.asyncio

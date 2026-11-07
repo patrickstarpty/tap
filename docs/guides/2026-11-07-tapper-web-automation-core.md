@@ -29,6 +29,7 @@ Tapper 的 **Browser run** 从自然语言目标、起始 URL、输入资料和�
 - 自有站点的私网地址只由验收监督器验证容器 ID、名称、owner label 与 bridge 地址后注入 `BrowserRuntime.test_target`。普通站点使用正式 worker 与生产网络策略；代价是自有站点门禁经过测试组合点。隔离运行使用 `TAP_BROWSER_SERVICE_MODE=external`，让真实 Chat/API 启动链路连接单个自有 Browser API/worker，避免双 worker 竞争；这是生命周期配置，不是私网放行开关。
 - 仅验收监督器 CLI 的费用上界从 USD 0.50 调整为 USD 1.00；下一轮自有站实验单独预留 16 次调用、USD 0.90、240 秒。此前真实页面检查和交互已发生，但八次调用上限在生成完成前截断，原 USD 0.50 是监督器自定值而非产品或设计上限。代价是单次实验保守预留额增加；产品 BudgetGate、默认配置与累计授权额度不变，仍须每次明确预留，不授权盲目重试。
 - Browser 执行证据的默认上限从 1,000,000 字节提高到 5,000,000 字节，保留调用方显式上限和原有 10,000,000 字节硬上限。一次有效公共站登录/退出脚本产生 1,297,553 字节证据，旧默认值在持久化前拒绝了 trace；代价是单次执行的默认有界证据存储和传输上界提高五倍。超限明确返回 `evidence_limit`；只有 `execution_failed` 且确有断言或测试失败时才允许模型修复脚本，资源或 runtime 错误不以空结果触发修复。模型预算不随此上限改变。
+- 最终复审发现早期 Browser session 启动/就绪取消虽已取得 `stop_receipt.stopped=true`，编码 runtime 却未将它投影为 workflow 所需的 `stop_confirmed`，导致持久取消无法完成。仅在 session 为 `canceled` 且停机收据明确为 true 时传递该证明；未知或未确认仍不写入停机事件。代价是追加一次有界修正与定向回归验证，不改变既有安全或停机证明边界。
 
 ## 真实模型实验
 
