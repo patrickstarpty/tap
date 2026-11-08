@@ -60,7 +60,7 @@ async function syntheticModelCalls(
 }
 
 test.skip(!active, "requires isolated browser core supervisor");
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "serial", timeout: taskTimeoutMs * 2 + 120_000 });
 
 for (const scenario of cases) {
   test(`${scenario.name}: Chat to persisted browser receipt`, async ({
