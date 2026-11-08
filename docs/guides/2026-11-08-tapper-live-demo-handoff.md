@@ -8,6 +8,19 @@
 
 原交接时，用户要求先写交接文档，并从具体阻塞继续，不重走整套设计和评审。
 
+## 最新状态：公网依赖与真实入口修复（2026-11-08）
+
+**FWD 指定资料询价和零模型回放仍未验收通过。** 下文金额、镜像和“尚未提交”描述均为分阶段历史；以本节为当前状态。代码 `4c485893` 已快进整合到 `develop`。
+
+- 用户要求取消正常浏览的逐域名许可。新会话及冻结包默认 `public_web`；公开网站、API/CDN 依赖可访问，本机、私网、元数据地址、DNS 重绑定及 HTTPS authority 保护保留。旧包默认 `declared_origins`。迁移 `0008_browser_network_mode`，跨应用边界见 [ADR-039](../decisions/2026-11-08-adr-039-browser-public-web-policy.md)。浏览器镜像 `sha256:60cbf6735f945b534fb0b8aca25e6ee6f257fcb6ee051231c5f2812e5b3a8dce`；编码镜像 `sha256:c56cac0aa6951e9dc2ab9ecbf62c3ee349d6b283c231659bb4e96e806b12c8c5`。
+- 真实 FWD 页面依赖 `https://ecapi.fwd.com.hk/data`。仅给起始域名的新策略无模型预检已加载保费：页面默认年龄 **25**，Standard 显示 HK$97.20 与优惠 HK$9.72/month。此数值只是网络依赖已加载的证据，**不是用户指定 30 岁的报价**。预检 `/private/tmp/tapper-fwd-public-web-preflight-20261108.json`，停止收据 true。
+- 修复观测包装使模型就绪检查误报失败的问题；193 项启动测试通过。真实 UI 任务 `cd98f1b5f2ab477986ba369a1f4c9188` 随后消耗 1 次、USD 0.000644：模型实际返回 `kind=browser`，但直接返回路由对象，旧解析器只读外层 `route`，导致 `native answer is empty`。已兼容两种形状并明确提示格式，36 项图/调度测试通过。原输出在 `/var/folders/zn/dg1zfbv96p19qstvcpgsjvyr0000gn/T/tap-browser-core-ab0bd5671009-evidence-0go2zptk/cd98f1b5f2ab477986ba369a1f4c9188-audit.json`。没有生成业务脚本或报价。
+- 公网策略与持久化 40 项、客户端 27 项、代理策略 6 项通过；真实 Chromium 隔离测试通过（90.73 秒）。`make check` 通过；路由最终变更另过 Ruff/mypy，最终 `make test` 590 项通过。日志 `/private/tmp/tapper-public-web-final-check.log`、`/private/tmp/tapper-public-web-final-core.log`、`/private/tmp/tapper-public-web-real-runtime.log`。
+- 随后 owner `tap-browser-core-d4b2fafe0c84` 在 `compose-up` 300 秒超时，尚未迁移数据库、启动应用或提交模型任务。证据 `/var/folders/zn/dg1zfbv96p19qstvcpgsjvyr0000gn/T/tap-browser-core-d4b2fafe0c84-evidence-4ew_9r2q`。默认导出保守标记 accounting unconfirmed，因为数据库未启动；阶段证据确认此尝试零调用。Docker 报本轮旧容器 PID 为 zombie；无网络、无挂载的空容器也在 15 秒内不能启动，停在 Created。不能将这一环境失败称为 FWD 业务失败或精确推断 Docker 内部根因。此前单次 Docker 重启授权已使用，本轮未再次重启；14 个原共享服务仍运行。
+- 用户“完成它”已承接上轮提出的 20 次 / USD 0.60 有界继续，调用总上限 262、费用总上限 USD 2.1496368。预留 `res_15ba2013b851bee46faf5d97` 已按 1 次、USD 0.000644 结算。累计 **243 次、USD 1.4710272**，本轮还可使用 **19 次、USD 0.599356**；无待结算预留。账本 `/private/tmp/tap-opencode-task03-ledger.jsonl`，收据 `/private/tmp/tapper-fwd-public-web-settlement.json`。再运行需先按剩余额度预留，不重新增加授权。
+
+仍待：Docker 恢复后，用未改动的真实 FWD 业务输入从自然语言入口继续，核实 30 岁等全部回读、非零 HKD 月保费、命名 JSON、原脚本/截图/trace 和零调用回放。不得把主机手动询价、上述默认值预检或合成模型当作通过。ADR-038 的未来 browser-use 路径仍未实现；Codex 侧栏渲染问题仍未确认修复。
+
 ## FWD HK 询价：本轮诊断与当前尝试（2026-11-08）
 
 用户明确以 FWD HK MyTerm Plus 公开询价为本次验收目标；产品输入与停止边界以[设计文档 §11.1](../superpowers/specs/2026-11-06-agent-workflows-and-test-loop-design.md)为准。真实 Tapper UI 必须从官网网上投保产品列表选择 MyTerm Plus，使用合成的 30 岁男性、不吸烟、本人、10 年续保、HKD 2,000,000、Standard、按月资料，读取非零实际 HKD 月保费并导出原生成脚本、截图、trace、零模型重放。流程止于公开报价，不创建投保、提交真实个人资料或付款。
