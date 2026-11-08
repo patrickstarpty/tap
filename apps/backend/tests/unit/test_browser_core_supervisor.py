@@ -124,8 +124,11 @@ def test_unconfirmed_accounting_stops_only_owned_compose_without_deleting_data(
         ("1.01", False),
     ],
 )
-def test_real_supervisor_accepts_only_positive_finite_cost_up_to_one_dollar(
-    tmp_path, monkeypatch, cost, accepted
+@pytest.mark.parametrize(
+    ("calls", "calls_accepted"), [(60, True), (61, False), (0, False)]
+)
+def test_real_supervisor_preserves_call_and_finite_cost_bounds(
+    tmp_path, monkeypatch, cost, accepted, calls, calls_accepted
 ):
     import importlib.util
 
@@ -154,7 +157,7 @@ def test_real_supervisor_accepts_only_positive_finite_cost_up_to_one_dollar(
             "--expected",
             "actual result",
             "--max-model-calls",
-            "16",
+            str(calls),
             "--max-cost-usd",
             cost,
             "--deadline-seconds",
@@ -163,7 +166,7 @@ def test_real_supervisor_accepts_only_positive_finite_cost_up_to_one_dollar(
             str(env_file),
         ],
     )
-    if accepted:
+    if accepted and calls_accepted:
         assert runner.parse_args().max_cost_usd.is_finite()
     else:
         with pytest.raises(SystemExit, match="2"):

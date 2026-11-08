@@ -353,7 +353,7 @@ def parse_args() -> argparse.Namespace:
         if args.site == "owned" and parsed.hostname != "example.test":
             parser.error("owned-site mode requires example.test")
         if (
-            not 1 <= args.max_model_calls <= 20
+            not 1 <= args.max_model_calls <= 60
             or not args.max_cost_usd.is_finite()
             or not Decimal("0") < args.max_cost_usd <= Decimal("1.0")
             or not 30 <= args.deadline_seconds <= 900
