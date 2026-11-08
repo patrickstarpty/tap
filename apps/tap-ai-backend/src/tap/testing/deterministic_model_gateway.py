@@ -430,7 +430,7 @@ def _grounded_claims_from_context(context: str) -> list[dict[str, Any]]:
 
 
 _WORKFLOW_SCRIPT = re.compile(
-    r"\[e2e-workflow:(direct|search|single:[a-z0-9_]+|double:[a-z0-9_]+:[a-z0-9_]+)\]"
+    r"\[e2e-workflow:(direct|browser|search|single:[a-z0-9_]+|double:[a-z0-9_]+:[a-z0-9_]+)\]"
 )
 
 
@@ -469,10 +469,10 @@ def _workflow_script_body(request: ModelRequest) -> dict[str, Any] | None:
         content = json.dumps(
             {
                 "route": {
-                    "kind": "native",
+                    "kind": "browser" if script[0] == "browser" else "native",
                     "reason": "deterministic workflow fixture",
                     "confidence": 0.99,
-                    "required_capabilities": [],
+                    "required_capabilities": ["browser"] if script[0] == "browser" else [],
                 },
                 "answer": "Deterministic direct answer" if script[0] == "direct" else "",
             }

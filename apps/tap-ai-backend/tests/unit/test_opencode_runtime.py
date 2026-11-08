@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import time
+import traceback
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Thread
@@ -106,6 +107,9 @@ class Journal:
     def __init__(self):
         self.events = []
 
+    async def append_event(self, _scope, _task, _token, _id, kind, payload):
+        self.events.append((kind, payload))
+
     async def reserve_action(self, _scope, _task, token, action_id, kind, **_kwargs):
         assert token == "lease" and kind == "model"
         self.events.append(("reserved", action_id))
@@ -186,6 +190,26 @@ class CompletedScriptContainer(MailContainer):
         self.goals.append(text)
 
     async def run_prompt(self):
+        if len(self.goals) == 1:
+            path = self.root / "requests" / "plan-script.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "id": "plan-script",
+                        "kind": "browser",
+                        "deadline_at": time.time() + 10,
+                        "payload": {
+                            "type": "plan",
+                            "steps": [
+                                {"id": "verify", "keyword": "Then", "title": "Verify result"}
+                            ],
+                        },
+                    }
+                )
+            )
+            path.chmod(0o600)
+            while not (self.root / "responses" / "plan-script.json").exists():
+                await asyncio.sleep(0.01)
         return {"terminal": "complete", "session_id": "ses_test"}
 
     async def collect(self):
@@ -336,7 +360,8 @@ async def test_coding_generation_receives_exact_frozen_input_before_prompt():
 
 
 @pytest.mark.asyncio
-async def test_coding_runtime_journals_reservation_before_forward_and_settles_usage():
+@pytest.mark.parametrize("response_delay", [0, 31])
+async def test_coding_runtime_journals_reservation_before_forward_and_settles_usage(response_delay):
     journal = Journal()
 
     class Upstream(BaseHTTPRequestHandler):
@@ -346,6 +371,7 @@ async def test_coding_runtime_journals_reservation_before_forward_and_settles_us
             assert journal.events and journal.events[0][0] == "reserved"
             type(self).calls += 1
             self.rfile.read(int(self.headers["Content-Length"]))
+            time.sleep(response_delay)
             body = b'{"usage":{"prompt_tokens":2,"completion_tokens":3},"choices":[]}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -580,13 +606,27 @@ async def test_blocked_browser_action_handler_observes_absolute_task_deadline():
 
     class ActionContainer(MailContainer):
         async def run_prompt(self):
+            plan = {
+                "id": "plan-a",
+                "kind": "browser",
+                "deadline_at": time.time() + 10,
+                "payload": {
+                    "type": "plan",
+                    "steps": [{"id": "inspect", "keyword": "Given", "title": "Inspect page"}],
+                },
+            }
+            path = self.root / "requests" / "plan-a.json"
+            path.write_text(json.dumps(plan))
+            path.chmod(0o600)
+            while not (self.root / "responses" / "plan-a.json").exists():
+                await asyncio.sleep(0.01)
             (self.root / "requests" / "action-a.json").write_text(
                 json.dumps(
                     {
                         "id": "action-a",
                         "kind": "browser",
                         "deadline_at": time.time() + 10,
-                        "payload": {"type": "snapshot"},
+                        "payload": {"type": "snapshot", "step": "inspect"},
                     }
                 )
             )
@@ -691,6 +731,175 @@ async def test_coding_command_rejects_failed_exit_or_oversize_stdout(
         await DockerCodingContainer._command(
             ("docker", "image", "inspect", "owned"), max_stdout=max_stdout
         )
+
+
+@pytest.mark.asyncio
+async def test_coding_command_timeout_reports_safe_stage_and_reaps_process(monkeypatch):
+    secret = "secret-model-token-value"
+
+    class HungProcess:
+        returncode = None
+        killed = False
+        waited = False
+
+        async def communicate(self, _data):
+            await asyncio.Event().wait()
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = HungProcess()
+
+    async def create_process(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    with pytest.raises(TimeoutError, match="docker run") as error:
+        await DockerCodingContainer._command(
+            ("docker", "run", "--env", f"TOKEN={secret}", "owned"),
+            timeout=0.01,
+            stage="docker run",
+        )
+    assert process.killed and process.waited
+    assert secret not in str(error.value)
+    assert "TOKEN=" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_coding_command_rejects_unapproved_stage_before_process(monkeypatch):
+    async def create_process(*_args, **_kwargs):
+        raise AssertionError("process should not start")
+
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    with pytest.raises(ValueError, match="invalid coding command stage"):
+        await DockerCodingContainer._command(("docker", "run", "owned"), stage="token=private")
+
+
+@pytest.mark.asyncio
+async def test_coding_command_timeout_traceback_omits_underlying_secret(monkeypatch):
+    secret = "secret-upstream-error-value"
+
+    class Process:
+        returncode = None
+
+        async def communicate(self, _data):
+            raise TimeoutError(secret)
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def create_process(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(
+        "tap.modules.workflows.adapters.opencode_runtime.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    with pytest.raises(TimeoutError, match="exec inspect") as error:
+        await DockerCodingContainer._command(
+            ("docker", "exec", "private", "inspect"), stage="exec inspect"
+        )
+    assert secret not in "".join(traceback.format_exception(error.value))
+    assert error.value.__context__ is None
+    assert error.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_coding_start_allows_serve_to_become_ready_after_thirty_seconds(
+    monkeypatch, tmp_path
+):
+    class Clock:
+        value = 0.0
+
+        def monotonic(self):
+            return self.value
+
+    clock = Clock()
+    monkeypatch.setattr("tap.modules.workflows.adapters.opencode_runtime.time", clock)
+    container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
+    probes = []
+
+    async def command(_argv, *, stage, timeout=30, **_kwargs):
+        if stage == "image inspect":
+            return (container.config.image_id + "\n").encode()
+        if stage == "docker run":
+            clock.value += 1
+            return b"a" * 64
+        assert stage == "exec inspect"
+        probes.append(timeout)
+        clock.value += min(timeout, 2)
+        if clock.value >= 39:
+            return b'{"ready":true}'
+        raise RuntimeError("not ready")
+
+    monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(command))
+    await container.start({}, "shim", 60)
+    assert clock.value >= 39
+    assert probes and all(0 < timeout <= 3 for timeout in probes)
+
+
+@pytest.mark.asyncio
+async def test_coding_start_readiness_respects_remaining_task_deadline(monkeypatch, tmp_path):
+    class Clock:
+        value = 0.0
+
+        def monotonic(self):
+            return self.value
+
+    clock = Clock()
+    monkeypatch.setattr("tap.modules.workflows.adapters.opencode_runtime.time", clock)
+    container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
+    probes = []
+
+    async def command(_argv, *, stage, timeout=30, **_kwargs):
+        if stage == "image inspect":
+            return (container.config.image_id + "\n").encode()
+        if stage == "docker run":
+            clock.value += 3
+            return b"a" * 64
+        assert stage == "exec inspect"
+        probes.append(timeout)
+        clock.value += timeout
+        raise RuntimeError("not ready")
+
+    monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(command))
+    with pytest.raises(TimeoutError, match="OpenCode serve readiness deadline"):
+        await container.start({}, "shim", 8)
+    assert clock.value <= 8
+    assert probes[0] == 3
+    assert probes[-1] <= 2
+
+
+@pytest.mark.asyncio
+async def test_coding_start_readiness_preserves_cancellation(monkeypatch, tmp_path):
+    container = DockerCodingContainer(CodingConfig.for_test(), tmp_path)
+
+    async def command(_argv, *, stage, **_kwargs):
+        if stage == "image inspect":
+            return (container.config.image_id + "\n").encode()
+        if stage == "docker run":
+            return b"a" * 64
+        assert stage == "exec inspect"
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(command))
+    with pytest.raises(asyncio.CancelledError):
+        await container.start({}, "shim", 30)
+    assert container.container_id == "a" * 64
 
 
 @pytest.mark.asyncio
@@ -966,3 +1175,21 @@ async def test_coding_command_cleanup_keeps_original_cancel(monkeypatch, cleanup
     )
     with pytest.raises(asyncio.CancelledError, match="original cancel"):
         await DockerCodingContainer._command(("docker", "exec", "owned"))
+
+
+@pytest.mark.asyncio
+async def test_generated_script_cannot_execute_without_a_saved_bdd_plan():
+    class Unplanned(CompletedScriptContainer):
+        async def run_prompt(self):
+            return {"terminal": "complete", "session_id": "ses_test"}
+
+    browser = ReceiptBrowser([])
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=browser,
+        store=Journal(),
+        container_factory=lambda _config, root: Unplanned(root),
+    )
+    with pytest.raises(ValueError, match="BDD plan required"):
+        await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert browser.limits == []

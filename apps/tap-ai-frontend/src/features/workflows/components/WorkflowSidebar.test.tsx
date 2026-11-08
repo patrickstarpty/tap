@@ -77,7 +77,7 @@ const snapshot: Snapshot = {
   ],
 };
 
-it("names dependency predecessors on each workflow node", () => {
+it("opens the compact task list without showing a dependency graph", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     Response.json({ items: [], nextCursor: null }),
   );
@@ -95,12 +95,11 @@ it("names dependency predecessors on each workflow node", () => {
       />
     </QueryClientProvider>,
   );
-  expect(
-    screen.getByRole("button", { name: /Review.*Depends on SDET/u }),
-  ).toBeVisible();
-  expect(
-    document.querySelector('[data-workflow-edge="sdet-1:approval-1"]'),
-  ).not.toBeNull();
+  await userEvent.click(screen.getByText("Subagents"));
+  expect(screen.getByText("Active · 1")).toBeVisible();
+  await userEvent.click(screen.getByText("Run details"));
+  expect(screen.getByRole("button", { name: /Review/u })).toBeVisible();
+  expect(document.querySelector("[data-workflow-edge]")).toBeNull();
 });
 
 it("labels an observed child with an unrecorded result as outcome unknown", async () => {
@@ -130,12 +129,13 @@ it("labels an observed child with an unrecorded result as outcome unknown", asyn
       />
     </QueryClientProvider>,
   );
+  await userEvent.click(screen.getByText("Subagents"));
   expect(
-    screen.getByRole("button", { name: /SDET Agent Outcome unknown/u }),
+    screen.getByRole("button", { name: /SDET.*Outcome unknown/u }),
   ).toBeVisible();
-  expect(screen.getByText("Node outcome unknown")).toBeVisible();
+  expect(screen.getByText("Outcome unknown")).toBeVisible();
   await userEvent.click(
-    screen.getByRole("button", { name: /SDET Agent Outcome unknown/u }),
+    screen.getByRole("button", { name: /SDET.*Outcome unknown/u }),
   );
   expect(
     screen.getByText(
@@ -167,7 +167,8 @@ it("shows Tapper progress without a callable root card and replaces overview wit
   expect(screen.getByRole("heading", { name: "Task progress" })).toBeVisible();
   expect(screen.getAllByText("Which browser?")[0]).toBeVisible();
   expect(screen.queryByRole("button", { name: /Tapper.*agent/i })).toBeNull();
-  expect(screen.getByText("Approval")).toBeVisible();
+  await user.click(screen.getByText("Subagents"));
+  expect(screen.getByText("Active · 1")).toBeVisible();
   await user.click(screen.getByRole("button", { name: /SDET/ }));
   expect(
     screen.getByRole("button", { name: "Back to workflow" }),
@@ -199,6 +200,7 @@ it("keeps selected node visible with authoritative status and connection retry",
     </QueryClientProvider>
   );
   const { rerender } = render(view(snapshot, "live"));
+  await user.click(screen.getByText("Subagents"));
   await user.click(screen.getByRole("button", { name: /SDET/u }));
   rerender(
     view(

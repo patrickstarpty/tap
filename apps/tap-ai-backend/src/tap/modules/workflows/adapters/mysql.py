@@ -28,6 +28,7 @@ from tap.modules.workflows.adapters.schema import (
     workflow_plan_revision,
     workflow_task,
 )
+from tap.modules.workflows.domain.browser_intent import effective_request
 from tap.modules.workflows.domain.commands import (
     ControlCommand,
     WorkflowDispatchBlocked,
@@ -344,7 +345,9 @@ class MysqlWorkflowStore:
                 .all()
             )
             return {
-                "request_json": row._mapping["request_json"],
+                "request_json": effective_request(
+                    row._mapping["request_json"], tuple(_event(event) for event in events)
+                ),
                 "created_at": row._mapping["created_at"],
                 "actor_id": row._mapping["actor_id"],
                 "identity_mode": row._mapping["identity_mode"],
@@ -479,6 +482,23 @@ class MysqlWorkflowStore:
                 if task_ids
                 else ()
             )
+            route_rows = (
+                (
+                    await session.execute(
+                        select(workflow_event).where(
+                            *scope_predicates(workflow_event, scope),
+                            workflow_event.c.task_id.in_(task_ids),
+                            workflow_event.c.kind == "task.route_decided",
+                        )
+                    )
+                ).all()
+                if task_ids
+                else ()
+            )
+        routes_by_task: dict[str, list[WorkflowEvent]] = {}
+        for route_row in route_rows:
+            fact = _event(route_row)
+            routes_by_task.setdefault(fact.task_id, []).append(fact)
         latest_by_task = {row["task_id"]: dict(row) for row in event_rows}
         by_task: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
         for node in node_rows:
@@ -488,6 +508,9 @@ class MysqlWorkflowStore:
             tuple(
                 {
                     **dict(row),
+                    "request_json": effective_request(
+                        dict(row["request_json"]), routes_by_task.get(row["task_id"], ())
+                    ),
                     "nodes": tuple(by_task[row["task_id"]]),
                     "recent_event": latest_by_task.get(row["task_id"]),
                 }
@@ -551,9 +574,20 @@ class MysqlWorkflowStore:
                     )
                 )
             ).scalar_one_or_none()
+            routes = (
+                await session.execute(
+                    select(workflow_event)
+                    .where(
+                        *scope_predicates(workflow_event, scope),
+                        workflow_event.c.task_id == task_id,
+                        workflow_event.c.kind == "task.route_decided",
+                    )
+                    .order_by(workflow_event.c.sequence)
+                )
+            ).all()
         if request is None:
             raise LookupError("workflow task not found")
-        return dict(request)
+        return effective_request(dict(request), tuple(_event(event) for event in routes))
 
     async def event_by_id(
         self, scope: ProjectScopeContext, task_id: str, event_id: str
@@ -2896,8 +2930,23 @@ class MysqlWorkflowStore:
             }
             if reserved - settled:
                 return False
+            route_rows = (
+                await session.execute(
+                    select(workflow_event).where(
+                        *scope_predicates(workflow_event, scope),
+                        workflow_event.c.task_id == task_id,
+                        workflow_event.c.kind == "task.route_decided",
+                    )
+                )
+            ).all()
+            is_browser = (
+                effective_request(
+                    row["request_json"], tuple(_event(item) for item in route_rows)
+                ).get("kind")
+                == "browser"
+            )
             browser_stops: list[RowMapping] = []
-            if row["request_json"].get("kind") == "browser":
+            if is_browser:
                 browser_stops = list(
                     (
                         (
@@ -2916,7 +2965,7 @@ class MysqlWorkflowStore:
                     )
                 )
             for node in nodes:
-                if row["request_json"].get("kind") == "browser":
+                if is_browser:
                     if not any(
                         event["node_id"] == node["node_id"]
                         and event["attempt"] == node["attempt"]
@@ -3147,9 +3196,9 @@ class MysqlWorkflowStore:
             raise ValueError("observed workflow task cannot be rerun")
         if row.status not in ("succeeded", "failed", "canceled", "skipped"):
             raise ValueError("rerun requires a terminal task")
-        request = dict(row.request_json)
+        original = await self.snapshot(scope, task_id)
+        request = original["request_json"]
         if request.get("kind") == "browser":
-            original = await self.snapshot(scope, task_id)
             request = _frozen_browser_replay(request, original["events"])
         window = request.get("execution_window_seconds")
         if window is None and request.get("deadline_at") is not None:

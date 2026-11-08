@@ -64,7 +64,7 @@ flowchart LR
 | --- | --- | --- |
 | V2.1 | Agent 团队视图：Agent 人事档案与组织架构图、Langfuse 运行数据、维护履历、汇报页与导出 | 工程完成（[plan](2026-10-23-agent-team-view.md)；[spec](../specs/2026-10-22-agent-team-view-design.md)）；2026-10-28 审查修复、面板重做（分析平台式）与香港语料数据重建合入（[演示](../../guides/2026-10-28-agent-team-business-demo.md)）；待业务验证（spec 7.4） |
 | Skill Hub | Skills 模块改为 Skill 库：按描述自动激活取代绑定 Agent、类别/版本/来源元数据、用量统计与导出（第 1 阶段）；来源同步与版本（第 2 阶段）；静态扫描与信任等级、项目内共享（第 3 阶段） | 已设计并确认（[spec](../specs/2026-11-01-skill-hub-design.md)，2026-11-01；替代已否决的"Skill 名册"方向）；第 1 阶段工程完成，待业务验证（已合入 `develop`，2026-11-03，[计划](2026-11-01-skill-hub-phase-1.md)；真实模型激活精度 1.00/1.00、名册去常驻复跑已完成） |
-| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 文档长任务的暂停恢复与进度，2026-11-06 扩展为通用任务底座和双路径 Agent 工作流 | 已设计（[原 spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；[扩展设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已确认，[实施计划](2026-11-06-agent-workflows-and-test-loop.md)已编写，新增 OpenCode + LiteLLM 路径（2026-11-06 按用户最终选择替换 Copilot）、原生编排和 Azure Pipelines 风格实时节点；可信知识仍独立验收） |
+| LangGraph 收尾 | 由 V1 能力 6 移入（2026-10-23）：PR 6 ⑥ 可信知识（依据支撑校验、诱导胡编子集门禁）；PR 7 ⑤ 文档长任务的暂停恢复与进度，2026-11-06 扩展为通用任务底座和双路径 Agent 工作流 | 已设计（[原 spec](../specs/2026-10-14-tapper-langgraph-orchestration-design.md) 第 9 节；[扩展设计](../specs/2026-11-06-agent-workflows-and-test-loop-design.md)已确认，[实施计划](2026-11-06-agent-workflows-and-test-loop.md)已编写，新增 OpenCode + LiteLLM 路径（2026-11-06 按用户最终选择替换 Copilot）、原生编排；2026-11-08 按用户要求改为自然语言自动执行及产出/Agent/来源视图，逐动作诊断按需展开；可信知识仍独立验收） |
 | V2.2 | 主动框架、TAP AI 内部剧本（知识缺口、Skill 影响、纠正与 FAQ 沉淀、流程沉淀为 Skill）、动态入口与设置 | 已设计 |
 | V2.3 | TAP AI 与平台事件契约 ADR、平台事件接入、Test Insights 失败与 flaky 分析、悬浮助手提示 | 已设计 |
 | V2.4 | Test Management 与 Low Code Automation 事件和采纳动作 | 已设计，随 V3 后端就绪 |
@@ -90,3 +90,5 @@ flowchart LR
 ## V4：产品化（未设计）
 
 方向：身份与多项目、局域网与生产安全设计、企业级检索（Azure AI Search 四索引）与生产加固。当前 Tapper Demo 为回环绑定、无认证，在此之前不做局域网或生产承诺。
+
+2026-11-08 用户追加验收：[自动执行与任务详情](../specs/2026-11-08-tapper-automatic-execution-design.md)要求取消 Browser run 与显式选 Agent 前置步骤，默认自动选能力；进度以产出、Agent、来源展示，并提供逐动作可追溯诊断。[实施计划](2026-11-08-tapper-automatic-execution.md)执行中，尚未验收。

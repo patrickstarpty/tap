@@ -38,6 +38,7 @@ const capabilityTransitions = new Set([
   "node.canceled",
 ]);
 const structural = new Set([
+  "task.route_decided",
   "node.created",
   "node.delegated",
   "node.unblocked",

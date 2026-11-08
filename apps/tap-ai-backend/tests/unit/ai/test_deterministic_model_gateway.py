@@ -174,3 +174,17 @@ async def test_fake_gateway_keeps_relation_routing_under_the_planner():
 
     assert plan.route == "graph"
     assert plan.degradation_reason is None
+
+
+@pytest.mark.asyncio
+async def test_browser_fixture_routes_only_explicitly_marked_requests() -> None:
+    import json
+    from dataclasses import replace
+
+    gateway = _gateway()
+    request = replace(_request(), context="[e2e-workflow:browser] Visit https://example.test")
+    routed = await gateway.chat(request)
+    assert json.loads(routed.output)["route"]["kind"] == "browser"
+    assert (
+        await gateway.chat(replace(request, context="Visit https://example.test"))
+    ).output == "Grounded"

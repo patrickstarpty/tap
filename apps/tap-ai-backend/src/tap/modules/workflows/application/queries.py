@@ -36,6 +36,7 @@ def replay_from(*, snapshot_sequence: int, client_sequence: int | None) -> int:
 _PUBLIC_FIELDS: dict[str, tuple[str, ...]] = {
     "task.created": ("status",),
     "task.claimed": ("status",),
+    "task.route_decided": (),
     "task.status": ("status",),
     "task.yielded": ("status",),
     "task.completed": ("outcome",),
@@ -61,8 +62,56 @@ _PUBLIC_FIELDS: dict[str, tuple[str, ...]] = {
 }
 _TEXT_FIELDS: dict[str, str] = {
     "node.finished": "summary",
+    "node.failed": "reason",
+    "task.failed": "reason",
     "task.awaiting_input": "question",
 }
+
+
+_BROWSER_META = (
+    "node_id",
+    "attempt",
+    "action_id",
+    "operation",
+    "duration_ms",
+    "outcome",
+    "step_id",
+    "step_keyword",
+    "revision",
+    "observation_sequence",
+)
+_BROWSER_TEXT = (
+    "url",
+    "selector",
+    "input",
+    "step_title",
+    "expected_result",
+    "title",
+    "summary",
+    "error",
+    "reason",
+)
+for _kind in ("browser.plan_created", "browser.action_started", "browser.action_finished"):
+    _PUBLIC_FIELDS[_kind] = _BROWSER_META
+
+
+def _event_texts(event: WorkflowEvent) -> tuple[str, ...]:
+    raw = event.payload
+    fields = _BROWSER_TEXT if event.kind.startswith("browser.") else (_TEXT_FIELDS.get(event.kind),)
+    values = [
+        cast(str, raw[field])[:2000]
+        for field in fields
+        if field and isinstance(raw.get(field), str)
+    ]
+    if event.kind == "browser.plan_created" and isinstance(raw.get("steps"), list):
+        for step in cast(list[Any], raw["steps"])[:24]:
+            if isinstance(step, dict):
+                values.extend(
+                    step[key][:400]
+                    for key in ("title", "expected_result")
+                    if isinstance(step.get(key), str)
+                )
+    return tuple(dict.fromkeys(values))
 
 
 def _public_value(value: object) -> object | None:
@@ -91,7 +140,25 @@ def project_event(
                 payload[field] = value
     text_field = _TEXT_FIELDS.get(event.kind)
     if text_field is not None and redact is not None and type(raw.get(text_field)) is str:
-        payload[text_field] = redact(cast(str, raw[text_field])[:400])[:400]
+        payload[text_field] = redact(cast(str, raw[text_field])[:2000])[:2000]
+    if event.kind.startswith("browser.") and event.kind in _PUBLIC_FIELDS and redact is not None:
+        for field in _BROWSER_TEXT:
+            if isinstance(raw.get(field), str):
+                payload[field] = redact(cast(str, raw[field])[:2000])[:2000]
+        if event.kind == "browser.plan_created" and isinstance(raw.get("steps"), list):
+            payload["steps"] = [
+                {
+                    "id": step["id"],
+                    "keyword": step["keyword"],
+                    "title": redact(step["title"][:400])[:400],
+                    "expected_result": redact(str(step.get("expected_result", ""))[:400])[:400],
+                }
+                for step in cast(list[Any], raw["steps"])[:24]
+                if isinstance(step, dict)
+                and isinstance(step.get("id"), str)
+                and isinstance(step.get("title"), str)
+                and step.get("keyword") in {"Given", "When", "Then", "And"}
+            ]
     if event.kind == "command.receipted" and isinstance(raw.get("receipt"), Mapping):
         receipt = cast(Mapping[str, object], raw["receipt"])
         payload["receipt"] = {
@@ -370,14 +437,14 @@ class WorkflowQueries:
             else _origin(snapshot["request_json"]),
             "parent_node_id": node["parent_node_id"] if node is not None else None,
         }
-        field = _TEXT_FIELDS.get(event.kind)
-        if field is None or type(event.payload.get(field)) is not str or self._redactor is None:
+        texts = _event_texts(event)
+        if not texts or self._redactor is None:
             return project_event(event, **metadata)
         try:
-            safe = await self._redactor.redact_text(cast(str, event.payload[field])[:400])
+            safe = {text: await self._redactor.redact_text(text) for text in texts}
         except Exception:
             return project_event(event, **metadata)
-        return project_event(event, redact=lambda _text: safe, **metadata)
+        return project_event(event, redact=lambda text: safe.get(text, ""), **metadata)
 
     async def _goal_summary(self, raw: object) -> str:
         if type(raw) is not str or self._redactor is None:

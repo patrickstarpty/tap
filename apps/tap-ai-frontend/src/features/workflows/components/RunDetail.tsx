@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { WorkflowCommandView, WorkflowTaskSnapshot } from "../api/client";
 import { ActivityTimeline } from "./ActivityTimeline";
-import { WorkflowGraph } from "./WorkflowGraph";
+import { ExecutionSteps } from "./ExecutionSteps";
+import { ProgressResources } from "./ProgressResources";
 
 export function RunDetail({
   snapshot,
@@ -53,13 +54,6 @@ export function RunDetail({
       : typeof waiting?.payload.reason === "string"
         ? waiting.payload.reason
         : null;
-  const active = [...snapshot.events]
-    .reverse()
-    .find((event) => event.kind !== "activity");
-  const root = snapshot.nodes.find((node) => node.agentId === "orchestrator");
-  const completed = snapshot.nodes.filter(
-    (node) => node.agentId !== "orchestrator" && node.status === "succeeded",
-  ).length;
   const browser = snapshot.taskKind === "browser";
   const browserRun = snapshot.browserRun;
   const replay = async () => {
@@ -77,21 +71,8 @@ export function RunDetail({
   return (
     <div className="tap-workflow-overview">
       <section className="tap-workflow-progress" aria-label="Task overview">
-        <p className="tap-workflow-goal">
-          {snapshot.goalSummary || "Current task"}
-        </p>
         <p className="tap-workflow-status" data-status={snapshot.status}>
           {snapshot.status.replaceAll("_", " ")}
-        </p>
-        <p className="tap-workflow-meta">Run {snapshot.taskId}</p>
-        <p className="tap-workflow-meta">
-          Started {new Date(snapshot.createdAt).toLocaleString()}
-        </p>
-        <p className="tap-workflow-meta">
-          Last updated{" "}
-          {latest
-            ? new Date(latest.occurredAt).toLocaleString()
-            : new Date(snapshot.createdAt).toLocaleString()}
         </p>
         {connection === "reconnecting" ? (
           <p role="status">Reconnecting · showing last saved update</p>
@@ -113,14 +94,6 @@ export function RunDetail({
           )) ? (
           <p>{waitingText}</p>
         ) : null}
-        {active ? (
-          <p>
-            Tapper activity:{" "}
-            {active.kind.replaceAll(".", " ").replaceAll("_", " ")}
-          </p>
-        ) : null}
-        {root?.publicSummary ? <p>{root.publicSummary}</p> : null}
-        {completed > 0 ? <p>{completed} specialist nodes completed</p> : null}
         {snapshot.origin === "native" && onCommand ? (
           <div className="tap-workflow-actions">
             {snapshot.availableActions
@@ -184,125 +157,160 @@ export function RunDetail({
           ) : null}
         </section>
       ) : null}
-      {browser && browserRun ? (
-        <section
-          aria-label="Browser result"
-          className="tap-workflow-browser-section"
-        >
-          <h2>Browser result</h2>
-          <p className="tap-workflow-status" data-status={browserRun.status}>
-            {browserRun.status === "passed"
-              ? "Passed"
-              : browserRun.status === "unknown"
-                ? "Outcome unknown"
-                : browserRun.status}
-          </p>
-          {snapshot.replayOfTaskId ? (
-            <p className="tap-workflow-meta">
-              Replay of run {snapshot.replayOfTaskId}
+      <ExecutionSteps snapshot={snapshot} />
+      <div className="tap-progress-resources">
+        <section aria-label="Outputs" className="tap-progress-resource">
+          <h2>Outputs</h2>
+          {!browserRun && !snapshot.artifacts.length ? (
+            <p className="tap-workflow-empty">Results will appear here</p>
+          ) : null}
+          {snapshot.artifacts.length ? (
+            <ul>
+              {snapshot.artifacts.map((item) => (
+                <li key={item.artifactId}>{item.versionRef}</li>
+              ))}
+            </ul>
+          ) : null}
+          {browser && browserRun ? (
+            <details
+              aria-label="Browser result"
+              className="tap-workflow-browser-section"
+            >
+              <summary>
+                Browser result ·{" "}
+                {browserRun.status === "passed"
+                  ? "Passed"
+                  : browserRun.status === "unknown"
+                    ? "Outcome unknown"
+                    : browserRun.status}
+              </summary>
+              {snapshot.replayOfTaskId ? (
+                <p className="tap-workflow-meta">
+                  Replay of run {snapshot.replayOfTaskId}
+                </p>
+              ) : null}
+              {browserRun.failureCode ? (
+                <p>Reason: {browserRun.failureCode}</p>
+              ) : null}
+              {browserRun.outputs.length > 0 ? (
+                <div className="tap-workflow-browser-values">
+                  <h3>Extracted values</h3>
+                  {browserRun.outputs.map((output, index) => (
+                    <dl key={index}>
+                      {Object.entries(output).map(([key, value]) => (
+                        <div key={key}>
+                          <dt>{key}</dt>
+                          <dd>
+                            {typeof value === "string"
+                              ? value
+                              : JSON.stringify(value)}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ))}
+                </div>
+              ) : null}
+              {browserRun.steps.length > 0 ? (
+                <div>
+                  <h3>Steps</h3>
+                  <ol className="tap-workflow-browser-steps">
+                    {browserRun.steps.map((step, index) => (
+                      <li key={`${index}-${step.title}`}>
+                        <span>{step.title}</span>
+                        <span>
+                          {step.status} · {step.durationMs} ms
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+              {browserRun.evidence.length > 0 ? (
+                <div>
+                  <h3>Evidence</h3>
+                  <ul className="tap-workflow-browser-evidence">
+                    {browserRun.evidence.map((item) => (
+                      <li key={item.evidenceId}>
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {item.kind === "screenshot"
+                            ? "Screenshot"
+                            : item.kind === "trace"
+                              ? "Trace"
+                              : "Result file"}
+                        </a>
+                        {item.kind === "screenshot" ? (
+                          <img
+                            src={item.url}
+                            alt="Browser run screenshot"
+                            loading="lazy"
+                          />
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <p className="tap-workflow-meta">
+                Bundle {browserRun.bundleId} · Input{" "}
+                {browserRun.inputSha256.slice(0, 12)} · Replay model calls{" "}
+                {browserRun.replayModelCalls}
+              </p>
+            </details>
+          ) : browser && snapshot.browserRunUnavailable ? (
+            <p role="status">
+              Saved browser evidence is temporarily unavailable. Retry the
+              connection to load it.
             </p>
           ) : null}
-          {browserRun.failureCode ? (
-            <p>Reason: {browserRun.failureCode}</p>
-          ) : null}
-          {browserRun.outputs.length > 0 ? (
-            <div className="tap-workflow-browser-values">
-              <h3>Extracted values</h3>
-              {browserRun.outputs.map((output, index) => (
-                <dl key={index}>
-                  {Object.entries(output).map(([key, value]) => (
-                    <div key={key}>
-                      <dt>{key}</dt>
-                      <dd>
-                        {typeof value === "string"
-                          ? value
-                          : JSON.stringify(value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              ))}
-            </div>
-          ) : null}
-          {browserRun.steps.length > 0 ? (
-            <div>
-              <h3>Steps</h3>
-              <ol className="tap-workflow-browser-steps">
-                {browserRun.steps.map((step, index) => (
-                  <li key={`${index}-${step.title}`}>
-                    <span>{step.title}</span>
-                    <span>
-                      {step.status} · {step.durationMs} ms
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : null}
-          {browserRun.evidence.length > 0 ? (
-            <div>
-              <h3>Evidence</h3>
-              <ul className="tap-workflow-browser-evidence">
-                {browserRun.evidence.map((item) => (
-                  <li key={item.evidenceId}>
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {item.kind === "screenshot"
-                        ? "Screenshot"
-                        : item.kind === "trace"
-                          ? "Trace"
-                          : "Result file"}
-                    </a>
-                    {item.kind === "screenshot" ? (
-                      <img
-                        src={item.url}
-                        alt="Browser run screenshot"
-                        loading="lazy"
-                      />
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <p className="tap-workflow-meta">
-            Bundle {browserRun.bundleId} · Input{" "}
-            {browserRun.inputSha256.slice(0, 12)} · Replay model calls{" "}
-            {browserRun.replayModelCalls}
-          </p>
         </section>
-      ) : browser && snapshot.browserRunUnavailable ? (
-        <p role="status">
-          Saved browser evidence is temporarily unavailable. Retry the
-          connection to load it.
+        <ProgressResources snapshot={snapshot} onSelectNode={onSelectNode} />
+      </div>
+      <details className="tap-run-diagnostics">
+        <summary>Run details</summary>
+        <p>{snapshot.goalSummary}</p>
+        <p className="tap-workflow-meta">Run {snapshot.taskId}</p>
+        <p className="tap-workflow-meta">
+          Started {new Date(snapshot.createdAt).toLocaleString()}
         </p>
-      ) : null}
-      <section aria-label="Workflow">
-        <h2>Workflow</h2>
-        <WorkflowGraph
-          nodes={snapshot.nodes}
-          edges={snapshot.edges}
-          status={snapshot.status}
-          onSelect={onSelectNode}
-        />
-      </section>
-      {snapshot.commands.length > 0 ? (
-        <section aria-label="Requests">
-          <h3>Requests</h3>
-          <ul>
-            {snapshot.commands.map((item) => (
-              <li key={item.commandId}>
-                {item.kind}: {item.status}
-                {item.reason ? ` · ${item.reason}` : ""}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      <ActivityTimeline events={snapshot.events} />
+        {snapshot.nodes.some((node) => node.kind !== "agent") ? (
+          <section aria-label="Other operations">
+            <h3>Other operations</h3>
+            <ul>
+              {snapshot.nodes
+                .filter((node) => node.kind !== "agent")
+                .map((node) => (
+                  <li key={node.nodeId}>
+                    <button
+                      type="button"
+                      onClick={() => onSelectNode(node.nodeId)}
+                    >
+                      {node.displayName} · {node.status.replaceAll("_", " ")}
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        ) : null}
+        {snapshot.commands.length > 0 ? (
+          <section aria-label="Requests">
+            <h3>Requests</h3>
+            <ul>
+              {snapshot.commands.map((item) => (
+                <li key={item.commandId}>
+                  {item.kind}: {item.status}
+                  {item.reason ? ` · ${item.reason}` : ""}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        <ActivityTimeline events={snapshot.events} />
+      </details>
     </div>
   );
 }

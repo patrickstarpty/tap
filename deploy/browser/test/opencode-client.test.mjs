@@ -2,7 +2,53 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
-import { terminalMessages, terminalFailure, linkedChildren, validateFrozenInput, waitForDaemon } from '../opencode-client.mjs';
+import { terminalMessages, terminalFailure, linkedChildren, validateFrozenInput, waitForDaemon, waitForServeReadiness } from '../opencode-client.mjs';
+
+const requiredServePaths = ['/session', '/session/{sessionID}/message', '/session/{sessionID}/prompt_async',
+  '/session/{sessionID}/children', '/session/{sessionID}/abort', '/event'];
+
+test('serve may become ready after fifteen seconds while staying within its bounded window', async () => {
+  let now = 0;
+  let probes = 0;
+  await waitForServeReadiness({ exitCode: null, signalCode: null }, 60_000, {
+    now: () => now,
+    pause: async () => { now += 1000; },
+    probe: async timeoutMs => {
+      probes += 1;
+      assert.ok(0 < timeoutMs && timeoutMs <= 5000);
+      if (now < 20_000) throw new Error('not ready');
+      return { status: 200, value: { openapi: '3.1.0', paths: Object.fromEntries(requiredServePaths.map(path => [path, {}])) } };
+    },
+  });
+  assert.equal(now, 20_000);
+  assert.equal(probes, 21);
+});
+
+test('serve readiness cannot outlive the absolute task deadline', async () => {
+  let now = 0;
+  await assert.rejects(waitForServeReadiness({ exitCode: null, signalCode: null }, 9000, {
+    now: () => now,
+    pause: async () => { now += 1000; },
+    probe: async () => { throw new Error('not ready'); },
+  }), /coding daemon deadline exceeded/);
+  assert.equal(now, 9000);
+});
+
+test('a document arriving after the readiness edge is rejected and its probe is clipped', async () => {
+  let now = 0;
+  const timeouts = [];
+  await assert.rejects(waitForServeReadiness({ exitCode: null, signalCode: null }, 60_000, {
+    now: () => now,
+    pause: async () => { now = Math.max(now, 29_900); },
+    probe: async timeoutMs => {
+      timeouts.push(timeoutMs);
+      if (timeouts.length === 1) throw new Error('not ready');
+      now += 200;
+      return { status: 200, value: { openapi: '3.1.0', paths: Object.fromEntries(requiredServePaths.map(path => [path, {}])) } };
+    },
+  }), /OpenCode serve readiness deadline/);
+  assert.deepEqual(timeouts, [5000, 100]);
+});
 
 test('daemon deadline terminates its independent process group', async () => {
   const child = spawn('/bin/sh', ['-c', 'sleep 30 & wait'], { detached: true, stdio: 'ignore' });

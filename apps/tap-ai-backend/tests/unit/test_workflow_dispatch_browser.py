@@ -312,3 +312,72 @@ async def test_browser_failed_terminal_persists_only_bounded_safe_diagnostic(
     assert ("fail_task", f"OpenCode failed: {summary}") in state.calls
     assert "sk-secret" not in json.dumps(store.events)
     assert "sk-secret" not in json.dumps(state.calls)
+
+
+@pytest.mark.asyncio
+async def test_automatic_route_freezes_intent_before_coding_and_uses_updated_budget(monkeypatch):
+    from tap.modules.workflows.application.routing import RouteDecision
+    from tap.modules.workflows.domain.browser_intent import effective_request
+
+    selected, state, store, coding = runtime(
+        CodingResult("passed", terminal_evidence={"result": {"outputs": [{"value": "42"}]}})
+    )
+    coding.config = SimpleNamespace(model_alias="browser-model")
+    admitted = {
+        "goal": "Read https://example.test/quote",
+        "model_alias": "chat-model",
+        "requested_ids": [],
+    }
+    snapshot = {
+        "events": (),
+        "nodes": [{"node_id": "node-a", "role": "orchestrator"}],
+        "budget_used": {"model_calls": 0},
+    }
+
+    async def lineage(*args):
+        return "lineage", 1
+
+    async def current(*args):
+        return {
+            **snapshot,
+            "budget_used": {"model_calls": 1},
+            "events": tuple(
+                SimpleNamespace(kind=kind, payload=payload) for kind, payload in store.events
+            ),
+        }
+
+    class Graph:
+        def __init__(self, gateway, **kwargs):
+            assert kwargs["browser_available"]
+            self.commit = kwargs["route_commit"]
+
+        async def run(self, *args, **kwargs):
+            assert kwargs["requested_ids"] == ()
+            await self.commit(
+                RouteDecision(
+                    "browser", "actual page", 1.0, ("browser",), "https://example.test/quote"
+                )
+            )
+            return {"result": {"outcome": "browser_handoff"}}
+
+    store.graph_lineage = lineage
+    store.snapshot = current
+    selected._action_gateway_factory = lambda *args: object()
+    selected._checkpointer_factory = lambda *args: object()
+    monkeypatch.setattr("tap.modules.workflows.application.dispatch.NativeWorkflowGraph", Graph)
+    status = await selected._run_node(
+        SimpleNamespace(), "task-a", "lease-a", "node-a", admitted, snapshot, root=True
+    )
+    assert status == "finished"
+    assert "kind" not in admitted
+    args, _ = coding.calls[0]
+    routed = args[1]
+    assert args[2]["budget_used"]["model_calls"] == 1
+    assert routed["model_alias"] == "browser-model"
+    assert routed["browser"]["input_data"] == {"goal": admitted["goal"]}
+    assert routed["browser"]["allowed_origins"] == ["https://example.test"]
+    assert store.events[0][0] == "task.route_decided"
+    restored = effective_request(
+        admitted, (SimpleNamespace(kind=store.events[0][0], payload=store.events[0][1]),)
+    )
+    assert restored == routed

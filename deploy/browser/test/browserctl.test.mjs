@@ -16,3 +16,20 @@ test('bounded observation retains actual identity and explicitly marks truncatio
   assert.equal(value.truncated, true);
   assert.ok(value.bounded_snapshot.length <= 5000);
 });
+
+
+test('large page observations keep usable controls instead of discarding all fields', () => {
+  const fields = Array.from({length: 60}, (_, i) => ({tag:'button', label:`Choice ${i}`, selector:`#choice-${i}`, options: Array.from({length:30}, (_, j) => ({label:`Option ${j}`, value:String(j)}))}));
+  const result = boundedObservation({session_id:'s',sequence:1,url:'https://example.com',title:'Quote',bounded_snapshot:'x'.repeat(16000),fields,error:'strict mode violation'});
+  assert.ok(result.fields.length > 0);
+  assert.equal(result.fields[0].selector, '#choice-0');
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 12000);
+  assert.equal(result.error, 'strict mode violation');
+});
+
+test('browser actions can carry a bounded business step without allowing arbitrary code', () => {
+  const action = {type:'click', selector:'#cover', step:'choose-cover'};
+  assert.deepEqual(validateAction(action),action);
+  assert.throws(() => validateAction({...action,step:{code:'fetch(secret)'}}), /step/);
+  assert.throws(() => validateAction({type:'plan', steps:[{id:'s',keyword:'Passed',title:'Claim success'}]}), /step/);
+});

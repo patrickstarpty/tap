@@ -27,11 +27,21 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.workflows.adapters.browser_client import BrowserApiClient, canonical_json_bytes
 from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox, MailItem
 from tap.modules.workflows.adapters.opencode_profiles import build_config
+from tap.modules.workflows.application.browser_steps import BrowserProgress
 from tap.modules.workflows.ports.coding import CodingResult
 from tap.platform.coding.gateway import BudgetGate, CallRecord
 
 
 class CodingStore(Protocol):
+    async def append_event(
+        self,
+        scope: ProjectScopeContext,
+        task_id: str,
+        lease_token: str,
+        event_id: str,
+        kind: str,
+        payload: dict[str, Any],
+    ) -> object: ...
     async def reserve_action(
         self,
         scope: ProjectScopeContext,
@@ -139,6 +149,20 @@ class DockerCodingContainer:
     """Only the task-owned coding image and one private mailbox are mounted."""
 
     _INSPECT_TIMEOUT = 3.0
+    _COMMAND_STAGES = frozenset(
+        {
+            "coding command",
+            "image inspect",
+            "docker run",
+            "exec inspect",
+            "exec set-input",
+            "exec set-goal",
+            "exec run",
+            "exec collect",
+            "docker stop",
+            "docker rm",
+        }
+    )
 
     def __init__(self, config: CodingConfig, mailbox_root: Path) -> None:
         self.config = config
@@ -156,7 +180,10 @@ class DockerCodingContainer:
         data: bytes | None = None,
         timeout: float = 30,
         max_stdout: int = 600_000,
+        stage: str = "coding command",
     ) -> bytes:
+        if stage not in DockerCodingContainer._COMMAND_STAGES:
+            raise ValueError("invalid coding command stage")
         # A canceled docker exec can leave its stdout pipe open after the CLI is
         # killed. A temporary file lets us reap the CLI without waiting for EOF
         # from that pipe; output is still read with the existing byte limit.
@@ -167,9 +194,10 @@ class DockerCodingContainer:
                 stdout=output,
                 stderr=asyncio.subprocess.DEVNULL,
             )
+            timed_out = False
             try:
                 await asyncio.wait_for(process.communicate(data), timeout)
-            except BaseException:
+            except BaseException as error:
                 try:
                     if process.returncode is None:
                         process.kill()
@@ -179,7 +207,12 @@ class DockerCodingContainer:
                     await asyncio.wait_for(process.wait(), 3)
                 except BaseException:
                     pass  # The caller still owns container/inspector stop confirmation.
-                raise
+                if isinstance(error, TimeoutError):
+                    timed_out = True
+                else:
+                    raise
+            if timed_out:
+                raise TimeoutError(f"coding container command timed out ({stage})")
             output.seek(0)
             stdout = output.read(max_stdout + 1)
             if len(stdout) > max_stdout or process.returncode != 0:
@@ -189,10 +222,12 @@ class DockerCodingContainer:
     async def start(self, config: dict[str, Any], shim_token: str, deadline_seconds: int) -> None:
         if os.getuid() == 0:
             raise ValueError("coding container host must run nonroot")
+        task_deadline = time.monotonic() + deadline_seconds
         actual = (
             (
                 await self._command(
-                    ("docker", "image", "inspect", self.config.image, "--format", "{{.Id}}")
+                    ("docker", "image", "inspect", self.config.image, "--format", "{{.Id}}"),
+                    stage="image inspect",
                 )
             )
             .decode()
@@ -261,12 +296,14 @@ class DockerCodingContainer:
             self.config.image,
         )
         self._run_attempted = True
-        acquired_id = (await self._command(argv, timeout=30)).decode().strip()
+        acquired_id = (await self._command(argv, timeout=30, stage="docker run")).decode().strip()
         if not acquired_id.startswith("sha256:") and len(acquired_id) < 12:
             raise RuntimeError("coding container identity unavailable")
         self.container_id = acquired_id
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
+        # The daemon may use 10 seconds to check its version, then 30 seconds
+        # to make /doc ready. Keep host polling within the task's own deadline.
+        deadline = min(time.monotonic() + 45, task_deadline)
+        while (remaining := deadline - time.monotonic()) > 0:
             try:
                 await self._command(
                     (
@@ -277,11 +314,13 @@ class DockerCodingContainer:
                         "/opt/tapper/opencode-client.mjs",
                         "inspect",
                     ),
-                    timeout=3,
+                    timeout=min(3, remaining),
+                    stage="exec inspect",
                 )
-                return
+                if time.monotonic() < deadline:
+                    return
             except RuntimeError:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
         raise TimeoutError("OpenCode serve readiness deadline")
 
     async def set_goal(self, text: str) -> None:
@@ -300,6 +339,7 @@ class DockerCodingContainer:
             data=text.encode(),
             timeout=5,
             max_stdout=100,
+            stage="exec set-goal",
         )
 
     async def set_frozen_input(self, data: bytes, digest: str) -> None:
@@ -323,6 +363,7 @@ class DockerCodingContainer:
             data=data,
             timeout=5,
             max_stdout=100,
+            stage="exec set-input",
         )
 
     async def run_prompt(self) -> dict[str, Any]:
@@ -332,6 +373,7 @@ class DockerCodingContainer:
             ("docker", "exec", self.container_id, "node", "/opt/tapper/opencode-client.mjs", "run"),
             timeout=600,
             max_stdout=4000,
+            stage="exec run",
         )
         result = json.loads(raw)
         if not isinstance(result, dict) or result.get("terminal") not in {
@@ -356,6 +398,7 @@ class DockerCodingContainer:
             ),
             timeout=10,
             max_stdout=400_000,
+            stage="exec collect",
         )
         result = json.loads(raw)
         if not isinstance(result, dict):
@@ -406,11 +449,21 @@ class DockerCodingContainer:
             identity = found["Id"]
             self.container_id = identity
         try:
-            await self._command(("docker", "stop", "-t", "2", identity), timeout=10, max_stdout=200)
+            await self._command(
+                ("docker", "stop", "-t", "2", identity),
+                timeout=10,
+                max_stdout=200,
+                stage="docker stop",
+            )
         except Exception:
             pass
         try:
-            await self._command(("docker", "rm", "-f", identity), timeout=10, max_stdout=200)
+            await self._command(
+                ("docker", "rm", "-f", identity),
+                timeout=10,
+                max_stdout=200,
+                stage="docker rm",
+            )
         except Exception:
             pass
         try:
@@ -483,11 +536,16 @@ class CodingRuntime:
         )
 
     @staticmethod
-    def _forward_gate(gate: BudgetGate, body: bytes, session_id: str | None) -> dict[str, Any]:
+    def _forward_gate(
+        gate: BudgetGate, body: bytes, session_id: str | None, *, deadline: float
+    ) -> dict[str, Any]:
         if len(body) > 131072:
             return {"status": 413, "contentType": "application/json", "bodyBase64": ""}
         parsed = urlsplit(gate.url)
-        connection = http.client.HTTPConnection("127.0.0.1", parsed.port, timeout=30)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("model forwarding task deadline")
+        connection = http.client.HTTPConnection("127.0.0.1", parsed.port, timeout=remaining)
         try:
             headers = {"Authorization": f"Bearer {gate.token}", "Content-Type": "application/json"}
             if session_id is not None:
@@ -787,6 +845,22 @@ class CodingRuntime:
                         container.set_frozen_input(canonical_json_bytes(input_data), digest)
                     )
 
+                    async def progress_event(kind: str, payload: dict[str, Any]) -> None:
+                        identity = str(payload.get("action_id") or payload.get("revision"))
+                        event_id = hashlib.sha256(
+                            f"{task_id}:{node_id}:{attempt}:{kind}:{identity}".encode()
+                        ).hexdigest()
+                        await store.append_event(
+                            scope,
+                            task_id,
+                            lease_token,
+                            event_id,
+                            kind,
+                            {"node_id": node_id, "attempt": attempt, **payload},
+                        )
+
+                    progress = BrowserProgress(progress_event)
+
                     async def handle(item: MailItem) -> dict[str, Any]:
                         if item.kind == "model":
                             encoded = item.payload.get("bodyBase64")
@@ -811,21 +885,19 @@ class CodingRuntime:
                                     "contentType": "application/json",
                                     "bodyBase64": "",
                                 }
-                            return await asyncio.to_thread(self._forward_gate, gate, body, claimed)
-                        action = await self.browser.action(
-                            session_id,
-                            item.payload,
-                            item.identifier,
-                            deadline_seconds=min(30, seconds_left()),
-                        )
-                        if action.get("status") != "completed" or not isinstance(
-                            action.get("observation"), dict
-                        ):
-                            return {
-                                "error": "browser action did not complete",
-                                "status": action.get("status"),
-                            }
-                        return action["observation"]
+                            return await asyncio.to_thread(
+                                self._forward_gate, gate, body, claimed, deadline=deadline_monotonic
+                            )
+
+                        async def execute(action: dict[str, Any]) -> dict[str, Any]:
+                            return await self.browser.action(
+                                session_id,
+                                action,
+                                item.identifier,
+                                deadline_seconds=min(30, seconds_left()),
+                            )
+
+                        return await progress.handle(item.payload, item.identifier, execute)
 
                     async def prompt_once(text: str) -> tuple[dict[str, Any], dict[str, Any]]:
                         await bounded_stage(container.set_goal(text))
@@ -876,6 +948,8 @@ class CodingRuntime:
                                 usage=gate.snapshot(),
                                 terminal_evidence={"failure": "missing flow.spec.ts"},
                             )
+                        if not progress.steps:
+                            raise ValueError("BDD plan required before executing generated script")
                         script_bytes = base64.b64decode(encoded, validate=True)
                         if not 0 < len(script_bytes) <= 256000 or hashlib.sha256(
                             script_bytes
@@ -1047,11 +1121,35 @@ class CodingRuntime:
             "You are implementing a generic Playwright browser task. "
             "Read the exact frozen user input JSON from /workspace/frozen-inputs.json "
             "during generation; this is the only supplied input value source. "
-            "First inspect the actual approved page with "
-            '`node /opt/tapper/browserctl.mjs \'{"type":"navigate","url":"..."}\'` '
+            "Before any browser action, decompose the user goal into business-readable BDD steps "
+            "and persist the plan using browserctl with "
+            "{type:plan,steps:[{id,keyword,title,expected_result}]}. "
+            "Use JSON quoted keys; keyword is Given, When, Then, or And; never report "
+            "a step passed "
+            "from your own prose. Every subsequent helper action MUST include step "
+            "with its planned id. "
+            "Plan amendments require reason and must retain already executed steps unchanged. "
+            "Then inspect the actual approved page with "
+            '`node /opt/tapper/browserctl.mjs \'{"type":"navigate","url":"...","step":"open"}\'` '
             "and snapshot/click/fill/select/press/wait/screenshot using the same fixed helper; "
             "only supplied origins are allowed. Then write /workspace/flow.spec.ts with a real "
-            "Playwright test that uses actual page observations. Read frozen input JSON from "
+            "Playwright test that uses actual page observations. Wrap each planned business step "
+            "in test.step using the EXACT keyword + space + title from the saved plan, retaining "
+            "the plan order; assert the expected outcomes in Then steps. Keep "
+            "inspection and actual "
+            "test execution distinct. Snapshot uses the official Playwright CLI AI "
+            "accessibility tree "
+            "with [ref=...] element references. Copy the complete reference exactly "
+            "(including any frame prefix, for example aria-ref=f1e61) from the "
+            "latest snapshot "
+            "for inspection actions; re-observe after navigation or a stale reference error. "
+            "For a long page, scope snapshot to a returned element using its aria-ref selector. "
+            "Use observed labels/roles or returned CSS selectors in the frozen test, because "
+            "snapshot refs are session-local and must never be replayed in a fresh browser. "
+            "Never guess placeholders or repeatedly retry an ambiguous text selector. "
+            "A navigation timeout may still include a usable DOM; inspect the returned "
+            "content and error. "
+            "Read frozen input JSON from "
             "/opt/browser/frozen/inputs.json during execution. To return business values, "
             "Use Playwright callback `test('task', async ({ page }, testInfo) => { ... })`; "
             "testInfo is the second argument, never a page fixture. "

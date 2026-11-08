@@ -138,6 +138,28 @@ export async function waitForDaemon(child, deadlineMs) {
   }
 }
 
+export async function waitForServeReadiness(child, absoluteDeadline, {
+  now = Date.now,
+  probe = timeoutMs => api('GET', '/doc', undefined, timeoutMs),
+  pause = sleep,
+} = {}) {
+  const readinessDeadline = Math.min(now() + 30000, absoluteDeadline);
+  const required = ['/session', '/session/{sessionID}/message', '/session/{sessionID}/prompt_async', '/session/{sessionID}/children', '/session/{sessionID}/abort', '/event'];
+  while (now() < readinessDeadline) {
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('OpenCode serve exited before readiness');
+    try {
+      const remaining = readinessDeadline - now();
+      if (remaining <= 0) break;
+      const document = await probe(Math.max(1, Math.min(5000, remaining)));
+      if (document.status === 200 && document.value?.openapi === '3.1.0' &&
+          required.every(item => Object.hasOwn(document.value.paths || {}, item)) && now() < readinessDeadline) return;
+    } catch {}
+    await pause(Math.min(50, Math.max(0, readinessDeadline - now())));
+  }
+  if (now() >= absoluteDeadline) throw new Error('coding daemon deadline exceeded');
+  throw new Error('OpenCode serve readiness deadline');
+}
+
 async function daemon() {
   const seconds = Number(process.env.TAP_CODING_DEADLINE_SECONDS);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) throw new Error('coding daemon deadline invalid');
@@ -155,18 +177,7 @@ async function daemon() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
   try {
-  const readinessDeadline = Math.min(Date.now() + 15000, absoluteDeadline);
-  while (Date.now() < readinessDeadline) {
-    if (child.exitCode !== null || child.signalCode !== null) throw new Error('OpenCode serve exited before readiness');
-    try {
-      const document = await api('GET', '/doc', undefined, Math.max(1, Math.min(5000, absoluteDeadline - Date.now())));
-      const required = ['/session', '/session/{sessionID}/message', '/session/{sessionID}/prompt_async', '/session/{sessionID}/children', '/session/{sessionID}/abort', '/event'];
-      if (document.status === 200 && document.value?.openapi === '3.1.0' && required.every(item => Object.hasOwn(document.value.paths || {}, item))) break;
-    } catch {}
-    await sleep(50);
-  }
-  if (Date.now() >= absoluteDeadline) throw new Error('coding daemon deadline exceeded');
-  if (Date.now() >= readinessDeadline) throw new Error('OpenCode serve readiness deadline');
+  await waitForServeReadiness(child, absoluteDeadline);
   fs.writeFileSync('/workspace/serve.json', JSON.stringify({ pid: child.pid, nonce: crypto.randomBytes(16).toString('hex'), version: '1.19.5' }), { flag: 'wx', mode: 0o600 });
   if (await lifetime) throw new Error('coding daemon deadline exceeded');
   } finally {

@@ -12,14 +12,17 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from socket import gethostname
 from typing import Any
+from urllib.parse import urlsplit
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.skill_activation import SkillCatalogEntry, catalog_entry
 from tap.modules.chat.application.workflow_bridge import WorkflowChatPort
+from tap.modules.chat.domain.conversations import FrozenBrowserIntent
 from tap.modules.workflows.adapters.opencode_runtime import CodingRuntime
 from tap.modules.workflows.application.native_graph import NativeChatGateway, NativeWorkflowGraph
+from tap.modules.workflows.domain.browser_intent import effective_request
 from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked, WorkflowLimitExceeded
 from tap.modules.workflows.domain.delegation import DelegationRequest, child_result_summary
 from tap.modules.workflows.ports.runtime import (
@@ -561,6 +564,7 @@ class NativeWorkflowRuntime:
                 )
             )
 
+        request = effective_request(request, snapshot["events"])
         if request.get("kind") == "browser":
             if not root:
                 raise ValueError("browser coding must run in the root node")
@@ -722,6 +726,30 @@ class NativeWorkflowRuntime:
                 "decision": asdict(decision),
                 "input_digest": request.get("input_digest"),
             }
+            if decision.kind == "browser" and self._coding is not None:
+                url = decision.start_url
+                if not isinstance(url, str):
+                    raise ValueError("browser destination unavailable")
+                parsed = urlsplit(url)
+                data = {"goal": request["goal"]}
+                canonical = json.dumps(
+                    data, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                )
+                intent = FrozenBrowserIntent(
+                    url,
+                    str(request["goal"])[:4000],
+                    (f"{parsed.scheme}://{parsed.netloc}",),
+                    canonical,
+                    hashlib.sha256(canonical.encode()).hexdigest(),
+                )
+                payload["browser_intent"] = {
+                    "start_url": intent.start_url,
+                    "expected_result": intent.expected_result,
+                    "allowed_origins": list(intent.allowed_origins),
+                    "input_data": data,
+                    "input_sha256": intent.input_sha256,
+                }
+                payload["browser_model_alias"] = self._coding.config.model_alias
             event_id = hashlib.sha256(f"route:{task_id}".encode()).hexdigest()
             await self._store.append_event(
                 scope,
@@ -740,6 +768,7 @@ class NativeWorkflowRuntime:
             route_commit=commit_route if root else None,
             before_model=before_model,
             is_root=root,
+            browser_available=root and self._coding is not None,
             agent_instruction=str(agent.get("instruction") or ""),
             skill_instructions=tuple(skills),
             allowed_tool_ids=tuple(str(item) for item in agent.get("tool_ids", ())),
@@ -784,6 +813,12 @@ class NativeWorkflowRuntime:
         final = result.get("result")
         if not isinstance(final, dict):
             raise ValueError("native graph did not finish or wait")
+        if root and final.get("outcome") == "browser_handoff":
+            current = await self._store.snapshot(scope, task_id)
+            routed = effective_request(request, current["events"])
+            return await self._run_browser_node(
+                scope, task_id, token, node_id, attempt, routed, current, authorize
+            )
         answer = str(final["answer"])
         await self._state.finish_node(
             scope,

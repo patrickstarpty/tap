@@ -19,7 +19,7 @@ RIPGREP_ARCHIVE_SHA256 = (
 RIPGREP_MEMBER = "ripgrep-15.1.0-aarch64-unknown-linux-gnu/rg"
 BROWSER_IMAGE = "tapper-browser-runtime:1.62.1-arm64"
 BROWSER_IMAGE_ID = (
-    "sha256:dd59168b4e82204c55f28ba1ac5c269600a0c4e28e4f21faa639485630a1feb1"
+    "sha256:44c27fecee6af8745ca843fe7b06701bfb845a585822b9a5cb6780d9534988fc"
 )
 CODING_IMAGE = "tapper-coding-runtime:1.19.5-arm64"
 FILES = ("model-shim.mjs", "browserctl.mjs", "opencode-client.mjs")

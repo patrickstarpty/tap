@@ -68,3 +68,42 @@ it("keeps the natural-language draft when a browser run needs a start URL", asyn
   ).toHaveValue("Find Ada's quote");
   expect(send).not.toHaveBeenCalled();
 });
+
+it("sends a browser goal without a checkbox, selected agent, or manual configuration", async () => {
+  const send = vi.fn().mockResolvedValue(true);
+  render(
+    <TapperChat
+      projectId="project-1"
+      agents={[]}
+      conversation={{
+        id: "draft",
+        title: "New chat",
+        turns: [],
+        modelId: "qwen-plus",
+        selectedSourceIds: [],
+        selectedAgentIds: [],
+        selectedSkillIds: [],
+      }}
+      copy={WORKSPACE_COPY.en}
+      locale="en"
+      message="Get a quote at https://example.test/"
+      onMessageChange={vi.fn()}
+      onModelChange={vi.fn()}
+      onPickSuggestion={vi.fn()}
+      onSend={send}
+      onToggleAgent={vi.fn()}
+      onToggleSkill={vi.fn()}
+      onToggleSource={vi.fn()}
+      renderAssistantTurn={vi.fn()}
+      skills={[]}
+      sources={[]}
+      browserAvailable
+    />,
+  );
+  expect(screen.queryByRole("checkbox", { name: "Browser run" })).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: WORKSPACE_COPY.en.chat.send }),
+  );
+  expect(send).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

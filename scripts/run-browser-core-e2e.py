@@ -102,7 +102,7 @@ def synthetic_script(name: str) -> str:
             common
             + """test('query order', async ({ page }, testInfo) => {
   const input = JSON.parse(fs.readFileSync('/opt/browser/frozen/inputs.json', 'utf8'));
-  const notes = Object.fromEntries(input.notes.split(';').map(part => part.trim().split('=')));
+  const notes = Object.fromEntries([...input.goal.matchAll(/(customer|region|account|amount)=([A-Za-z0-9-]+)/g)].map(match => [match[1], match[2]]));
   await page.goto('http://example.test/');
   await page.getByLabel('Customer').fill(notes.customer);
   await page.getByLabel('Region').selectOption(notes.region);
@@ -122,7 +122,7 @@ def synthetic_script(name: str) -> str:
             common
             + """test('check request form', async ({ page }, testInfo) => {
   const input = JSON.parse(fs.readFileSync('/opt/browser/frozen/inputs.json', 'utf8'));
-  const notes = Object.fromEntries(input.notes.split(';').map(part => part.trim().split('=')));
+  const notes = Object.fromEntries([...input.goal.matchAll(/(customer|region|account|amount)=([A-Za-z0-9-]+)/g)].map(match => [match[1], match[2]]));
   await page.goto('http://example.test/review');
   await page.getByLabel('Account').fill(notes.account);
   await page.getByLabel('Amount').fill(notes.amount);
@@ -201,6 +201,13 @@ class SyntheticModel(BaseHTTPRequestHandler):
             command = None
             description = ""
         elif stage == 0:
+            plan = {"type": "plan", "steps": [
+                {"id": "inspect", "keyword": "Given", "title": "Inspect the requested page", "expected_result": "The requested page is available"},
+                {"id": "verify", "keyword": "Then", "title": "Verify requested result", "expected_result": "The result matches the request"},
+            ]}
+            command = f"node /opt/tapper/browserctl.mjs '{json.dumps(plan)}'"
+            description = "Persist BDD plan before actions"
+        elif stage == 1:
             start = (
                 "http://example.test/"
                 if name == "cancel"
@@ -210,9 +217,9 @@ class SyntheticModel(BaseHTTPRequestHandler):
                     if case["name"] == name
                 )
             )
-            command = f"node /opt/tapper/browserctl.mjs '{json.dumps({'type': 'navigate', 'url': start})}'"
+            command = f"node /opt/tapper/browserctl.mjs '{json.dumps({'type': 'navigate', 'url': start, 'step': 'inspect'})}'"
             description = "Inspect actual approved page"
-        elif stage == 1:
+        elif stage == 2:
             if not any(
                 title in body
                 for title in ("Tapper Core Site", "Request review", "Travel checklist")
@@ -236,7 +243,11 @@ class SyntheticModel(BaseHTTPRequestHandler):
             else:
                 command = (
                     "cat > /workspace/flow.spec.ts <<'EOF'\n"
-                    + synthetic_script(name)
+                    + synthetic_script(name).replace(
+                        "async ({ page }, testInfo) => {\n",
+                        "async ({ page }, testInfo) => {\n  await test.step('Then Verify requested result', async () => {\n",
+                        1,
+                    ).removesuffix("});\n") + "  });\n});\n"
                     + "EOF"
                 )
             description = "Write observed browser task"
@@ -728,6 +739,11 @@ def main() -> int:
         }
     )
     if args.mode == "real":
+        # Exercise the production model router as well as the coding runtime.
+        # Readiness checks catalog metadata; it does not issue a model completion.
+        env["TAP_DEMO_MODE"] = ""
+        env["TAPPER_MODEL_BACKEND"] = "litellm"
+        env["TAP_AGENT_TEAM_RUNTIME_METRICS"] = "langfuse"
         values = dotenv_values(args.env_file)
         origin, key = values.get("LITELLM_BASE_URL"), values.get("LITELLM_MASTER_KEY")
         if not isinstance(origin, str) or not isinstance(key, str) or len(key) < 16:

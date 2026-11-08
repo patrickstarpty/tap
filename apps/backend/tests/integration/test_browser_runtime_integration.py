@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import re
 import hashlib
 import os
 from dataclasses import dataclass
@@ -776,6 +777,7 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
     image = "tapper-browser-runtime:1.62.1-arm64"
     client = SubprocessDockerClient()
     site = "tapper-browser-synthetic-site"
+    fixture = Path(__file__).resolve().parents[4] / "deploy/browser/synthetic-site.mjs"
 
     @dataclass
     class Sink:
@@ -812,11 +814,13 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
             "--user",
             "10001:10001",
             "--read-only",
+            "--mount",
+            f"type=bind,source={fixture},target=/opt/browser/synthetic-site-fixture.mjs,readonly",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=16m,uid=10001,gid=10001",
             image,
             "node",
-            "/opt/browser/synthetic-site.mjs",
+            "/opt/browser/synthetic-site-fixture.mjs",
         )
     )
     assert started.exit_code == 0, started.stderr
@@ -850,6 +854,53 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
             )
             assert first.title == "Synthetic Tapper Site"
             assert any(field["name"] == "customer" for field in first.fields)
+            custom = next(
+                field for field in first.fields if field.get("id") == "custom-region"
+            )
+            assert custom["role"] == "combobox"
+            assert custom["selector"] == "#custom-region"
+            assert custom["label"] == "Delivery region"
+            customer_ref = re.search(
+                r'textbox "Customer" \[ref=(e\d+)\]', first.bounded_snapshot
+            )
+            assert customer_ref, first.bounded_snapshot
+            by_ref = await runtime.observe(
+                inspector,
+                {
+                    "type": "fill",
+                    "selector": f"aria-ref={customer_ref[1]}",
+                    "value": "Observed reference",
+                },
+            )
+            assert by_ref.error is None
+            assert any(
+                field.get("value") == "Observed reference" for field in by_ref.fields
+            )
+            failed_click = await runtime.observe(
+                inspector, {"type": "click", "selector": "button"}
+            )
+            assert "strict mode" in failed_click.error
+            assert failed_click.title == "Synthetic Tapper Site"
+            assert "Order lookup" in failed_click.bounded_snapshot
+            delayed_started = time.monotonic()
+            delayed = await runtime.observe(
+                inspector,
+                {"type": "navigate", "url": "http://example.test/delayed-load"},
+            )
+            delayed_snapshot = await runtime.observe(inspector, {"type": "snapshot"})
+            assert "Order lookup" in delayed_snapshot.bounded_snapshot
+            assert delayed.error is None
+            assert delayed.title == "Synthetic Tapper Site"
+            assert "Order lookup" in delayed.bounded_snapshot
+            assert time.monotonic() - delayed_started < 15
+            partial = await runtime.observe(
+                inspector,
+                {"type": "navigate", "url": "http://example.test/delayed-dom"},
+            )
+            assert partial.error is not None and "Timeout" in partial.error
+            assert partial.title == "Synthetic Tapper Site"
+            assert "Order lookup" in partial.bounded_snapshot
+            assert any(field["name"] == "customer" for field in partial.fields)
             await runtime.observe(
                 inspector,
                 {"type": "fill", "selector": "[name=customer]", "value": "Ada"},
@@ -858,7 +909,9 @@ async def test_real_chromium_isolated_flow(tmp_path: Path) -> None:
                 inspector,
                 {"type": "select", "selector": "[name=region]", "value": "west"},
             )
-            await runtime.observe(inspector, {"type": "click", "selector": "button"})
+            await runtime.observe(
+                inspector, {"type": "click", "selector": "button[type=submit]"}
+            )
             snapshot = await runtime.observe(inspector, {"type": "screenshot"})
             assert "Ada / west / FOUND" in snapshot.bounded_snapshot
             assert snapshot.screenshot_ref is not None
@@ -1007,7 +1060,7 @@ secure.on('error',()=>process.exit(0));});
 test('lookup', async ({ page }) => {
   await page.goto('http://example.test/');
   await page.getByLabel('Customer').fill('Ada');
-  await page.getByLabel('Region').selectOption('west');
+  await page.getByLabel('Region', { exact: true }).selectOption('west');
   await page.getByRole('button', { name: 'Find' }).click();
   await expect(page.locator('#result')).toHaveText('Ada / west / FOUND');
 });

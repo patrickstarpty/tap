@@ -5,8 +5,8 @@
 ## 准备服务和镜像
 
 1. 按现有 Tapper 本地流程启动 MySQL、Redis、MinIO、LiteLLM 等依赖。为 TAP AI workflow 和 TAP Browser API 分别配置数据库与迁移：AI 使用 `TAP_DATABASE_URL=mysql+asyncmy://…` 执行 `make tap-ai-migrate`；Browser API 使用单独数据库的 `TAP_BROWSER_DATABASE_URL=mysql+pymysql://…` 执行 `TAP_DATABASE_URL="$TAP_BROWSER_DATABASE_URL" make tap-backend-migrate`。不要把两个 URL 指向同一库。
-2. 在 arm64 主机构建浏览器镜像：`python3 scripts/build-browser-runtime.py`。验收镜像 ID 为 `sha256:dd59168b4e82204c55f28ba1ac5c269600a0c4e28e4f21faa639485630a1feb1`；若本机重建 ID 不同，先核对锁定输入和实际构建报告，不能悄悄替换运行时 pin。
-3. 提供经校验的 OpenCode 1.19.5 Linux arm64 可执行文件，以及 [ripgrep 15.1.0 官方 aarch64 GNU 发行归档](https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz)，运行 `python3 scripts/build_coding_image.py --opencode-binary /path/to/opencode --ripgrep-archive /path/to/ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz`。构建器核对 OpenCode SHA-256 `dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c`、ripgrep 官方归档 SHA-256 `2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e` 和浏览器基础镜像 ID；当前编码镜像 ID 为 `sha256:b1f5c4df0c79e4e46ab1ac15de56e9bcff9cc2b0d505f5206be9149442e2e811`。被忽略的本机开发目录不是产品启动依赖。
+2. 在 arm64 主机构建浏览器镜像：`python3 scripts/build-browser-runtime.py`。当前构建镜像 ID 为 `sha256:44c27fecee6af8745ca843fe7b06701bfb845a585822b9a5cb6780d9534988fc`；若本机重建 ID 不同，先核对锁定输入和实际构建报告，不能悄悄替换运行时 pin。
+3. 提供经校验的 OpenCode 1.19.5 Linux arm64 可执行文件，以及 [ripgrep 15.1.0 官方 aarch64 GNU 发行归档](https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz)，运行 `python3 scripts/build_coding_image.py --opencode-binary /path/to/opencode --ripgrep-archive /path/to/ripgrep-15.1.0-aarch64-unknown-linux-gnu.tar.gz`。构建器核对 OpenCode SHA-256 `dab85b46f4ea4813da5367997f99a60aab64a2118d58ebf552980e792747436c`、ripgrep 官方归档 SHA-256 `2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e` 和浏览器基础镜像 ID；当前编码镜像 ID 为 `sha256:2841fda29fbc68534c9257a69b510a2f24cec40eb071b57786e6fd0d335625d7`。被忽略的本机开发目录不是产品启动依赖。
 
 ## 配置和启动
 
@@ -14,6 +14,6 @@
 
 默认 `TAP_BROWSER_SERVICE_MODE=managed` 时运行 `make tap-ai-dev`：`run-tapper-dev.sh` 启动独立 Browser API、Browser worker、TAP AI API/worker 与 Web，并在退出时只清理自己启动的子进程。若 Browser API/worker 已由外部监督器管理，设 `TAP_BROWSER_SERVICE_MODE=external` 后再运行同一命令；脚本检查配置的 Browser API 健康端点，但不会启动、停止或竞争外部 worker。正式 worker 保持公共网络访问策略，不接受 HTTP 请求指定私网测试目标。
 
-在 Chat 勾选 **Browser run**，输入自然语言目标和起始 URL；若目标中已有明确 URL，表单会自动带入并允许修改。预期结果默认取目标，输入资料可用普通文字填写。缺 URL 会在发送前提示且保留目标。提交后在会话侧栏或 **Agents → Runs** 查看持久任务、步骤、结果和截图/trace；刷新后仍从 API 读取。运行中可取消，终态可 **Replay**，新任务在 Runs 显示来源任务，沿用冻结 bundle 与输入且不再调用模型。执行中若返回 `input_request`，应提供补充资料创建新的冻结请求；当前接口不支持原执行的 resume/steer。
+在 Chat 直接输入自然语言目标、网址和测试资料，Tapper 在已启用的能力中自动选择执行方式，不需要勾选 Browser run 或指定 Agent。也可展开 **Execution options** 手选 Browser。自动路由缺少明确 URL 时会先询问，不会猜测网站。浏览器动作前先保存 Given/When/Then 计划，并随实际操作和校验更新进度。提交后从 **View progress** 或 **Agents → Runs** 查看持久任务：默认显示 BDD 步骤及 Outputs、Subagents、Sources；展开结果、业务步骤或 Run details 查看截图、trace、定位器、耗时和脱敏错误；刷新后仍从 API 读取。运行中可取消，终态可 **Replay**，新任务在 Runs 显示来源任务，沿用冻结 bundle 与输入且不再调用模型。执行中若返回 `input_request`，应提供补充资料创建新的冻结请求；当前接口不支持原执行的 resume/steer。
 
 隔离自有站验收可由测试监督器在确认自己的容器 ID/labels 并从 inspect 取得地址后，构造 `BrowserRuntime(test_target=固定owned地址)`；这只属于测试 composition，不改变上述正式启动或开放 HTTP 私网目标。自有站和独立公共站的有界真实模型核心闭环结果、历史失败及适用边界见[核心验收指南](2026-11-07-tapper-web-automation-core.md)；上述能力仍须按本指南配置并显式启用，当前共享应用没有自动开启。

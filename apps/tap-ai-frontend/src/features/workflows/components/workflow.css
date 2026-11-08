@@ -313,3 +313,167 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+.tap-progress-resources {
+  margin-top: 20px;
+  padding: 0 18px;
+  border: 1px solid var(--tap-line);
+  border-radius: 22px;
+  background: var(--tap-surface);
+}
+.tap-progress-resource {
+  padding: 20px 0;
+}
+.tap-progress-resource + .tap-progress-resource {
+  border-top: 1px solid var(--tap-line);
+}
+.tap-progress-resource h2,
+.tap-progress-resource summary > span:first-child {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--tap-muted);
+}
+.tap-progress-resource summary {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tap-progress-resource summary > span:last-child {
+  font-size: 13px;
+}
+.tap-progress-resource summary:focus-visible,
+.tap-execution-plan summary:focus-visible {
+  outline: 2px solid var(--tap-accent);
+  outline-offset: 4px;
+}
+.tap-agent-group h3,
+.tap-agent-group > p {
+  color: var(--tap-muted);
+  font-weight: 400;
+}
+.tap-agent-group ul,
+.tap-progress-sources {
+  list-style: none;
+  padding: 0;
+}
+.tap-agent-group button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--tap-ink);
+}
+.tap-agent-group button > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tap-agent-group button small,
+.tap-progress-sources small {
+  display: block;
+  margin-top: 4px;
+  color: var(--tap-muted);
+}
+.tap-agent-group time {
+  color: var(--tap-muted);
+  white-space: nowrap;
+  font-size: 10px;
+}
+.tap-agent-symbol {
+  color: var(--tap-accent-dark);
+  font-size: 23px;
+}
+.tap-progress-sources li {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.tap-progress-sources a {
+  color: inherit;
+  text-decoration: none;
+}
+.tap-progress-sources a:hover {
+  text-decoration: underline;
+}
+.tap-run-diagnostics {
+  margin-top: 24px;
+  color: var(--tap-muted);
+}
+.tap-run-diagnostics > summary {
+  cursor: pointer;
+}
+.tap-execution-plan {
+  margin: 16px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tap-execution-plan h3 {
+  font-size: 12px;
+  color: var(--tap-muted);
+  font-weight: 400;
+}
+.tap-execution-plan ol {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+}
+.tap-execution-plan li {
+  padding: 8px 0;
+}
+.tap-execution-plan summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+.tap-execution-plan summary > span:nth-child(2) {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.tap-execution-plan summary small {
+  color: var(--tap-muted);
+  max-width: 100px;
+  text-align: right;
+}
+.tap-execution-plan [data-state="Passed"] {
+  color: var(--tap-accent-dark);
+}
+.tap-execution-plan [data-state="Failed"],
+.tap-execution-plan [data-state="Needs attention"] {
+  color: #a12622;
+}
+.tap-step-keyword {
+  color: var(--tap-muted);
+  font-size: 10px;
+  min-width: 34px;
+}
+.tap-step-expected {
+  color: var(--tap-muted);
+}
+.tap-action-details {
+  padding: 8px 0;
+  border-top: 1px solid var(--tap-line);
+  overflow-wrap: anywhere;
+}
+.tap-action-details dl {
+  margin: 0;
+}
+.tap-action-details dl > div {
+  display: grid;
+  grid-template-columns: 65px minmax(0, 1fr);
+  gap: 8px;
+  margin: 5px 0;
+}
+.tap-action-details dt,
+.tap-action-details time {
+  color: var(--tap-muted);
+  font-size: 10px;
+}
+.tap-action-details dd {
+  margin: 0;
+  white-space: pre-wrap;
+}

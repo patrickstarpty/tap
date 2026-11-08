@@ -26,7 +26,12 @@ from tap.modules.ai.domain.skill_activation import (
     catalog_entry,
     render_skill_catalog,
 )
-from tap.modules.workflows.application.routing import RouteDecision, RouteKind, merge_route
+from tap.modules.workflows.application.routing import (
+    RouteDecision,
+    RouteKind,
+    merge_route,
+    requested_browser_url,
+)
 from tap.modules.workflows.domain.delegation import DelegationRequest
 
 NATIVE_GRAPH_VERSION = "agent-workflow-v1"
@@ -40,6 +45,7 @@ SkillActivation = Callable[[str, tuple[dict[str, object], ...], str], Awaitable[
 
 
 class NativeState(TypedDict, total=False):
+    browser_handoff: bool
     graph_version: str
     state_schema_version: int
     execution_mode: Literal["durable"]
@@ -75,6 +81,7 @@ class NativeWorkflowGraph:
         route_commit: RouteCommit | None = None,
         before_model: BeforeModel | None = None,
         coding_available: bool = False,
+        browser_available: bool = False,
         is_root: bool = True,
         agent_instruction: str = "",
         skill_instructions: tuple[str, ...] = (),
@@ -95,6 +102,7 @@ class NativeWorkflowGraph:
         self._route_commit = route_commit
         self._before_model = before_model
         self._coding_available = coding_available
+        self._browser_available = browser_available
         self._is_root = is_root
         self._agent_instruction = agent_instruction
         self._skill_instructions = skill_instructions
@@ -188,6 +196,7 @@ class NativeWorkflowGraph:
                 reason=route["reason"],
                 confidence=route["confidence"],
                 required_capabilities=tuple(route.get("required_capabilities", ())),
+                start_url=route.get("start_url"),
             )
         answer = decoded.get("answer")
         return suggestion, answer if isinstance(answer, str) else ""
@@ -245,8 +254,15 @@ class NativeWorkflowGraph:
         ]
         if self._is_root:
             instructions.append(
-                "Choose native, coding, or execute for this request and explain the choice in "
-                "a JSON route object. If native, answer directly or call the offered tools. "
+                "Choose native, browser, coding, or execute for this request and "
+                "explain the choice in "
+                "a JSON route object with kind, reason, confidence (0-1), required_capabilities. "
+                "Use browser when the user asks to visit or interact with a website and obtain "
+                "an actual result (including quotes, forms or browser testing). No Agent selection "
+                "or mode switch is needed. Include start_url copied exactly from the user's goal. "
+                "A question about a website alone does not require browser execution. "
+                f"Browser execution available: {self._browser_available}. "
+                "If native, answer directly or call the offered tools. "
                 "Never claim coding or execution happened when the capability is unavailable."
             )
             if self._delegate_catalog:
@@ -298,6 +314,7 @@ class NativeWorkflowGraph:
                 "reason": self._frozen_route.reason,
                 "confidence": self._frozen_route.confidence,
                 "required_capabilities": list(self._frozen_route.required_capabilities),
+                "start_url": self._frozen_route.start_url,
             }
         if route_json is None and not self._is_root:
             route_json = {
@@ -335,6 +352,22 @@ class NativeWorkflowGraph:
                     suggested=suggestion,
                     coding_available=True,
                 )
+            if decision.kind == "browser" and self._browser_available:
+                start_url = requested_browser_url(prompt, decision.start_url)
+                if start_url is None:
+                    return {
+                        "answer": "请提供需要操作的网站完整网址。",
+                        "pending_calls": [],
+                        "waiting_reason": "clarification",
+                        "model_round": round_number,
+                    }
+                decision = RouteDecision(
+                    decision.kind,
+                    decision.reason,
+                    decision.confidence,
+                    decision.required_capabilities,
+                    start_url,
+                )
             if self._route_commit is not None:
                 await self._route_commit(decision)
             route_json = {
@@ -342,10 +375,23 @@ class NativeWorkflowGraph:
                 "reason": decision.reason,
                 "confidence": decision.confidence,
                 "required_capabilities": list(decision.required_capabilities),
+                "start_url": decision.start_url,
             }
         calls: list[dict[str, str]]
+        if route_json["kind"] == "browser" and self._browser_available:
+            return {
+                "route_decision": route_json,
+                "answer": "正在拆解操作步骤。",
+                "pending_calls": [],
+                "messages": state.get("messages", []),
+                "model_round": round_number,
+                "waiting_reason": None,
+                "browser_handoff": True,
+            }
         if route_json["kind"] != "native":
-            label = "编码" if route_json["kind"] == "coding" else "已发布制品执行"
+            label = {"coding": "编码", "browser": "浏览器执行", "execute": "已发布制品执行"}[
+                str(route_json["kind"])
+            ]
             answer = f"当前{label}能力不可用，任务未执行。"
             calls = []
         else:
@@ -517,7 +563,9 @@ class NativeWorkflowGraph:
         if not answer.strip():
             raise ValueError("native answer is empty")
         outcome = (
-            "completed"
+            "browser_handoff"
+            if state.get("browser_handoff")
+            else "completed"
             if state.get("route_decision", {}).get("kind") == "native"
             else "unavailable"
         )

@@ -1,3 +1,4 @@
+import { ActionDetails } from "./ExecutionSteps";
 import type { WorkflowEventEnvelope } from "../api/client";
 
 const labels: Record<string, string> = {
@@ -49,7 +50,9 @@ export function workflowEventLabel(
       return `${subject} ${outcome}: ${identifier}`;
     return `${subject} finished: ${identifier}`;
   }
-  return labels[kind] ?? "Activity recorded";
+  if (kind.startsWith("browser.action_"))
+    return `${typeof payload.step_title === "string" ? payload.step_title : "Browser action"} · ${payload.outcome ?? "in progress"}`;
+  return labels[kind] ?? "";
 }
 export function ActivityTimeline({
   events,
@@ -58,7 +61,10 @@ export function ActivityTimeline({
   events: readonly WorkflowEventEnvelope[];
   limit?: number;
 }) {
-  const visible = events.slice(-limit).reverse();
+  const visible = events
+    .filter((event) => workflowEventLabel(event.kind, event.payload))
+    .slice(-limit)
+    .reverse();
   return (
     <section className="tap-workflow-timeline" aria-label="Activity timeline">
       <h3>Activity</h3>
@@ -80,6 +86,7 @@ export function ActivityTimeline({
                   {new Date(event.occurredAt).toLocaleTimeString()}
                 </time>
                 {detail ? <p>{detail}</p> : null}
+                <ActionDetails event={event} />
               </li>
             );
           })}

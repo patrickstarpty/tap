@@ -399,15 +399,13 @@ it("keeps workflow details closed until clicked and retains the terminal task li
   completedConversation({ traceId: null, workflowTaskId: "task-1" });
   const user = userEvent.setup();
   expect(
-    await screen.findByRole("button", { name: "View execution details" }),
+    await screen.findByRole("button", { name: "View progress" }),
   ).toBeVisible();
   expect(
     screen.queryByRole("complementary", { name: "Workflow details" }),
   ).toBeNull();
   await screen.findByText("Tapper · succeeded");
-  await user.click(
-    screen.getByRole("button", { name: "View execution details" }),
-  );
+  await user.click(screen.getByRole("button", { name: "View progress" }));
   expect(
     await screen.findByRole(
       "heading",
@@ -421,9 +419,7 @@ it("keeps workflow details closed until clicked and retains the terminal task li
   expect(
     screen.queryByRole("complementary", { name: "Workflow details" }),
   ).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "View execution details" }),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "View progress" })).toBeVisible();
 });
 
 it("shows all restored native Agent IDs and requires an explicit legacy choice", async () => {
@@ -625,7 +621,7 @@ it("restores the same task's selected node, historical attempt and scroll after 
   const user = userEvent.setup();
   await screen.findByText("Tapper · succeeded");
   await user.click(
-    await screen.findByRole("button", { name: "View execution details" }),
+    await screen.findByRole("button", { name: "View progress" }),
   );
   await screen.findByRole("heading", { name: "Task progress" });
   await user.click(await screen.findByRole("button", { name: /SDET/u }));
@@ -636,9 +632,7 @@ it("restores the same task's selected node, historical attempt and scroll after 
   await user.click(
     screen.getByRole("button", { name: "Close workflow details" }),
   );
-  await user.click(
-    screen.getByRole("button", { name: "View execution details" }),
-  );
+  await user.click(screen.getByRole("button", { name: "View progress" }));
   expect(
     await screen.findByRole("heading", { name: "Node details" }),
   ).toBeVisible();

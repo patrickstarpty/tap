@@ -727,21 +727,24 @@ export function TapperChat({
       <label className="tapper-visually-hidden" htmlFor="tap-message">
         {copy.chat.messageTapper}
       </label>
-      <div className="tap-browser-composer">
-        <label className="tap-browser-toggle">
-          <input
-            type="checkbox"
-            checked={browserMode}
-            disabled={!browserAvailable}
-            onChange={(event) => onBrowserModeChange?.(event.target.checked)}
-          />
-          Browser run
-        </label>
-        {!browserAvailable ? (
-          <span className="tap-browser-unavailable">
-            Browser automation unavailable · see local setup guide
-          </span>
-        ) : null}
+      <details
+        className="tap-browser-composer"
+        open={browserSourceTaskId ? true : undefined}
+      >
+        <summary>Execution options</summary>
+        <label htmlFor="tap-execution-mode">Execution</label>
+        <select
+          id="tap-execution-mode"
+          value={browserMode ? "browser" : "auto"}
+          onChange={(event) =>
+            onBrowserModeChange?.(event.target.value === "browser")
+          }
+        >
+          <option value="auto">Automatic</option>
+          <option value="browser" disabled={!browserAvailable}>
+            Browser
+          </option>
+        </select>
         {browserMode ? (
           <div className="tap-browser-options">
             {browserSourceTaskId ? (
@@ -779,7 +782,7 @@ export function TapperChat({
             />
           </div>
         ) : null}
-      </div>
+      </details>
 
       {selectedSources.length +
         selectedAgents.length +

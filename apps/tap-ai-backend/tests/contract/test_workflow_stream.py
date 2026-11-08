@@ -139,3 +139,53 @@ async def test_new_child_after_snapshot_waits_for_matching_metadata_view() -> No
         "observed",
     )
     assert await queries.events(None, "task-1", 2) == ()
+
+
+def test_browser_action_details_are_redacted_but_keep_failure_location():
+    event = WorkflowEvent(
+        "action-1",
+        "task-1",
+        9,
+        "node-1",
+        1,
+        "browser.action_finished",
+        {
+            "action_id": "inspect-1",
+            "operation": "click",
+            "duration_ms": 21,
+            "outcome": "failed",
+            "url": "https://example.com/quote",
+            "selector": "text=Age",
+            "error": "strict mode violation: 64 elements; secret",
+            "step_id": "choose-cover",
+            "step_keyword": "When",
+            "step_title": "Choose cover",
+            "input": "secret",
+            "execution_token": "private",
+        },
+        datetime(2026, 11, 6, tzinfo=UTC),
+    )
+    public = project_event(event, redact=lambda s: s.replace("secret", "[redacted]"))
+    assert public["kind"] == "browser.action_finished"
+    assert public["payload"]["operation"] == "click"
+    assert public["payload"]["duration_ms"] == 21
+    assert public["payload"]["selector"] == "text=Age"
+    assert "64 elements" in public["payload"]["error"]
+    assert public["payload"]["step_title"] == "Choose cover"
+    assert "secret" not in str(public) and "private" not in str(public)
+    assert "error" not in project_event(event)["payload"]
+
+
+def test_task_failure_exposes_a_redacted_reason_for_diagnosis():
+    event = WorkflowEvent(
+        "failed",
+        "task-1",
+        10,
+        None,
+        None,
+        "task.failed",
+        {"reason": "browser timeout secret"},
+        datetime(2026, 11, 6, tzinfo=UTC),
+    )
+    public = project_event(event, redact=lambda s: s.replace("secret", "[redacted]"))
+    assert public["payload"]["reason"] == "browser timeout [redacted]"

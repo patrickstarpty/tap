@@ -32,7 +32,11 @@ type CoreSnapshot = {
   browserInputRequest?: { question: string } | null;
   replayOfTaskId?: string | null;
   budgetUsed?: { model_calls?: number };
-  events?: { kind: string }[];
+  events?: {
+    kind: string;
+    sequence: number;
+    payload: Record<string, unknown>;
+  }[];
 };
 
 const active = process.env.TAPPER_BROWSER_CORE_E2E === "1";
@@ -77,26 +81,14 @@ for (const scenario of cases) {
 
     await page.goto("/");
     await page.getByRole("button", { name: "New chat" }).click();
-    await page.getByRole("button", { name: "Add to message" }).click();
-    await page
-      .getByRole("menu", { name: "Add to message" })
-      .getByRole("menuitem", { name: "Use Agents" })
-      .click();
-    await page
-      .getByRole("dialog", { name: "Use Agents" })
-      .getByRole("option", { name: /SDET/u })
-      .click();
-    await page.getByRole("checkbox", { name: "Browser run" }).check();
+    await expect(
+      page.getByRole("checkbox", { name: "Browser run" }),
+    ).toHaveCount(0);
     await page
       .getByRole("textbox", { name: "Message Tapper" })
-      .fill(scenario.goal);
-    await page.getByLabel("Start URL").fill(scenario.startUrl);
-    if (scenario.inputNotes) {
-      await page
-        .getByLabel("Input details (optional)")
-        .fill(scenario.inputNotes);
-    }
-    await page.getByLabel("Expected result (optional)").fill(scenario.expected);
+      .fill(
+        `${process.env.TAPPER_BROWSER_CORE_SYNTHETIC === "1" ? "[e2e-workflow:browser] " : ""}${scenario.goal}\nWebsite: ${scenario.startUrl}\n${scenario.inputNotes ?? ""}\nExpected: ${scenario.expected}`,
+      );
     const acceptedResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -152,6 +144,16 @@ for (const scenario of cases) {
       )
       .toBe(scenario.status);
     expect(snapshot.taskKind).toBe("browser");
+    const plan = snapshot.events?.find(
+      (event) => event.kind === "browser.plan_created",
+    );
+    const firstAction = snapshot.events?.find(
+      (event) => event.kind === "browser.action_started",
+    );
+    expect(plan).toBeDefined();
+    expect(firstAction).toBeDefined();
+    expect(plan!.sequence).toBeLessThan(firstAction!.sequence);
+    expect(firstAction!.payload.step_id).toBeTruthy();
     expect(snapshot.taskId).toBe(taskId);
     writeFileSync(
       `${evidenceDir}/${scenario.name}-snapshot.json`,
@@ -207,23 +209,24 @@ for (const scenario of cases) {
     }
     expect(evidence.screenshot).toBeDefined();
     expect(evidence.trace).toBeDefined();
-    await page.getByRole("button", { name: "View execution details" }).click();
+    await page.getByRole("button", { name: "View progress" }).click();
+    await expect(page.getByText(/^Browser result ·/u)).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Browser result" }),
-    ).toBeVisible();
+      page.getByRole("link", { name: "Screenshot" }),
+    ).not.toBeVisible();
+    await page.getByText(/^Browser result ·/u).click();
     await expect(page.getByRole("link", { name: "Screenshot" })).toBeVisible();
+    await page.getByText(/^Browser result ·/u).click();
     await page.screenshot({
       path: `${evidenceDir}/${scenario.name}-ui.png`,
       fullPage: true,
     });
     await page.reload();
     await expect(
-      page.getByRole("button", { name: "View execution details" }),
+      page.getByRole("button", { name: "View progress" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "View execution details" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Browser result" }),
-    ).toBeVisible();
+    await page.getByRole("button", { name: "View progress" }).click();
+    await expect(page.getByText(/^Browser result ·/u)).toBeVisible();
 
     const foreign = `/api/v1/projects/foreign-project/workflows/${taskId}`;
     expect((await page.request.get(foreign)).status()).toBeGreaterThanOrEqual(
@@ -304,28 +307,11 @@ test("cancel active browser coding through the run detail", async ({
   const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
   await page.goto("/");
   await page.getByRole("button", { name: "New chat" }).click();
-  await page.getByRole("button", { name: "Add to message" }).click();
-  await page
-    .getByRole("menu", { name: "Add to message" })
-    .getByRole("menuitem", { name: "Use Agents" })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Use Agents" })
-    .getByRole("option", { name: /SDET/u })
-    .click();
-  await page.getByRole("checkbox", { name: "Browser run" }).check();
   await page
     .getByRole("textbox", { name: "Message Tapper" })
     .fill(
-      "Core cancel: inspect the order page, then continue a long verification.",
+      "[e2e-workflow:browser] Core cancel: inspect http://example.test/ then continue a long verification. customer=Ada; region=west. Cancel before the final result.",
     );
-  await page.getByLabel("Start URL").fill("http://example.test/");
-  await page
-    .getByLabel("Input details (optional)")
-    .fill("customer=Ada; region=west");
-  await page
-    .getByLabel("Expected result (optional)")
-    .fill("Cancel before the final result.");
   const acceptedResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -370,7 +356,7 @@ test("cancel active browser coding through the run detail", async ({
       { timeout: 90_000, intervals: [500, 1000, 2000] },
     )
     .toBeGreaterThanOrEqual(2);
-  await page.getByRole("button", { name: "View execution details" }).click();
+  await page.getByRole("button", { name: "View progress" }).click();
   await page.getByRole("button", { name: "Request cancel" }).click();
   let snapshot = {} as CoreSnapshot;
   await expect
@@ -397,6 +383,6 @@ test("cancel active browser coding through the run detail", async ({
   );
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "View execution details" }),
+    page.getByRole("button", { name: "View progress" }),
   ).toBeVisible();
 });

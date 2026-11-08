@@ -642,3 +642,60 @@ def test_long_child_result_is_private_and_parent_receives_bounded_reference():
     assert full not in parent[0]["summary"]
     assert parent[0]["summary"] == persisted_summary
     assert f"sha256:{hashlib.sha256(full.encode()).hexdigest()[:16]}" in parent[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_browser_goal_routes_without_selected_agent_or_manual_mode():
+    gateway = ScriptedGateway(
+        [
+            (
+                json.dumps(
+                    {
+                        "route": {
+                            "kind": "browser",
+                            "reason": "quote requires real page",
+                            "confidence": 0.95,
+                            "required_capabilities": ["browser"],
+                            "start_url": "https://example.test/quote",
+                        }
+                    }
+                ),
+                (),
+            )
+        ]
+    )
+    graph = NativeWorkflowGraph(gateway, checkpointer=MemorySaver(), browser_available=True)
+    result = await graph.run(
+        VALIDATION_SCOPE, "auto-browser", "root", "Quote at https://example.test/quote", "qwen-plus"
+    )
+    assert result["result"]["outcome"] == "browser_handoff"
+    assert result["route_decision"]["start_url"] == "https://example.test/quote"
+    assert len(gateway.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_browser_route_does_not_accept_an_invented_destination():
+    gateway = ScriptedGateway(
+        [
+            (
+                json.dumps(
+                    {
+                        "route": {
+                            "kind": "browser",
+                            "reason": "quote",
+                            "confidence": 0.95,
+                            "required_capabilities": ["browser"],
+                            "start_url": "https://unrequested.test/",
+                        }
+                    }
+                ),
+                (),
+            )
+        ]
+    )
+    graph = NativeWorkflowGraph(gateway, checkpointer=MemorySaver(), browser_available=True)
+    result = await graph.run(
+        VALIDATION_SCOPE, "auto-missing", "root", "Give me a quote", "qwen-plus"
+    )
+    assert result["waiting_reason"] == "clarification"
+    assert "route_decision" not in result

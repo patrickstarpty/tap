@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { components } from "../../../shared/api/generated/schema";
 import { useWorkflowLogs, useWorkflowNode } from "../api/queries";
 import type { WorkflowCommandView, WorkflowTaskSnapshot } from "../api/client";
+import { ActionDetails } from "./ExecutionSteps";
 import { workflowEventLabel } from "./ActivityTimeline";
 
 type Node = components["schemas"]["WorkflowNodeView"];
@@ -183,17 +184,20 @@ export function NodeDetails({
           <p>No public log entries yet.</p>
         ) : (
           <ol>
-            {logItems.map((item) => (
-              <li key={item.eventId}>
-                <time dateTime={item.occurredAt}>
-                  {new Date(item.occurredAt).toLocaleTimeString()}
-                </time>
-                <span>{workflowEventLabel(item.kind, item.payload)}</span>
-                {typeof item.payload.summary === "string" ? (
-                  <p>{item.payload.summary}</p>
-                ) : null}
-              </li>
-            ))}
+            {logItems
+              .filter((item) => workflowEventLabel(item.kind, item.payload))
+              .map((item) => (
+                <li key={item.eventId}>
+                  <time dateTime={item.occurredAt}>
+                    {new Date(item.occurredAt).toLocaleTimeString()}
+                  </time>
+                  <span>{workflowEventLabel(item.kind, item.payload)}</span>
+                  <ActionDetails event={item} />
+                  {typeof item.payload.summary === "string" ? (
+                    <p>{item.payload.summary}</p>
+                  ) : null}
+                </li>
+              ))}
           </ol>
         )}
         {logs.hasNextPage ? (

@@ -100,12 +100,15 @@ it("shows persisted browser values and evidence and offers frozen replay", async
       onReplay={replay}
     />,
   );
-  expect(screen.getByText(/Ada/u)).toBeInTheDocument();
+  expect(screen.getByText("Read quote").closest("details")).not.toHaveAttribute(
+    "open",
+  );
+  await userEvent.click(screen.getByText("Browser result · Passed"));
+  expect(screen.getByText(/Ada/u)).toBeVisible();
   expect(screen.getByText("Read quote")).toBeInTheDocument();
   expect(screen.queryByText("Tapper is handling this task.")).toBeNull();
-  expect(
-    screen.getByText("No specialist nodes were recorded for this task."),
-  ).toBeInTheDocument();
+  expect(screen.getByText("Subagents")).toBeInTheDocument();
+  expect(screen.getByText("Sources")).toBeInTheDocument();
   expect(screen.getByText("Replay of run task-original")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Screenshot/u })).toHaveAttribute(
     "href",

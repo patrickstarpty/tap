@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
-RouteKind = Literal["native", "coding", "execute"]
+RouteKind = Literal["native", "coding", "execute", "browser"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,7 +16,11 @@ class RouteDecision:
     confidence: float
     required_capabilities: tuple[str, ...]
 
+    start_url: str | None = None
+
     def __post_init__(self) -> None:
+        if self.kind not in {"native", "coding", "execute", "browser"}:
+            raise ValueError("invalid route kind")
         if not 0 <= self.confidence <= 1:
             raise ValueError("route confidence must be between zero and one")
 
@@ -45,8 +50,23 @@ def merge_route(
         )
     else:
         decision = suggested or RouteDecision("native", "default assistant", 1.0, ())
-        if decision.confidence < 0.5 and decision.required_capabilities:
+        if decision.confidence < 0.5 and (
+            decision.required_capabilities or decision.kind != "native"
+        ):
             raise ValueError("clarification required before capability expansion")
     if decision.kind == "coding" and not coding_available:
         raise ValueError("coding capability unavailable")
     return decision
+
+
+def requested_browser_url(goal: str, proposed: str | None) -> str | None:
+    """Select only URLs present in the user goal, never model-invented origins."""
+    urls = tuple(
+        dict.fromkeys(
+            value.rstrip(".,;!?，。；！？)）]")
+            for value in re.findall(r"https?://[^\s<>\"']+", goal)
+        )
+    )
+    if proposed is not None:
+        return proposed if proposed in urls else None
+    return urls[0] if len(urls) == 1 else None
