@@ -1140,24 +1140,32 @@ class CodingRuntime:
         ):
             raise ValueError("browser expected result invalid")
         return (
-            "You are implementing a generic Playwright browser task. "
+            "You are executing a browser task in an already prepared workspace. "
+            "Do not scan for a project, create src directories, or write placeholder scripts. "
+            "First read the frozen input, persist the BDD plan, and operate the actual page. "
             "Read the exact frozen user input JSON from /workspace/frozen-inputs.json "
             "during generation; this is the only supplied input value source. "
             "Before any browser action, decompose the user goal into business-readable BDD steps "
             "and persist the plan using browserctl with "
             "{type:plan,steps:[{id,keyword,title,expected_result}]}. "
-            "Example valid invocation (replace with the full business-specific plan): "
-            "node /opt/tapper/browserctl.mjs "
-            '\'{"type":"plan","steps":[{"id":"open","keyword":"Given",'
-            '"title":"Open the requested website"}]}\'. '
+            "Send JSON using standard input and a quoted heredoc, never shell-quoted JSON. "
+            "Example (replace with the full business-specific plan):\n"
+            "node /opt/tapper/browserctl.mjs --stdin <<'TAPPER_ACTION'\n"
+            '{"type":"plan","steps":[{"id":"open","keyword":"Given",'
+            '"title":"Open the requested website"}]}\nTAPPER_ACTION\n'
             "Use JSON quoted keys; keyword is Given, When, Then, or And; never report "
             "a step passed "
             "from your own prose. Every subsequent helper action MUST include step "
             "with its planned id. "
             "Plan amendments require reason and must retain already executed steps unchanged. "
-            "Then inspect the actual approved page with "
-            '`node /opt/tapper/browserctl.mjs \'{"type":"navigate","url":"...","step":"open"}\'` '
-            "and snapshot/click/fill/select/press/wait/screenshot using the same fixed helper; "
+            "Then inspect the actual approved page using the same stdin form:\n"
+            "node /opt/tapper/browserctl.mjs --stdin <<'TAPPER_ACTION'\n"
+            '{"type":"navigate","url":"...","step":"open"}\nTAPPER_ACTION\n'
+            "Use this form for snapshot/click/fill/select/press/wait/screenshot too. "
+            "Never repeat an unchanged failed invocation. A raw DOM id is not a CSS selector; "
+            "copy aria-ref or the exact returned selector, preserving escaping. "
+            "Successfully apply and read back requested form values during inspection before "
+            "writing the final script. Do not replace failed input actions with assumptions. "
             "Public websites and page dependencies are accessible; private, local and metadata "
             "destinations remain blocked. Stay within the user task. "
             "Then write /workspace/flow.spec.ts with a real "

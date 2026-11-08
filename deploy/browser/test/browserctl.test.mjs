@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { validateAction, boundedObservation } from '../browserctl.mjs';
+import { Readable } from 'node:stream';
+import { validateAction, boundedObservation, readAction } from '../browserctl.mjs';
 
 test('browserctl accepts only fixed inspector actions', () => {
   assert.deepEqual(validateAction({ type: 'click', selector: '#submit' }), { type: 'click', selector: '#submit' });
@@ -32,4 +33,15 @@ test('browser actions can carry a bounded business step without allowing arbitra
   assert.deepEqual(validateAction(action),action);
   assert.throws(() => validateAction({...action,step:{code:'fetch(secret)'}}), /step/);
   assert.throws(() => validateAction({type:'plan', steps:[{id:'s',keyword:'Passed',title:'Claim success'}]}), /step/);
+});
+
+
+test('structured stdin preserves apostrophes and selectors without shell quoting', async () => {
+  const action = { type: 'plan', steps: [{ id: 'age', keyword: 'When', title: "Read customer's age", expected_result: "Age field shows '30'" }] };
+  const body = JSON.stringify(action);
+  assert.deepEqual(await readAction(['--stdin'], Readable.from([body.slice(0, 17), body.slice(17)])), action);
+  const fill = { type: 'fill', step: 'age', selector: '[id="combobox::age"]', value: '30' };
+  assert.deepEqual(await readAction(['--stdin'], Readable.from([JSON.stringify(fill)])), fill);
+  await assert.rejects(readAction(['--stdin'], Readable.from(['x'.repeat(16385)])), /size cap/);
+  await assert.rejects(readAction(['--stdin'], Readable.from(['{"type":"evaluate","code":"x"}'])), /unsupported/);
 });

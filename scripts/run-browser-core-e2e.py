@@ -716,7 +716,7 @@ def main() -> int:
             "TAP_BROWSER_SERVICE_MODE": "external",
             "TAP_BROWSER_CODING_MODEL_ALIAS": "qwen-plus",
             "TAP_BROWSER_CODING_MAX_INPUT_TOKENS": "129024",
-            "TAP_BROWSER_CODING_MAX_OUTPUT_TOKENS": "2048",
+            "TAP_BROWSER_CODING_MAX_OUTPUT_TOKENS": "4096" if args.mode == "real" else "2048",
             "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": "0.4",
             "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": "1.2",
             "TAP_WORKFLOW_MAX_MODEL_CALLS": str(

@@ -58,11 +58,30 @@ export function boundedObservation(observation) {
   return result;
 }
 
+export async function readAction(args, input) {
+  let raw;
+  if (args.length === 1 && args[0] === '--stdin') {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of input) {
+      const bytes = Buffer.from(chunk);
+      size += bytes.length;
+      if (size > 16384) throw new Error('browser action exceeds size cap');
+      chunks.push(bytes);
+    }
+    raw = Buffer.concat(chunks).toString('utf8');
+  } else if (args.length === 1) {
+    raw = args[0];
+  } else {
+    throw new Error('Use browserctl --stdin with a quoted heredoc for JSON actions');
+  }
+  return validateAction(JSON.parse(raw));
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    if (process.argv.length !== 3) throw new Error('browserctl requires one JSON action argument');
     if (process.env.TAP_CODING_MAILBOX !== '/mailbox') throw new Error('coding mailbox unavailable');
-    const action = validateAction(JSON.parse(process.argv[2]));
+    const action = await readAction(process.argv.slice(2), process.stdin);
     const result = await mailboxRequest(process.env.TAP_CODING_MAILBOX, 'browser', action, 30000);
     // An action error still carries the observed DOM and disambiguating controls.
     // Preserve it as structured output so the agent can inspect and recover.
