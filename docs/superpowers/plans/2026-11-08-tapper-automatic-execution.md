@@ -41,7 +41,7 @@ Files: workflows `routing.py`、`native_graph.py`、`dispatch.py`、浏览器意
 
 - [x] 核实本轮失败资源清理并结算，保留旧证据。
 - [ ] 无费用验证全部通过后，在剩余额度内或取得追加授权后真实 FWD 验收。
-- [ ] 审查最终 diff，仅提交本轮文件，合入 develop 并推送；不将未完成 FWD 标为通过。
+- [x] 审查最终 diff，仅提交本轮文件，合入 develop 并推送（`96f5d951`）；不将未完成 FWD 标为通过。
 
 ## 验证记录（2026-11-08）
 

@@ -91,4 +91,4 @@ flowchart LR
 
 方向：身份与多项目、局域网与生产安全设计、企业级检索（Azure AI Search 四索引）与生产加固。当前 Tapper Demo 为回环绑定、无认证，在此之前不做局域网或生产承诺。
 
-2026-11-08 用户追加验收：[自动执行与任务详情](../specs/2026-11-08-tapper-automatic-execution-design.md)要求取消 Browser run 与显式选 Agent 前置步骤，默认自动选能力；进度以产出、Agent、来源展示，并提供逐动作可追溯诊断。[实施计划](2026-11-08-tapper-automatic-execution.md)执行中，尚未验收。
+2026-11-08 用户追加验收：[自动执行与任务详情](../specs/2026-11-08-tapper-automatic-execution-design.md)要求取消 Browser run 与显式选 Agent 前置步骤，默认自动选能力；进度以产出、Agent、来源展示，并提供逐动作可追溯诊断。[实施计划](2026-11-08-tapper-automatic-execution.md)的代码已随 `96f5d951` 整合并推送 develop；自动入口、BDD、冻结重放和取消通过隔离 E2E，真实 FWD HK 业务验收仍未通过。
