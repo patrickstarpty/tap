@@ -9,6 +9,7 @@
 - [ADR-032：Skill 包存放边界与工具注册表](2026-10-12-adr-032-skill-packages-and-tool-registry.md)（`accepted`）：Skill 包作为不可变修订存对象存储、包内代码永不执行、`allowed-tools` 不授予权限；工具注册表为代码定义的边界，V1 两项内置，MCP 不在 V1。
 - [ADR-033：Langfuse 作为默认组件与团队视图运行数据的唯一查询来源](2026-10-23-adr-033-langfuse-default-runtime-source.md)（`accepted`）：Langfuse 由可选改为默认组件；团队视图运行数据以 Langfuse Metrics API v1 为唯一来源，固定 3.x；不可用时降级而非 5xx。
 - [ADR-037：通用 Web 自动化核心闭环优先交付](2026-11-07-adr-037-browser-automation-core-first.md)（`accepted`）：核心执行先交付，复杂恢复和正式测试资产后补；工作流与执行权威保持分离。
+- [ADR-038：浏览器 Agent、脚本整理与执行权威分工](2026-11-08-adr-038-browser-agent-and-script-ownership.md)（`accepted`，尚未实现）：browser-use 实时执行业务，OpenCode 默认整理动作脚本，TAP 管会话、人工接管及证据；局部调整 ADR-037 的执行路径，生成脚本不自动重复业务。
 - [ADR-034：Tapper 回答执行与资产维护的应用模块归属](2026-11-06-adr-034-tapper-application-module-ownership.md)（`accepted`）：回答编排归应用模块，资产维护与修订同事务写入归 AI 模块。
 
 ## 当前平台基线

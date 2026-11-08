@@ -2,6 +2,8 @@
 
 日期：2026-11-06。本文汇总产品负责人在 2026-11-05 至 2026-11-06 确认的整体设计；用户已同意进入实施规划，见[实施总计划](../plans/2026-11-06-agent-workflows-and-test-loop.md)。2026-11-06 provider 修订：用户取消 Copilot 订阅后，最终明确使用 OpenCode 并继续接入 LiteLLM；先前 Codex 替换提议不再执行。本文不是已交付能力或实施完成记录。归属[产品路线图](../plans/2026-10-01-product-roadmap.md)的通用任务底座与测试闭环增量。现状以[现状架构](../../architecture.md)为准。
 
+2026-11-08 浏览器职责调整：用户确认 browser-use 完成实时网页任务、OpenCode 默认将成功动作整理成脚本、TAP 负责独立浏览器、人工接管和证据。浏览器任务的新执行与交接边界以[后续设计](2026-11-08-tapper-browser-agent-and-replay-design.md)及 [ADR-038](../../decisions/2026-11-08-adr-038-browser-agent-and-script-ownership.md)为准；一般编码、知识任务及正式测试资产规则沿用本文。该方向尚未实现，不覆盖下文旧路径的历史验证记录。
+
 ## 1. 已确认的产品决定
 
 | 决定 | 约束 |
