@@ -36,6 +36,7 @@ class BrowserProgress:
         self.steps: dict[str, dict[str, str]] = {}
         self.used: set[str] = set()
         self.revision = 0
+        self.has_page_observation = False
 
     async def handle(
         self, payload: dict[str, Any], action_id: str, execute: Execute
@@ -127,6 +128,8 @@ class BrowserProgress:
                 },
             )
             raise
+        if diagnostic_url(observation.get("url")) and observation.get("bounded_snapshot"):
+            self.has_page_observation = True
         await self.emit(
             "browser.action_finished",
             {

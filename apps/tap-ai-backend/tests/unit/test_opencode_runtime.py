@@ -1193,3 +1193,32 @@ async def test_generated_script_cannot_execute_without_a_saved_bdd_plan():
     with pytest.raises(ValueError, match="BDD plan required"):
         await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
     assert browser.limits == []
+
+
+@pytest.mark.asyncio
+async def test_external_block_without_page_observation_gets_bounded_repair_not_user_question():
+    made = []
+
+    class UnsupportedBlock(CompletedScriptContainer):
+        async def run_prompt(self):
+            return {"terminal": "complete", "session_id": "ses_test"}
+
+        async def collect(self):
+            return {"input_request": {"reason": "external_block", "question": "Maybe CAPTCHA"}}
+
+    def factory(_config, mailbox):
+        value = UnsupportedBlock(mailbox)
+        made.append(value)
+        return value
+
+    browser = SessionBrowser()
+    runtime = CodingRuntime(
+        CodingConfig.for_test(), browser=browser, store=Journal(), container_factory=factory
+    )
+    result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert result.status == "failed"
+    assert result.input_request is None
+    assert result.terminal_evidence["failure"] == "external_block_without_page_observation"
+    assert len(made[0].goals) == runtime.config.max_repairs + 1
+    assert "No page observation" in made[0].goals[-1]
+    assert made[0].stopped and browser.canceled

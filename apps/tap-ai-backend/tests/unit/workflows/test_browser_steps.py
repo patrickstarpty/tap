@@ -24,6 +24,7 @@ async def test_plan_is_committed_before_any_action_and_failures_keep_step_identi
         }
 
     progress = BrowserProgress(emit)
+    assert not progress.has_page_observation
     denied = await progress.handle(
         {"type": "click", "selector": "text=Age", "step": "cover"}, "a0", execute
     )
@@ -50,6 +51,7 @@ async def test_plan_is_committed_before_any_action_and_failures_keep_step_identi
         "a1",
         execute,
     )
+    assert progress.has_page_observation
     assert result["error"].startswith("strict mode")
     assert events[0][0] == "browser.plan_created"
     assert [e[0] for e in events[1:]] == ["browser.action_started", "browser.action_finished"]

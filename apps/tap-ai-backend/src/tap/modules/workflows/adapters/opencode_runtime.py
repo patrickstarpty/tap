@@ -927,6 +927,28 @@ class CodingRuntime:
                         )
                         input_request = collected.get("input_request")
                         if isinstance(input_request, dict):
+                            if (
+                                input_request.get("reason") == "external_block"
+                                and not progress.has_page_observation
+                            ):
+                                if repair < self.config.max_repairs:
+                                    goal = (
+                                        "No page observation exists. The claimed external blocker "
+                                        "is unverified. Remove tapper-input-request.json, create "
+                                        "the BDD plan, and inspect the real page with browserctl. "
+                                        "Fix any helper invocation errors before judging the site. "
+                                        "Do not infer CAPTCHA/login from a tool error. " + goal
+                                    )
+                                    continue
+                                return CodingResult(
+                                    "failed",
+                                    provider_session_id=provider_session,
+                                    usage=gate.snapshot(),
+                                    terminal_evidence={
+                                        "failure": "external_block_without_page_observation",
+                                        "model_terminal": terminal,
+                                    },
+                                )
                             return CodingResult(
                                 "blocked",
                                 provider_session_id=provider_session,
@@ -1124,6 +1146,10 @@ class CodingRuntime:
             "Before any browser action, decompose the user goal into business-readable BDD steps "
             "and persist the plan using browserctl with "
             "{type:plan,steps:[{id,keyword,title,expected_result}]}. "
+            "Example valid invocation (replace with the full business-specific plan): "
+            "node /opt/tapper/browserctl.mjs "
+            '\'{"type":"plan","steps":[{"id":"open","keyword":"Given",'
+            '"title":"Open the requested website"}]}\'. '
             "Use JSON quoted keys; keyword is Given, When, Then, or And; never report "
             "a step passed "
             "from your own prose. Every subsequent helper action MUST include step "
@@ -1161,7 +1187,9 @@ class CodingRuntime:
             "all business outputs together must be <=32768 bytes. "
             "Verify actual page state with Playwright assertions and return business values "
             "extracted from the actual DOM, not constants copied from the expected result. "
-            "If required data or external login/captcha blocks progress, write "
+            "Only claim an external login/captcha blocker after observing it in an actual "
+            "browser response; a helper error or missing observation is not a website blocker. "
+            "If required data or observed external login/captcha blocks progress, write "
             "/workspace/tapper-input-request.json with "
             '`{"reason":"missing_input"|"external_block","question":"..."}` and stop. '
             "Do not claim success from prose. Approved origins: "
