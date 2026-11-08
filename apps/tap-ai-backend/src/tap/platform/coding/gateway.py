@@ -595,6 +595,11 @@ class BudgetGate:
                     if gate._on_settle is not None:
                         try:
                             gate._on_settle(record)
+                            if usage_verified and estimated_cost_usd is not None:
+                                # Release unused funds only after durable settlement succeeds.
+                                # Unknown usage and failed settlements retain their full reserve.
+                                with gate._lock:
+                                    gate._reserved_cost -= reservation - estimated_cost_usd
                         except Exception:
                             with gate._lock:
                                 gate.budget_exceeded = True

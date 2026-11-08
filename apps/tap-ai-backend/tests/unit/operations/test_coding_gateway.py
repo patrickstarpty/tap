@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import pytest
+
 from tap.platform.coding.gateway import BudgetGate
 
 
@@ -101,6 +103,45 @@ def test_failed_reservation_never_forwards():
         ) as gate:
             assert _send(gate) == 429
         assert Upstream.calls == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("settlement_fails", [False, True])
+def test_durable_settlement_releases_only_verified_unused_reservation(settlement_fails):
+    Upstream.calls = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def settle(record):
+        if settlement_fails:
+            raise ValueError("durable settlement failed")
+
+    try:
+        with BudgetGate(
+            f"http://127.0.0.1:{server.server_port}",
+            "secret",
+            max_calls=3,
+            max_seconds=5,
+            max_cost_usd=0.001025,
+            input_price_per_million=1.0,
+            output_price_per_million=2.0,
+            max_input_tokens=1000,
+            on_settle=settle,
+        ) as gate:
+            assert _send(gate) == (502 if settlement_fails else 200)
+            if settlement_fails:
+                assert gate.snapshot()["reserved_cost_usd"] == pytest.approx(0.001016)
+            else:
+                # Each response uses 2 input + 3 output tokens: USD 0.000008.
+                # A second maximum reservation fits; a third does not.
+                assert gate.snapshot()["reserved_cost_usd"] == pytest.approx(0.000008)
+                assert _send(gate) == 200
+            assert _send(gate) == 429
+        assert Upstream.calls == (1 if settlement_fails else 2)
     finally:
         server.shutdown()
         server.server_close()

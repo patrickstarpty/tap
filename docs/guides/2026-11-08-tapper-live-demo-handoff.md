@@ -8,9 +8,22 @@
 
 原交接时，用户要求先写交接文档，并从具体阻塞继续，不重走整套设计和评审。
 
-## 最新状态：公网依赖与真实入口修复（2026-11-08）
+## 最新状态：第二次重启后的 FWD 实测（2026-11-08）
 
-**FWD 指定资料询价和零模型回放仍未验收通过。** 下文金额、镜像和“尚未提交”描述均为分阶段历史；以本节为当前状态。代码 `4c485893` 已快进整合到 `develop`。
+**FWD 指定 30 岁资料的报价和零模型回放仍未验收通过。** 以下为当前状态，后续各节均为历史。第二次 Docker 重启已获用户单独批准并已执行，不能将这次批准当作后续无限重启许可。
+
+- 重启后按原始精确 ID 核验 14 个共享服务全部运行，有健康检查的服务均 healthy。无网络空容器启动耗时 0.94 秒。本次两个实测专属环境均已退出；最终共享服务与清理收据 `/private/tmp/tapper-fwd-second-restart-final.json`，重启前后收据同前缀 `-before.json`、`-after.json`、`-probe.json`。
+- 第一项真实任务 `e7ba31d4bbb04bccbac0a72c17110d88` 自动进入 browser 路由，但模型没有进行任何浏览器动作便声称存在验证码/登录/地域阻塞。浏览器账本实际为 **0 个动作、0 个页面观察**，所以该说法没有证据，不能要求用户处理假设的验证码。此任务 8 次调用、USD 0.019570。代码 `a16f7bbb` 已整合推送到 `develop`：没有真实页面观察的外部阻塞会在原预算内纠正一次，再失败则报告内部执行问题；明确提供合法 BDD 工具示例。51 项定向测试、591 项核心回归及相关静态检查通过。
+- 第二项任务 `052dacfdec824c75908bbdb2f028b3c9` 已保存 6 个 BDD 步骤，实际访问 FWD 产品列表和 MyTerm Plus 页面，收到真实 DOM、年龄默认值 25 及表单控件引用。产品列表导航超时仍保留可用 DOM，产品页导航成功。**尚未填写 30 岁等资料，也没有有效报价、冻结脚本或回放**。终态审计明确 `cutoff.cause=calls`，10 次编码调用加 1 次入口分流达到剩余 11 次上限；上层显示的 `OpenCode assistant reported an error` 是粗粒度错误，不能把它当作网站阻塞。
+- 最新证据目录 `/var/folders/zn/dg1zfbv96p19qstvcpgsjvyr0000gn/T/tap-browser-core-33ce36780fc9-evidence-xyqldal1`，含审计、浏览器动作账本、用量和停止收据（`stopped=true`）。脱敏工具回执 `/private/tmp/tapper-fwd-live7-tools-private.json`。模型先写了未完成的脚本骨架，再创建计划并访问页面；骨架不构成已验收脚本。上一项零动作误报证据目录为 `/var/folders/zn/dg1zfbv96p19qstvcpgsjvyr0000gn/T/tap-browser-core-465457a94a66-evidence-o8l3z5h9`。
+- 最新任务按 11 次、USD 0.0336968 核实结算；本轮合计 **20 次、USD 0.0539108**，原定 USD 0.60 尚余 USD 0.5460892，但本轮调用次数已耗尽。累计 **262 次、USD 1.524294**，当前累计调用上限 262；无待结算预留。账本 `/private/tmp/tap-opencode-task03-ledger.jsonl`，收据 `/private/tmp/tapper-fwd-second-restart-settlement.json`。后续付费运行须先取得增加调用次数的授权，不能因费用尚有余量而越过次数上限。
+- 核账发现生产网关虽已持久化实际费用，内存仍累计每次最高预留费用，会妨碍后续在原费用上限内继续。已修复为只在真实用量已核实且持久化结算成功后释放差额；未知用量与失败结算保留原最高预留，无持久化回调的诊断探针仍维持原保守规则。未以此扩大任何费用或调用上限。新增本机 HTTP 失败复现先红后绿，86 项网关/运行时测试及 591 项核心回归通过，Ruff/mypy 通过；日志 `/private/tmp/tapper-budget-settlement-red.log`、`/private/tmp/tapper-budget-settlement-green.log`、`/private/tmp/tapper-budget-settlement-core.log`。
+
+继续验收时沿用原始业务输入，通过 Tapper 自然语言入口运行；取得全部输入回读、非零实际 HKD 月保费、命名 JSON、原脚本/截图/trace 与零模型回放，才可标记通过。当前浏览器/编码镜像仍为下节 `60cbf673…` / `c56cac0a…`，新修复均为宿主 Python 逻辑。ADR-038 的未来 browser-use 路径未实现，Codex 侧栏渲染问题未确认修复。
+
+## 历史阶段：公网依赖与真实入口修复（2026-11-08）
+
+**FWD 指定资料询价和零模型回放仍未验收通过。** 下文金额、镜像和“尚未提交”描述均为分阶段历史；本节仅记录该阶段状态。代码 `4c485893` 已快进整合到 `develop`。
 
 - 用户要求取消正常浏览的逐域名许可。新会话及冻结包默认 `public_web`；公开网站、API/CDN 依赖可访问，本机、私网、元数据地址、DNS 重绑定及 HTTPS authority 保护保留。旧包默认 `declared_origins`。迁移 `0008_browser_network_mode`，跨应用边界见 [ADR-039](../decisions/2026-11-08-adr-039-browser-public-web-policy.md)。浏览器镜像 `sha256:60cbf6735f945b534fb0b8aca25e6ee6f257fcb6ee051231c5f2812e5b3a8dce`；编码镜像 `sha256:c56cac0aa6951e9dc2ab9ecbf62c3ee349d6b283c231659bb4e96e806b12c8c5`。
 - 真实 FWD 页面依赖 `https://ecapi.fwd.com.hk/data`。仅给起始域名的新策略无模型预检已加载保费：页面默认年龄 **25**，Standard 显示 HK$97.20 与优惠 HK$9.72/month。此数值只是网络依赖已加载的证据，**不是用户指定 30 岁的报价**。预检 `/private/tmp/tapper-fwd-public-web-preflight-20261108.json`，停止收据 true。
