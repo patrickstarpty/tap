@@ -47,8 +47,9 @@ export async function mailboxRequest(root, kind, payload, timeoutMs = 30000) {
   }
 }
 
-export function createModelShim({ root, token, port = 39001 }) {
+export function createModelShim({ root, token, port = 39001, deadlineAt = null }) {
   if (!root || !token || !Number.isInteger(port) || port < 0 || port > 65535) throw new Error('invalid shim configuration');
+  if (deadlineAt !== null && (!Number.isSafeInteger(deadlineAt) || deadlineAt <= 0)) throw new Error('invalid model deadline');
   return http.createServer(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
       response.writeHead(404, { 'Content-Length': '0' }).end();
@@ -82,10 +83,12 @@ export function createModelShim({ root, token, port = 39001 }) {
         return;
       }
       if (size === 0) throw new Error('empty model request');
+      const remaining = deadlineAt === null ? 30000 : Math.min(600000, deadlineAt - Date.now());
+      if (remaining <= 0) throw new Error('coding task deadline exceeded');
       const result = await mailboxRequest(root, 'model', {
         bodyBase64: Buffer.concat(chunks).toString('base64'),
         claimedSessionId: request.headers['x-opencode-session-id'] || null,
-      }, 30000);
+      }, remaining);
       const body = Buffer.from(result.bodyBase64 || '', 'base64');
       if (body.length > MAX_RESPONSE_BYTES || !Number.isInteger(result.status) || result.status < 100 || result.status > 599 ||
           typeof result.contentType !== 'string' || !/^(?:application\/json|text\/event-stream)(?:;[^\r\n]{0,80})?$/.test(result.contentType)) {

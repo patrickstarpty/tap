@@ -166,7 +166,7 @@ async function daemon() {
   const absoluteDeadline = Date.now() + seconds * 1000;
   const version = spawnSync('/opt/opencode/opencode', ['--version'], { encoding: 'utf8', timeout: 10000 });
   if (version.status !== 0 || version.stdout.trim() !== '1.19.5') throw new Error('OpenCode version mismatch');
-  const shim = createModelShim({ root: '/mailbox', token: process.env.TAP_MODEL_SHIM_TOKEN });
+  const shim = createModelShim({ root: '/mailbox', token: process.env.TAP_MODEL_SHIM_TOKEN, deadlineAt: absoluteDeadline });
   await new Promise(resolve => shim.listen(39001, '127.0.0.1', resolve));
   const child = spawn('/opt/opencode/opencode', ['serve', '--pure', '--hostname', '127.0.0.1', '--port', String(PORT)],
     { cwd: '/workspace', env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
