@@ -25,6 +25,7 @@ class Runtime(Protocol):
         deadline: int,
         *,
         session_id: str,
+        network_mode: str = "declared_origins",
     ) -> InspectorHandle: ...
     async def observe(
         self, handle: InspectorHandle, action: dict[str, Any]
@@ -110,6 +111,11 @@ class BrowserWorker:
                 tuple(row["request"]["allowed_origins"]),
                 row["request"]["deadline_seconds"],
                 session_id=row["id"],
+                **(
+                    {"network_mode": "public_web"}
+                    if row["request"].get("network_mode") == "public_web"
+                    else {}
+                ),
             )
             self._handles[row["id"]] = handle
             if not self.service.store.publish_owned(

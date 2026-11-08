@@ -16,18 +16,18 @@ export function isPublicIP(ip) {
   return net.isIP(ip) === 4 && !privateV4(ip);
 }
 
-export function validateTarget(raw, allowed) {
+export function validateTarget(raw, allowed, publicWeb = false) {
   const url = new URL(raw);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
-      !allowed.includes(url.origin) || url.hostname === 'localhost' ||
+      (!publicWeb && !allowed.includes(url.origin)) || ['localhost', 'localhost.localdomain'].includes(url.hostname) ||
       (net.isIP(url.hostname) && !isPublicIP(url.hostname))) {
     throw new Error('destination denied');
   }
   return url;
 }
 
-export function validateInnerRequest(request, outerOrigin, allowed) {
-  const outer = validateTarget(outerOrigin, allowed);
+export function validateInnerRequest(request, outerOrigin, allowed, publicWeb = false) {
+  const outer = validateTarget(outerOrigin, allowed, publicWeb);
   if (outer.protocol !== 'https:' || request.servername !== outer.hostname ||
       request.headers.host !== outer.host || request.headers[':authority'] !== undefined ||
       !request.url?.startsWith('/') || request.url.startsWith('//') ||
@@ -61,10 +61,10 @@ async function destination(url, policy) {
 
 if (process.env.TAP_BROWSER_PROXY_POLICY) {
   const policy = JSON.parse(process.env.TAP_BROWSER_PROXY_POLICY);
-  const { certificates } = createTaskCertificates(policy.allowed_origins);
+  const { getCertificate } = createTaskCertificates(policy.allowed_origins, { publicWeb: policy.public_web === true });
   const server = http.createServer(async (req, res) => {
     try {
-      const url = validateTarget(req.url, policy.allowed_origins);
+      const url = validateTarget(req.url, policy.allowed_origins, policy.public_web === true);
       if (url.protocol !== 'http:') throw new Error('HTTPS requires CONNECT');
       if (req.headers.host !== url.host) throw new Error('HTTP authority denied');
       const target = await destination(url, policy);
@@ -77,16 +77,16 @@ if (process.env.TAP_BROWSER_PROXY_POLICY) {
   });
   server.on('connect', async (req, client, head) => {
     try {
-      const url = validateTarget(`https://${req.url}`, policy.allowed_origins);
+      const url = validateTarget(`https://${req.url}`, policy.allowed_origins, policy.public_web === true);
       const target = await destination(url, policy);
-      const identity = certificates.get(url.hostname);
+      const identity = getCertificate(url.hostname);
       if (!identity) throw new Error('HTTPS identity unavailable');
       const inner = https.createServer({ ...identity, ALPNProtocols: ['http/1.1'],
         handshakeTimeout: 10_000 }, (innerReq, innerRes) => {
         try {
           validateInnerRequest({ method: innerReq.method, url: innerReq.url,
             headers: innerReq.headers, servername: innerReq.socket.servername }, url.origin,
-          policy.allowed_origins);
+          policy.allowed_origins, policy.public_web === true);
           if (innerReq.rawHeaders.filter((_, i) => i % 2 === 0).filter(x => x.toLowerCase() === 'host').length !== 1) {
             throw new Error('ambiguous Host');
           }

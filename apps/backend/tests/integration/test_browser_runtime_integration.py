@@ -1118,3 +1118,33 @@ test('lookup', async ({ page }) => {
     finally:
         await client.run(("docker", "stop", "--time", "2", site))
         await client.run(("docker", "rm", site))
+
+
+@pytest.mark.asyncio
+async def test_public_web_mode_reaches_proxy_and_preserves_private_destination_gate():
+    client = FakeDocker([])
+    runtime = BrowserRuntime(client, image="browser:test")
+    handle = await runtime.start_inspector(
+        "public", ("http://example.com",), 60, network_mode="public_web"
+    )
+    try:
+        policies = [
+            json.loads(arg.split("=", 1)[1])
+            for command, _ in client.commands
+            for arg in command
+            if arg.startswith("TAP_BROWSER_PROXY_POLICY=")
+        ]
+        assert policies[0]["public_web"] is True
+        assert any(
+            "/tmp/tapper-task-ca/ca.crt" in command for command, _ in client.commands
+        )
+        assert handle.network_mode == "public_web"
+        await runtime.observe(
+            handle, {"type": "navigate", "url": "https://dependency.example.org/"}
+        )
+        with pytest.raises(ValueError):
+            await runtime.observe(
+                handle, {"type": "navigate", "url": "http://169.254.169.254/"}
+            )
+    finally:
+        assert (await runtime.cancel(handle))["stopped"] is True

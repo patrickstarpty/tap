@@ -26,6 +26,7 @@ from .policy import (
     execution_succeeded,
     validate_evidence_path,
     validate_origin,
+    validate_network_mode,
     validate_url,
 )
 
@@ -147,6 +148,7 @@ class InspectorHandle:
     proxy: str
     allowed_origins: tuple[str, ...]
     session_id: str | None = None
+    network_mode: str = "declared_origins"
 
 
 @dataclass
@@ -267,7 +269,9 @@ class BrowserRuntime:
         deadline_at: float | None = None,
         state: ExecutionState | None = None,
         resources: OwnedResources | None = None,
+        network_mode: str = "declared_origins",
     ) -> tuple[str, str, str]:
+        validate_network_mode(network_mode)
         if not _ID.fullmatch(task_id):
             raise ValueError("invalid task ID")
         if not origins or any(validate_origin(origin) != origin for origin in origins):
@@ -311,6 +315,7 @@ class BrowserRuntime:
             proxy_env = json.dumps(
                 {
                     "allowed_origins": origins,
+                    "public_web": network_mode == "public_web",
                     "test_target": self.test_target,
                     "test_ca_pem": self.test_ca_pem,
                 },
@@ -355,7 +360,9 @@ class BrowserRuntime:
             )
             await require(("docker", "network", "connect", network, proxy))
             proxy_ca = ""
-            if any(origin.startswith("https://") for origin in origins):
+            if network_mode == "public_web" or any(
+                origin.startswith("https://") for origin in origins
+            ):
                 for _ in range(20):
                     ca_result = await self._call(
                         ("docker", "exec", proxy, "cat", "/tmp/tapper-task-ca/ca.crt"),
@@ -524,6 +531,7 @@ class BrowserRuntime:
         deadline: int,
         *,
         session_id: str | None = None,
+        network_mode: str = "declared_origins",
     ) -> InspectorHandle:
         if not 1 <= deadline <= 600:
             raise ValueError("invalid deadline")
@@ -547,6 +555,7 @@ class BrowserRuntime:
                 deadline,
                 deadline_at=deadline_at,
                 resources=resources,
+                network_mode=network_mode,
             )
             try:
                 await self._require(
@@ -583,7 +592,13 @@ class BrowserRuntime:
                 resources.cleanup_confirmed = await self._cleanup(resources)
                 raise
             handle = InspectorHandle(
-                task_id, browser, network, proxy, allowed_origins, session_id
+                task_id,
+                browser,
+                network,
+                proxy,
+                allowed_origins,
+                session_id,
+                network_mode,
             )
             self._handles[task_id] = handle
             self._inspector_handle_owners[task_id] = session_id
@@ -699,7 +714,11 @@ class BrowserRuntime:
         if action.get("type") not in _ACTIONS:
             raise ValueError("unsupported browser action")
         if action["type"] == "navigate":
-            validate_url(str(action.get("url", "")), handle.allowed_origins)
+            validate_url(
+                str(action.get("url", "")),
+                handle.allowed_origins,
+                network_mode=handle.network_mode,
+            )
         if len(json.dumps(action)) > 16_384:
             raise ValueError("browser action too large")
         payload = json.dumps(action, separators=(",", ":")).encode()
@@ -892,7 +911,12 @@ class BrowserRuntime:
                 json.dumps(inputs.get("input_data", {}))
             )
             (frozen / "policy.json").write_text(
-                json.dumps({"allowed_origins": bundle.allowed_origins})
+                json.dumps(
+                    {
+                        "allowed_origins": bundle.allowed_origins,
+                        "network_mode": bundle.network_mode,
+                    }
+                )
             )
             mounts = (
                 "--mount",
@@ -909,6 +933,7 @@ class BrowserRuntime:
                 deadline_at=state.deadline_at,
                 state=state,
                 resources=state.resources,
+                network_mode=bundle.network_mode,
             )
             # A distinct execution container receives only this frozen entry and output directory.
             result: CommandResult | None = None

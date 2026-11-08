@@ -326,3 +326,23 @@ async def test_session_readiness_cancellation_stops_known_session(monkeypatch):
     receipt = await running
     assert receipt["status"] == "canceled"
     assert canceled == ["/sessions/session-a/cancel"]
+
+
+@pytest.mark.asyncio
+async def test_new_sessions_and_frozen_bundles_use_public_web_without_domain_setup(monkeypatch):
+    client = BrowserApiClient("http://127.0.0.1:8002", "project-a", "x" * 16)
+    posted = []
+
+    async def request(method, path, body=None, key=None):
+        if method == "POST":
+            posted.append((path, body))
+        if path == "/bundles":
+            return {"bundle_id": "bundle-a"}
+        return {"session_id": "session-a", "status": "active"}
+
+    monkeypatch.setattr(client, "request", request)
+    await client.session("task-a", ["https://example.com"], 30, "session-key")
+    await client.bundle("task-a", "test", {}, ["https://example.com"], "bundle-key")
+    assert [path for path, _ in posted] == ["/sessions", "/bundles"]
+    assert all(body["network_mode"] == "public_web" for _, body in posted)
+    assert all(body["allowed_origins"] == ["https://example.com"] for _, body in posted)

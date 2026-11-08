@@ -69,6 +69,9 @@ bundles = Table(
     Column("input_sha256", String(64), nullable=False),
     Column("input_ref", String(128), nullable=False),
     Column("allowed_origins", JSON, nullable=False),
+    Column(
+        "network_mode", String(32), nullable=False, server_default="declared_origins"
+    ),
     Column("created_at", String(40), nullable=False),
 )
 executions = Table(

@@ -645,25 +645,18 @@ def test_long_child_result_is_private_and_parent_receives_bounded_reference():
 
 
 @pytest.mark.asyncio
-async def test_browser_goal_routes_without_selected_agent_or_manual_mode():
-    gateway = ScriptedGateway(
-        [
-            (
-                json.dumps(
-                    {
-                        "route": {
-                            "kind": "browser",
-                            "reason": "quote requires real page",
-                            "confidence": 0.95,
-                            "required_capabilities": ["browser"],
-                            "start_url": "https://example.test/quote",
-                        }
-                    }
-                ),
-                (),
-            )
-        ]
-    )
+@pytest.mark.parametrize("envelope", [True, False])
+@pytest.mark.parametrize("include_url", [True, False])
+async def test_browser_goal_routes_without_selected_agent_or_manual_mode(envelope, include_url):
+    route = {
+        "kind": "browser",
+        "reason": "quote requires real page",
+        "confidence": 0.95,
+        "required_capabilities": ["browser"],
+    }
+    if include_url:
+        route["start_url"] = "https://example.test/quote"
+    gateway = ScriptedGateway([(json.dumps({"route": route} if envelope else route), ())])
     graph = NativeWorkflowGraph(gateway, checkpointer=MemorySaver(), browser_available=True)
     result = await graph.run(
         VALIDATION_SCOPE, "auto-browser", "root", "Quote at https://example.test/quote", "qwen-plus"

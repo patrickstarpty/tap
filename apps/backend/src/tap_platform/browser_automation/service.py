@@ -124,6 +124,13 @@ class BrowserService:
                 raise Conflict(str(exc)) from None
             raise
 
+    @staticmethod
+    def _network_mode(body: dict[str, Any]) -> str:
+        mode = body.get("network_mode", "declared_origins")
+        if mode not in ("declared_origins", "public_web"):
+            raise Invalid("invalid browser network mode")
+        return str(mode)
+
     def create_session(
         self, principal: AccessPrincipal, body: dict[str, Any], key: str
     ) -> dict[str, Any]:
@@ -133,6 +140,7 @@ class BrowserService:
             return self._session(prior)
         task_id = self._id(body.get("task_id"), "task_id")
         origins = self._origins(body.get("allowed_origins"))
+        network_mode = self._network_mode(body)
         deadline = body.get("deadline_seconds", 120)
         if type(deadline) is not int or not 1 <= deadline <= 600:
             raise Invalid("invalid deadline")
@@ -144,7 +152,11 @@ class BrowserService:
             dict(
                 task_id=task_id,
                 status="pending",
-                request={"allowed_origins": origins, "deadline_seconds": deadline},
+                request={
+                    "allowed_origins": origins,
+                    "deadline_seconds": deadline,
+                    "network_mode": network_mode,
+                },
                 observation=None,
                 owner=None,
                 lease_until=None,
@@ -268,6 +280,7 @@ class BrowserService:
         ):
             raise Invalid("frozen input hash mismatch")
         origins = self._origins(body.get("allowed_origins"))
+        network_mode = self._network_mode(body)
         self._key(key)
         script_ref, _, _ = self.objects.persist(
             script, kind="script", max_bytes=256_000
@@ -287,6 +300,7 @@ class BrowserService:
                 input_sha256=body["input_sha256"],
                 input_ref=input_ref,
                 allowed_origins=origins,
+                network_mode=network_mode,
             ),
         )
         return self._bundle(row)
@@ -300,6 +314,7 @@ class BrowserService:
             "sha256": row["sha256"],
             "input_sha256": row["input_sha256"],
             "allowed_origins": row["allowed_origins"],
+            "network_mode": row["network_mode"],
             "created_at": row["created_at"],
             "entry_name": "flow.spec.ts",
         }
@@ -322,6 +337,7 @@ class BrowserService:
             row["input_sha256"],
             tuple(row["allowed_origins"]),
             row["created_at"],
+            network_mode=row["network_mode"],
         ), json.loads(data)
 
     def get_bundle(self, principal: AccessPrincipal, bundle_id: str) -> dict[str, Any]:

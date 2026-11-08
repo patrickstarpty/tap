@@ -39,12 +39,24 @@ def validate_origin(origin: str) -> str:
     return f"{parsed.scheme}://{parsed.hostname.lower()}{f':{port}' if port else ''}"
 
 
-def validate_url(url: str, allowed_origins: tuple[str, ...]) -> str:
+def validate_network_mode(mode: str) -> str:
+    if mode not in {"declared_origins", "public_web"}:
+        raise ValueError("invalid browser network mode")
+    return mode
+
+
+def validate_url(
+    url: str,
+    allowed_origins: tuple[str, ...],
+    *,
+    network_mode: str = "declared_origins",
+) -> str:
+    validate_network_mode(network_mode)
     parsed = urlsplit(url)
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("URL credentials forbidden")
     origin = validate_origin(f"{parsed.scheme}://{parsed.netloc}")
-    if origin not in allowed_origins:
+    if network_mode == "declared_origins" and origin not in allowed_origins:
         raise ValueError("origin not allowed")
     return url
 

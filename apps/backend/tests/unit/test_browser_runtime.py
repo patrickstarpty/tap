@@ -126,3 +126,26 @@ def test_evidence_root_may_have_symlink_ancestor(tmp_path: Path) -> None:
         validate_evidence_path(alias / "evidence", "capture.png")
         == alias / "evidence" / "capture.png"
     )
+
+
+def test_public_navigation_accepts_external_site_but_never_private_destinations():
+    from tap_platform.browser_automation.policy import validate_url
+
+    assert (
+        validate_url(
+            "https://api.example.net/path",
+            ("https://example.com",),
+            network_mode="public_web",
+        )
+        == "https://api.example.net/path"
+    )
+    with pytest.raises(ValueError):
+        validate_url("https://api.example.net/path", ("https://example.com",))
+    for url in (
+        "http://127.0.0.1",
+        "http://169.254.169.254",
+        "http://10.0.0.1",
+        "file:///etc/passwd",
+    ):
+        with pytest.raises(ValueError):
+            validate_url(url, (), network_mode="public_web")

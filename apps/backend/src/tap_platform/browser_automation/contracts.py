@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .policy import validate_origin
+from .policy import validate_origin, validate_network_mode
 
 
 @dataclass(frozen=True)
@@ -36,8 +36,10 @@ class BrowserBundle:
     allowed_origins: tuple[str, ...]
     created_at: str
     entry_name: str = "flow.spec.ts"
+    network_mode: str = "declared_origins"
 
     def __post_init__(self) -> None:
+        validate_network_mode(self.network_mode)
         if self.entry_name != "flow.spec.ts" or len(self.script_bytes) > 256_000:
             raise ValueError("invalid frozen browser entry")
         if hashlib.sha256(self.script_bytes).hexdigest() != self.sha256:

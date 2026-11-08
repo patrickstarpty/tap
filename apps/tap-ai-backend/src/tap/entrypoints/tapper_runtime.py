@@ -2460,7 +2460,11 @@ def _create_readiness(
                     rel_tol=1e-12,
                 )
             )
+        from tap.modules.workflows.application.observations import ObservedModelGateway
+
         gateway = getattr(embeddings, "gateway", None)
+        if isinstance(gateway, ObservedModelGateway):
+            gateway = gateway.delegate
         if not isinstance(gateway, LiteLLMModelGateway):
             return False
         health = await gateway.health()

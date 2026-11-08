@@ -47,3 +47,12 @@ test('decrypted HTTPS authority and SNI must match the frozen CONNECT origin', (
   assert.throws(() => validateInnerRequest({ method: 'GET', url: '/account', headers: { host: 'example.test' }, servername: 'other.test' }, outer, allowed));
   assert.throws(() => validateInnerRequest({ method: 'GET', url: 'https://other.test/account', headers: { host: 'example.test' }, servername: 'example.test' }, outer, allowed));
 });
+
+test('public web mode allows website dependencies while blocking local and metadata targets', async () => {
+  assert.equal(validateTarget('https://api.example.net/data', ['https://example.com'], true).hostname, 'api.example.net');
+  for (const target of ['http://127.0.0.1', 'http://10.0.0.1', 'http://169.254.169.254', 'http://localhost', 'https://user:secret@example.com', 'file:///etc/passwd']) {
+    assert.throws(() => validateTarget(target, [], true));
+  }
+  await assert.rejects(resolvePublicIPv4('rebound.example', async () => [{ address: '10.0.0.1', family: 4 }]));
+  assert.throws(() => validateInnerRequest({method:'GET',url:'/',headers:{host:'other.example'},servername:'api.example.net'}, 'https://api.example.net', [], true));
+});

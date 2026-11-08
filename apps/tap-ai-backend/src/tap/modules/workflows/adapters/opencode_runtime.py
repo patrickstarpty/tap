@@ -1132,7 +1132,9 @@ class CodingRuntime:
             "Then inspect the actual approved page with "
             '`node /opt/tapper/browserctl.mjs \'{"type":"navigate","url":"...","step":"open"}\'` '
             "and snapshot/click/fill/select/press/wait/screenshot using the same fixed helper; "
-            "only supplied origins are allowed. Then write /workspace/flow.spec.ts with a real "
+            "Public websites and page dependencies are accessible; private, local and metadata "
+            "destinations remain blocked. Stay within the user task. "
+            "Then write /workspace/flow.spec.ts with a real "
             "Playwright test that uses actual page observations. Wrap each planned business step "
             "in test.step using the EXACT keyword + space + title from the saved plan, retaining "
             "the plan order; assert the expected outcomes in Then steps. Keep "

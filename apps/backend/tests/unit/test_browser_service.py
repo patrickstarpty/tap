@@ -198,3 +198,34 @@ def test_action_idempotency_route_cannot_be_overwritten_by_body(tmp_path):
     with pytest.raises(Conflict, match="idempotency conflict"):
         browser.create_action(actor, second_session, action, "same-action-key")
     assert first["session_id"] == first_session
+
+
+def test_public_web_policy_is_persisted_for_session_and_frozen_replay(tmp_path):
+    browser = service(tmp_path)
+    body = {
+        "task_id": "task-a",
+        "allowed_origins": ["https://example.com"],
+        "network_mode": "public_web",
+    }
+    session = browser.create_session(principal("project-a"), body, "session-public")
+    saved = browser.store.get("session", "project-a", session["session_id"])
+    assert saved["request"]["network_mode"] == "public_web"
+    script = "// frozen"
+    bundle = browser.create_bundle(
+        principal("project-a"),
+        {
+            **body,
+            "script": script,
+            "sha256": hashlib.sha256(script.encode()).hexdigest(),
+            "input_data": {},
+            "input_sha256": hashlib.sha256(b"{}").hexdigest(),
+        },
+        "bundle-public",
+    )
+    frozen, _ = browser.frozen_bundle("project-a", bundle["bundle_id"])
+    assert frozen.network_mode == "public_web"
+    assert bundle["network_mode"] == "public_web"
+    with pytest.raises(Invalid):
+        browser.create_session(
+            principal("project-a"), {**body, "network_mode": "unrestricted"}, "bad-mode"
+        )

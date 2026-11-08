@@ -2908,8 +2908,9 @@ async def test_milvus_document_role_factory_owns_client_created_during_cancellat
     ids=["clean", "skipped-non-role-is-notice", "skipped-role-fails", "public-blob-fails"],
 )
 @pytest.mark.asyncio
+@pytest.mark.parametrize("observe_chat_models", [False, True])
 async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and_models_get(
-    chat_info, extra_rows, blob_private, unready_component, expected_detail
+    chat_info, extra_rows, blob_private, unready_component, expected_detail, observe_chat_models
 ) -> None:
     module = _runtime()
     settings = module.TapperSettings.from_mapping(valid_settings())
@@ -3004,6 +3005,7 @@ async def test_real_readiness_uses_head_ping_private_containers_empty_milvus_and
 
     models = module._create_embeddings(
         settings,
+        observe_chat_models=observe_chat_models,
         catalog=LiteLLMCatalog(
             base_url=settings.litellm_base_url,
             api_key=settings.litellm_api_key,

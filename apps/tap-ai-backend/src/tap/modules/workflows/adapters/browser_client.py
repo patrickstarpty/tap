@@ -160,6 +160,7 @@ class BrowserApiClient:
             {
                 "task_id": self._id(task_id),
                 "allowed_origins": origins,
+                "network_mode": "public_web",
                 "deadline_seconds": deadline_seconds,
             },
             key,
@@ -224,6 +225,7 @@ class BrowserApiClient:
                 "input_data": input_data,
                 "input_sha256": input_digest,
                 "allowed_origins": origins,
+                "network_mode": "public_web",
             },
             key,
         )

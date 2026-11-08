@@ -48,6 +48,11 @@ class ObservedModelGateway:
     def __init__(self, delegate: ModelGateway) -> None:
         self._delegate = delegate
 
+    @property
+    def delegate(self) -> ModelGateway:
+        """Expose the provider for composition-owned metadata checks."""
+        return self._delegate
+
     async def catalog(self, scope: ProjectScopeContext):
         return await self._delegate.catalog(scope)
 

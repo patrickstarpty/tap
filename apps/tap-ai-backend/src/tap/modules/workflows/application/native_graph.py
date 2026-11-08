@@ -189,6 +189,9 @@ class NativeWorkflowGraph:
         if not isinstance(decoded, dict):
             return None, raw
         route = decoded.get("route")
+        # Providers may return the requested route object without its envelope.
+        if route is None and {"kind", "reason", "confidence"} <= decoded.keys():
+            route = decoded
         suggestion = None
         if isinstance(route, dict):
             suggestion = RouteDecision(
@@ -256,7 +259,9 @@ class NativeWorkflowGraph:
             instructions.append(
                 "Choose native, browser, coding, or execute for this request and "
                 "explain the choice in "
-                "a JSON route object with kind, reason, confidence (0-1), required_capabilities. "
+                'JSON shaped as {"route":{"kind":"browser","reason":"...",'
+                '"confidence":0.95,"required_capabilities":["browser"],"start_url":"..."},'
+                '"answer":"..."}. The route kind must be native, browser, coding, or execute. '
                 "Use browser when the user asks to visit or interact with a website and obtain "
                 "an actual result (including quotes, forms or browser testing). No Agent selection "
                 "or mode switch is needed. Include start_url copied exactly from the user's goal. "

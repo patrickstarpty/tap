@@ -603,7 +603,7 @@ it("restores the same task's selected node, historical attempt and scroll after 
     workflowTaskId: "task-1",
     workflowNode: {
       nodeId: "sdet-1",
-      parentNodeId: null,
+      parentNodeId: "root",
       agentId: "sdet",
       agentRevisionId: "rev-sdet",
       displayName: "SDET",
