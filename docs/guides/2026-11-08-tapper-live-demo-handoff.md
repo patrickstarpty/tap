@@ -1,4 +1,121 @@
-# Tapper 真实演示失败后的交接
+# Tapper 真实演示与原生浏览器改造交接
+
+## 续接记录（2026-11-08，browser-use 实现进行中）
+
+用户已要求继续 browser-use 方案、直接实现、不写新实施计划。以下覆盖旧交接中的“停止修复/试跑”和原生循环选型；**FWD 全链路仍未验收，代码尚未提交或集成**。
+
+- 实现仍在 `feat/tapper-agent-workflows` 工作区。新增 `browser_use_runtime.py`，默认入口改为 browser-use OSS `0.11.13` Agent，通过现有 journaled LiteLLM gateway 调用模型；TAP 保存 BDD 计划、逐动作事件、DOM 回读及结束复核。
+- OpenCode 增加仅根据成功操作证据生成脚本的模式，不获取现场浏览器、不自动再次执行。原生循环仅保留兼容实现；原“展开年龄菜单即完成输入步骤”的失败测试已修复。
+- CDP 通过已有代理容器转接至本机回环端口，保留浏览器 `--internal` 网络及出站防火墙。Docker 默认网段耗尽，新浏览器任务使用 `10.240.0.0/12` 范围内独立 /28，隔离验证环境使用 `10.224.0.0/12` 范围内独立 /24。未重启 Docker，未清理历史容器或数据。
+- `make check`、`make test` 已通过；随后修正了 browser-use 模型超时必须沿用 TAP 配置的适配问题，新增定向测试通过。真实 SDK 在限定域名和 public_web 下均完成导航、DOM 读取与终态复核，停止回执 `stopped=true`；这只是 SDK 冒烟，不是 FWD 验收。
+- FWD01 / FWD03 在环境启动前失败，均零调用结算；FWD02 因 Docker 网段耗尽未启动浏览器，1 次路由调用 USD 0.0007764，已结算。FWD04 浏览器启动成功，但 SDK 请求超时参数超过网关上限，5 次预约仅 1 次结算（已知 USD 0.0007728），保守记账 USD 0.60，原始未结算记录保留。
+- FWD05 修复模型返回 JSON 内容而非 tool_calls 的适配，5 次 USD 0.0183748；FWD06 促使改为先单独生成、持久化 BDD 再启动 SDK，5 次 USD 0.0188564；FWD07 实际进入产品页，但核验属性被拒及模型超时，9 次预约、8 次结算，已知 USD 0.0474744，外部账本保守计 USD 0.60。均已结算外部预约，未知内部用量保留。
+- FWD08 / FWD09 使用已授权 qwen-max，分别 13 次 USD 0.3665876、10 次 USD 0.2399456，均已完整结算；仍未完成报价。确认 `aria-checked` / `aria-pressed` 参数被拒、超过四个动作的整批校验放大失败、页面树被二次 JSON 转义等问题。已修为读取实际 HTML/ARIA 属性、只校验和执行前四个动作、直接保留 SDK 页面树换行缩进。当前末页断言复核保留，已离开的页面不要求重新执行。
+- FWD10 已结束并结算，29 次 USD 0.2604836：实际读取 Standard 月费 HK$106.20，但反复核验，未完成全部输入验证、脚本和回放。新增每轮权威进度及重复成功读值拦截。外部账本截至 FWD10 为 **442 次、USD 4.6536484**（含历史未知用量的保守计费，不是供应商实际账单）。账本仍是 `/private/tmp/tap-opencode-task03-ledger.jsonl`，不得重复预约或重复结算。
+- 用户新增要求：原浏览器操作全程默认录像，显式脚本回放默认另录新录像。已接入浏览器启动录像、结束/取消保存 WebM、证据下载和 UI 播放；回放执行器开启每次录像。OpenCode 启动探测的单次超时现在在既有总期限内继续探测。
+- 自有站点完整链路已通过：browser-use SDK 操作 → OpenCode 合成脚本 → 显式零模型回放 → 两份不同录像。证据目录 `tap-browser-core-fb79ca81d978-evidence-f8h13q1e`（同下文临时根目录），日志 `/private/tmp/tapper-browser-use-video-e2e.log`。这是确定性模型替身验证，不是 FWD 验收。视频后端定向 29 passed、1 skipped；容量断言更新后定向 13 passed。
+- FWD11 已失败结束，15 次调用全部结算 USD 0.1101968；重复读取错误报价元素，未导出脚本或执行回放。累计 **457 次、USD 4.7638452**，无待结算预约。日志 `/private/tmp/tapper-browser-use-fwd11.log`，结算 `/private/tmp/tapper-browser-use-fwd11-settlement.json`。证据目录 `tap-browser-core-15b6a283631e-evidence-9sjjrui1`，失败原操作录像 `live-failed.webm`（14,067,761 字节）；浏览器停止回执 `stopped=true`。本轮没有追加付费重跑。
+- 针对实际失败补了同一失败动作三次即终止的限制，切换步骤不会清零，同一动作成功会清零。另修复 `browser.recording_saved` 未进入公开事件投影导致失败录像不显示的问题。两项都有失败→通过的定向回归，尚未再次真实网站验收。
+- 当前浏览器镜像为录像版，构建收据 `/private/tmp/tapper-browser-use-video-build.log`，不要再使用旧属性验证镜像 ID。自有站点原操作录像 24.56 秒、回放录像 1.92 秒，均可解码并包含实际业务页面；回放无模型调用。检查中的旧容量断言已修复，后续 Web、品牌与确定性质量检查通过；不把后来的定向测试冒充整树重跑。
+
+自动审批曾拒绝整段测试文件写入（改用增量补丁完成），也拒绝移除 `--internal`（未执行，改用代理转接）。当前没有待审批动作。
+
+## 当前结论（2026-11-08，最新交接）
+
+**当前版本尚未通过真实全链路验收。FWD 真实询价、产物导出和零模型回放仍未完成。原生浏览器改造尚未提交、整合或推送。** 用户本次要求写交接文档，因此停止继续修复和付费试跑，保留现场。本节至“历史记录”前为当前状态；后面的旧额度、运行中描述、镜像和执行指令均只代表历史阶段，不可直接沿用。
+
+直接由主 agent 操作浏览器曾读到指定资料下的 Standard 报价：原价 **HK$106.20/月**，页面优惠 **HK$10.62/月**（首年 90% 折扣，GOODGA）。这是独立浏览器基线，不是 Tapper 成功，也不是当前仍有效的报价承诺。年龄控件为 readonly combobox，须展开后点击 30；Standard 卡片本身显示报价，其链接进入 contact 页面，不应为了读取报价继续进入投保。
+
+## 用户目标与持续授权
+
+- 从 Tapper 普通自然语言入口开始，自动选择能力，无需勾选 Browser run 或特意 @agent；手动选择只是可选覆盖。
+- 收到需求先持久化 BDD 步骤，再执行并同步 Progress。外层参考 Codex 的 Outputs / Subagents / Sources；业务步骤可展开真实动作、输入、结果、耗时和错误。不能只显示 `Activity recorded`、`Task failed`，不能用动作请求发出代替步骤完成。
+- 真实业务：从 `https://www.fwd.com.hk/online-insurance/en/` 产品列表进入 MyTerm Plus，合成资料为 30 岁、男性、不吸烟、本人、10 年续保、HKD 2,000,000、Standard、按月。逐项回读真实输入，获得非零 HKD 月保费；保存命名 JSON、截图、trace、原始生成脚本；单独触发零模型回放。停在公开报价，不提交投保、联系方式、身份、健康或付款资料，不绕过登录/验证码。
+- 用户要求主 agent 亲自做，不再交给 Sol；明确允许替换失败设计，不考虑沉没成本。不得把主 agent 手工浏览、合成模型或旧版本成功当作产品验收。
+- 用户已授权“额度你随便用，但要小心使用”：自行设置有限批次、先预留后按证据结算，无需反复询问旧次数上限。保持费用及期限边界，未知用量保守记账。
+- **最新明确授权：允许将保存的真实 FWD 页面上下文、询价资料和动作回执发送给 qwen-plus / qwen-max 做有界双模型对照；用户要求“不造假”。** 原动作被自动审批拒绝，理由是当时未认定发送给两个模型获授权；随后用户已经补充明确授权。真实 FWD 双模型对照仍未执行，接手可按此授权执行，不应再次索要同一授权。
+- 两次 Docker Desktop 重启授权均已使用；不能据此无限重启。本次未重启。正常公开浏览已取消逐域名审批，仍保留私网和元数据地址保护。
+
+## 代码位置与未提交范围
+
+| 位置 | 分支与状态 |
+| --- | --- |
+| `/Users/patrick/Desktop/Workspace/ai-native/tap` | `develop`，HEAD 与本地 `origin/develop` 均为 `a3926e913ce124c986a774e9a564916e001c5510`；这是当前已推送基线 |
+| `/Users/patrick/.codex/worktrees/tapper-agent-workflows/tap` | `feat/tapper-agent-workflows`，同一 HEAD；全部原生浏览器改造留在未提交工作区 |
+
+本交接文档更新在 **主目录**，尚未提交；实施工作树里的同名文档仍旧，后续整合不要覆盖本次交接。未提交改造共 26 个已跟踪修改、9 个新增文件，接手先用 `git status --short` 核对，不要重置工作树。主目录原有 `.env.bak-20261015`、`apps/tap-ai-backend/.quality/` 不读取、不修改、不暂存。只允许从主目录 `.env` 使用已授权网关配置，不能输出或提交密钥。
+
+当前设计与计划位于实施工作树：
+
+- `docs/superpowers/specs/2026-11-08-tapper-direct-browser-execution-design.md`
+- `docs/superpowers/plans/2026-11-08-tapper-direct-browser-execution.md`
+- 已修改 `docs/architecture.md`、ADR-038、产品路线图；仍标注验证中，不得提前改为验收通过。
+
+### 已实现但仍待最终验证
+
+1. `deploy/browser/page-actions.mjs` 新增可见控件观察（含 readonly、value、checked、href）、实际 DOM read/assert；`inspector.mjs` 保存持续 trace，并在 finish 时生成实际 JSON、截图与 trace。
+2. `apps/backend/src/tap_platform/browser_automation/` 扩展结果、证据、会话归属和完成回执。完成实时会话后登记执行结果，生成脚本阶段不再次访问网站；显式 replay 仍走现有执行器。
+3. `apps/tap-ai-backend/src/tap/modules/workflows/application/direct_browser.py` 新增原生 `browser_step` 循环：plan → observe → act → read/verify → finish；只允许当前观察的引用，拒绝 readonly fill、伪造结果和过期引用；从成功动作纯生成回放脚本。无 FWD 专用选择器或保费常量。
+4. `adapters/direct_browser_runtime.py` 通过现有记账网关发送原生 assistant tool_calls/tool messages，默认浏览器任务不再启动 OpenCode 编码容器。入口、工具注册、dispatch/queries、测试网关及 E2E runner 已接入。
+5. `RunDetail.tsx` 区分业务完成与回放脚本保存失败，保留可展开错误。确定性测试覆盖动态表单、多页、错误预期、缺输入、取消和独立回放。
+6. LIVE13 后补了已验证输出与剩余 BDD 步骤的持续上下文、保留历史 extracted 数据、取消时等待模型结算，以及捕获取消与后续预留之间的 `WorkflowDispatchBlocked` 竞态。这些修复尚未经历下一次真实 FWD 运行。
+
+### 当前明确未修复的问题（第一优先级）
+
+新增测试 `test_opening_a_combobox_does_not_complete_the_fill_step` **仍失败**。`direct_browser.py` 当前在成功动作后直接 `completed.add(step)`，仅展开年龄下拉框、值仍为 25，就把“填写 30 岁”标为完成。证据 `/private/tmp/tapper-direct-step-red.log`：1 failed、5 passed。不能隐藏失败或放宽测试。
+
+待实施方向：把中间动作成功与业务步骤验证完成分开，依据实际读值/断言或有证据的页面转换推进步骤；保留所有动作回执。需同时考虑更新控件后旧 verified outputs 的时效性，不能把旧值当当前值。具体规则尚未实施，不要将建议写成已完成设计。
+
+## 最近真实尝试与证据
+
+| 尝试 | 结果与费用 |
+| --- | --- |
+| LIVE11，旧编码路线 | 反复安装依赖，0 浏览器动作；8 次，USD 0.020736。此后转为原生浏览器循环 |
+| LIVE12，task `b9f7de7566d1437eb2f5e28a885d62ff` | 原工具历史包装错误导致重复 plan，未操作页面。12 次预留、11 次核实结算；已知 USD 0.0151348，另一次用量不明，账本按整批 USD 0.50 保守计入。取消后状态 recovering，浏览器已停 |
+| LIVE13，task `080595536db1487da34ea3a302b55fd5` | 真实进入产品列表及 MyTerm Plus，选 30 并回读，回读本人 true；随后重复年龄/本人检查，未完成其余输入与报价。33 次全部结算，实际 USD 0.2150352。取消后 recovering，浏览器停止收据 true |
+
+LIVE13 观察到上下文压缩未保留已提取值，循环也未稳定提供剩余步骤；修复已写入工作树。不能因此宣称重复问题已在真实任务解决。取消后 recovering 的已复现竞态也有定向修复，仍需完整运行验证。
+
+证据根目录均为 `/var/folders/zn/dg1zfbv96p19qstvcpgsjvyr0000gn/T/`：
+
+- LIVE12：`tap-browser-core-55a79ede6590-evidence-lr_vumyx`；状态目录 `tap-browser-core-55a79ede6590-state-akoat3tp`。
+- LIVE13：`tap-browser-core-2be672114737-evidence-xf4foe5e`；状态目录 `tap-browser-core-2be672114737-state-_4yy07to`。
+- 重点读取 `browser-session-ledger.json`（真实动作与观察）、`live-unexpected-snapshot.json`（BDD 状态）、各 task 的 `*-audit.json`、`node-error-snapshot-private.json`。不要读取或导出隐藏推理。
+- 日志 `/private/tmp/tapper-fwd-direct-live12.log`、`/private/tmp/tapper-fwd-direct-live13.log`；结算分别为同前缀 `-settlement.json`。
+
+**双模型对照边界：** 已做的仅是虚构普通订单表单诊断，两模型均正确选择剩余地区字段。脚本 `/private/tmp/tapper-browser-next-decision.py`、结果 `/private/tmp/tapper-browser-next-decision-result.json`，2 次合计 USD 0.0024928。它不含真实 FWD 验收结果，不能用于宣称 FWD 通过。后续真实对照应另存文件，明确记录来自 LIVE13 的实际观察序号、控件引用、已验证值和原始模型输出，不能补造页面状态。
+
+## 验证状态与镜像
+
+- 已完成的旧树检查：`make check`、`make test` 通过，日志 `/private/tmp/tapper-direct-check-final.log`、`/private/tmp/tapper-direct-test-final.log`。**之后改了记忆/进度/取消逻辑并新增上述失败测试，所以不是最终工作树全绿证明。**
+- 浏览器服务/runtime 定向 29 passed、1 deselected；真实主机 Chromium 只读组合框/动态报价测试 2 passed；JS 36 passed。原生循环/runtime 在新增组合框失败测试前 9 passed。UI、dispatch/stream 定向测试曾通过。
+- 完整确定性 UI 矩阵曾通过，含 lookup、form、multipage、wrong expected、missing input、cancel、显式零模型 replay；日志 `/private/tmp/tapper-direct-matrix.log`，证据目录 `tap-browser-core-2eb9098926a6-evidence-sgky4xzu`（同上临时根目录）。这早于最新记忆/取消修改，且模型为合成模型。
+- 浏览器镜像 tag `tapper-browser-runtime:1.62.1-arm64`；构建 ID `sha256:7d6d0be1098685321f0169b3cd7c61f25b8ab008d40208b6a2372ca5ce1d22c0`；日志 `/private/tmp/tapper-direct-build.log`。之后仅改宿主 Python 的状态逻辑，不能误用下文旧镜像记录。
+- Codex 侧栏 `Tab content couldn't render` 未确认修复；浮窗浏览器正常不等于侧栏修复。旧临时 UI 地址已结束，不能继续给用户打开过期地址。
+
+## 费用与资源（本次交接重新核对）
+
+账本 `/private/tmp/tap-opencode-task03-ledger.jsonl` 当前累计 **365 次，USD 2.548624**，无待结算预留。金额含历史未知用量的保守计入，不等于供应商实际账单。最近账本批次上限为 365 次 / USD 2.6461312；次数已用完，但用户持续授权允许下一次设定新的有限批次。使用 `scripts/opencode_probe/ledger.py` 的 `authorize_continuation` → `reserve` → `settle`，不要删账或把保守金额冒充实际账单。
+
+本次交接按旧收据中的精确容器 ID 核验：**原 14 个共享服务全部运行**；有健康检查者 healthy。LIVE12 和 LIVE13 各 7 个专属容器均已退出，数据库及卷保留供取证，不是运行中任务。更早实验仍有已退出容器，未删除。新收据 `/private/tmp/tapper-direct-handoff-state-20261108.json` 保存共享服务、容器列表和账本摘要。本次没有启动付费尝试、重启 Docker 或清理数据。
+
+## 接手顺序与现有运行入口
+
+1. 先核对两个工作区状态，保留未提交改造与主目录最新交接。直接修复组合框进度误报，跑相关失败测试与循环/runtime 回归；不要重走整套设计、不要重试旧 OpenCode 安装路径。
+2. 如需对照，使用已授权的真实 LIVE13 页面观察给 qwen-plus/qwen-max 各做一次有限决策检查。按真实回执构造已验证状态；仅作为诊断，不算产品验收。
+3. 新增有限预留后，从 Tapper 普通输入运行原始 FWD 需求。现有 `/private/tmp/tapper-fwd-official-refs-launcher.py` 读取原冻结业务输入，调用 wrapper，当前每次 40 次 / USD 0.60 / 900 秒；实际值先读脚本核对。不要启动重复任务。
+4. launcher 依赖原 case 文件 `tap-browser-core-800f642cbd98-state-ay3g8ou6/cases.json`（同临时根目录）、`/private/tmp/tapper-fwd-official-refs-wrapper.py` 及主目录 `.env`。元数据写 `/private/tmp/tapper-fwd-official-refs-metadata.json`，包含新 UI/API/evidence 路径。`/private/tmp/tapper-fwd-progress-brief.py OWNER` 可只读查看动作与预算。临时文件可能被系统清除，启动前检查存在性，不要编造缺失内容。
+5. 取消走正常 workflow command API，等待模型结算及真实浏览器停止，再导出证据；不要先杀 worker。确认报价、所有输入回读、JSON/截图/trace/原脚本与显式零模型 replay 全部成立，才标记验收通过。
+6. 对最终变更做必要检查，更新计划、路线图、交接；验收后整合到 `develop` 并推送，保留主目录无关文件。未验收不得把 `main` 标为稳定接受版本。
+
+可复制到新会话：
+
+> 读取主目录 `docs/guides/2026-11-08-tapper-live-demo-handoff.md` 最上方最新交接。主 agent 亲自继续，勿委派 Sol。实施工作树 `/Users/patrick/.codex/worktrees/tapper-agent-workflows/tap` 有未提交原生浏览器改造；develop/a3926e91 只是基线。FWD 真正全链路仍未通过。先修复已红的 `test_opening_a_combobox_does_not_complete_the_fill_step`，然后用实际观察验证记忆/进度/取消修复，再通过 Tapper 自然语言入口完成指定 MyTerm Plus 询价、全部输入回读、命名 JSON、截图、trace、原脚本和独立零模型回放。用户已授权谨慎使用模型额度及真实 FWD 上下文的 qwen-plus/qwen-max 有界对照，不要重复询问。已有虚构订单诊断不是 FWD 证据，主 agent 手动读到报价也不是产品成功。保留账本与现场，先预留后结算；不要重启 Docker、删除共享数据或覆盖主目录最新交接。验收后验证并整合推送 develop，不造假。
+
+## 历史记录（以下均为旧阶段快照）
+
+以下保留原始诊断与失败证据供追溯；其中“最新”“当前”“正在运行”和授权限制均以本文件上方最新交接为准。
+
 
 ## 接手先读
 

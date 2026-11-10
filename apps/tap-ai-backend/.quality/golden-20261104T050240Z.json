@@ -1,0 +1,295 @@
+{
+  "model": "deterministic",
+  "schema": "kb-golden-report-v1",
+  "metrics": {
+    "fact": {
+      "citationRecall": 1.0,
+      "keywordRecall": 1.0,
+      "abstainAccuracy": 1.0,
+      "answered": 1.0
+    },
+    "procedure": {
+      "citationRecall": 1.0,
+      "keywordRecall": 0.8,
+      "abstainAccuracy": 1.0,
+      "answered": 1.0
+    },
+    "abstain": {
+      "abstainAccuracy": 1.0
+    },
+    "total": {
+      "citationRecall": 1.0,
+      "keywordRecall": 0.9444,
+      "abstainAccuracy": 1.0,
+      "answered": 1.0
+    }
+  },
+  "cases": [
+    {
+      "id": "kb-fact-001",
+      "category": "fact",
+      "question": "账户连续输错几次密码会被锁定？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "用户在 15 分钟内连续输错密码 5 次，账户将被自动锁定。",
+      "citedDocuments": [
+        "account-lockout-policy.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-002",
+      "category": "fact",
+      "question": "自动锁定的账户多久后自动解锁？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "自动锁定的账户在 30 分钟后自动解锁。",
+      "citedDocuments": [
+        "account-lockout-policy.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-003",
+      "category": "fact",
+      "question": "客户订单数据需要保留多少年？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "客户订单数据保留 7 年，以满足财务审计要求。",
+      "citedDocuments": [
+        "data-retention.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-004",
+      "category": "fact",
+      "question": "应用调试日志保留多久？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "应用调试日志保留 30 天后自动清理。",
+      "citedDocuments": [
+        "data-retention.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-005",
+      "category": "fact",
+      "question": "生产部署的标准维护窗口是什么时间？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "生产部署的标准维护窗口为每周二和周四晚上 22:00 至 24:00。",
+      "citedDocuments": [
+        "release-process.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-006",
+      "category": "fact",
+      "question": "金额低于 5000 元的采购由谁审批？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "金额低于 5000 元的采购由部门经理审批。",
+      "citedDocuments": [
+        "approval-workflow.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-007",
+      "category": "fact",
+      "question": "2025 版密码规则要求密码长度至少多少位？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "账户密码长度至少为 12 位，必须包含大写字母、小写字母、数字和特殊字符中的三类。",
+      "citedDocuments": [
+        "password-policy-v2.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-008",
+      "category": "fact",
+      "question": "缺陷逃逸率是什么意思？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "缺陷逃逸率指上线后发现的缺陷数占该版本缺陷总数的比例。",
+      "citedDocuments": [
+        "glossary.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-009",
+      "category": "fact",
+      "question": "What is the Recovery Point Objective (RPO)?",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "RPO（Recovery Point Objective，恢复点目标）指故障时允许丢失数据的最长时间范围。",
+      "citedDocuments": [
+        "glossary.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-010",
+      "category": "fact",
+      "question": "How long are audit logs retained?",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "审计日志（audit logs）保留 3 年，期间不得修改或删除。",
+      "citedDocuments": [
+        "data-retention.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-011",
+      "category": "fact",
+      "question": "紧急修复需要几名技术负责人批准？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "紧急修复（Hotfix）可以绕过代码冻结，但需要两名技术负责人共同批准。",
+      "citedDocuments": [
+        "release-process.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-012",
+      "category": "fact",
+      "question": "新密码不能与最近几次使用过的密码相同？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "新密码不得与最近 5 次使用过的密码相同。",
+      "citedDocuments": [
+        "password-policy-v2.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-fact-013",
+      "category": "fact",
+      "question": "服务账户连续认证失败会怎样？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "服务账户不适用自动锁定，但连续认证失败会触发安全告警。",
+      "citedDocuments": [
+        "account-lockout-policy.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-procedure-001",
+      "category": "procedure",
+      "question": "发布流程中，变更单由谁审核批准？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "2. 变更评审委员会审核变更单并给出批准结论。",
+      "citedDocuments": [
+        "release-process.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-procedure-002",
+      "category": "procedure",
+      "question": "冒烟测试失败后应该如何回滚？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "冒烟测试失败时，运维团队必须在 15 分钟内启动回滚。",
+      "citedDocuments": [
+        "release-process.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-procedure-003",
+      "category": "procedure",
+      "question": "采购申请提交后系统如何路由审批人？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "1. 申请人在采购系统填写采购申请单并上传报价单。",
+      "citedDocuments": [
+        "approval-workflow.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-procedure-004",
+      "category": "procedure",
+      "question": "采购审批人超时未审批会怎样处理？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "3. 审批人在 3 个工作日内完成审批，超时将自动提醒其上级。",
+      "citedDocuments": [
+        "approval-workflow.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-procedure-005",
+      "category": "procedure",
+      "question": "账户被锁定 3 次后如何人工解锁？",
+      "abstained": false,
+      "abstentionReason": null,
+      "answer": "同一账户在 24 小时内被锁定 3 次时，必须由服务台人工解锁。",
+      "citedDocuments": [
+        "account-lockout-policy.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "kb-abstain-001",
+      "category": "abstain",
+      "question": "公司年会在哪个城市举办？",
+      "abstained": true,
+      "abstentionReason": "insufficient_evidence",
+      "answer": "",
+      "citedDocuments": [],
+      "error": null
+    },
+    {
+      "id": "kb-abstain-002",
+      "category": "abstain",
+      "question": "员工每年有多少天带薪年假？",
+      "abstained": true,
+      "abstentionReason": "insufficient_evidence",
+      "answer": "",
+      "citedDocuments": [],
+      "error": null
+    },
+    {
+      "id": "kb-abstain-003",
+      "category": "abstain",
+      "question": "办公室打印机如何连接无线网络？",
+      "abstained": true,
+      "abstentionReason": "insufficient_evidence",
+      "answer": "",
+      "citedDocuments": [],
+      "error": null
+    },
+    {
+      "id": "kb-abstain-004",
+      "category": "abstain",
+      "question": "密码长度至少需要多少位？",
+      "abstained": true,
+      "abstentionReason": "conflicting_sources",
+      "answer": "",
+      "citedDocuments": [],
+      "error": null
+    },
+    {
+      "id": "kb-abstain-005",
+      "category": "abstain",
+      "question": "食堂的午餐供应时间是几点？",
+      "abstained": true,
+      "abstentionReason": "insufficient_evidence",
+      "answer": "",
+      "citedDocuments": [],
+      "error": null
+    }
+  ]
+}
