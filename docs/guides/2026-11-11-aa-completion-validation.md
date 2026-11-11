@@ -106,3 +106,24 @@ replacement selector, silently normalize arbitrary CSS, retry a dispatched
 click, or weaken the unknown-outcome fence. Waiting is a separate supported
 read-only action. A new real Chromium test reproduced the 30-second failure before
 this change. Further live FWD success still requires separate acceptance.
+
+## AIA and environment results
+
+The first bounded real AIA run used the existing qwen-plus alias, reached the
+iframe quote form, filled the synthetic sum insured, selected the gender/smoking
+controls and opened the date picker. After changing its month, the model reused
+an obsolete snapshot ref for a click. That inspector had started before the
+zero-match precheck fix and correctly stopped as unknown after timeout. There
+was no verified quote. Recorded usage: 17 calls / USD 0.103962; its full initial
+30-call / USD 0.50 reservation remains retained.
+
+The second AIA attempt failed in normal launcher/parser startup before any task
+or model execution (`usage-manifest` was empty). Concurrent owned fixture startup
+identified Docker VM `/tmp` ENOSPC, despite ample Mac host disk space. No paid
+retry is issued until the environment is healthy. This unused attempt remains
+within the originally approved AIA allowance; it is not an additional budget.
+
+The broader repository `make test` and `make check` passed after the bridge and
+assert_read implementation; browser socket tests required the authorized local
+execution context rather than the restricted sandbox. The subsequent readonly
+and zero-match inspector changes passed 16 real Chromium context/alias tests.
