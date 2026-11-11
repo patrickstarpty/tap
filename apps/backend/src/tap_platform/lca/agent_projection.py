@@ -197,9 +197,10 @@ def project_agent_actions(
                 reason = reason or "unsupported_wait_constraint"
         elif operation == "press":
             arguments = {"key": request.get("key")}
-            if canonical_target is not None and bound.get("args", {}).get(
-                "key"
-            ) != request.get("key"):
+            if canonical_target is not None and (
+                not isinstance(bound, dict)
+                or bound.get("args", {}).get("key") != request.get("key")
+            ):
                 reason = reason or "press_key_evidence_mismatch"
         elif operation in {"fill", "select"}:
             arguments = {"value": request.get("value")}
