@@ -89,6 +89,9 @@ async function observe(action, actuate) {
   let screenshot_ref = null;
   let screenshot_data = null;
   let action_error = null;
+  // Only this trusted direct inspector can prove that no write call began.
+  // Controlled input paths retain their separate, conservative outcome fence.
+  let write_started = !controlled && !actuate && ['navigate','click','fill','select','press','scroll'].includes(action.type) ? false : undefined;
   let extracted = null;
   let trace_data = null;
   let result_data = null;
@@ -109,6 +112,7 @@ async function observe(action, actuate) {
   }
   if (['click','fill','select','press','read','wait'].includes(action.type)) await guardTarget(page, action);
   if (!actuate && action.type === 'navigate') {
+    write_started = true;
     await page.goto(action.url, { timeout: 45_000, waitUntil: 'domcontentloaded' });
   }
   if(controlled && actuate) {
@@ -118,6 +122,13 @@ async function observe(action, actuate) {
     await actuate();
     if(action.actor_kind==='agent') { await context.tracing.start({screenshots:true,snapshots:true}); traceActive=true; }
   }
+  if (!actuate && !controlled && ['click','fill','select','press'].includes(action.type)) {
+    // Parse and resolve the locator read-only. A syntax/strict-target error here
+    // cannot have applied a browser write; do not turn it into unknown outcome.
+    const count = await page.locator(action.selector).count();
+    if (count > 1) throw new Error('strict mode violation: target is ambiguous before write');
+  }
+  if (write_started === false) write_started = true;
   if (!actuate && action.type === 'click') await page.locator(action.selector).click({ timeout: 30_000 });
   if (!actuate && action.type === 'fill') await page.locator(action.selector).fill(bounded(action.value, 4000), { timeout: 30_000 });
   if (!actuate && action.type === 'scroll') await page.mouse.wheel(action.delta_x, action.delta_y);
@@ -185,7 +196,7 @@ async function observe(action, actuate) {
   }
   return { session_id: process.env.TAP_BROWSER_SESSION, sequence, url: bounded(page.url(), 2048),
     title: bounded(await page.title().catch(() => ''), 256), bounded_snapshot: bounded(snapshot), fields,
-    screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, error: pageCrashed ? 'browser page crashed' + (action_error ? '\n' + action_error : '') : action_error };
+    screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, ...(write_started !== undefined ? {write_started} : {}), error: pageCrashed ? 'browser page crashed' + (action_error ? '\n' + action_error : '') : action_error };
 }
 
 const liveControl = controlled ? createLiveControl({page,observe,onControl:async kind=>{

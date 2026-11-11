@@ -137,6 +137,7 @@ test('a pointer-blocking overlay beyond the page prefix reaches the model with i
   });
   const result=await execute({type:'click',step:'blocked_age',selector:'#age'});
   assert.match(result.error,/intercepts pointer events/);
+  assert.equal(result.write_started,true);
   assert.doesNotMatch(result.bounded_snapshot,/Review this notice/);
   const blocker=result.related_fields?.find(field=>field.context==='pointer_blocker');
   assert.ok(blocker,'the model must see the actual blocking element');
@@ -175,6 +176,7 @@ test('a semantic modal exposes only its visible close control', async t=>{
   });
   const result=await execute({type:'click',step:'blocked_age',selector:'#age'});
   assert.match(result.error,/intercepts pointer events/);
+  assert.equal(result.write_started,true);
   const modal=result.related_fields?.find(field=>field.id==='notice-dialog');
   assert.ok(modal);
   assert.match(modal.popup_text,/Read this before proceeding/);
@@ -266,4 +268,12 @@ test('an unaffordable context reports omission and points to full evidence', asy
   assert.match(result.observation_detail,/evidence_file|scoped snapshot/);
   assert.ok(fs.existsSync(result.evidence_file));
   assert.ok(JSON.stringify(result.related_fields || []).length<=2200);
+});
+
+test('malformed selector is rejected before a write is started with recoverable evidence', async t=>{
+  const {execute} = await fixture(t,false);
+  const result=await execute({type:'fill',step:'operate',selector:'[',value:'30'});
+  assert.match(result.error,/selector/);
+  assert.equal(result.write_started,false);
+  assert.ok(result.bounded_snapshot);
 });

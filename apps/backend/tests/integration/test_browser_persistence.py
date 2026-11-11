@@ -1062,3 +1062,68 @@ def test_late_inspector_evidence_keeps_originating_session(tmp_path):
     assert row is not None
     assert row["session_id"] == first["session_id"]
     assert row["session_id"] != second["session_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "write_started,expected", [(False, "failed"), (True, "unknown"), (None, "unknown")]
+)
+async def test_legacy_write_failure_requires_explicit_no_write_proof(
+    tmp_path, write_started, expected
+):
+    store, objects, service, principal, _ = setup(tmp_path)
+
+    class InspectorRuntime(Runtime):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id
+        ):
+            return InspectorHandle(
+                task_id, "browser", "network", "proxy", allowed_origins, session_id
+            )
+
+        async def observe(self, handle, action):
+            return BrowserObservation(
+                handle.session_id,
+                1,
+                "https://example.com",
+                "Page",
+                "current snapshot",
+                (),
+                None,
+                "selector failed",
+                write_started=write_started,
+            )
+
+    session = service.create_session(
+        principal,
+        {
+            "task_id": "task-a",
+            "allowed_origins": ["https://example.com"],
+            "deadline_seconds": 60,
+        },
+        "session-key",
+    )
+    action = service.create_action(
+        principal,
+        session["session_id"],
+        {
+            "type": "fill",
+            "selector": "[",
+            "value": "synthetic",
+        },
+        "action-key",
+    )
+    worker = BrowserWorker(
+        service,
+        InspectorRuntime(BrowserEvidenceSink(store, objects)),
+        "project-a",
+        "owner-a",
+    )
+    await worker.tick()
+    await worker.drain()
+    await worker.tick()
+    await worker.drain()
+    receipt = service.get_action(principal, session["session_id"], action["action_id"])
+    assert receipt["status"] == expected
+    if write_started is False:
+        assert receipt["observation"]["bounded_snapshot"] == "current snapshot"

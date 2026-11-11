@@ -66,6 +66,7 @@ class BrowserObservation:
     extracted: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
     evidence: tuple[dict[str, Any], ...] = ()
+    write_started: bool | None = None
 
 
 @dataclass(frozen=True)

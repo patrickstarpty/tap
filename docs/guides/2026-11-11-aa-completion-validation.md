@@ -35,3 +35,34 @@ These checks use controlled fixtures with no external model calls or new model
 spend. They do not establish autonomous FWD/AIA quotation success, AI-generated
 LCA draft integration, or full release/remote-CI completion. Those remain separate
 acceptance requirements.
+
+## Public FWD tool-level preflight
+
+With the task-owned local Browser runtime and existing configured upstream proxy,
+opening the public MyTerm Plus quote page, selecting synthetic age `30` through
+the current observed readonly combobox, and exact `value=30` readback all returned
+no error. The browser was confirmed stopped afterward. This used no model and
+submitted no application, contact details or payment. It proves this tool-level
+interaction works today, not an autonomous full quote task or recorded acceptance
+video. The probe had no evidence sink, so its cleanup reported that no session
+recording was persisted; observation JSON was saved separately.
+
+## Recoverable pre-write failure regression
+
+The normal-stack synthetic Chat → OpenCode → browser acceptance exposed a
+regression: the browser worker classified every failed write as unknown, including
+an invalid CSS selector that could not have executed. This stopped the task in
+`recovering`, so model correction never ran. No paid model was used.
+
+The trusted direct inspector now reports whether a write call actually started.
+It parses/counts the locator before dispatch and rejects malformed/ambiguous
+locators read-only. Only an explicit `write_started=false` from a legacy/direct
+inspector allows the worker to publish a known failure. Missing/true proof and
+controlled-input paths keep the unknown fence. The workflow preserves the actual
+error and current observation for a known failure; it does not retry automatically.
+Navigation, click/fill/select/press execution and uncertain outcomes remain
+conservative. This does not declare all timeouts safe to retry.
+
+Verification: new Python and Chromium regressions failed before the fix; 145
+browser/authority/progress Python tests and 53 inspector Chromium/Node tests then
+passed. Full normal-stack acceptance is rerun separately after this fix.
