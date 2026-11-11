@@ -61,10 +61,12 @@ def test_local_worker_receives_runtime_selection_but_not_model_credentials():
         "TAP_BROWSER_EXECUTION_MODE": "local",
         "TAP_BROWSER_LOCAL_TEST_TARGET": "http://127.0.0.1:18080",
         "TAP_BROWSER_LOCAL_OPENCODE_BINARY": "/private/tmp/opencode",
+        "TAP_BROWSER_LOCAL_UPSTREAM_PROXY": "http://127.0.0.1:7897",
         "LITELLM_MASTER_KEY": "private-model-credential",
     }
     selected = runner.selected_browser_env(env)
     assert selected["TAP_BROWSER_EXECUTION_MODE"] == "local"
     assert selected["TAP_BROWSER_LOCAL_TEST_TARGET"] == "http://127.0.0.1:18080"
+    assert selected["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] == "http://127.0.0.1:7897"
     assert "LITELLM_MASTER_KEY" not in selected
     assert "TAP_BROWSER_LOCAL_OPENCODE_BINARY" not in selected
