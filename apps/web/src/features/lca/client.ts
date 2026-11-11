@@ -20,7 +20,8 @@ export type Operation =
   | "wait_for"
   | "assert_visible"
   | "assert_value"
-  | "assert_checked";
+  | "assert_checked"
+  | "assert_read";
 export interface LcaTarget {
   id: string;
   kind: "test_id" | "role" | "css";

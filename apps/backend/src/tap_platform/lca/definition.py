@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -82,6 +83,7 @@ class Step(StrictModel):
         "assert_visible",
         "assert_value",
         "assert_checked",
+        "assert_read",
     ]
     arguments: dict[str, Text | int | float | bool | ParameterReference]
     target_id: Identifier | None = None
@@ -157,7 +159,9 @@ class DebugDefinition(StrictModel):
                     )
         for step in self.steps:
             schema = argument_schema(step.operation)
-            if set(step.arguments) != set(schema):
+            if step.operation == "assert_read":
+                check_read_arguments(step.arguments)
+            elif set(step.arguments) != set(schema):
                 raise ValueError("Operation arguments do not match its schema")
             if step.operation in {"navigate", "assert_url"}:
                 if step.target_id is not None:
@@ -209,6 +213,15 @@ class DebugDefinition(StrictModel):
 
 def argument_schema(operation: str) -> dict[str, str]:
     return {
+        "assert_read": {
+            "attribute": "string",
+            "name": "string",
+            "equals": "string",
+            "contains": "string",
+            "pattern": "string",
+            "nonempty": "boolean",
+            "positive": "boolean",
+        },
         "navigate": {"url": "string"},
         "assert_url": {"url": "string"},
         "fill": {"value": "string"},
@@ -222,6 +235,87 @@ def argument_schema(operation: str) -> dict[str, str]:
         "drag_drop": {"destination_target_id": "string"},
         "assert_checked": {"checked": "boolean"},
     }.get(operation, {})
+
+
+READ_ATTRIBUTES = frozenset(
+    {
+        "text",
+        "value",
+        "checked",
+        "title",
+        "alt",
+        "placeholder",
+        "role",
+        "aria-label",
+        "aria-description",
+        "aria-valuenow",
+        "aria-valuetext",
+        "aria-expanded",
+        "aria-selected",
+        "aria-disabled",
+        "aria-pressed",
+        "aria-invalid",
+        "data-testid",
+    }
+)
+
+
+def check_read_pattern(pattern: str) -> None:
+    """A deliberately small, linear-time JS/Python regex intersection.
+
+    No groups, alternation, backreferences or counted repetition. At most one
+    quantifier, anchored at the start, prevents both exponential backtracking
+    and quadratic unanchored searches on the bounded DOM value.
+    """
+    if not pattern or len(pattern) > 200:
+        raise ValueError("Read pattern must contain 1 to 200 characters")
+    token = re.compile(
+        r"\\[dDsSwWnrt.^$*+?\[\]{}()|\\/]|\[[a-zA-Z0-9 ^_.,:$%/\-]+\]|[^\\[\]()|{}*+?]"
+    )
+    offset = 0
+    quantifiers = 0
+    while offset < len(pattern):
+        match = token.match(pattern, offset)
+        if not match:
+            raise ValueError("Unsupported read pattern syntax")
+        atom = match.group()
+        offset = match.end()
+        if offset < len(pattern) and pattern[offset] in "*+?":
+            if atom in {"^", "$"}:
+                raise ValueError("Invalid read pattern quantifier")
+            quantifiers += 1
+            offset += 1
+    if quantifiers > 1 or (quantifiers and not pattern.startswith("^")):
+        raise ValueError("Read patterns allow one start-anchored quantifier")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ValueError("Invalid read pattern") from exc
+
+
+def check_read_arguments(arguments: Mapping[str, object]) -> None:
+    schema = argument_schema("assert_read")
+    if (
+        arguments.keys() - schema.keys()
+        or arguments.get("attribute") not in READ_ATTRIBUTES
+    ):
+        raise ValueError("Unsupported read attribute or constraint")
+    if not (
+        arguments.keys() & {"equals", "contains", "nonempty", "positive", "pattern"}
+    ):
+        raise ValueError("Read assertion requires a condition")
+    for key, value in arguments.items():
+        check_scalar(schema[key], value)
+        if key in {"nonempty", "positive"} and value is not True:
+            raise ValueError("Read boolean conditions must be true")
+        if key == "name" and (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value)
+        ):
+            raise ValueError("Read output name must be an identifier")
+        if key == "pattern":
+            assert isinstance(value, str)
+            check_read_pattern(value)
 
 
 def check_argument(

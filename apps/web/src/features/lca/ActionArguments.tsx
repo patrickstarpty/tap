@@ -30,6 +30,77 @@ export function ActionArguments({
   const update = (key: string, value: Scalar | { parameter: string }) => {
     onChange({ ...step, arguments: { ...step.arguments, [key]: value } });
   };
+  if (step.operation === "assert_read") {
+    const toggle = (key: string, enabled: boolean, value: Scalar) => {
+      const args = { ...step.arguments };
+      if (enabled) args[key] = value;
+      else delete args[key];
+      onChange({ ...step, arguments: args });
+    };
+    const hasCondition = [
+      "equals",
+      "contains",
+      "nonempty",
+      "positive",
+      "pattern",
+    ].some((key) => key in step.arguments);
+    return (
+      <>
+        <p>
+          Read the exact DOM value. At least one condition is required. Patterns
+          use a bounded subset: no groups or alternatives, at most one
+          start-anchored quantifier.
+        </p>
+        {fields.map((field) => {
+          const enabled = field.key in step.arguments;
+          const optional = field.key !== "attribute";
+          const label = `Step ${step.id}`;
+          return (
+            <div key={field.key}>
+              {optional && (
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`${label} enable ${field.key}`}
+                    checked={enabled}
+                    onChange={(e) =>
+                      toggle(field.key, e.target.checked, field.default)
+                    }
+                  />
+                  {field.key}
+                </label>
+              )}
+              {enabled && field.type !== "boolean" && (
+                <label>
+                  {field.key}
+                  {field.choices ? (
+                    <select
+                      aria-label={`${label} ${field.key} value`}
+                      value={String(step.arguments[field.key])}
+                      onChange={(e) => update(field.key, e.target.value)}
+                    >
+                      {field.choices.map((value) => (
+                        <option key={value}>{value}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <textarea
+                      aria-label={`${label} ${field.key} value`}
+                      value={String(step.arguments[field.key] ?? "")}
+                      onChange={(e) => update(field.key, e.target.value)}
+                    />
+                  )}
+                </label>
+              )}
+            </div>
+          );
+        })}
+        {!hasCondition && (
+          <p role="alert">Read assertion requires at least one condition.</p>
+        )}
+      </>
+    );
+  }
   return (
     <>
       {fields.map((field) => {
