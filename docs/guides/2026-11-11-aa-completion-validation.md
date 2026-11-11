@@ -169,3 +169,13 @@ or planning. A future separately bounded approved run can specify:
 
 The current implementation/fixture work remains provider-free. Model preference
 does not enlarge the approved spending limit or guarantee successful acceptance.
+
+A later read-only reconciliation resolved the conservative reservation uncertainty:
+all action reservations were settled (10/10, 7/7, 17/17, 23/23), all 57 settlements
+had costs, all 53 coding proxy settlements had verified usage, the four planning
+settlements identified `dashscope/qwen-plus`, and all four browser session ledgers
+confirmed stopped/canceled. The earlier `recovering` workflow state did not mean
+missing model billing. Using the ledger's conservatively rounded cost totals,
+the original per-site allowance therefore has FWD 43 calls / USD 0.935803 and
+AIA 20 calls / USD 0.715413 remaining. This reconciliation itself used no model;
+no new paid run is started without an explicit bounded continuation decision.
