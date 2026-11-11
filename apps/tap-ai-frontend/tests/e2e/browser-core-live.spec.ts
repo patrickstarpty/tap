@@ -351,7 +351,24 @@ for (const scenario of cases) {
       {
         await link.click();
         await expect(lca.getByLabel("AA task ID")).toHaveValue(taskId);
+        const previewResponse = lca.waitForResponse((response) =>
+          new URL(response.url()).pathname.endsWith(
+            `/agent-tasks/${taskId}/preview`,
+          ),
+        );
         await lca.getByRole("button", { name: "Preview AA task" }).click();
+        const preview = (await (await previewResponse).json()) as {
+          definition: {
+            steps: {
+              id: string;
+              operation: string;
+              target_id?: string;
+              arguments: { name?: string };
+            }[];
+            bdd_steps: { id: string; keyword: string; action_ids: string[] }[];
+            source_acceptance: unknown;
+          };
+        };
         await expect(
           lca.getByRole("button", { name: "Use as unsaved draft" }),
         ).toBeVisible();
@@ -359,6 +376,39 @@ for (const scenario of cases) {
         await expect(lca.getByLabel("Flow title")).toHaveValue(
           `AA task ${taskId}`,
         );
+        const resultRead = [...preview.definition.steps]
+          .reverse()
+          .find(
+            (step) =>
+              step.operation === "assert_read" &&
+              step.arguments.name === "result",
+          );
+        expect(resultRead?.target_id).toBeTruthy();
+        const groupIndex = preview.definition.bdd_steps.findIndex((group) =>
+          group.action_ids.includes(resultRead!.id),
+        );
+        expect(preview.definition.bdd_steps[groupIndex].keyword).toBe("Then");
+        await lca
+          .getByRole("navigation", { name: "BDD steps" })
+          .locator("ol > li > button")
+          .nth(groupIndex)
+          .click();
+        await lca
+          .getByRole("button", { name: "Add assertion", exact: true })
+          .click();
+        await lca
+          .getByRole("combobox", { name: /^Step .+ operation$/u })
+          .selectOption("assert_text_exact");
+        await lca
+          .getByRole("combobox", { name: /^Step .+ target$/u })
+          .selectOption(resultRead!.target_id!);
+        await lca
+          .getByRole("textbox", { name: /^Step .+ text value$/u })
+          .fill("AC-42 / 120 / MATCH");
+        await lca.screenshot({
+          path: `${evidenceDir}/form-lca-edited-assertion.png`,
+          fullPage: true,
+        });
         const saved = lca.waitForResponse(
           (r) =>
             r.request().method() === "POST" &&
@@ -370,6 +420,32 @@ for (const scenario of cases) {
         const save = await saved;
         expect(save.ok(), await save.text()).toBe(true);
         const flow = await save.json();
+        const originalIds = new Set(
+          preview.definition.steps.map((step) => step.id),
+        );
+        const added = flow.definition.steps.filter(
+          (step: { id: string }) => !originalIds.has(step.id),
+        );
+        expect(added).toHaveLength(1);
+        expect(added[0]).toMatchObject({
+          operation: "assert_text_exact",
+          target_id: resultRead!.target_id,
+          arguments: { text: "AC-42 / 120 / MATCH" },
+        });
+        expect(
+          flow.definition.bdd_steps.find(
+            (group: { id: string }) =>
+              group.id === preview.definition.bdd_steps[groupIndex].id,
+          ).action_ids,
+        ).toContain(added[0].id);
+        expect(flow.definition.source_acceptance).toEqual(
+          preview.definition.source_acceptance,
+        );
+        writeFileSync(
+          `${evidenceDir}/form-lca-edited-definition.json`,
+          JSON.stringify(flow.definition, null, 2),
+        );
+
         expect(
           flow.definition.steps.some(
             (s: { operation: string }) => s.operation === "assert_read",
