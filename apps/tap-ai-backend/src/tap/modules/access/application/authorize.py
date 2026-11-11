@@ -21,6 +21,10 @@ from tap.modules.access.domain.policy import (
 )
 
 _PROJECT_ACTION_RESOURCE_KINDS = {
+    "lca.read": "lca",
+    "lca.write": "lca",
+    "lca.execute": "lca",
+    "lca.publish": "lca",
     "knowledge.citation.read": "knowledge-citation",
     "knowledge.evidence.read": "knowledge-evidence",
     "knowledge.original.read": "knowledge-original",

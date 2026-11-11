@@ -55,11 +55,14 @@ def create_app(
     validation_mode: bool = False,
     allowed_origins: frozenset[str] = frozenset(),
     lca_gateway: LcaGateway | None = None,
+    lca_gateway_from_environment: bool = True,
 ) -> FastAPI:
     """Build the HTTP application without starting middleware or external clients."""
     app = FastAPI(title="TAP API", version="0.1.0", lifespan=lifespan)
     app.state.http_services = services or HttpServices()
-    app.state.lca_gateway = lca_gateway or LcaGateway.from_environment()
+    app.state.lca_gateway = lca_gateway or (
+        LcaGateway.from_environment() if lca_gateway_from_environment else None
+    )
     app.include_router(lca_router)
     validate_origins(allowed_origins)
     app.state.validation_mode = validation_mode

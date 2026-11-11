@@ -369,3 +369,145 @@ def test_reconcile_by_durable_run_id_survives_reload_without_original_client_key
     assert new_service.reconcile_run(actor(), intent["id"]) == recovered
     with pytest.raises(LcaNotFound):
         new_service.reconcile_run(actor(principal_id="bob"), intent["id"])
+
+
+def test_publish_requires_verified_pass_and_release_is_immutable(services):
+    service, browser = services
+    publisher = actor(
+        actions=actor().actions | {"lca.releases.publish", "lca.releases.read"}
+    )
+    flow = create(service)
+    run = service.debug_run(
+        publisher, flow["id"], 1, {"url": "https://example.com"}, "release-proof"
+    )
+    with pytest.raises(LcaConflict):
+        service.publish_release(publisher, flow["id"], 1, run["id"], "publish")
+    from dataclasses import asdict
+    from tap_platform.browser_automation.objects import BrowserEvidenceSink
+
+    sink = BrowserEvidenceSink(browser.store, browser.objects)
+    evidence = [
+        asdict(
+            sink.persist(
+                "project-a",
+                flow["id"],
+                run["execution_id"],
+                kind,
+                {
+                    "screenshot": b"\x89PNG\r\n\x1a\nfixture",
+                    "trace": b"PK\x03\x04fixture",
+                    "result": b"{}",
+                }[kind],
+                1000,
+            )
+        )
+        for kind in ("screenshot", "trace", "result")
+    ]
+    browser.store.update(
+        "execution",
+        "project-a",
+        run["execution_id"],
+        status="passed",
+        evidence=evidence,
+        result={
+            "outputs": [
+                {
+                    "schema_version": "lca-debug-result-v1",
+                    "definition_digest": run["definition_digest"],
+                    "steps": [{"step_id": "open", "status": "passed"}],
+                }
+            ]
+        },
+    )
+    release = service.publish_release(publisher, flow["id"], 1, run["id"], "publish")
+    assert release == service.publish_release(
+        publisher, flow["id"], 1, run["id"], "publish"
+    )
+    assert count(browser, "executions") == 1
+    service.save_draft(publisher, flow["id"], 1, definition())
+    assert service.get_release(publisher, release["id"])["version"] == 1
+    replay = service.run_release(
+        publisher, release["id"], {"url": "https://example.com"}, "release-replay"
+    )
+    assert (
+        service.get_run(publisher, replay["id"])["definition_snapshot"]["version"] == 1
+    )
+    assert replay["classification"] == "published"
+    assert (
+        service.run_release(
+            publisher, release["id"], {"url": "https://example.com"}, "release-replay"
+        )["id"]
+        == replay["id"]
+    )
+    with pytest.raises(LcaNotFound):
+        service.get_release(
+            actor(principal_id="bob", actions=publisher.actions), release["id"]
+        )
+    with pytest.raises(PermissionError):
+        service.publish_release(actor(), flow["id"], 2, run["id"], "forbidden")
+
+
+@pytest.mark.parametrize(
+    "corruption", ["wrong_run", "stale", "missing_evidence", "failed_step"]
+)
+def test_release_cannot_publish_unverified_or_changed_draft(services, corruption):
+    from dataclasses import asdict
+    from tap_platform.browser_automation.objects import BrowserEvidenceSink
+
+    service, browser = services
+    publisher = actor(
+        actions=actor().actions | {"lca.releases.publish", "lca.releases.read"}
+    )
+    flow = create(service)
+    run = service.debug_run(
+        publisher, flow["id"], 1, {"url": "https://example.com"}, "verification"
+    )
+    sink = BrowserEvidenceSink(browser.store, browser.objects)
+    evidence = [
+        asdict(
+            sink.persist(
+                "project-a",
+                flow["id"],
+                run["execution_id"],
+                kind,
+                {
+                    "screenshot": b"\x89PNG\r\n\x1a\nfixture",
+                    "trace": b"PK\x03\x04fixture",
+                    "result": b"{}",
+                }[kind],
+                1000,
+            )
+        )
+        for kind in ("screenshot", "trace", "result")
+    ]
+    browser.store.update(
+        "execution",
+        "project-a",
+        run["execution_id"],
+        status="passed",
+        evidence=[] if corruption == "missing_evidence" else evidence,
+        result={
+            "outputs": [
+                {
+                    "schema_version": "lca-debug-result-v1",
+                    "definition_digest": run["definition_digest"],
+                    "steps": [
+                        {
+                            "step_id": "open",
+                            "status": "failed"
+                            if corruption == "failed_step"
+                            else "passed",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    if corruption == "stale":
+        service.save_draft(publisher, flow["id"], 1, definition())
+    if corruption == "wrong_run":
+        flow = service.create_flow(publisher, "other-flow", "Other", definition())
+    with pytest.raises(LcaConflict):
+        service.publish_release(publisher, flow["id"], 1, run["id"], "must-not-publish")
+    assert service.list_releases(publisher, flow["id"]) == []
+    assert count(browser, "executions") == 1

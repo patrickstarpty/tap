@@ -37,6 +37,15 @@ export TAPPER_API_HOST="${TAPPER_API_HOST:-127.0.0.1}"
 export TAPPER_API_PORT="${TAPPER_API_PORT:-8000}"
 export TAPPER_WEB_HOST="${TAPPER_WEB_HOST:-127.0.0.1}"
 export TAPPER_WEB_PORT="${TAPPER_WEB_PORT:-5173}"
+export TAP_LCA_ENABLED="${TAP_LCA_ENABLED:-false}"
+case "$TAP_LCA_ENABLED" in true|false) ;; *) echo "TAP_LCA_ENABLED must be true or false" >&2; exit 2 ;; esac
+export TAP_WEB_PORT="${TAP_WEB_PORT:-5174}"
+if [ "$TAP_LCA_ENABLED" = true ]; then
+  export TAP_BROWSER_API_ORIGIN="${TAP_BROWSER_API_ORIGIN:-http://127.0.0.1:8002}"
+  export TAP_LCA_BACKEND_URL="${TAP_LCA_BACKEND_URL:-$TAP_BROWSER_API_ORIGIN}"
+  export VITE_TAP_WEB_URL="http://127.0.0.1:$TAP_WEB_PORT"
+  export VITE_TAPPER_URL="http://$TAPPER_WEB_HOST:$TAPPER_WEB_PORT"
+fi
 export TAP_BROWSER_SERVICE_MODE="${TAP_BROWSER_SERVICE_MODE:-managed}"
 case "$TAP_BROWSER_SERVICE_MODE" in
   managed|external) ;;
@@ -90,6 +99,7 @@ tapper_dev_workflow_pid=""
 tapper_dev_browser_api_pid=""
 tapper_dev_browser_worker_pid=""
 tapper_dev_web_pid=""
+tapper_dev_tap_web_pid=""
 tapper_dev_ready_file=""
 tapper_dev_cleanup_started=0
 tapper_dev_shutdown_grace_seconds=90
@@ -117,7 +127,7 @@ cleanup() {
     tapper_dev_ready_file=""
   fi
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
+  for child_pid in "$tapper_dev_tap_web_pid" "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     terminate_pid "$child_pid" || cleanup_failed=1
@@ -126,7 +136,7 @@ cleanup() {
   deadline=$(( SECONDS + tapper_dev_shutdown_grace_seconds ))
   while :; do
     live=0
-    for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
+    for child_pid in "$tapper_dev_tap_web_pid" "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" \
       "$tapper_dev_worker_pid" \
       "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
       if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
@@ -138,14 +148,14 @@ cleanup() {
     sleep 0.1 || cleanup_failed=1
   done
 
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
+  for child_pid in "$tapper_dev_tap_web_pid" "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
       kill -KILL "$child_pid" 2>/dev/null || cleanup_failed=1
     fi
   done
-  for child_pid in "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
+  for child_pid in "$tapper_dev_tap_web_pid" "$tapper_dev_web_pid" "$tapper_dev_test_design_pid" "$tapper_dev_generation_pid" "$tapper_dev_workflow_pid" "$tapper_dev_browser_api_pid" "$tapper_dev_browser_worker_pid" "$tapper_dev_graph_pid" "$tapper_dev_suggestion_pid" "$tapper_dev_langfuse_pid" \
     "$tapper_dev_worker_pid" \
     "$tapper_dev_relay_pid" "$tapper_dev_api_pid"; do
     if [ -n "$child_pid" ]; then
@@ -229,7 +239,7 @@ if [ "${TAP_WORKFLOW_ENABLED:-false}" = "true" ]; then
   (exec uv run --project apps/tap-ai-backend python -m tap.entrypoints.tapper_workflow_worker) &
   tapper_dev_workflow_pid=$!
 fi
-if [ "${TAP_BROWSER_CODING_ENABLED:-false}" = "true" ] && \
+if { [ "${TAP_BROWSER_CODING_ENABLED:-false}" = "true" ] || [ "$TAP_LCA_ENABLED" = true ]; } && \
   [ "$TAP_BROWSER_SERVICE_MODE" = "managed" ]; then
   (exec bash "$tapper_dev_script_dir/run-tap-browser.sh" api) &
   tapper_dev_browser_api_pid=$!
@@ -240,8 +250,18 @@ fi
   --config "$tapper_dev_vite_config" \
   --host "$TAPPER_WEB_HOST" --port "$TAPPER_WEB_PORT" --strictPort) &
 tapper_dev_web_pid=$!
+if [ "$TAP_LCA_ENABLED" = true ]; then
+  (exec "$tapper_dev_repo_root/apps/web/node_modules/.bin/vite" "$tapper_dev_repo_root/apps/web" \
+    --config "$tapper_dev_repo_root/apps/web/vite.config.ts" --host 127.0.0.1 --port "$TAP_WEB_PORT" --strictPort) &
+  tapper_dev_tap_web_pid=$!
+fi
 
 child_exit_status() {
+  if [ -n "$tapper_dev_tap_web_pid" ] && ! kill -0 "$tapper_dev_tap_web_pid" 2>/dev/null; then
+    if wait "$tapper_dev_tap_web_pid"; then status=1; else status=$?; fi
+    tapper_dev_tap_web_pid=""
+    return "$status"
+  fi
   if [ -n "$tapper_dev_parser_pid" ] && ! kill -0 "$tapper_dev_parser_pid" 2>/dev/null; then
     if wait "$tapper_dev_parser_pid"; then status=1; else status=$?; fi
     tapper_dev_parser_pid=""
@@ -342,7 +362,7 @@ while [ "$SECONDS" -lt "$ready_deadline" ]; do
     status=$?
     exit "$status"
   fi
-  if { [ "${TAP_BROWSER_CODING_ENABLED:-false}" != "true" ] || \
+  if { { [ "${TAP_BROWSER_CODING_ENABLED:-false}" != "true" ] && [ "$TAP_LCA_ENABLED" != true ]; } || \
     curl --fail --silent --show-error --max-time 2 --max-filesize 65536 \
       "${TAP_BROWSER_API_ORIGIN:-http://127.0.0.1:8002}/health/live" >/dev/null 2>&1; } && \
     curl --fail --silent --show-error --max-time 2 --max-filesize 65536 \
@@ -373,6 +393,24 @@ tapper_dev_ready_file=""
 if [ "$ready" -ne 1 ]; then
   echo "Tapper applications did not become ready." >&2
   exit 1
+fi
+if [ "$TAP_LCA_ENABLED" = true ]; then
+  curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$TAP_WEB_PORT/" >/dev/null
+  "$tapper_dev_repo_root/.venv/bin/python" - "http://127.0.0.1:$TAP_WEB_PORT" <<'PYREADY'
+import json, sys
+from urllib.parse import quote
+from urllib.request import urlopen
+try:
+    origin = sys.argv[1]
+    with urlopen(origin + "/api/lca/context", timeout=5) as response:
+        context = json.load(response)
+    assert context.get("available") is True and isinstance(context.get("project_id"), str)
+    with urlopen(origin + "/api/projects/" + quote(context["project_id"], safe="") + "/lca/flows", timeout=5) as response:
+        assert isinstance(json.load(response), list)
+except Exception:
+    raise SystemExit("TAP LCA gateway/core readiness failed; check project credentials and migrations") from None
+PYREADY
+  echo "TAP LCA ready at http://127.0.0.1:$TAP_WEB_PORT/?module=low-code"
 fi
 echo "Tapper local applications ready."
 

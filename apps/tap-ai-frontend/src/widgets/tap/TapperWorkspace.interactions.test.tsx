@@ -1192,7 +1192,9 @@ describe("Tap product workspace interactions", () => {
     });
     expect(
       within(navigation)
-        .getAllByRole("button")
+        .getAllByLabelText(
+          /^(Tapper|Test Management|Low Code Automation|Test Insights)$/,
+        )
         .map((item) => item.getAttribute("aria-label")),
     ).toEqual([
       "Tapper",

@@ -10,17 +10,16 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from tap.interfaces.http.scope import project_authorization
-from tap.modules.access.domain.context import IdentityMode
 
 _ID = r"[A-Za-z0-9_-]{1,80}"
 _ROUTES = {
     "GET": (
         rf"(?:flows/{_ID}/recordings(?:/{_ID})?|flows|flows/{_ID}|"
-        rf"flows/{_ID}/runs|runs/{_ID}|runs/{_ID}/evidence/{_ID})"
+        rf"flows/{_ID}/runs|flows/{_ID}/releases|releases/{_ID}|runs/{_ID}|runs/{_ID}/evidence/{_ID})"
     ),
     "POST": (
         rf"(?:flows/{_ID}/recordings/{_ID}/cancel|flows/{_ID}/recordings|"
-        rf"flows|flows/{_ID}/runs|runs/{_ID}/(?:cancel|reconcile))"
+        rf"flows|flows/{_ID}/runs|flows/{_ID}/releases|releases/{_ID}/runs|runs/{_ID}/(?:cancel|reconcile))"
     ),
     "PUT": rf"flows/{_ID}/draft",
 }
@@ -84,8 +83,6 @@ class LcaGateway:
 
     async def forward(self, request: Request, project_id: str, path: str) -> Response:
         scope = request.state.project_scope
-        if scope.identity_mode is not IdentityMode.VALIDATION:
-            raise HTTPException(403, "LCA debug gateway requires local validation scope")
         if scope.project_id != project_id:
             raise HTTPException(403, "LCA project forbidden")
         control = re.fullmatch(
@@ -146,13 +143,26 @@ class LcaGateway:
             ) from None
 
 
-router = APIRouter(dependencies=[Depends(project_authorization("knowledge.answer"))])
+async def authorize_lca(request: Request) -> None:
+    # No inherited knowledge permission grants browser execution. Every request
+    # is resolved against the current trusted project/actor and policy decision.
+    path = request.path_params.get("path", "")
+    if request.method == "GET":
+        action = "lca.read"
+    elif path.endswith("/releases"):
+        action = "lca.publish"
+    elif "/runs" in path or "/recordings" in path:
+        action = "lca.execute"
+    else:
+        action = "lca.write"
+    await project_authorization(action)(request)
+
+
+router = APIRouter(dependencies=[Depends(authorize_lca)])
 
 
 @router.get("/api/lca/context")
 async def context(request: Request) -> dict[str, object]:
-    if request.state.project_scope.identity_mode is not IdentityMode.VALIDATION:
-        raise HTTPException(403, "LCA debug gateway requires local validation scope")
     return {
         "project_id": request.state.project_scope.project_id,
         "available": getattr(request.app.state, "lca_gateway", None) is not None,

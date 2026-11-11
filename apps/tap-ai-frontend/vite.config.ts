@@ -72,6 +72,11 @@ const apiProxy = {
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    "import.meta.env.VITE_TAP_WEB_URL": JSON.stringify(
+      process.env.VITE_TAP_WEB_URL ?? "http://127.0.0.1:5174",
+    ),
+  },
   build: {
     rolldownOptions: {
       output: {

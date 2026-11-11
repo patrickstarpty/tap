@@ -156,6 +156,26 @@ export function WorkspaceSidebar({
         ? tapperWorkspaceActive
         : activeModule === module.key;
 
+    if (module.key === "low-code" || module.key === "test-insights") {
+      const base = import.meta.env.VITE_TAP_WEB_URL || "/";
+      const url = new URL(base, window.location.origin);
+      url.searchParams.set("module", module.key);
+      const href = base.startsWith("/")
+        ? `${url.pathname}${url.search}`
+        : url.href;
+      return (
+        <a
+          key={module.key}
+          href={href}
+          className={`tap-navigation-item tap-navigation-item--${location}`}
+          aria-label={module.label}
+          title={module.label}
+        >
+          {module.icon}
+          <span className="tap-sidebar-label">{module.label}</span>
+        </a>
+      );
+    }
     return (
       <button
         key={module.key}

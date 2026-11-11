@@ -7,7 +7,7 @@ Run from the repository root with an explicitly approved EXISTING network:
 
 Requires the already-cached official mysql:8.4.6 image and Docker. Creates no
 network, publishes only an ephemeral loopback port, and removes only its own
-label-verified container plus anonymous volume. No .env is loaded. The six LCA
+label-verified container plus anonymous volume. No .env is loaded. The seven LCA
 tables are synthetic and disposable. Populated downgrade must refuse retention
 loss; empty downgrade must succeed. No paid services are used.
 """
@@ -53,11 +53,11 @@ def verify(url: str) -> None:
     cfg = Config(str(ROOT / "apps/backend/alembic.ini"))
     command.upgrade(cfg, "0009_browser_control")
     assert not any(t.startswith("tap_lca_") for t in inspect(engine).get_table_names())
-    command.upgrade(cfg, "0010_lca_debug_flows")
+    command.upgrade(cfg, "0011_lca_releases")
     assert set(metadata.tables) <= set(inspect(engine).get_table_names())
     command.downgrade(cfg, "0009_browser_control")
     assert not any(t.startswith("tap_lca_") for t in inspect(engine).get_table_names())
-    command.upgrade(cfg, "0010_lca_debug_flows")
+    command.upgrade(cfg, "0011_lca_releases")
     store = LcaStore(engine)
     canonical = b'{"title":"' + b"x" * 70000 + b'","steps":[]}'
     f = store.create_flow(
@@ -93,9 +93,23 @@ def verify(url: str) -> None:
                 created_at="2026-11-10T12:00:00+00:00",
             )
         )
+    release = store.create_release(
+        "synthetic-project",
+        "synthetic-owner",
+        "release",
+        store.get_flow("synthetic-project", "synthetic-owner", f["id"]),
+        s,
+        r["id"],
+    )
     engine.dispose()
     engine = create_engine(url)
     recovered = LcaStore(engine)
+    assert (
+        recovered.get_release("synthetic-project", "synthetic-owner", release["id"])[
+            "snapshot_id"
+        ]
+        == s["id"]
+    )
     assert (
         recovered.get_flow("synthetic-project", "synthetic-owner", f["id"])["version"]
         == 2
@@ -135,13 +149,13 @@ def verify(url: str) -> None:
     with engine.connect() as c:
         assert (
             c.execute(text("SELECT version_num FROM tap_alembic_version")).scalar_one()
-            == "0010_lca_debug_flows"
+            == "0011_lca_releases"
         )
     print(
         json.dumps(
             {
                 "mysql": "8.4.6",
-                "tables": 6,
+                "tables": 7,
                 "empty_downgrade": "passed",
                 "large_draft_bytes": len(canonical),
                 "reconnect_persistence": "passed",

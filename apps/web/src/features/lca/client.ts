@@ -65,7 +65,7 @@ export interface LcaRun {
   input_digest: string;
   bundle_id: string;
   execution_id: string | null;
-  classification: "debug";
+  classification: "debug" | "published";
   canonical_results?: Array<{
     step_id: string;
     status: "passed" | "failed" | "not_run";
@@ -84,7 +84,32 @@ export interface RunInput {
   expected_version: number;
   parameters: Record<string, Scalar>;
 }
+export interface LcaRelease {
+  id: string;
+  flow_id: string;
+  version: number;
+  created_at: string;
+  definition_digest: string;
+  verified_run_id: string;
+}
 export interface LcaClient {
+  getRelease(
+    project: string,
+    id: string,
+  ): Promise<LcaRelease & { definition: LcaDefinition }>;
+  listReleases(project: string, flow: string): Promise<LcaRelease[]>;
+  publish(
+    project: string,
+    flow: string,
+    body: { expected_version: number; verified_run_id: string },
+    key: string,
+  ): Promise<LcaRelease>;
+  createPublishedRun(
+    project: string,
+    release: string,
+    body: { parameters: Record<string, Scalar> },
+    key: string,
+  ): Promise<LcaRun>;
   listFlows(project: string): Promise<LcaFlow[]>;
   getFlow(project: string, id: string): Promise<LcaFlow>;
   createFlow(
@@ -177,6 +202,24 @@ export function createLcaClient(
       if (!response.ok) throw new LcaHttpError(response.status);
       return response.blob();
     },
+    getRelease: (p, id) =>
+      request(`${base(p)}/releases/${encodeURIComponent(id)}`),
+    listReleases: (p, flow) =>
+      request(`${base(p)}/flows/${encodeURIComponent(flow)}/releases`),
+    publish: (p, flow, body, key) =>
+      request(
+        `${base(p)}/flows/${encodeURIComponent(flow)}/releases`,
+        "POST",
+        body,
+        key,
+      ),
+    createPublishedRun: (p, release, body, key) =>
+      request(
+        `${base(p)}/releases/${encodeURIComponent(release)}/runs`,
+        "POST",
+        body,
+        key,
+      ),
     getRun: (p, id) => request(`${base(p)}/runs/${encodeURIComponent(id)}`),
   };
 }

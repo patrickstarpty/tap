@@ -1472,6 +1472,14 @@ export function TapperWorkspace() {
     // for a different project, so `graphHighlight` below resolves to
     // `null`), the effect below undoes it.
     if (optimisticLibraryGuessRef.current) return "library";
+    const requested = new URLSearchParams(window.location.search).get("module");
+    if (
+      requested &&
+      ["tapper", "test-management", "agents", "skills", "library"].includes(
+        requested,
+      )
+    )
+      return requested as ProductModule;
     return durableTestPlanPath() !== null ? "test-management" : "tapper";
   });
   const [graphHighlight, clearGraphHighlight] =

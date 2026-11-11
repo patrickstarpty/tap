@@ -3,6 +3,11 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    "import.meta.env.VITE_TAPPER_URL": JSON.stringify(
+      process.env.VITE_TAPPER_URL ?? "http://127.0.0.1:5173",
+    ),
+  },
   server: {
     host: "127.0.0.1",
     port: 5174,

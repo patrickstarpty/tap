@@ -11,6 +11,7 @@ import {
 } from "./client";
 import { DefinitionEditor, parseParameterValue } from "./DefinitionEditor";
 import "./lca.css";
+import { PublishedVersions } from "./PublishedVersions";
 import { RecorderPanel } from "./RecorderPanel";
 import type { RecorderClient } from "./recorderClient";
 
@@ -84,6 +85,7 @@ function ProjectWorkspace({
   recorderClient?: RecorderClient;
 }) {
   const [recordingActive, setRecordingActive] = useState(false);
+  const [publicationActive, setPublicationActive] = useState(false);
   const [flows, setFlows] = useState<LcaFlow[]>([]);
   const [flow, setFlow] = useState<LcaFlow | null>(null);
   const [definition, setDefinition] = useState<LcaDefinition | null>(null);
@@ -110,7 +112,11 @@ function ProjectWorkspace({
   const unresolved = runs.some((item) => item.execution_id === null);
   const selectedFlow = useRef<string | null>(null);
   const locked =
-    recordingActive || busy || replayIntent !== null || createIntent !== null;
+    recordingActive ||
+    publicationActive ||
+    busy ||
+    replayIntent !== null ||
+    createIntent !== null;
 
   useEffect(() => {
     alive.current = true;
@@ -138,14 +144,14 @@ function ProjectWorkspace({
     };
   }, [client, projectId]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !locked) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [dirty, locked]);
   useEffect(() => {
     if (!run || (run.execution && terminal.has(run.execution.status))) return;
     const id = run.id;
@@ -363,11 +369,10 @@ function ProjectWorkspace({
     <section className="lca-workspace" aria-label="Real debug flows">
       <header>
         <div>
-          <p className="lca-eyebrow">LOW CODE AUTOMATION · DEBUG</p>
-          <h1>Debug flows</h1>
+          <h1>Low Code Automation</h1>
           <p>
-            Saved steps, explicit assertions, isolated replay. These are not
-            published test assets.
+            Record a browser flow, edit its steps, verify the result, and
+            publish a version for repeatable execution.
           </p>
         </div>
         <button
@@ -588,8 +593,42 @@ function ProjectWorkspace({
                   </p>
                 )}
               </section>
+              {flow && (
+                <PublishedVersions
+                  key={flow.id}
+                  client={client}
+                  projectId={projectId}
+                  flowId={flow.id}
+                  version={flow.version}
+                  dirty={dirty}
+                  locked={
+                    locked ||
+                    !historyReady ||
+                    unresolved ||
+                    (!!run?.execution && !terminal.has(run.execution.status))
+                  }
+                  verifiedRunId={
+                    run?.execution?.status === "passed" &&
+                    run.definition_snapshot?.version === flow.version &&
+                    run.canonical_results?.length &&
+                    run.canonical_results.every(
+                      (result) => result.status === "passed",
+                    )
+                      ? run.id
+                      : undefined
+                  }
+                  onActiveChange={setPublicationActive}
+                  onRun={(next) => {
+                    setRuns((old) => [
+                      next,
+                      ...old.filter((item) => item.id !== next.id),
+                    ]);
+                    setRun(next);
+                  }}
+                />
+              )}
               <section>
-                <h2>Debug run history</h2>
+                <h2>Run history</h2>
                 <p>
                   Each run refers to its frozen snapshot, not the current
                   editor.
@@ -607,7 +646,8 @@ function ProjectWorkspace({
                         >
                           {item.id}
                         </button>{" "}
-                        · debug · {item.created_at || "Time unavailable"}
+                        · {item.classification} ·{" "}
+                        {item.created_at || "Time unavailable"}
                         {item.execution_id === null && (
                           <button
                             type="button"
@@ -705,7 +745,11 @@ function RunDetails({
       <h3>Run {run.id}</h3>
       <dl>
         <dt>Classification</dt>
-        <dd>Debug only</dd>
+        <dd>
+          {run.classification === "published"
+            ? "Published version"
+            : "Debug only"}
+        </dd>
         <dt>Frozen snapshot</dt>
         <dd>{run.snapshot_id}</dd>
         <dt>Definition digest</dt>

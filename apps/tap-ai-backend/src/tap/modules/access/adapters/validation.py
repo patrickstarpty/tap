@@ -23,6 +23,10 @@ VALIDATION_SCOPE = ProjectScopeContext(
 # their own explicit pairs; platform/user/project administration is never implicit.
 _VALIDATION_ACTIONS = frozenset(
     {
+        ("lca.read", "lca"),
+        ("lca.write", "lca"),
+        ("lca.execute", "lca"),
+        ("lca.publish", "lca"),
         ("knowledge.read", "knowledge"),
         ("knowledge.write", "knowledge"),
         ("knowledge.delete", "knowledge"),

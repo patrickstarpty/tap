@@ -46,6 +46,10 @@ const run: LcaRun = {
 };
 function client(): LcaClient {
   return {
+    getRelease: vi.fn(),
+    listReleases: vi.fn().mockResolvedValue([]),
+    publish: vi.fn(),
+    createPublishedRun: vi.fn(),
     reconcileRun: vi.fn(),
     cancelRun: vi.fn(),
     getEvidence: vi.fn(),

@@ -103,6 +103,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/lca/flows/{flow_id}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Releases */
+        get: operations["list_releases_api_projects__project_id__lca_flows__flow_id__releases_get"];
+        put?: never;
+        /** Publish Release */
+        post: operations["publish_release_api_projects__project_id__lca_flows__flow_id__releases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/lca/flows/{flow_id}/runs": {
         parameters: {
             query?: never;
@@ -115,6 +133,40 @@ export interface paths {
         put?: never;
         /** Create Run */
         post: operations["create_run_api_projects__project_id__lca_flows__flow_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/lca/releases/{release_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Release */
+        get: operations["get_release_api_projects__project_id__lca_releases__release_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/lca/releases/{release_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Release */
+        post: operations["run_release_api_projects__project_id__lca_releases__release_id__runs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -636,6 +688,20 @@ export interface components {
             /** Value */
             value: number | null;
         };
+        /** PublishInput */
+        PublishInput: {
+            /** Expected Version */
+            expected_version: number;
+            /** Verified Run Id */
+            verified_run_id: string;
+        };
+        /** ReleaseRunInput */
+        ReleaseRunInput: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
         /** ReportAttachmentContract */
         ReportAttachmentContract: {
             /** Available */
@@ -1045,6 +1111,74 @@ export interface operations {
             };
         };
     };
+    list_releases_api_projects__project_id__lca_flows__flow_id__releases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_release_api_projects__project_id__lca_flows__flow_id__releases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_runs_api_projects__project_id__lca_flows__flow_id__runs_get: {
         parameters: {
             query?: never;
@@ -1090,6 +1224,74 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RunInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_release_api_projects__project_id__lca_releases__release_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_release_api_projects__project_id__lca_releases__release_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseRunInput"];
             };
         };
         responses: {

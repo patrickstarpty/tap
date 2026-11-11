@@ -19,7 +19,9 @@ it("shows the TAP brand and every TAP product module with Tapper first", () => {
   expect(screen.getByRole("img", { name: "TAP platform" })).toBeVisible();
   expect(
     within(product)
-      .getAllByRole("button")
+      .getAllByLabelText(
+        /^(Tapper|Test Management|Low Code Automation|Test Insights)$/,
+      )
       .map((button) => button.getAttribute("aria-label")),
   ).toEqual([
     "Tapper",
@@ -29,19 +31,14 @@ it("shows the TAP brand and every TAP product module with Tapper first", () => {
   ]);
 });
 
-it("points the non-AI modules at the TAP workspace", async () => {
-  renderKnowledgeApp(<TapAiPage />, {
-    api: fakeKnowledgeClient(),
-  });
-  await userEvent.click(screen.getByRole("button", { name: "Test Insights" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Test Insights opens in the TAP workspace.",
-  );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Low Code Automation" }),
-  );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Low Code Automation opens in the TAP workspace.",
+it("links directly to the real TAP workspace instead of a placeholder", () => {
+  renderKnowledgeApp(<TapAiPage />, { api: fakeKnowledgeClient() });
+  expect(
+    screen.getByRole("link", { name: "Low Code Automation" }),
+  ).toHaveAttribute("href", "/?module=low-code");
+  expect(screen.getByRole("link", { name: "Test Insights" })).toHaveAttribute(
+    "href",
+    "/?module=test-insights",
   );
 });
 
@@ -708,7 +705,9 @@ describe("TAP AI page (durable Conversation API)", () => {
     const navigation = screen.getByRole("navigation", { name: "Product" });
     expect(
       within(navigation)
-        .getAllByRole("button")
+        .getAllByLabelText(
+          /^(Tapper|Test Management|Low Code Automation|Test Insights)$/,
+        )
         .map((item) => item.getAttribute("aria-label")),
     ).toEqual([
       "Tapper",

@@ -108,7 +108,12 @@ async def test_rendered_record_edit_replay_and_restore(tmp_path, recording_site)
             return scope
 
         async def authorize(self, actual_scope, action, resource):
-            assert actual_scope == scope and action == "knowledge.answer"
+            assert actual_scope == scope and action in {
+                "lca.read",
+                "lca.write",
+                "lca.execute",
+                "lca.publish",
+            }
             return AuthorizationDecision(True, "owned-ui-fixture")
 
     core_port, gateway_port, vite_port = port(), port(), port()
@@ -197,8 +202,9 @@ async def test_rendered_record_edit_replay_and_restore(tmp_path, recording_site)
         const first=await context.newPage();
         let page=first;
         const go=async p=>{
-          await p.goto(process.env.UI_ORIGIN+'/lca');
-          await p.getByRole('heading',{name:'Debug flows',exact:true}).waitFor({timeout:30000});
+          await p.goto(process.env.UI_ORIGIN+'/?module=low-code');
+          await p.getByRole('heading',{name:'Low Code Automation',exact:true})
+            .waitFor({timeout:30000});
         };
         const snapshot=async name=>{
           await page.screenshot({path:process.env.UI_SCREENSHOT+'/'+name+'.png',fullPage:true});

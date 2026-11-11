@@ -226,6 +226,10 @@ class TapperSettings:
     workflow_max_cost_micros: int = 0
     workflow_max_seconds: int = 900
     workflow_max_attempts: int = 3
+    lca_enabled: bool = False
+    lca_backend_url: str = ""
+    lca_gateway_token: str = field(default="", repr=False)
+    tap_web_port: int = 5174
     browser_coding_enabled: bool = False
     browser_control_enabled: bool = False
     browser_gateway_token: str = field(default="", repr=False)
@@ -262,13 +266,36 @@ class TapperSettings:
                 "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS"
             )
         if self.browser_control_enabled and (
-            not self.browser_coding_enabled
+            not (self.browser_coding_enabled or self.lca_enabled)
             or len(self.browser_gateway_token) < 32
             or self.browser_gateway_token == self.browser_access_token
             or len(self.browser_worker_token) < 32
             or self.browser_worker_token in {self.browser_access_token, self.browser_gateway_token}
         ):
-            raise ValueError("browser control requires coding and a separate gateway credential")
+            raise ValueError(
+                "browser control requires coding or LCA and separate gateway credentials"
+            )
+        if self.lca_enabled:
+            from tap.interfaces.http.routes.lca import LcaGateway
+            from tap.modules.workflows.adapters.browser_client import BrowserApiClient
+
+            if not self.browser_control_enabled or self.tap_web_port in {
+                self.web_port,
+                self.api_port,
+            }:
+                raise ValueError("LCA requires browser control and a separate TAP Web port")
+            if self.lca_backend_url != self.browser_api_origin:
+                raise ValueError("Local LCA must use the configured managed browser API origin")
+            if self.lca_gateway_token in {
+                self.browser_access_token,
+                self.browser_gateway_token,
+                self.browser_worker_token,
+            }:
+                raise ValueError("LCA requires a separate server credential")
+            LcaGateway(self.lca_backend_url, self.lca_gateway_token)
+            BrowserApiClient(
+                self.browser_api_origin, self.browser_project_id, self.browser_access_token
+            )
         if self.browser_execution_mode not in {"docker", "local"}:
             raise ValueError("invalid browser execution mode")
         if self.browser_coding_enabled:
@@ -822,6 +849,13 @@ class TapperSettings:
                 minimum=1,
                 maximum=10,
             ),
+            lca_enabled=_fixed_choice(
+                values, "TAP_LCA_ENABLED", default="false", choices=frozenset({"true", "false"})
+            )
+            == "true",
+            lca_backend_url=_value(values, "TAP_LCA_BACKEND_URL", ""),
+            lca_gateway_token=_value(values, "TAP_LCA_GATEWAY_TOKEN", ""),
+            tap_web_port=_integer(values, "TAP_WEB_PORT", 5174, minimum=1, maximum=65535),
             browser_coding_enabled=_fixed_choice(
                 values,
                 "TAP_BROWSER_CODING_ENABLED",
@@ -1337,6 +1371,16 @@ async def create_api_runtime(
                 embeddings.gateway,
                 repository.scope,
                 workflow_events,
+            )
+        if settings.lca_enabled:
+            services = replace(
+                services,
+                browser_client=BrowserApiClient(
+                    settings.browser_api_origin,
+                    settings.browser_project_id,
+                    settings.browser_access_token,
+                    gateway_token=settings.browser_gateway_token,
+                ),
             )
         model_catalog = services.model_catalog
         if model_catalog is None:

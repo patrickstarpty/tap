@@ -3407,3 +3407,41 @@ def test_browser_control_is_opt_in_and_requires_separate_gateway_credential():
     assert settings.browser_gateway_token == ""
     with pytest.raises(ValueError, match="browser control"):
         TapperSettings.from_mapping({**S3_SETTINGS, "TAP_BROWSER_CONTROL_ENABLED": "true"})
+
+
+def test_lca_local_settings_do_not_require_model_coding_and_require_explicit_credentials():
+    values = S3_SETTINGS | {
+        "TAP_LCA_ENABLED": "true",
+        "TAP_LCA_BACKEND_URL": "http://127.0.0.1:8002",
+        "TAP_LCA_GATEWAY_TOKEN": "l" * 32,
+        "TAP_BROWSER_CONTROL_ENABLED": "true",
+        "TAP_BROWSER_GATEWAY_TOKEN": "g" * 32,
+        "TAP_BROWSER_WORKER_TOKEN": "w" * 32,
+        "TAP_BROWSER_API_ORIGIN": "http://127.0.0.1:8002",
+        "TAP_BROWSER_PROJECT_ID": "tapper-demo",
+        "TAP_BROWSER_ACCESS_TOKEN": "a" * 32,
+        "TAP_WEB_PORT": "5174",
+    }
+    settings = TapperSettings.from_mapping(values)
+    assert settings.lca_enabled and not settings.browser_coding_enabled
+    assert settings.tap_web_port == 5174
+    from tap.entrypoints.tapper_api import build_runtime_app
+
+    client = TestClient(build_runtime_app(settings))
+    assert client.post("/missing", headers={"Origin": "http://127.0.0.1:5174"}).status_code == 404
+    assert client.post("/missing", headers={"Origin": "http://127.0.0.1:5175"}).status_code == 403
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(values | {"TAP_LCA_GATEWAY_TOKEN": ""})
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(values | {"TAP_WEB_PORT": "5173"})
+    with pytest.raises(ValueError):
+        TapperSettings.from_mapping(values | {"TAP_BROWSER_CONTROL_ENABLED": "false"})
+
+
+def test_lca_disabled_does_not_load_stale_gateway_environment(monkeypatch):
+    from tap.entrypoints.tapper_api import build_runtime_app
+
+    monkeypatch.setenv("TAP_LCA_BACKEND_URL", "invalid")
+    monkeypatch.setenv("TAP_LCA_GATEWAY_TOKEN", "stale")
+    app = build_runtime_app(TapperSettings.from_mapping(S3_SETTINGS))
+    assert app.state.lca_gateway is None

@@ -112,6 +112,20 @@ recordings = Table(
 )
 
 
+releases = Table(
+    "tap_lca_releases",
+    metadata,
+    *_identity(),
+    Column("flow_id", String(36), nullable=False),
+    Column("snapshot_id", String(36), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("title", String(256), nullable=False),
+    Column("verified_run_id", String(36), nullable=False),
+    Column("definition_digest", String(64), nullable=False),
+    UniqueConstraint("flow_id", "version"),
+)
+
+
 class LcaConflict(ValueError):
     """The expected revision, immutable link or idempotency body changed."""
 
@@ -265,6 +279,18 @@ class LcaStore:
         )
         try:
             with self.engine.begin() as connection:
+                if table is releases:
+                    current = connection.execute(
+                        select(flows.c.version)
+                        .where(
+                            flows.c.id == values["flow_id"],
+                            flows.c.project_id == project_id,
+                            flows.c.actor_id == actor_id,
+                        )
+                        .with_for_update()
+                    ).scalar_one_or_none()
+                    if current != values["version"]:
+                        raise LcaConflict("draft version conflict")
                 connection.execute(
                     insert(idempotency).values(
                         project_id=project_id,
@@ -427,6 +453,7 @@ class LcaStore:
         bundle_id: str,
         input_digest: str,
         execution_request: dict[str, Any],
+        classification: str = "debug",
     ) -> dict[str, Any]:
         snapshot = self.get_snapshot(project_id, actor_id, snapshot_id)
         digest = _digest([snapshot_id, bundle_id, input_digest, execution_request])
@@ -443,12 +470,60 @@ class LcaStore:
                 definition_digest=snapshot["definition_digest"],
                 bundle_id=bundle_id,
                 input_digest=input_digest,
-                classification="debug",
+                classification=classification,
                 execution_key="lca-debug-" + uuid.uuid4().hex,
                 execution_request=execution_request,
                 execution_id=None,
             ),
         )
+
+    def get_release(self, project: str, actor: str, release_id: str) -> dict[str, Any]:
+        return self._get(releases, project, actor, release_id)
+
+    def list_releases(
+        self, project: str, actor: str, flow_id: str
+    ) -> list[dict[str, Any]]:
+        self.get_flow(project, actor, flow_id)
+        with self.engine.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    select(releases)
+                    .where(
+                        releases.c.project_id == project,
+                        releases.c.actor_id == actor,
+                        releases.c.flow_id == flow_id,
+                    )
+                    .order_by(releases.c.version.desc())
+                ).mappings()
+            ]
+
+    def create_release(
+        self,
+        project: str,
+        actor: str,
+        key: str,
+        flow: dict[str, Any],
+        snapshot: dict[str, Any],
+        run_id: str,
+    ) -> dict[str, Any]:
+        values = dict(
+            flow_id=flow["id"],
+            snapshot_id=snapshot["id"],
+            version=snapshot["version"],
+            title=flow["title"],
+            verified_run_id=run_id,
+            definition_digest=snapshot["definition_digest"],
+        )
+        prior = self._prior(releases, "release", project, actor, key, _digest(values))
+        if prior is not None:
+            return prior
+        try:
+            return self._create(
+                releases, "release", project, actor, key, _digest(values), values
+            )
+        except IntegrityError:
+            raise LcaConflict("This draft version is already published") from None
 
     def link_execution(
         self, project_id: str, actor_id: str, run_id: str, execution_id: str

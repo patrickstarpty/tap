@@ -62,14 +62,29 @@ def test_lca_revision_continues_the_single_browser_control_chain(migration):
     config = Config(str(BACKEND / "alembic.ini"))
     config.set_main_option("path_separator", "os")
     directory = ScriptDirectory.from_config(config)
-    assert directory.get_heads() == [REVISION]
+    assert directory.get_heads() == ["0011_lca_releases"]
     assert directory.get_revision(REVISION).down_revision == "0009_browser_control"
 
 
 def test_migration_matches_store_columns_and_constraints_without_seeding(engine):
     with engine.connect() as connection:
         assert set(inspect(connection).get_table_names()) == TABLES
-        assert compare_metadata(MigrationContext.configure(connection), metadata) == []
+        assert (
+            compare_metadata(
+                MigrationContext.configure(
+                    connection,
+                    opts={
+                        "include_object": lambda obj,
+                        name,
+                        kind,
+                        reflected,
+                        compared: name != "tap_lca_releases"
+                    },
+                ),
+                metadata,
+            )
+            == []
+        )
         for table in TABLES:
             assert (
                 connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() == 0
@@ -290,5 +305,7 @@ def test_mysql_upgrade_ddl_uses_full_size_binary_columns_and_matches_metadata(
     assert "UNIQUE (flow_id, identity_digest)" in ddl
     assert "UNIQUE (execution_key)" in ddl
     for table in metadata.tables.values():
+        if table.name == "tap_lca_releases":
+            continue
         expected = str(CreateTable(table).compile(dialect=mysql.dialect())).strip()
         assert " ".join(expected.split()) in " ".join(ddl.split())

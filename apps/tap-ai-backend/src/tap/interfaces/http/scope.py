@@ -164,6 +164,8 @@ def _resource_kind_for_action(action: str) -> str:
         return "knowledge-review"
     if action.startswith("ai."):
         return "ai"
+    if action.startswith("lca."):
+        return "lca"
     if action.startswith("test-plans."):
         return "test-plan"
     return "knowledge"

@@ -643,6 +643,40 @@
         "title": "MetricResultContract",
         "type": "object"
       },
+      "PublishInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "verified_run_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Verified Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "verified_run_id"
+        ],
+        "title": "PublishInput",
+        "type": "object"
+      },
+      "ReleaseRunInput": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          }
+        },
+        "title": "ReleaseRunInput",
+        "type": "object"
+      },
       "ReportAttachmentContract": {
         "additionalProperties": false,
         "properties": {
@@ -1499,6 +1533,116 @@
         ]
       }
     },
+    "/api/projects/{project_id}/lca/flows/{flow_id}/releases": {
+      "get": {
+        "operationId": "list_releases_api_projects__project_id__lca_flows__flow_id__releases_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response List Releases Api Projects  Project Id  Lca Flows  Flow Id  Releases Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Releases",
+        "tags": [
+          "lca"
+        ]
+      },
+      "post": {
+        "operationId": "publish_release_api_projects__project_id__lca_flows__flow_id__releases_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Publish Release Api Projects  Project Id  Lca Flows  Flow Id  Releases Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Release",
+        "tags": [
+          "lca"
+        ]
+      }
+    },
     "/api/projects/{project_id}/lca/flows/{flow_id}/runs": {
       "get": {
         "operationId": "list_runs_api_projects__project_id__lca_flows__flow_id__runs_get",
@@ -1604,6 +1748,118 @@
           }
         },
         "summary": "Create Run",
+        "tags": [
+          "lca"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/lca/releases/{release_id}": {
+      "get": {
+        "operationId": "get_release_api_projects__project_id__lca_releases__release_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Release Api Projects  Project Id  Lca Releases  Release Id  Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Release",
+        "tags": [
+          "lca"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/lca/releases/{release_id}/runs": {
+      "post": {
+        "operationId": "run_release_api_projects__project_id__lca_releases__release_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRunInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Run Release Api Projects  Project Id  Lca Releases  Release Id  Runs Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Release",
         "tags": [
           "lca"
         ]

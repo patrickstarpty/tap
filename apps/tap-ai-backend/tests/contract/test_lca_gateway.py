@@ -19,7 +19,7 @@ class Authority:
         return VALIDATION_SCOPE
 
     async def authorize(self, scope, action, resource):
-        assert action == "knowledge.answer"
+        assert action in {"lca.read", "lca.write", "lca.execute", "lca.publish"}
         return AuthorizationDecision(True, "allowed")
 
 
@@ -115,6 +115,9 @@ def test_local_debug_gateway_does_not_grant_browser_actions_to_product_readers()
     class ProductAuthority(Authority):
         async def current(self, facts):
             return scope
+
+        async def authorize(self, scope, action, resource):
+            return AuthorizationDecision(action == "knowledge.answer", "reader-only")
 
     authority = ProductAuthority()
     calls = []
@@ -310,3 +313,109 @@ def test_recording_unavailable_control_cannot_issue_capability(recording_browser
     assert response.status_code == 409
     assert response.json() == {"detail": "Recording control unavailable"}
     assert calls == []
+
+
+def test_product_lca_permissions_are_action_specific():
+    from dataclasses import replace
+
+    from tap.modules.access.domain.context import IdentityMode
+
+    scope = replace(VALIDATION_SCOPE, identity_mode=IdentityMode.PRODUCT)
+    seen = []
+    allowed = {"lca.read"}
+
+    class ProductAuthority:
+        async def current(self, facts):
+            return scope
+
+        async def authorize(self, actual, action, resource):
+            assert actual == scope and resource.kind == "lca"
+            seen.append(action)
+            return AuthorizationDecision(action in allowed, "product-policy")
+
+    authority = ProductAuthority()
+    calls = []
+
+    def backend(request):
+        calls.append(request)
+        return httpx.Response(200, json=[])
+
+    client = TestClient(
+        create_app(
+            HttpServices(scope=scope, scope_provider=authority, authorization_policy=authority),
+            allowed_origins=frozenset({"http://127.0.0.1:5174"}),
+            lca_gateway=LcaGateway(
+                "http://127.0.0.1:8001", "test-server-token", httpx.MockTransport(backend)
+            ),
+        )
+    )
+    assert client.get("/api/lca/context").status_code == 200
+    assert client.get("/api/projects/tapper-demo/lca/flows").status_code == 200
+    assert (
+        client.post(
+            "/api/projects/tapper-demo/lca/flows",
+            json={},
+            headers={"Origin": "http://127.0.0.1:5174"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/projects/tapper-demo/lca/flows/f/runs",
+            json={},
+            headers={"Origin": "http://127.0.0.1:5174"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/projects/tapper-demo/lca/flows/f/releases",
+            json={},
+            headers={"Origin": "http://127.0.0.1:5174"},
+        ).status_code
+        == 403
+    )
+    assert len(calls) == 1
+    assert seen == ["lca.read", "lca.read", "lca.write", "lca.execute", "lca.publish"]
+    allowed.add("lca.execute")
+    assert (
+        client.post(
+            "/api/projects/tapper-demo/lca/flows/f/runs",
+            json={},
+            headers={"Origin": "http://127.0.0.1:5174"},
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.parametrize("action", ["lca.read", "lca.write", "lca.execute", "lca.publish"])
+def test_lca_actions_reuse_current_project_principal_policy(action):
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+
+    from tap.modules.access.application.authorize import authorize_project_action
+    from tap.modules.access.domain.authorization import ProjectPrincipal, ResourceRef
+
+    now = datetime.now(UTC)
+    principal = ProjectPrincipal(
+        enterprise_id="e",
+        project_id="p",
+        actor_id="a",
+        audience="tap-api",
+        expires_at=now + timedelta(minutes=1),
+        actions=frozenset({action}),
+        enabled=True,
+    )
+    resource = ResourceRef(enterprise_id="e", project_id="p", kind="lca")
+
+    def allowed(candidate, target=resource):
+        return authorize_project_action(
+            candidate, action, target, expected_audience="tap-api", now=now
+        ).allowed
+
+    assert allowed(principal)
+    assert not allowed(replace(principal, enabled=False))
+    assert not allowed(replace(principal, expires_at=now))
+    assert not allowed(replace(principal, actions=frozenset({"knowledge.answer"})))
+    assert not allowed(replace(principal, audience="other"))
+    assert not allowed(principal, replace(resource, project_id="other"))

@@ -191,3 +191,88 @@ def test_platform_app_exposes_unconfigured_lca_without_identity_fallback(monkeyp
     monkeypatch.delenv("TAP_LCA_GATEWAY_TOKEN", raising=False)
     client = TestClient(create_app())
     assert client.get("/api/projects/p/lca/flows").status_code == 503
+
+
+def test_platform_app_wires_configured_lca_and_persists_across_app_restart(
+    tmp_path, monkeypatch
+):
+    from sqlalchemy import create_engine
+    from tap_platform.app import create_app
+    from tap_platform.browser_automation.service import BrowserService
+    from tap_platform.browser_automation.store import BrowserStore, metadata as bm
+    from tap_platform.browser_automation.objects import BrowserObjectStore
+    from tap_platform.lca.store import metadata as lm
+    from tap_platform.access import AccessPrincipal
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'platform.db'}")
+    bm.create_all(engine)
+    lm.create_all(engine)
+    browser = BrowserService(
+        BrowserStore(engine), BrowserObjectStore(tmp_path / "objects")
+    )
+    principal = AccessPrincipal(
+        project_id="p",
+        principal_id="platform-service",
+        principal_type="service",
+        audience="tap-browser",
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+        enabled=True,
+        actions=frozenset({"browser.executions.read"}),
+    )
+    monkeypatch.setenv("TAP_LCA_GATEWAY_TOKEN", "server-delegation-token")
+    monkeypatch.setenv("TAP_BROWSER_GATEWAY_TOKEN", "g" * 32)
+
+    def app():
+        return create_app(
+            browser_service=browser,
+            browser_principal=principal,
+            browser_token="browser-service-token",
+        )
+
+    headers = {
+        "Authorization": "Bearer server-delegation-token",
+        "X-LCA-Actor": "alice",
+        "Idempotency-Key": "platform-create",
+    }
+    first = TestClient(app())
+    assert (
+        first.post(
+            "/api/projects/p/browser/sessions/missing/control", json={}
+        ).status_code
+        == 401
+    )
+    created = first.post("/api/projects/p/lca/flows", json=body(), headers=headers)
+    assert created.status_code == 201
+    second = TestClient(app())
+    assert (
+        second.get("/api/projects/p/lca/flows", headers=headers).json()[0]["id"]
+        == created.json()["id"]
+    )
+    assert (
+        second.get(
+            "/api/projects/p/lca/flows", headers={**headers, "X-LCA-Actor": "bob"}
+        ).json()
+        == []
+    )
+    assert second.get("/api/projects/p/lca/flows").status_code == 403
+
+
+def test_video_evidence_returns_webm_with_verified_digest(tmp_path, monkeypatch):
+    import hashlib
+
+    data = b"\x1a\x45\xdf\xa3verified-video"
+    digest = hashlib.sha256(data).hexdigest()
+    calls = []
+
+    def read_evidence(self, principal, run_id, evidence_id):
+        calls.append((principal.principal_id, run_id, evidence_id))
+        return {"kind": "video", "sha256": digest}, data
+
+    monkeypatch.setattr(LcaService, "read_evidence", read_evidence)
+    response = setup(tmp_path).get("/api/projects/p/lca/runs/run/evidence/video")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "video/webm"
+    assert response.headers["x-content-sha256"] == digest
+    assert response.headers["cache-control"] == "no-store"
+    assert response.content == data
+    assert calls == [("alice", "run", "video")]

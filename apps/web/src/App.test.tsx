@@ -32,12 +32,12 @@ function legacyWorkspace() {
 
 beforeEach(() => {
   localStorage.clear();
-  window.history.replaceState(null, "", "/");
+  window.history.replaceState(null, "", "/prototype/legacy");
 });
 afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
 
-describe("TAP non-AI application", () => {
+describe("TAP legacy workspace migration", () => {
   it("lets the user recover legacy data even after a new workspace was already saved", async () => {
     const user = userEvent.setup();
     localStorage.setItem("tap.prototype.workspace.v2", legacyWorkspace());
@@ -243,7 +243,9 @@ describe("TAP non-AI application", () => {
     ).toBeVisible();
     expect(screen.queryByText("Local workspace")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Insights" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Test Insights" })).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("button", { name: "Test Insights" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps the automation editor free of the Tapper agent panel", async () => {

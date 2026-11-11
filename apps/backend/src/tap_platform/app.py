@@ -150,7 +150,13 @@ def create_app(
 
     if browser_service is not None:
         app.include_router(
-            create_browser_router(browser_service, browser_principal, browser_token)
+            create_browser_router(
+                browser_service,
+                browser_principal,
+                browser_token,
+                gateway_token=os.getenv("TAP_BROWSER_GATEWAY_TOKEN"),
+                worker_token=os.getenv("TAP_BROWSER_WORKER_TOKEN"),
+            )
         )
 
     @app.get("/health/live")

@@ -34,8 +34,12 @@ async def assert_tap_surface(app: FastAPI) -> None:
             "/api/projects/{project_id}/lca/flows/{flow_id}/recordings/{session_id}/cancel",
             ("POST",),
         ),
+        ("/api/projects/{project_id}/lca/flows/{flow_id}/releases", ("GET",)),
+        ("/api/projects/{project_id}/lca/flows/{flow_id}/releases", ("POST",)),
         ("/api/projects/{project_id}/lca/flows/{flow_id}/runs", ("GET",)),
         ("/api/projects/{project_id}/lca/flows/{flow_id}/runs", ("POST",)),
+        ("/api/projects/{project_id}/lca/releases/{release_id}", ("GET",)),
+        ("/api/projects/{project_id}/lca/releases/{release_id}/runs", ("POST",)),
         ("/api/projects/{project_id}/lca/runs/{run_id}", ("GET",)),
         ("/api/projects/{project_id}/lca/runs/{run_id}/cancel", ("POST",)),
         (
@@ -82,7 +86,7 @@ async def assert_tap_surface(app: FastAPI) -> None:
         ("/openapi.json", ("GET", "HEAD")),
         ("/redoc", ("GET", "HEAD")),
     ]
-    assert len(app.routes) == 31
+    assert len(app.routes) == 35
     for route in app.routes:
         if isinstance(route, APIRoute):
             assert route.endpoint.__module__.startswith("tap_platform.")
@@ -109,6 +113,9 @@ async def assert_tap_surface(app: FastAPI) -> None:
         "/api/projects/{project_id}/lca/flows/{flow_id}/recordings/{session_id}/cancel": {
             "post"
         },
+        "/api/projects/{project_id}/lca/flows/{flow_id}/releases": {"get", "post"},
+        "/api/projects/{project_id}/lca/releases/{release_id}": {"get"},
+        "/api/projects/{project_id}/lca/releases/{release_id}/runs": {"post"},
         "/api/projects/{project_id}/lca/flows/{flow_id}/runs": {"get", "post"},
         "/api/projects/{project_id}/lca/runs/{run_id}": {"get"},
         "/api/projects/{project_id}/lca/runs/{run_id}/cancel": {"post"},

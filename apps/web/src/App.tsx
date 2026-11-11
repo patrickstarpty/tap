@@ -32,14 +32,24 @@ export function App() {
   const isPrototype = window.location.pathname === "/prototype";
   useLayoutEffect(() => {
     document.documentElement.dataset.tapPrototype = "true";
-    return () => { delete document.documentElement.dataset.tapPrototype; };
+    return () => {
+      delete document.documentElement.dataset.tapPrototype;
+    };
   }, [isPrototype]);
-  return <ConfigProvider theme={tapperTheme}>
-    {window.location.pathname === "/lca" ? <LcaApplication /> : isPrototype ? <TapProductPrototype /> : <TapApplication />}
-  </ConfigProvider>;
+  return (
+    <ConfigProvider theme={tapperTheme}>
+      {isPrototype ? (
+        <TapProductPrototype />
+      ) : window.location.pathname === "/prototype/legacy" ? (
+        <LegacyTapApplication />
+      ) : (
+        <TapApplication />
+      )}
+    </ConfigProvider>
+  );
 }
 
-function TapApplication() {
+function LegacyTapApplication() {
   const [section, setSection] = useState<"automation" | "analytics">(
     ["test-insights", "test-analytics"].includes(
       new URLSearchParams(window.location.search).get("module") ?? "",
@@ -87,14 +97,16 @@ function TapApplication() {
       />
       <main className="tap-product-main tap-runtime-main">
         {section === "automation" ? <a href="/lca">Real debug flows</a> : null}
-        {section === "automation" ? <WorkspaceTransfer
-          state={state}
-          onRestore={(restored) => {
-            dispatch({ type: "workspace/restore", state: restored });
-            setView({ kind: "library" });
-            setSection("automation");
-          }}
-        /> : null}
+        {section === "automation" ? (
+          <WorkspaceTransfer
+            state={state}
+            onRestore={(restored) => {
+              dispatch({ type: "workspace/restore", state: restored });
+              setView({ kind: "library" });
+              setSection("automation");
+            }}
+          />
+        ) : null}
         {section === "analytics" ? (
           <TestAnalyticsWorkspace
             locale="en"
@@ -152,6 +164,63 @@ function TapApplication() {
         )}
         {notice ? <p role="status">{notice}</p> : null}
       </main>
-  </div>
+    </div>
+  );
+}
+
+/** Real product entry. Prototype/localStorage runs never appear on this route. */
+function TapApplication() {
+  const sectionFromUrl = () =>
+    new URLSearchParams(window.location.search).get("module") ===
+    "test-insights"
+      ? "analytics"
+      : "automation";
+  const [section, setSection] = useState(sectionFromUrl);
+  const [collapsed, setCollapsed] = useState(true);
+  useEffect(() => {
+    const restore = () => setSection(sectionFromUrl());
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+  const selectModule = (module: ProductModule) => {
+    if (module === "low-code" || module === "test-insights") {
+      setSection(module === "low-code" ? "automation" : "analytics");
+      const url = new URL(window.location.href);
+      url.pathname = "/";
+      url.searchParams.set("module", module);
+      window.history.pushState(null, "", url);
+    } else {
+      const destination = new URL(
+        import.meta.env.VITE_TAPPER_URL || "/tapper",
+        window.location.origin,
+      );
+      destination.searchParams.set("module", module);
+      window.location.assign(destination.href);
+    }
+  };
+  return (
+    <div className="tap-product-shell tap-runtime-shell">
+      <PrototypeSidebar
+        activeConversationId=""
+        activeModule={section === "automation" ? "low-code" : "test-insights"}
+        collapsed={collapsed}
+        conversations={[]}
+        copy={PROTOTYPE_COPY.en}
+        locale="en"
+        onLocaleChange={() => {}}
+        onModuleChange={selectModule}
+        onNewChat={() => selectModule("tapper")}
+        onSelectConversation={() => {}}
+        onToggleCollapsed={() => setCollapsed((value) => !value)}
+        showFooter={false}
+      />
+      <main className="tap-product-main tap-runtime-main">
+        {/* Keep the editor mounted: navigating within TAP must not discard drafts or recording state. */}
+        <div hidden={section !== "automation"}>
+          <LcaApplication />
+        </div>
+        {section === "analytics" && <TestAnalyticsWorkspace locale="en" />}
+      </main>
+    </div>
   );
 }

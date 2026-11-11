@@ -29,6 +29,17 @@ class DraftInput(BaseModel):
     definition: dict[str, Any]
 
 
+class PublishInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_version: int = Field(ge=1)
+    verified_run_id: str = Field(min_length=1, max_length=80)
+
+
+class ReleaseRunInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     expected_version: int = Field(ge=1)
@@ -193,6 +204,54 @@ def create_lca_router(
             ),
         )
 
+    @router.get("/flows/{flow_id}/releases")
+    def list_releases(project_id: str, flow_id: str, request: Request) -> Any:
+        return invoke(
+            request,
+            project_id,
+            lambda svc, actor: [
+                _public(row) for row in svc.list_releases(actor, flow_id)
+            ],
+        )
+
+    @router.post("/flows/{flow_id}/releases", status_code=201)
+    def publish_release(
+        project_id: str, flow_id: str, body: PublishInput, request: Request
+    ) -> Any:
+        return invoke(
+            request,
+            project_id,
+            lambda svc, actor: _public(
+                svc.publish_release(
+                    actor,
+                    flow_id,
+                    body.expected_version,
+                    body.verified_run_id,
+                    key(request),
+                )
+            ),
+        )
+
+    @router.get("/releases/{release_id}")
+    def get_release(project_id: str, release_id: str, request: Request) -> Any:
+        return invoke(
+            request,
+            project_id,
+            lambda svc, actor: _public(svc.get_release(actor, release_id)),
+        )
+
+    @router.post("/releases/{release_id}/runs", status_code=202)
+    def run_release(
+        project_id: str, release_id: str, body: ReleaseRunInput, request: Request
+    ) -> Any:
+        return invoke(
+            request,
+            project_id,
+            lambda svc, actor: _public(
+                svc.run_release(actor, release_id, body.parameters, key(request))
+            ),
+        )
+
     @router.get("/runs/{run_id}")
     def get_run(project_id: str, run_id: str, request: Request) -> Any:
         return invoke(
@@ -224,6 +283,7 @@ def create_lca_router(
         )
         mime = {
             "screenshot": "image/png",
+            "video": "video/webm",
             "trace": "application/zip",
             "result": "application/json",
         }[row["kind"]]
@@ -264,6 +324,8 @@ class DelegatedLcaAuthorizer:
                 enabled=True,
                 actions=frozenset(
                     {
+                        "lca.releases.publish",
+                        "lca.releases.read",
                         "lca.flows.create",
                         "lca.flows.read",
                         "lca.drafts.save",

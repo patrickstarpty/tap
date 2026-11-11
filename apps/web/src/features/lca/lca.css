@@ -1,14 +1,12 @@
 .lca-workspace {
-  --lca-border: #dce3ec;
-  --lca-muted: #58677c;
-  padding: 28px;
-  color: #17253a;
-  background: #f8fafc;
+  --lca-border: var(--tap-line, #e4e6e1);
+  --lca-muted: var(--tap-muted, #626b68);
+  padding: 8px 0;
+  color: var(--tap-ink, #232b2b);
+  background: var(--tap-canvas, #faf9f6);
   max-width: 1500px;
   margin: auto;
-  font:
-    14px/1.5 system-ui,
-    sans-serif;
+  font: 14px/1.5 var(--tap-font, system-ui);
 }
 .lca-workspace * {
   box-sizing: border-box;
@@ -21,7 +19,7 @@
   gap: 20px;
 }
 .lca-workspace h1 {
-  font-size: 28px;
+  font-size: 26px;
   margin: 0;
 }
 .lca-workspace h2 {
@@ -32,29 +30,29 @@
   font-size: 16px;
 }
 .lca-eyebrow {
-  color: #465b85;
+  color: var(--tap-muted, #626b68);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
 }
 .lca-workspace button {
-  border: 1px solid #cad4e3;
+  border: 1px solid var(--tap-line-strong, #c4cbc5);
   background: white;
-  color: #233c60;
+  color: var(--tap-ink, #232b2b);
   border-radius: 6px;
   padding: 8px 12px;
   cursor: pointer;
   font: inherit;
 }
 .lca-workspace button:hover:not(:disabled) {
-  background: #eef3fb;
+  background: var(--tap-soft, #f3f2ee);
 }
 .lca-workspace button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 .lca-workspace :focus-visible {
-  outline: 3px solid #5979d4;
+  outline: 3px solid var(--tap-focus, #a9470b);
   outline-offset: 2px;
 }
 .lca-workspace label {
@@ -69,7 +67,7 @@
 .lca-workspace textarea {
   width: 100%;
   min-width: 0;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--tap-line-strong, #c4cbc5);
   border-radius: 5px;
   padding: 8px;
   background: white;
@@ -89,7 +87,7 @@
   border: 1px solid var(--lca-border);
   border-radius: 8px;
   margin: 20px 0;
-  background: #edf2f8;
+  background: var(--tap-soft, #f3f2ee);
 }
 .lca-recording p {
   margin: 4px 0 0;
@@ -115,8 +113,8 @@
   overflow-wrap: anywhere;
 }
 .lca-layout nav button[aria-current="page"] {
-  background: #e8effb;
-  border-color: #809acf;
+  background: var(--tap-accent-soft, #fff1e5);
+  border-color: var(--tap-accent-line, #efc7a7);
 }
 .lca-layout main {
   background: white;
@@ -171,7 +169,7 @@
   font-size: 12px;
 }
 .lca-workspace pre {
-  background: #f5f7fb;
+  background: var(--tap-soft, #f3f2ee);
   padding: 12px;
   overflow: auto;
   max-height: 360px;
@@ -245,4 +243,41 @@
   border: 1px solid var(--lca-border);
   margin: 16px 0;
   cursor: crosshair;
+}
+
+.tap-lca-application {
+  min-width: 0;
+}
+.lca-workspace header > div > p {
+  color: var(--lca-muted);
+  max-width: 65ch;
+}
+.lca-workspace header > button {
+  background: var(--tap-brand, #e87722);
+  color: var(--tap-ink, #232b2b);
+  border-color: transparent;
+  font-weight: 600;
+}
+.lca-workspace header > button:hover:not(:disabled) {
+  background: var(--tap-accent-soft, #fff1e5);
+}
+.lca-layout > nav {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+}
+@media (max-width: 760px) {
+  .lca-layout > nav {
+    position: static;
+  }
+}
+
+.lca-workspace button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.lca-editor-heading > label {
+  flex: 1;
+  min-width: 0;
+  max-width: 560px;
 }

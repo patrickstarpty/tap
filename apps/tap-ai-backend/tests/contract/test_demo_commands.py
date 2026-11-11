@@ -4169,3 +4169,51 @@ def test_insights_e2e_cleans_owned_resources_after_partial_compose_up_failure(
     assert " up -d --wait --wait-timeout 180 mysql clickhouse" in commands
     assert " down --remove-orphans" in commands
     assert " down -v" not in commands
+
+
+def test_dev_supervisor_owns_lca_web_and_browser_processes(tmp_path: Path) -> None:
+    supervisor, environment, log = _supervisor_fixture(
+        tmp_path, api_exit="17", ready_status="unready"
+    )
+    root = supervisor.parents[1]
+    browser = root / "scripts/run-tap-browser.sh"
+    browser.write_text('#!/bin/sh\nexec tapper-child "browser-$1"\n')
+    browser.chmod(0o700)
+    web = root / "apps/web/node_modules/.bin/vite"
+    web.parent.mkdir(parents=True)
+    web.write_text("#!/bin/sh\nexec tapper-child tap-web\n")
+    web.chmod(0o700)
+    # Inject failure only after the owned LCA children have initialized. A fixed
+    # 200 ms API lifetime can expire before their shell processes are scheduled.
+    child = root / "fake-bin/tapper-child"
+    child.write_text(
+        child.read_text().replace(
+            '  sleep 0.2\n  exit "$TAPPER_STUB_API_EXIT"',
+            '''  for expected in tap-web browser-api browser-worker; do
+    attempts=0
+    until grep -q "^env $expected " "$TAPPER_CHILD_LOG"; do
+      attempts=$((attempts + 1))
+      [ "$attempts" -lt 100 ] || exit 105
+      sleep 0.02
+    done
+  done
+  sleep 0.2
+  exit "$TAPPER_STUB_API_EXIT"''',
+        )
+    )
+    environment.update({"TAP_LCA_ENABLED": "true", "TAP_BROWSER_SERVICE_MODE": "managed"})
+    completed = subprocess.run(
+        ["/bin/bash", str(supervisor)],
+        cwd=root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert completed.returncode == 17, completed.stderr
+    events = log.read_text().splitlines()
+    for role in ("tap-web", "browser-api", "browser-worker"):
+        assert any(line.startswith(f"start {role} ") for line in events)
+        assert any(line.startswith(f"term {role} ") for line in events)
+    _assert_processes_are_gone(_started_child_pids(log))

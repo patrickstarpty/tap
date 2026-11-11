@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from tap.entrypoints.tapper_runtime import TapperSettings
 from tap.interfaces.http.app import create_app
 from tap.interfaces.http.dependencies import HttpServices
+from tap.interfaces.http.routes.lca import LcaGateway
 
 
 class ApiRuntime(Protocol):
@@ -64,7 +65,14 @@ def build_runtime_app(
     runtime_app = create_app(
         lifespan=lifespan,
         validation_mode=False,
-        allowed_origins=frozenset({f"http://{settings.web_host}:{settings.web_port}"}),
+        allowed_origins=frozenset(
+            {f"http://{settings.web_host}:{settings.web_port}"}
+            | ({f"http://127.0.0.1:{settings.tap_web_port}"} if settings.lca_enabled else set())
+        ),
+        lca_gateway_from_environment=False,
+        lca_gateway=LcaGateway(settings.lca_backend_url, settings.lca_gateway_token)
+        if settings.lca_enabled
+        else None,
     )
     runtime_app.state._tapper_lifecycle_failure = None
     if settings.e2e_mode:

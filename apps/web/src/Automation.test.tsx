@@ -2,7 +2,10 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { App } from "./App";
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  window.history.replaceState(null, "", "/prototype/legacy");
+});
 afterEach(cleanup);
 
 it("opens Low Code Automation as an asset library", async () => {

@@ -1,6 +1,6 @@
 """Authorized debug-flow orchestration, with durable intent before enqueue.
 
-Only ``debug_run`` admits execution. Retries reconcile the original immutable
+Only ``debug_run`` and ``run_release`` admit execution. Retries reconcile the original immutable
 request, never the current draft, and never rerun an unknown execution. This is
 an internal service boundary; gateway authentication remains the caller's job.
 """
@@ -200,6 +200,113 @@ class LcaService:
                     "input_sha256": generated.input_digest,
                 },
             },
+        )
+        return self._reconcile(principal, intent)
+
+    def publish_release(
+        self,
+        principal: AccessPrincipal,
+        flow_id: str,
+        expected_version: int,
+        verified_run_id: str,
+        key: str,
+    ) -> dict[str, Any]:
+        project, actor = self._authorize(principal, "lca.releases.publish")
+        self._version(expected_version)
+        flow = self.store.get_flow(project, actor, flow_id)
+        run = self.get_run(principal, verified_run_id)
+        snapshot = self.store.get_snapshot(project, actor, run["snapshot_id"])
+        if run["flow_id"] != flow_id or snapshot["version"] != expected_version:
+            raise LcaConflict("Verification run must match the published draft version")
+        if (
+            not run["execution"]
+            or run["execution"]["status"] != "passed"
+            or run["canonical_results_error"]
+            or not run["canonical_results"]
+            or any(item["status"] != "passed" for item in run["canonical_results"])
+        ):
+            raise LcaConflict(
+                "Publication requires a verified passing replay of every step"
+            )
+        return self.store.create_release(
+            project, actor, key, flow, snapshot, verified_run_id
+        )
+
+    def list_releases(
+        self, principal: AccessPrincipal, flow_id: str
+    ) -> list[dict[str, Any]]:
+        project, actor = self._authorize(principal, "lca.releases.read")
+        return self.store.list_releases(project, actor, flow_id)
+
+    def get_release(
+        self, principal: AccessPrincipal, release_id: str
+    ) -> dict[str, Any]:
+        project, actor = self._authorize(principal, "lca.releases.read")
+        release = self.store.get_release(project, actor, release_id)
+        snapshot = self.store.get_snapshot(project, actor, release["snapshot_id"])
+        return {
+            **release,
+            "definition": json.loads(snapshot["canonical_bytes"]),
+            "generator_version": snapshot["generator_version"],
+        }
+
+    def run_release(
+        self,
+        principal: AccessPrincipal,
+        release_id: str,
+        parameters: Mapping[str, object] | None,
+        key: str,
+    ) -> dict[str, Any]:
+        project, actor = self._authorize(principal, "lca.runs.create")
+        if not isinstance(key, str) or not 1 <= len(key) <= 128:
+            raise ValueError("Invalid idempotency key")
+        self._authorize(principal, "lca.releases.read")
+        release = self.store.get_release(project, actor, release_id)
+        snapshot = self.store.get_snapshot(project, actor, release["snapshot_id"])
+        if snapshot["generator_version"] != GENERATOR_VERSION:
+            raise LcaConflict(
+                "Published generator version unavailable; validate and publish a new revision"
+            )
+        identity = digest(
+            {"release_id": release_id, "parameters": dict(parameters or {})}
+        )
+        prior = self.store.get_run_by_key(project, actor, key)
+        if prior is not None:
+            if prior["execution_request"]["request_identity"] != identity:
+                raise LcaConflict("idempotency conflict")
+            return self._reconcile(principal, prior)
+        definition = validate_definition(json.loads(snapshot["canonical_bytes"]))
+        inputs = resolve_parameters(definition, parameters)
+        generated = generate_playwright(definition, inputs)
+        bundle = self.browser.create_bundle(
+            self._browser_principal(principal),
+            {
+                "task_id": release["flow_id"],
+                "script": generated.source,
+                "sha256": hashlib.sha256(generated.source.encode()).hexdigest(),
+                "input_data": inputs,
+                "input_sha256": generated.input_digest,
+                "allowed_origins": snapshot["allowed_origins"],
+            },
+            "lca-release-bundle-" + digest([actor, key, identity]),
+        )
+        intent = self.store.create_run(
+            project,
+            actor,
+            key,
+            snapshot["id"],
+            bundle["bundle_id"],
+            generated.input_digest,
+            {
+                "request_identity": identity,
+                "release_id": release_id,
+                "browser_request": {
+                    "task_id": release["flow_id"],
+                    "bundle_id": bundle["bundle_id"],
+                    "input_sha256": generated.input_digest,
+                },
+            },
+            classification="published",
         )
         return self._reconcile(principal, intent)
 
