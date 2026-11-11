@@ -126,6 +126,7 @@ async function observe(action, actuate) {
     // Parse and resolve the locator read-only. A syntax/strict-target error here
     // cannot have applied a browser write; do not turn it into unknown outcome.
     const count = await page.locator(action.selector).count();
+    if (count === 0) throw new Error('no target matched before write; take a fresh snapshot and use its aria-ref, or wait explicitly for an observed stable selector');
     if (count > 1) throw new Error('strict mode violation: target is ambiguous before write');
     if (action.type === 'fill' && count === 1 && await page.locator(action.selector).evaluate(element => element.readOnly === true)) {
       throw new Error('target is readonly before write; use select for a combobox or inspect its available controls');

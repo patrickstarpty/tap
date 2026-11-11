@@ -93,3 +93,16 @@ It never converts a timeout or post-dispatch outcome to safe failure, and it doe
 not force a site's control into an editable state. The real Chromium regression
 failed before the change (30-second timeout, `write_started=true`) and passed
 afterward with `write_started=false` and no click/open/write on the control.
+
+The second bounded FWD run also failed, before quotation: the model emitted
+`combobox [ref=e59]` rather than the documented `aria-ref=e59` locator. It matched
+nothing, so the click timed out and remained unknown. Recorded usage was 7 calls /
+USD 0.023654. Both attempt reservations now exhaust the approved FWD 60-call /
+USD 1 allowance; no more FWD paid tests are run from this allowance.
+
+The same direct pre-dispatch resolution now rejects zero matches as a known
+failure and asks for a fresh snapshot or an explicit wait. This does not guess a
+replacement selector, silently normalize arbitrary CSS, retry a dispatched
+click, or weaken the unknown-outcome fence. Waiting is a separate supported
+read-only action. A new real Chromium test reproduced the 30-second failure before
+this change. Further live FWD success still requires separate acceptance.

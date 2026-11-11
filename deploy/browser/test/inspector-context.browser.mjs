@@ -285,3 +285,10 @@ test('readonly fill is rejected before dispatch so the agent can choose select',
   assert.equal(result.write_started,false);
   assert.equal(await page.locator('#age').getAttribute('data-writes'),null);
 });
+
+test('unmatched target fails before dispatch and asks for fresh observation or wait', async t=>{
+  const {execute} = await fixture(t,false);
+  const result=await execute({type:'click',step:'operate',selector:'combobox [ref=e59]'});
+  assert.match(result.error,/no target.*snapshot.*wait/i);
+  assert.equal(result.write_started,false);
+});
