@@ -1,3 +1,90 @@
+// This fixed DOM reader admits only an explicit, bounded visible enum binding.
+// It never returns arbitrary hidden values or derives state from label presence.
+export function associatedControlState(nodes, {target = null} = {}) {
+  const visible = node => Boolean(node?.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' && !node.closest('[hidden],[inert],[aria-hidden="true"]'));
+  const normalize = text => String(text || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const sensitive = text => /password|passcode|secret|token|csrf|xsrf|session|auth|credential|otp|one.?time|verification|security|cvv|cvc|card|payment|bank|account|routing|iban|swift|private|api.?key|access.?key|ssn|social.?security|passport|licen[cs]e|pin(?:$|[^a-z]|code)/i.test(text);
+  const unique = selector => document.querySelectorAll(selector).length === 1;
+  const selectorFor = node => {
+    if (node.id && unique(`#${CSS.escape(node.id)}`)) return `#${CSS.escape(node.id)}`;
+    for (const attribute of ['data-testid', 'name', 'aria-label']) {
+      const value = node.getAttribute(attribute);
+      if (!value) continue;
+      const candidate = `${node.tagName.toLowerCase()}[${attribute}=${JSON.stringify(value)}]`;
+      if (unique(candidate)) return candidate;
+    }
+    const parts = [];
+    for (let element = node; element && element !== document.body; element = element.parentElement) {
+      const siblings = [...(element.parentElement?.children || [element])].filter(item => item.tagName === element.tagName);
+      parts.unshift(`${element.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(element) + 1})`);
+      if (unique(parts.join(' > '))) return parts.join(' > ');
+    }
+    return `body > ${parts.join(' > ')}`;
+  };
+  const state = node => {
+    const hidden = node?.matches('input[type="hidden"]');
+    const group = hidden ? node.parentElement : node?.closest('[data-name]');
+    if (!group || ['BODY','HTML','FORM'].includes(group.tagName) || !visible(group)
+      || (!hidden && !visible(node)) || group.querySelectorAll('*').length > 120
+      || group.querySelector('[data-name]') || group.parentElement?.closest('[data-name]') || group.closest('[data-secret],[data-private],[data-sensitive]')) return null;
+    const controls = [...group.querySelectorAll('input,select,textarea')];
+    if (controls.length !== 1) return null;
+    const input = controls[0];
+    if (input.type !== 'hidden' || input.parentElement !== group || (hidden && input !== node)) return null;
+    const name = input.getAttribute('name') || '';
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(name) || group.getAttribute('data-name') !== name
+      || sensitive([name,input.id,input.getAttribute('autocomplete'),input.getAttribute('aria-label')].join(' '))
+      || input.matches('[data-secret],[data-private],[data-sensitive]')) return null;
+    const attributes = ['data-value','data-option-value','data-optionvalue'];
+    const choices = [...group.querySelectorAll(attributes.map(attribute=>`[${attribute}]`).join(','))];
+    if (choices.length < 2 || choices.length > 12 || choices.some(choice=>!visible(choice))) return null;
+    let valueAttribute;
+    const options = [];
+    for (const choice of choices) {
+      const present = attributes.filter(attribute=>choice.hasAttribute(attribute));
+      if (present.length !== 1 || (valueAttribute && valueAttribute !== present[0])) return null;
+      valueAttribute = present[0];
+      const value = choice.getAttribute(valueAttribute);
+      const label = normalize(choice.innerText);
+      // Short enum codes only, never opaque payloads, identifiers or credentials.
+      if (!/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}$/.test(value) || /\d{9,}|[A-Fa-f0-9]{16,}/.test(value)
+        || !label || label.length > 100 || sensitive(label)
+        || choices.some(other=>other !== choice && choice.contains(other))) return null;
+      options.push({label,value});
+    }
+    if (new Set(options.map(option=>option.value)).size !== options.length
+      || new Set(options.map(option=>normalize(option.label).toLowerCase())).size !== options.length) return null;
+    const labelled = (group.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map(id=>document.getElementById(id));
+    const headings = [...group.querySelectorAll('legend,label,p,h1,h2,h3,h4,h5,h6,[role="heading"]')]
+      .filter(heading=>visible(heading) && !choices.some(choice=>choice.contains(heading)) && normalize(heading.innerText));
+    const label = normalize(group.getAttribute('aria-label')
+      || (labelled.length && labelled.every(visible) ? labelled.map(node=>node.innerText).join(' ') : '')
+      || (headings.length === 1 ? headings[0].innerText : ''));
+    if (!label || label.length > 120 || sensitive(label) || normalize(group.innerText).length > 600) return null;
+    // Read the hidden payload only after proving its ordinary visible enum context.
+    const value = String(input.value);
+    const selected = options.filter(option=>option.value === value);
+    if (value !== '' && selected.length !== 1) return null;
+    return {tag:'input',type:'hidden',id:input.id,name,selector:selectorFor(input),
+      context:'associated_selection_state',label,value,selected_label:selected[0]?.label ?? null,
+      options,readonly:true,disabled:Boolean(input.disabled),
+      association:{kind:'named_widget_enum',group_selector:selectorFor(group),group_label:label,value_attribute:valueAttribute},
+    };
+  };
+  if (!Array.isArray(nodes)) return state(nodes);
+  return nodes.slice(0,200).map(state).filter(Boolean)
+    .sort((a,b)=>Number(Boolean(target && document.querySelector(b.association.group_selector)?.contains(target)))
+      - Number(Boolean(target && document.querySelector(a.association.group_selector)?.contains(target))))
+    .slice(0,12);
+}
+
+export async function readSelectedLabel(page, action) {
+  if (typeof action.equals !== 'string') throw new Error('associated selection requires exact equals');
+  const state = await page.locator(action.selector).evaluate(associatedControlState);
+  if (!state || state.selected_label === null) throw new Error('no safe associated selected state');
+  return state.selected_label;
+}
+
 // Browser facts are extracted by Playwright, never authored by the model.
 const fieldSelector = 'output,[role="status"],input,select,textarea,button,a[href],[role="combobox"],[role="radio"],[role="checkbox"],[role="option"],[role="slider"],[contenteditable="true"]';
 
@@ -91,6 +178,11 @@ function collectFields(nodes, {target = null, selectorOnly = false} = {}) {
     checked: node.checked ?? node.getAttribute('aria-checked'), disabled: Boolean(node.disabled),
     readonly: Boolean(node.readOnly || node.getAttribute('aria-readonly') === 'true'),
     expanded: node.getAttribute('aria-expanded'), href: node.getAttribute('href'),
+    state_attributes: Object.fromEntries(['aria-checked','aria-selected','aria-pressed','aria-valuenow','data-active','data-selected']
+      .filter(name=>node.hasAttribute(name) && (name === 'aria-valuenow'
+        ? /^-?\d{1,12}(?:\.\d{1,6})?$/.test(node.getAttribute(name))
+        : /^(?:|true|false|mixed|1|0)$/.test(node.getAttribute(name))))
+      .map(name=>[name,node.getAttribute(name)])),
     options: node.tagName === 'SELECT' ? [...node.options].slice(0, 30).map(o => ({label:o.label, value:o.value})) : [],
     };
   });
@@ -116,7 +208,11 @@ export async function observeFields(page, action = {}) {
         }
         const prefix = prefixes.map(selector => `${selector} >> internal:control=enter-frame >> `).join('');
         const fields = await frame.locator(fieldSelector).evaluateAll(collectFields, {target:frame === targetFrame ? target : null});
-        results.push(...fields.map(field => ({...field, selector:prefix + field.selector})));
+        const states = await frame.locator('input[type="hidden"]').evaluateAll(associatedControlState, {target:frame === targetFrame ? target : null});
+        const ordered = [...fields.filter(field=>field.context === 'action_target'), ...states, ...fields.filter(field=>field.context !== 'action_target')];
+        results.push(...ordered.map(field => ({...field, selector:prefix + field.selector,
+          ...(field.association ? {association:{...field.association,group_selector:prefix + field.association.group_selector}} : {}),
+        })));
       } catch { /* A detached frame has no current observable controls. */ }
     }
     return [...results.filter(field => field.context), ...results.filter(field => !field.context)].slice(0, 100);
@@ -136,8 +232,15 @@ export async function readValue(page, action) {
     // Reject secret controls even when the model asks for their attributes.
     const type = await locator.getAttribute('type', {timeout});
     const autocomplete = await locator.getAttribute('autocomplete', {timeout});
-    if (type === 'password' || /password|one-time-code|cc-number|cc-csc/.test(autocomplete || '')) throw new Error('sensitive control cannot be extracted');
-    if (attribute === 'text') value = await locator.innerText({timeout});
+    if (String(type).toLowerCase() === 'password' || /password|one-time-code|cc-number|cc-csc/i.test(autocomplete || '')) throw new Error('sensitive control cannot be extracted');
+    if (attribute === 'selected_label') value = await readSelectedLabel(page, action);
+    else if (String(type).toLowerCase() === 'hidden') {
+      if (attribute !== 'value' || typeof action.equals !== 'string') throw new Error('hidden selection requires exact associated value read');
+      const state = await locator.evaluate(associatedControlState);
+      if (!state || state.selected_label === null) throw new Error('hidden control has no safe associated selected state');
+      value = state.value;
+    }
+    else if (attribute === 'text') value = await locator.innerText({timeout});
     else if (attribute === 'value') value = await locator.inputValue({timeout});
     else if (attribute === 'checked') value = await locator.evaluate(node => node.getAttribute('aria-checked') ?? String(node.checked));
     else value = await locator.getAttribute(attribute, {timeout});
@@ -160,20 +263,27 @@ export async function guardTarget(page, action) {
   const facts = await page.locator(action.selector).evaluate(node => ({
     labels: [node.id, node.getAttribute('name'), node.getAttribute('aria-label'),
       ...(node.labels ? [...node.labels].map(n=>n.textContent) : []),
-      node.textContent, ...(node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id=>document.getElementById(id)?.textContent)].filter(Boolean),
+      node.innerText, node.textContent, ...(node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id=>document.getElementById(id)?.textContent)].filter(Boolean),
     scopes: [node.closest('label'), node.parentElement, node.parentElement?.parentElement]
       .filter(n=>n && !['BODY','HTML'].includes(n.tagName) && (n.textContent || '').length <= 600)
       .map(n=>(n.innerText || n.textContent).trim())
       .filter(text=>text !== (node.innerText || node.textContent || '').trim()).slice(0,1),
     type: node.getAttribute('type'), autocomplete: node.getAttribute('autocomplete') || '',
   }), {timeout:30000});
+  if (String(facts.type).toLowerCase() === 'hidden') {
+    const state = await page.locator(action.selector).evaluate(associatedControlState);
+    if (!state) throw new Error('hidden target has no safe associated selection state');
+    if (action.type && !['read','snapshot'].includes(action.type)) throw new Error('hidden selection state is read-only');
+    facts.labels = [state.id,state.name,state.label].filter(Boolean);
+    facts.scopes = [state.association.group_label];
+  }
   const matches = (text, expected) => {
     const value = String(text).normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
     const term = String(expected).normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     return Boolean(term) && new RegExp('(^|[^\\p{L}\\p{N}])'+escaped+'($|[^\\p{L}\\p{N}])','u').test(value);
   };
-  if (facts.type === 'password' || /password|one-time-code|cc-number|cc-csc/.test(facts.autocomplete)) throw new Error('sensitive target');
+  if (String(facts.type).toLowerCase() === 'password' || /password|one-time-code|cc-number|cc-csc/i.test(facts.autocomplete)) throw new Error('sensitive target');
   if (!action.target_texts.some(term=>facts.labels.some(text=>matches(text,term)))) throw new Error('target does not match frozen BDD contract');
   if (action.scope_text && !facts.scopes.some(text=>matches(text,action.scope_text))) throw new Error('scope does not match frozen BDD contract');
 }

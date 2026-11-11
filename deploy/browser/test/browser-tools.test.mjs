@@ -186,3 +186,30 @@ test('native read schema distinguishes control state from visible label text', a
   for (const term of [/text.*default/i, /value.*input.*select/i, /checked.*radio.*checkbox/i,
     /true.*false/i, /aria-valuenow.*slider/i, /label/i]) assert.match(guidance, term);
 });
+
+test('model receipt preserves bounded associated selection and explicit state facts', async t => {
+  const {root, tool}=await setup(t);
+  const state={context:'associated_selection_state',selector:'#choice',tag:'input',type:'hidden',id:'choice',
+    name:'deliveryChoice',label:'Delivery method',value:'E',selected_label:'Express',readonly:true,
+    options:[{label:'Standard',value:'S'},{label:'Express',value:'E'}],
+    association:{kind:'named_widget_enum',group_selector:'#delivery',group_label:'Delivery method',value_attribute:'data-optionvalue'}};
+  const responder=setInterval(()=>{
+    for (const file of fs.readdirSync(path.join(root,'requests')).filter(name=>name.endsWith('.json'))) {
+      fs.writeFileSync(path.join(root,'responses',file),JSON.stringify({sequence:1,error:null,
+        bounded_snapshot:'Delivery method Standard Express',
+        documents:[{frame_id:'frame-1',document_id:'doc-1',url:'https://owned.test/'}],
+        fields:[state,{context:'action_target',selector:'#monthly',tag:'button',label:'Monthly',state_attributes:{'data-active':''}}],
+      }),{mode:0o600});
+    }
+  },5);
+  try {
+    const result=JSON.parse(await tool.execute({action:{type:'snapshot',step:'observe'}},{directory:root,abort:new AbortController().signal,ask:async()=>{}}));
+    const observed=result.related_fields.find(field=>field.selector==='#choice');
+    assert.equal(observed.selected_label,'Express');
+    assert.deepEqual(observed.association,state.association);
+    assert.deepEqual(observed.options,state.options);
+    assert.deepEqual(result.related_fields.find(field=>field.selector==='#monthly').state_attributes,{'data-active':''});
+    assert.deepEqual(result.documents,[{frame_id:'frame-1',document_id:'doc-1',url:'https://owned.test/'}]);
+    assert.ok(JSON.stringify(result).length<8000);
+  } finally {clearInterval(responder);}
+});
