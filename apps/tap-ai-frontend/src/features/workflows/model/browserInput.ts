@@ -51,6 +51,7 @@ export const BROWSER_READBACK_ATTRIBUTES = [
   "checked",
   "aria-pressed",
   "aria-valuenow",
+  "data-active",
 ] as const;
 
 export interface BrowserAcceptanceField {

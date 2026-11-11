@@ -18,7 +18,7 @@ class BrowserRequiredInput(BaseModel):
     id: str = Field(strict=True, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     value: Value
     readback_value: Value
-    attribute: Literal["text", "value", "checked", "aria-pressed", "aria-valuenow"]
+    attribute: Literal["text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active"]
     target_texts: tuple[Label, ...] = Field(min_length=1, max_length=6)
     scope_text: Label | None = None
 

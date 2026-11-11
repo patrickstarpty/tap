@@ -58,7 +58,9 @@ class BDDStep(FrozenModel):
     target_texts: tuple[str, ...] = Field(default=(), max_length=6)
     scope_text: str | None = Field(default=None, max_length=200)
     value: str | None = Field(default=None, max_length=4000)
-    attribute: Literal["text", "value", "checked", "aria-pressed", "aria-valuenow"] = "text"
+    attribute: Literal[
+        "text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active"
+    ] = "text"
     assertion: Assertion | None = None
 
     @model_validator(mode="after")

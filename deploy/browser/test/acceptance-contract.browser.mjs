@@ -15,14 +15,14 @@ const base=[
   {type:'click',selector:'#next',target_texts:['Calculate'],step:'next'},
   {type:'read',selector:'#quote',attribute:'text',positive:true,name:'quote',target_texts:['Quote'],step:'result'},
 ];
-function compile(actions) {
+function compile(actions, acceptance=contract) {
   const python=`import sys,json
 from tap.modules.workflows.application.direct_browser import DirectBrowserResult,compile_replay
 from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 p=json.load(sys.stdin);a=p['actions']
 steps={x['step']:{'id':x['step'],'keyword':'Then' if x['type']=='read' else 'Given' if x['type']=='navigate' else 'When','title':x['step']} for x in a}
 print(compile_replay(DirectBrowserResult('passed',{},a,steps,acceptance_contract=BrowserAcceptanceContract.model_validate(p['contract']))))`;
-  return spawnSync(root+'.venv/bin/python',['-c',python],{cwd:root,input:JSON.stringify({actions,contract}),encoding:'utf8'});
+  return spawnSync(root+'.venv/bin/python',['-c',python],{cwd:root,input:JSON.stringify({actions,contract:acceptance}),encoding:'utf8'});
 }
 for (const variant of ['correct', 'default-value', 'changed-expected', 'omitted', 'wrong-target', 'wrong-selector', 'mutated', 'refreshed', 'unknown']) {
   test(`reviewed input replay fails closed: ${variant}`,async()=>{
@@ -57,6 +57,27 @@ for (const variant of ['correct', 'default-value', 'changed-expected', 'omitted'
       } else {
         await assert.rejects(completed);assert.equal(attached,undefined);
       }
+    } finally {await browser.close();}
+  });
+}
+
+for (const active of [true, false]) {
+  test(`data-active replay distinguishes present empty state from null: ${active}`, async()=>{
+    const acceptance={version:1,reviewed:true,fields:[{id:'choice',value:'Option A',readback_value:'',attribute:'data-active',target_texts:['Option A']}]};
+    const actions=[{type:'read',step:'verify',selector:'#choice',name:'choice',attribute:'data-active',equals:'',target_texts:['Option A']}];
+    const compiled=compile(actions,acceptance);
+    assert.equal(compiled.status,0,compiled.stderr);
+    const browser=await chromium.launch({headless:true});
+    try {
+      const page=await browser.newPage();
+      await page.setContent(`<button id="choice" ${active?'data-active=""':''}>Option A</button>`);
+      let completed,attached;
+      const run=(_name,body)=>{completed=body({page},{attach:async(_name,data)=>{attached=JSON.parse(data.body.toString());}});};
+      run.setTimeout=()=>{};run.step=async(_name,body)=>body();
+      const source=compiled.stdout.replace("import { test, expect } from '@playwright/test';",'').replace(': Record<string, string | null>','');
+      new Function('test','expect',source)(run,expect.configure({timeout:200}));
+      if(active) {await completed;assert.deepEqual(attached,{choice:''});}
+      else {await assert.rejects(completed);assert.equal(attached,undefined);}
     } finally {await browser.close();}
   });
 }

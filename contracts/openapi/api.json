@@ -2310,7 +2310,8 @@
               "value",
               "checked",
               "aria-pressed",
-              "aria-valuenow"
+              "aria-valuenow",
+              "data-active"
             ],
             "title": "Attribute",
             "type": "string"

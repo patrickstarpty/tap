@@ -74,7 +74,7 @@ BROWSER_TOOL: dict[str, Any] = {
                     "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "description": "Business output name for a DOM read.",
                 },
-                "attribute": {"enum": ["text", "value", "checked", "aria-valuenow"]},
+                "attribute": {"enum": ["text", "value", "checked", "aria-valuenow", "data-active"]},
                 "equals": {"type": "string"},
                 "contains": {"type": "string"},
                 "nonempty": {"type": "boolean"},
@@ -388,6 +388,7 @@ def compile_replay(result: DirectBrowserResult) -> str:
                 "checked": "evaluate(n => n.getAttribute('aria-checked') ?? String(n.checked))",
                 "aria-valuenow": "getAttribute('aria-valuenow')",
                 "aria-pressed": "getAttribute('aria-pressed')",
+                "data-active": "getAttribute('data-active')",
             }[attribute]
             if "equals" in action:
                 method = (

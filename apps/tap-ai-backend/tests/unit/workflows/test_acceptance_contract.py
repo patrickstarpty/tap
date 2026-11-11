@@ -133,7 +133,7 @@ async def test_reviewed_input_cannot_pass_without_current_exact_read_proof(fault
     assert not progress.required_inputs_complete
 
 
-async def proof_fixture():
+async def proof_fixture(contract=None):
     from tap.modules.workflows.application.browser_steps import BrowserProgress
 
     async def emit(*_args):
@@ -168,7 +168,9 @@ async def proof_fixture():
             "observation": {"sequence": seq, "url": state["page"], "extracted": fact},
         }
 
-    progress = BrowserProgress(emit, BrowserAcceptanceContract.model_validate(contract_data()))
+    progress = BrowserProgress(
+        emit, BrowserAcceptanceContract.model_validate(contract or contract_data())
+    )
     await progress.handle(
         {
             "type": "plan",
@@ -397,3 +399,17 @@ def test_readback_coercion_cannot_be_added_by_an_unreviewed_model_plan():
     data["steps"][2]["assertion"]["expected"] = "31"
     with pytest.raises(ValueError, match="reviewed"):
         BDDPlan.model_validate(data).validate_acceptance(None)
+
+
+@pytest.mark.asyncio
+async def test_data_active_proves_empty_present_attribute_but_not_missing_state():
+    data = contract_data()
+    data["fields"][0].update(attribute="data-active", readback_value="")
+    progress, execute, read, state = await proof_fixture(data)
+    read.update(attribute="data-active", equals="")
+    state["value"] = ""
+    await progress.handle(read, "selected", execute)
+    assert progress.required_inputs_complete
+    state["fault"] = "unreadable"  # Missing DOM attribute returns null, not empty string.
+    await progress.handle(read, "not-selected", execute)
+    assert not progress.required_inputs_complete

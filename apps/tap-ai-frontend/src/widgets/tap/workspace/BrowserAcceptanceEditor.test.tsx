@@ -60,3 +60,35 @@ it("requires explicit values and re-review after every edit", async () => {
   await userEvent.type(screen.getByLabelText("Input value"), "x");
   expect(review).not.toBeChecked();
 });
+
+it("offers data-active with explicitly reviewed empty readback", async () => {
+  function Composer() {
+    const [draft, setDraft] = useState<BrowserAcceptanceDraft>({
+      reviewed: false,
+      fields: [
+        {
+          id: "choice",
+          value: "Option A",
+          readbackValue: "",
+          attribute: "value",
+          targetTexts: ["Option A"],
+        },
+      ],
+    });
+    return (
+      <>
+        <BrowserAcceptanceEditor draft={draft} onChange={setDraft} />
+        <button disabled={!browserAcceptanceReady(draft)}>Send state</button>
+      </>
+    );
+  }
+  render(<Composer />);
+  await userEvent.selectOptions(
+    screen.getByLabelText("Readback attribute"),
+    "data-active",
+  );
+  expect(screen.getByLabelText("Expected readback value")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Send state" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("checkbox"));
+  expect(screen.getByRole("button", { name: "Send state" })).toBeEnabled();
+});
