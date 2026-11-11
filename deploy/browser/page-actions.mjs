@@ -89,7 +89,7 @@ export async function readSelectedLabel(page, action) {
 const fieldSelector = 'output,[role="status"],input,select,textarea,button,a[href],[role="combobox"],[role="radio"],[role="checkbox"],[role="option"],[role="slider"],[contenteditable="true"]';
 
 // Runs only our fixed read-only DOM collector; never changes the AI ref map.
-function collectFields(nodes, {target = null, selectorOnly = false} = {}) {
+function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect = false} = {}) {
   const unique = selector => document.querySelectorAll(selector).length === 1;
   const selectorFor = node => {
     if (node.id && unique(`#${CSS.escape(node.id)}`)) return `#${CSS.escape(node.id)}`;
@@ -183,7 +183,11 @@ function collectFields(nodes, {target = null, selectorOnly = false} = {}) {
         ? /^-?\d{1,12}(?:\.\d{1,6})?$/.test(node.getAttribute(name))
         : /^(?:|true|false|mixed|1|0)$/.test(node.getAttribute(name))))
       .map(name=>[name,node.getAttribute(name)])),
-    options: node.tagName === 'SELECT' ? [...node.options].slice(0, 30).map(o => ({label:o.label, value:o.value})) : [],
+    ...(node.tagName === 'SELECT' ? {
+      options:[...node.options].slice(0,scopedSelect && node === target ? 200 : 30).map(o=>({label:o.label,value:o.value})),
+      options_total:node.options.length,
+      options_truncated:node.options.length > (scopedSelect && node === target ? 200 : 30),
+    } : {options:[]}),
     };
   });
 }
@@ -207,7 +211,7 @@ export async function observeFields(page, action = {}) {
           finally { await element.dispose(); }
         }
         const prefix = prefixes.map(selector => `${selector} >> internal:control=enter-frame >> `).join('');
-        const fields = await frame.locator(fieldSelector).evaluateAll(collectFields, {target:frame === targetFrame ? target : null});
+        const fields = await frame.locator(fieldSelector).evaluateAll(collectFields, {target:frame === targetFrame ? target : null, scopedSelect:action.type === 'snapshot' && Boolean(action.selector)});
         const states = await frame.locator('input[type="hidden"]').evaluateAll(associatedControlState, {target:frame === targetFrame ? target : null});
         const ordered = [...fields.filter(field=>field.context === 'action_target'), ...states, ...fields.filter(field=>field.context !== 'action_target')];
         results.push(...ordered.map(field => ({...field, selector:prefix + field.selector,

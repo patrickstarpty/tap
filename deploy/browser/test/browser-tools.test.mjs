@@ -290,3 +290,62 @@ for(const source of [
   assert.equal(result.extracted.value,'Approved');
   assert.equal(observation.url,source);
 });
+
+test('compact identities survive two large selection states before calendar details',async t=>{
+  const {root}=await setup(t);
+  const {modelReceipt}=await import('../browser-tools.mjs');
+  const state=index=>({context:'associated_selection_state',selector:`#state-${index}`,tag:'input',type:'hidden',
+    id:`state-${index}`,name:`choice${index}`,label:`Choice ${index}`,value:'A',readonly:true,disabled:false,
+    selected_label:'A'.repeat(100),options:Array.from({length:12},(_,i)=>({label:`${i} ${'associated choice '.repeat(6)}`,value:String(i)})),
+    association:{kind:'named_widget_enum',group_selector:`#group-${index}`,group_label:'Associated choice '.repeat(7),value_attribute:'data-optionvalue'}});
+  const fields=[{context:'action_target',selector:'#dob',id:'dob',tag:'input',role:null,label:'Date of birth',value:'',readonly:true,disabled:false},
+    state(1),state(2),
+    {context:'visible_control',selector:'#calendar-month',tag:'select',label:'Month',options:Array.from({length:12},(_,i)=>({label:`Month ${i+1}`,value:String(i+1)})),options_total:12,options_truncated:false},
+    {context:'visible_control',selector:'#calendar-year',tag:'select',label:'Year',options:Array.from({length:30},(_,i)=>({label:String(1900+i),value:String(1900+i)})),options_total:127,options_truncated:true},
+    {context:'popup_item',selector:'#day-11',tag:'button',label:'11'},
+    {context:'visible_popup',selector:'#calendar',tag:'div',label:'Calendar',popup_text:'Calendar day '.repeat(300),popup_text_truncated:true}];
+  const receipt={sequence:9,error:null,bounded_snapshot:'Background '.repeat(2000),fields,
+    documents:Array.from({length:3},(_,i)=>({frame_id:`frame-${i}`,document_id:`document-${i}`,url:`https://owned.test/page-${i}`}))};
+  const encoded=modelReceipt(receipt,{type:'click',selector:'#dob'},root);
+  const result=JSON.parse(encoded);
+  assert.ok(encoded.length<8000);
+  assert.deepEqual(new Set(result.related_fields.map(field=>field.selector)),new Set(fields.map(field=>field.selector)));
+  assert.equal(result.related_fields.find(field=>field.selector==='#dob').readonly,true);
+  assert.equal(Object.hasOwn(result.related_fields.find(field=>field.selector==='#dob'),'role'),false,'null identity fields waste the shared budget');
+  const year=result.related_fields.find(field=>field.selector==='#calendar-year');
+  assert.equal(year.options_total,127);assert.equal(year.options_truncated,true);
+  assert.ok(result.related_fields.some(field=>field.details_omitted),'model-budget omissions must be explicit');
+  for (const index of [1,2]) assert.deepEqual(result.related_fields.find(field=>field.selector===`#state-${index}`).association,state(index).association);
+  assert.deepEqual(result.documents,receipt.documents);
+  assert.deepEqual(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')).fields,fields);
+});
+
+test('native schema explains exact refs, scoped snapshots, current receipts and readonly dates',async t=>{
+  const {tool}=await setup(t);
+  const snapshot=tool.args.action.oneOf.find(item=>item.properties.type.const==='snapshot');
+  const guidance=tool.description+' '+snapshot.properties.selector.description;
+  for(const term of [/aria\/Label.*invalid/i,/aria-ref=Label.*invalid/i,/existing element/i,/not.*text search/i,
+    /receipts.*observations/i,/readonly.*date.*open/i,/year.*month.*day/i,/sibling popup/i]) assert.match(guidance,term);
+});
+
+test('native select identities survive more popup items than the field limit',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const result=JSON.parse(modelReceipt({error:null,bounded_snapshot:'Calendar',fields:[
+    {context:'action_target',selector:'#dob',tag:'input',readonly:true},
+    ...Array.from({length:30},(_,i)=>({context:'popup_item',selector:`#day-${i}`,tag:'button',label:String(i+1)})),
+    {context:'popup_item',selector:'#month',tag:'select',label:'Month'},
+    {context:'popup_item',selector:'#year',tag:'select',label:'Year'},
+  ]},{type:'click',selector:'#dob'},root));
+  assert.ok(result.related_fields.some(field=>field.selector==='#month'));
+  assert.ok(result.related_fields.some(field=>field.selector==='#year'));
+  assert.ok(result.related_fields_omitted>0);
+});
+
+test('an observed empty native select does not claim that options were truncated',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const result=JSON.parse(modelReceipt({error:null,bounded_snapshot:'Empty choices',fields:[
+    {context:'action_target',selector:'#empty',tag:'select',options:[],options_total:0,options_truncated:false},
+  ]},{type:'snapshot',selector:'#empty'},root));
+  assert.equal(result.related_fields[0].options_total,0);
+  assert.equal(result.related_fields[0].options_truncated,false);
+});

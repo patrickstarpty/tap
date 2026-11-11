@@ -233,7 +233,7 @@ test('popup text over the DOM cap reports truncation to the model', async t=>{
   assert.ok(popup.popup_text.length<=1000);
 });
 
-test('long popup selector survives the model budget by shortening text', async t=>{
+test('long popup selector survives the shared model budget without shortening identity', async t=>{
   const {page,frame,execute}=await fixture(t,false);
   await frame.locator('body').evaluate(body=>{
     let parent=body;
@@ -249,26 +249,26 @@ test('long popup selector survives the model budget by shortening text', async t
   assert.ok(projected,'popup identity and selector must survive text pressure');
   assert.equal(projected.selector,popup.selector);
   assert.equal(await page.locator(projected.selector).getAttribute('role'),'dialog');
-  assert.equal(projected.popup_text_truncated,true);
-  assert.ok(result.related_fields_omitted>0 || projected.popup_text.length<popup.popup_text.length);
-  assert.ok(JSON.stringify(result.related_fields).length<=2200);
+  assert.equal(projected.popup_text,popup.popup_text);
+  assert.equal(projected.popup_text_truncated,false);
+  assert.ok(JSON.stringify(result).length<8000);
 });
 
 test('an unaffordable context reports omission and points to full evidence', async t=>{
   const {page,frame,execute}=await fixture(t,false);
   await frame.locator('body').evaluate(body=>{
     let parent=body;
-    for(let i=0;i<140;i++){const child=document.createElement('div');parent.append(child);parent=child;}
+    for(let i=0;i<500;i++){const child=document.createElement('div');parent.append(child);parent=child;}
     const dialog=document.createElement('div'); dialog.setAttribute('role','dialog');
     dialog.textContent='Deep notice'; parent.append(dialog);
   });
   const popup=(await observeFields(page,{})).find(field=>field.role==='dialog');
-  assert.ok(popup.selector.length>2200,'fixture needs a selector that cannot fit');
+  assert.ok(popup.selector.length>8000,'fixture needs a selector that cannot fit the shared budget');
   const result=await execute({type:'snapshot',step:'inspect_deep'});
   assert.ok(result.related_fields_omitted>0);
   assert.match(result.observation_detail,/evidence_file|scoped snapshot/);
   assert.ok(fs.existsSync(result.evidence_file));
-  assert.ok(JSON.stringify(result.related_fields || []).length<=2200);
+  assert.ok(JSON.stringify(result).length<8000);
 });
 
 test('malformed selector is rejected before a write is started with recoverable evidence', async t=>{
@@ -292,4 +292,54 @@ test('unmatched target fails before dispatch and asks for fresh observation or w
   const result=await execute({type:'click',step:'operate',selector:'combobox [ref=e59]'});
   assert.match(result.error,/no target.*snapshot.*wait/i);
   assert.equal(result.write_started,false);
+});
+
+test('observed readonly calendar reveals a year beyond option 30 and survives redraw refs',async t=>{
+  const {page,frame,execute}=await fixture(t,false);
+  await frame.setContent(`<label>Date of birth<input readonly aria-label="Date of birth" value="01/01/2000"></label><div hidden></div>`);
+  await frame.evaluate(()=>{
+    const input=document.querySelector('input');const calendar=document.querySelector('body > div');
+    calendar.style='position:fixed;top:100px;left:100px;background:white';
+    let year='2026',month='11';window.calendarWrites=0;
+    for(const event of ['click','input','change','focus'])document.addEventListener(event,()=>window.calendarWrites++,true);
+    const draw=()=>{
+      calendar.innerHTML='<select aria-label="Calendar month">'+Array.from({length:12},(_,i)=>`<option value="${i+1}" ${String(i+1)===month?'selected':''}>Month ${i+1}</option>`).join('')+'</select>'
+        +'<select aria-label="Calendar year">'+Array.from({length:127},(_,i)=>`<option ${String(1900+i)===year?'selected':''}>${1900+i}</option>`).join('')+'</select>'
+        +'<button aria-label="Choose day 11">11</button>';
+      const [months,years]=calendar.querySelectorAll('select');
+      months.onchange=()=>{month=months.value;draw();};years.onchange=()=>{year=years.value;draw();};
+      calendar.querySelector('button').onclick=()=>{input.value=`11/${month.padStart(2,'0')}/${year}`;calendar.hidden=true;};
+    };
+    input.onclick=()=>{calendar.hidden=false;draw();};
+  });
+  const initial=await execute({type:'snapshot',step:'observe'});
+  const inputRef=initial.bounded_snapshot.split('\n').find(line=>line.includes('textbox "Date of birth"')).match(/\[ref=([^\]]+)\]/)[1];
+  const opened=await execute({type:'click',step:'open_date',selector:`aria-ref=${inputRef}`});
+  const input=opened.related_fields.find(field=>field.context==='action_target');
+  assert.equal(input.readonly,true);
+  const year=opened.related_fields.find(field=>field.tag==='select'&&field.label==='Calendar year');
+  const month=opened.related_fields.find(field=>field.tag==='select'&&field.label==='Calendar month');
+  assert.ok(year);assert.ok(month);assert.equal(year.options_total,127);assert.equal(year.options_truncated,true);
+  const writes=await page.evaluate(()=>window.calendarWrites);
+  const inputScope=await execute({type:'snapshot',step:'input_scope',selector:input.selector});
+  assert.doesNotMatch(inputScope.bounded_snapshot,/Calendar year/,'a textbox scope cannot contain its sibling calendar');
+  const scoped=await execute({type:'snapshot',step:'year_options',selector:year.selector});
+  assert.equal(await page.evaluate(()=>window.calendarWrites),writes,'observation must not focus, click, input or change controls');
+  const scopedYear=scoped.related_fields.find(field=>field.context==='action_target');
+  assert.equal(scopedYear.options_total,127);assert.equal(scopedYear.options_truncated,false);
+  assert.ok(scopedYear.options.some(option=>option.value==='1996'),'scoping the observed select exposes years beyond the page prefix');
+  const oldYearRef=scoped.bounded_snapshot.match(/\[ref=([^\]]+)\]/)?.[1];
+  const changedYear=await execute({type:'select',step:'choose_year',selector:scopedYear.selector,value:'1996'});
+  assert.equal(changedYear.error,null);
+  const currentMonth=changedYear.related_fields.find(field=>field.tag==='select'&&field.label==='Calendar month');
+  assert.ok(currentMonth);
+  const changedMonth=await execute({type:'select',step:'choose_month',selector:currentMonth.selector,value:'3'});
+  assert.equal(changedMonth.error,null);
+  assert.equal(await page.locator(`aria-ref=${oldYearRef}`).count(),0,'redrawing the calendar invalidates old snapshot refs');
+  const dayLine=changedMonth.bounded_snapshot.split('\n').find(line=>line.includes('button "Choose day 11"'));
+  assert.ok(dayLine);const dayRef=dayLine.match(/\[ref=([^\]]+)\]/)[1];
+  const selected=await execute({type:'click',step:'choose_day',selector:`aria-ref=${dayRef}`});
+  assert.equal(selected.error,null);
+  const read=await execute({type:'read',step:'verify_dob',selector:input.selector,name:'dob',attribute:'value',equals:'11/03/1996'});
+  assert.equal(read.error,null);assert.equal(read.extracted.value,'11/03/1996');
 });

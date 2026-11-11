@@ -113,6 +113,13 @@ async function observe(action, actuate) {
     delete resultValues[action.name];
     delete resultProvenance[action.name];
   }
+  if (!actuate && !controlled && ['click','fill','select','press'].includes(action.type)) {
+    // Parse and resolve the locator read-only. A syntax/strict-target error here
+    // cannot have applied a browser write; do not turn it into unknown outcome.
+    const count = await page.locator(action.selector).count();
+    if (count === 0) throw new Error('no target matched before write; take a fresh snapshot and use its aria-ref, or wait explicitly for an observed stable selector');
+    if (count > 1) throw new Error('strict mode violation: target is ambiguous before write');
+  }
   if (['click','fill','select','press','read','wait'].includes(action.type)) await guardTarget(page, action);
   if (!actuate && action.type === 'navigate') {
     write_started = true;
@@ -126,11 +133,6 @@ async function observe(action, actuate) {
     if(action.actor_kind==='agent') { await context.tracing.start({screenshots:true,snapshots:true}); traceActive=true; }
   }
   if (!actuate && !controlled && ['click','fill','select','press'].includes(action.type)) {
-    // Parse and resolve the locator read-only. A syntax/strict-target error here
-    // cannot have applied a browser write; do not turn it into unknown outcome.
-    const count = await page.locator(action.selector).count();
-    if (count === 0) throw new Error('no target matched before write; take a fresh snapshot and use its aria-ref, or wait explicitly for an observed stable selector');
-    if (count > 1) throw new Error('strict mode violation: target is ambiguous before write');
     if (action.type === 'fill') {
       // Inspect the exact target only. A combobox/container is not an input;
       // never guess a child, follow a label, or rewrite the model's operation.
@@ -139,7 +141,7 @@ async function observe(action, actuate) {
         readonly: element.readOnly === true || element.getAttribute('aria-readonly') === 'true',
         contenteditable: element.isContentEditable === true,
       }));
-      if (target.readonly) throw new Error('target is readonly before write; use select for a combobox or inspect its available controls');
+      if (target.readonly) throw new Error('target is readonly before write; inspect current controls instead of fill. For a readonly date widget, open the observed widget and choose current year, month and day controls; use select only on an observed supported choice control');
       // Match the pinned Playwright fill API's native input types, including
       // date/color/range controls. Visibility and action-time failures remain
       // Playwright's responsibility once dispatch starts.

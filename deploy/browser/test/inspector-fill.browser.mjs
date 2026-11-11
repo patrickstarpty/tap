@@ -21,9 +21,11 @@ async function fixture(t,html,{afterFill, beforeFill}={}) {
   });
   const source=fs.readFileSync(new URL('../inspector.mjs',import.meta.url),'utf8')
     .replace(/^import .*;\n/gm,'').split('try { fs.unlinkSync(socketPath); }')[0];
+  let guardCalls=0;
+  const observedGuard=async(...args)=>{guardCalls++;return guardTarget(...args);};
   const observe=await new (Object.getPrototypeOf(async function(){}).constructor)(
     'fs','net','chromium','observeFields','readValue','guardTarget','selectValue','process','createDocumentProvenance',source+'\nreturn observe;'
-  )(fs,{}, {launchPersistentContext:async()=>context},observeFields,readValue,guardTarget,selectValue,
+  )(fs,{}, {launchPersistentContext:async()=>context},observeFields,readValue,observedGuard,selectValue,
     {env:{TAP_BROWSER_LOCAL_DIR:root}},createDocumentProvenance);
   let fills=0;
   const locator=page.locator.bind(page);
@@ -42,7 +44,7 @@ async function fixture(t,html,{afterFill, beforeFill}={}) {
     assert.equal(projected.write_started,receipt.write_started);
     return receipt;
   };
-  return {page,run,fills:()=>fills};
+  return {page,run,fills:()=>fills,guardCalls:()=>guardCalls};
 }
 
 for(const [name,html] of [
@@ -120,4 +122,16 @@ test('a target changed after preflight remains a started write rather than a saf
   const result=await run({selector:'#target'});
   assert.ok(result.error);assert.equal(result.write_started,true);assert.equal(fills(),1);
   assert.equal(await page.locator('#target').inputValue(),'25');
+});
+
+
+for(const type of ['click','fill','select','press']) test(`${type} missing target is rejected before the target contract evaluates`,async t=>{
+  const {page,run,fills,guardCalls}=await fixture(t,'<input id="available" aria-label="Age" value="25">');
+  const start=Date.now();
+  const result=await run({type,selector:'#missing',target_texts:['Age'],key:'Enter'});
+  assert.equal(guardCalls(),0,'missing direct-write targets must not enter the auto-waiting contract evaluator');
+  assert.ok(Date.now()-start<3000,'a missing target must not wait for the 30-second guard timeout');
+  assert.equal(result.write_started,false);assert.match(result.error,/no target.*before write.*fresh.*observation|no target.*before write.*fresh snapshot/i);
+  assert.equal(fills(),0);assert.equal(await page.evaluate(()=>window.controlWrites),0);
+  assert.ok(result.bounded_snapshot.includes('Age'));
 });
