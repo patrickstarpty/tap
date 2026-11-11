@@ -220,3 +220,16 @@ All 110 provider calls are settled, all owned browser sessions stopped, and no A
 | Total | 110 | 1,718,802 | 18,505 | 1.80894040 |
 
 The task budget ledger conservatively rounds each call upward to whole microdollars, totaling USD 1.808987. AIA reached its original 60-call site cap; FWD has only USD 0.053810 and ten calls left. No further complete-site paid attempt is planned under an infeasible remainder, and no budget is automatically enlarged. Development/review conversation token and dollar telemetry is unavailable and is not included or estimated here. Zero-provider-cost regression tests are separate from these billed API calls.
+
+## Final post-fix validation checkpoint
+
+Application revision `e16062c9` passed `make check`, `make test` and `make browser-contract-test` (120/120 owned Chromium cases). The repository gates include 702 backend tests with 90 explicitly environment-dependent skips, 539 core AA tests, 83 AA UI tests, 70 selected browser/backend tests and nine shell UI tests. The new retry-brake implementation and observation changes also passed their focused suites and independent review. A one-line Testing Library option typing error was corrected without changing application behavior.
+
+The first fresh full-stack attempt stalled during Docker container creation, before database migration, AA or UI execution. This was not an action or requirements failure and incurred no provider calls. After a coordinated data-preserving Docker runtime recovery, one fresh serial attempt passed on the fixed revision:
+
+- AA task `c384c33f922b4b1087ae92c590134043`.
+- LCA run `93606336152e407ba8c57b084d86eacc`: 11/11 canonical actions and eight BDD groups passed; technical execution and both current requirements passed, with no canonical result error.
+- Real UI edit `step_76f4e4ab2ba7` was saved under Then as an exact assertion for `AC-42 / 120 / MATCH` and executed successfully.
+- Continuous `tap-aa-lca-full-acceptance-e16062c9.mp4`: 28.88 seconds, 800×450, H.264/yuv420p/faststart, uncut and not sped up, with a successful full decode. The original WebM, edited definition, full results screenshot and JSON receipt were retained under owner `429150d95d12`.
+
+The video is an actual TAP product test with a synthetic model; its displayed Qwen Plus alias does not represent a provider call. It supersedes the older synthetic checkpoint for the repaired application. It is still not FWD/AIA autonomous acceptance or a manual browser-recording entry-point demonstration. The metered real-experiment totals above are unchanged.
