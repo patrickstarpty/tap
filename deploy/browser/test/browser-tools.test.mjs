@@ -213,3 +213,80 @@ test('model receipt preserves bounded associated selection and explicit state fa
     assert.ok(JSON.stringify(result).length<8000);
   } finally {clearInterval(responder);}
 });
+
+function freezeTree(value) {
+  if (value && typeof value === 'object') {
+    Object.freeze(value);
+    for (const item of Object.values(value)) freezeTree(item);
+  }
+  return value;
+}
+
+for (const mode of ['evidence','storage-fallback','unbounded-response']) test(`model source URLs are redacted without altering proof or business values: ${mode}`,async t=>{
+  const {root}=await setup(t);
+  const {modelReceipt}=await import('../browser-tools.mjs');
+  if (mode === 'storage-fallback') fs.writeFileSync(path.join(root,'.tap-browser-observations'),'occupied');
+  const source='https://MODEL_USER_SENTINEL:MODEL_PASSWORD_SENTINEL@owned.test/quote?access_token=ACCESS_TOKEN_SENTINEL&session=SESSION_SENTINEL&key=KEY_SENTINEL#FRAGMENT_SENTINEL';
+  const business='https://catalog.test/product?color=blue#specifications';
+  const observation=freezeTree({
+    sequence:7,error:null,url:source,source_frame_url:source,
+    ...(mode === 'unbounded-response' ? {} : {bounded_snapshot:'Quote ready',fields:[{tag:'a',selector:'#continue',href:source,value:'Leave unchanged'}]}),
+    documents:[{frame_id:'frame-1',document_id:'document-1',url:source}],
+    extracted:{name:'product_link',value:business,source_url:source,source_frame_url:source,source_frame_id:'frame-1',source_document_id:'document-1'},
+    provenance:{quote:{source_url:source,source_frame_url:source,source_url_sha256:'unchanged-proof-hash'}},
+    outputs:[{product_link:business,final_url:source,provenance:{product_link:{source_url:source}}}],
+    result_data:{outputs:[{quote:'HK$23.45',url:business,final_url:source,
+      provenance:{quote:{source_url:source,source_frame_url:source,source_url_sha256:'unchanged-proof-hash'}}}]},
+  });
+  const original=structuredClone(observation);
+  const encoded=modelReceipt(observation,{type:'read',step:'price',selector:'#quote',name:'quote'},root);
+  const result=JSON.parse(encoded);
+  for(const sentinel of ['MODEL_USER_SENTINEL','MODEL_PASSWORD_SENTINEL','ACCESS_TOKEN_SENTINEL','SESSION_SENTINEL','KEY_SENTINEL','FRAGMENT_SENTINEL']) assert.ok(!encoded.includes(sentinel));
+  assert.equal(result.url,'https://owned.test/quote');
+  assert.equal(result.source_frame_url,'https://owned.test/quote');
+  assert.deepEqual(result.documents,[{frame_id:'frame-1',document_id:'document-1',url:'https://owned.test/quote'}]);
+  assert.equal(result.extracted.value,business);
+  assert.equal(result.extracted.source_url,'https://owned.test/quote');
+  assert.equal(result.extracted.source_frame_url,'https://owned.test/quote');
+  assert.equal(result.extracted.source_document_id,'document-1');
+  assert.equal(result.provenance.quote.source_url,'https://owned.test/quote');
+  assert.equal(result.provenance.quote.source_url_sha256,'unchanged-proof-hash');
+  assert.equal(result.outputs[0].final_url,'https://owned.test/quote');
+  assert.equal(result.outputs[0].product_link,business);
+  assert.equal(result.outputs[0].provenance.product_link.source_url,'https://owned.test/quote');
+  assert.equal(result.result_data.outputs[0].quote,'HK$23.45');
+  assert.equal(result.result_data.outputs[0].url,business);
+  assert.equal(result.result_data.outputs[0].final_url,'https://owned.test/quote');
+  assert.equal(result.result_data.outputs[0].provenance.quote.source_frame_url,'https://owned.test/quote');
+  assert.deepEqual(observation,original,'raw proof receipt must remain byte-for-byte equivalent');
+  if(mode === 'evidence') {
+    const evidence=fs.readFileSync(result.evidence_file,'utf8');
+    assert.ok(!evidence.includes('SENTINEL'));
+    const saved=JSON.parse(evidence);
+    assert.equal(saved.fields[0].href,'https://owned.test/quote');
+    assert.equal(saved.fields[0].value,'Leave unchanged');
+    assert.equal(saved.extracted.source_url,'https://owned.test/quote');
+    assert.equal(saved.extracted.value,business);
+    assert.equal(saved.provenance.quote.source_url_sha256,'unchanged-proof-hash');
+  } else if(mode === 'storage-fallback') {
+    assert.ok(result.evidence_storage_error);
+    assert.equal(result.evidence_file,undefined);
+  }
+});
+
+for(const source of [
+  'data:text/html,OPAQUE_SOURCE_SENTINEL',
+  'javascript:OPAQUE_SOURCE_SENTINEL',
+  'https://[invalid?access_token=OPAQUE_SOURCE_SENTINEL',
+  '/relative?access_token=OPAQUE_SOURCE_SENTINEL',
+  'about:blank?access_token=OPAQUE_SOURCE_SENTINEL#OPAQUE_SOURCE_SENTINEL',
+]) test(`unparseable or opaque source URL does not leak its payload: ${source.split(':')[0]}`,async t=>{
+  const {root}=await setup(t);
+  const {modelReceipt}=await import('../browser-tools.mjs');
+  const observation=freezeTree({url:source,documents:[{frame_id:'f',document_id:'d',url:source}],extracted:{value:'Approved',source_url:source},bounded_snapshot:'',fields:[]});
+  const result=JSON.parse(modelReceipt(observation,{type:'snapshot'},root));
+  assert.ok(!JSON.stringify(result).includes('OPAQUE_SOURCE_SENTINEL'));
+  assert.ok(!fs.readFileSync(result.evidence_file,'utf8').includes('OPAQUE_SOURCE_SENTINEL'));
+  assert.equal(result.extracted.value,'Approved');
+  assert.equal(observation.url,source);
+});

@@ -60,9 +60,56 @@ function canonicalLiveAction(action) {
   return alias && snapshotRoles.has(alias[1]) ? {...action, selector:`aria-ref=${alias[3]}`} : action;
 }
 
-// Keep evidence complete on disk; send only the current action's useful facts.
+// Redact only presentation metadata. Proofs keep the original receipt, and
+// exact business reads (including URL-valued reads) must remain unchanged.
+function modelSourceView(receipt) {
+  if (!receipt || typeof receipt !== 'object') return receipt;
+  const view = structuredClone(receipt);
+  const url = value => {
+    if (value === null) return null;
+    try {
+      if (typeof value !== 'string') throw new Error('invalid source URL');
+      const parsed = new URL(value);
+      if (parsed.protocol === 'about:' && ['blank','srcdoc'].includes(parsed.pathname)) return `about:${parsed.pathname}`;
+      if (!['http:','https:'].includes(parsed.protocol)) throw new Error('opaque source URL');
+      parsed.username = ''; parsed.password = ''; parsed.search = ''; parsed.hash = '';
+      return parsed.href;
+    } catch { return '[redacted URL]'; }
+  };
+  const sourceKeys = ['source_url','source_frame_url'];
+  const record = (object, keys = sourceKeys) => {
+    if (!object || typeof object !== 'object' || Array.isArray(object)) return;
+    for (const key of keys) if (Object.hasOwn(object,key)) object[key] = url(object[key]);
+  };
+  const provenance = object => {
+    if (!object || typeof object !== 'object') return;
+    for (const [key,value] of Object.entries(object)) {
+      if (sourceKeys.includes(key)) object[key] = url(value);
+      else if (value && typeof value === 'object') provenance(value);
+    }
+  };
+  const outputs = items => {
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      // Bare "url" is a valid business output name, unlike reserved final_url.
+      record(item,[...sourceKeys,'final_url']);
+      provenance(item?.provenance);
+    }
+  };
+  record(view,['url','final_url',...sourceKeys]);
+  for (const document of Array.isArray(view.documents) ? view.documents : []) record(document,['url',...sourceKeys]);
+  record(view.extracted);
+  provenance(view.provenance);
+  outputs(view.outputs);
+  outputs(view.result_data?.outputs);
+  for (const field of Array.isArray(view.fields) ? view.fields : []) record(field,['href']);
+  return view;
+}
+
+// Keep source-redacted page evidence on disk; send a compact model view.
 // This is a tool view, not a second conversation compressor.
-function modelReceipt(receipt, action, directory) {
+export function modelReceipt(receipt, action, directory) {
+  receipt = modelSourceView(receipt);
   if (!receipt || typeof receipt !== 'object' || !('bounded_snapshot' in receipt)) return JSON.stringify(receipt);
   const folder = path.join(directory, '.tap-browser-observations');
   const file = path.join(folder, `${crypto.randomBytes(16).toString('hex')}.json`);
@@ -72,7 +119,7 @@ function modelReceipt(receipt, action, directory) {
     fs.writeFileSync(file, JSON.stringify(receipt, null, 2), {flag:'wx', mode:0o600});
   } catch {
     // The browser already acted. Never replace its known outcome with a storage exception.
-    return JSON.stringify({...receipt, evidence_storage_error:'Full receipt returned because local evidence could not be saved. Do not repeat the action.'});
+    return JSON.stringify({...receipt, evidence_storage_error:'Source-redacted receipt returned because local evidence could not be saved. Do not repeat the action.'});
   }
   const {fields, bounded_snapshot, ...facts} = receipt;
   const related = [];
@@ -108,7 +155,7 @@ function modelReceipt(receipt, action, directory) {
   const contextSize = related.length ? JSON.stringify(related).length : 0;
   const snapshot = action.type === 'read' && !receipt.error ? '' : String(bounded_snapshot || '').slice(0,6000-contextSize);
   const view = {...facts, bounded_snapshot:snapshot, ...(related.length ? {related_fields:related} : {}), ...(omitted ? {related_fields_omitted:omitted} : {}), evidence_file:file,
-    observation_detail:action.type === 'read' && !receipt.error ? 'The current read and full observation are stored in evidence_file.' : 'The original bounded snapshot and controls are in evidence_file. related_fields prioritize the target, bound selection states and popups. associated_selection_state includes a proven local name/enum binding; selected_label is null until the current code selects one unique visible choice. Read selected_label with exact equals to verify its current label. state_attributes contains only observed allowlisted state; an empty data-active differs from absence. visible_control only means in the current viewport, not associated; readonly controls require a supported interaction instead of fill. If popup_text_truncated or related_fields_omitted is present, read evidence_file or request a scoped snapshot for the missing facts. Use a popup selector for a scoped snapshot when needed.',
+    observation_detail:action.type === 'read' && !receipt.error ? 'The current read and source-redacted observation are stored in evidence_file.' : 'The bounded snapshot and controls are in evidence_file. Source and link URLs omit credentials, query and fragment; use observed locators instead of reconstructing URLs. related_fields prioritize the target, bound selection states and popups. associated_selection_state includes a proven local name/enum binding; selected_label is null until the current code selects one unique visible choice. Read selected_label with exact equals to verify its current label. state_attributes contains only observed allowlisted state; an empty data-active differs from absence. visible_control only means in the current viewport, not associated; readonly controls require a supported interaction instead of fill. If popup_text_truncated or related_fields_omitted is present, read evidence_file or request a scoped snapshot for the missing facts. Use a popup selector for a scoped snapshot when needed.',
     snapshot_truncated:snapshot.length < String(bounded_snapshot || '').length,
   };
   // Escaped snapshot text and errors also count toward the model response.
@@ -126,7 +173,7 @@ export default async function BrowserTools() {
   if (!root) throw new Error('coding mailbox unavailable');
   return {tool:{tap_browser:{
     description:'Operate the task-owned live browser. Save a business BDD plan, then use its step IDs for actions. '
-      + 'Original bounded observations are saved in evidence_file; related_fields show current controls and visible popups. Use read/grep for relevant details or a scoped snapshot. '
+      + 'Source-redacted bounded observations are saved in evidence_file; related_fields show current controls and visible popups. Use read/grep for relevant details or a scoped snapshot. '
       + 'Use observed selectors/aria-ref or the documented exact live role[ref] aliases; snapshot may be scoped. Read validates equals/contains/nonempty/positive/pattern '
       + 'against the actual DOM and records named business values. Give each required input or result condition its own Then step and unique read name. Mark form-input Then steps verification_kind=input and use exact equals readbacks after filling the form, before leaving it. At least one final result Then is required; verify result steps after the last write. '
       + 'Use fill only for editable text. Use select for native selects, radio/checkbox controls and custom dropdowns; provide an observed exact option value or label, then read back the actual control state. read defaults to text: explicitly use attribute=value for input/select, checked for radio/checkbox, or an observed aria-valuenow for a slider. For an observed associated_selection_state, selected_label reads the current unique visible choice from its proven hidden enum binding with exact equals; null is not selected. Label text alone does not prove selection. '
