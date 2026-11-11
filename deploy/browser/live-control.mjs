@@ -23,7 +23,8 @@ async function revision(page) {
 }
 async function targetFor(page, action, retainElement=false) {
   let selector=action.selector;
-  if (action.type==='scroll') selector='body';
+  const pageScroll=action.type==='scroll'&&!selector;
+  if (pageScroll) selector='body';
   if (!selector && ['click','fill','select','press'].includes(action.type)) {
     if (![action.x,action.y].every(Number.isFinite)) throw new Error('invalid click coordinates');
     selector=await page.evaluate(({x,y})=>{
@@ -45,7 +46,7 @@ async function targetFor(page, action, retainElement=false) {
     if(await element.ownerFrame()!==page.mainFrame()) throw new Error('nested frame target unsupported in live control');
   } catch(error) { await element.dispose(); throw error; }
   try {
-  const attach=result=>({...result,...(retainElement?{element}: {})});
+  const attach=result=>({...result,...(pageScroll?{target:null}:{}),pageScroll,...(retainElement?{element}: {})});
   const facts=await element.evaluate((node,sensitiveSelector)=>{
     if(node.matches(sensitiveSelector)) throw new Error('sensitive target unavailable');
     const unique=css=>document.querySelectorAll(css).length===1;
@@ -90,7 +91,7 @@ async function actuateBound(binding, action) {
     },{proof:binding.proof.handle,expires});
     await binding.proof.checkStyles();
   }
-  return binding.element.evaluate(async (node,{action,selector,expires,sensitiveSelector,proof})=>{
+  return binding.element.evaluate(async (node,{action,selector,expires,sensitiveSelector,proof,pageScroll})=>{
     const sensitive=()=>node.matches(sensitiveSelector);
     const identity=()=>node.isConnected&&node.ownerDocument===document&&document.querySelector(selector)===node;
     const current=()=>{
@@ -165,10 +166,12 @@ async function actuateBound(binding, action) {
       }
       current();actionable();node.click(); // Navigation/removal after click is an expected result.
     } else if(action.type==='scroll') {
-      current();window.scrollBy({left:action.delta_x,top:action.delta_y,behavior:'instant'});
+      current();
+      if(pageScroll) window.scrollBy({left:action.delta_x,top:action.delta_y,behavior:'instant'});
+      else Element.prototype.scrollBy.call(node,{left:action.delta_x,top:action.delta_y,behavior:'instant'});
     } else throw new Error('unsupported controlled write');
     return null;
-  },{action:{type:action.type,value:action.value,delta_x:action.delta_x,delta_y:action.delta_y},selector:binding.selector,expires,sensitiveSelector,proof:binding.proof?.handle??null});
+  },{action:{type:action.type,value:action.value,delta_x:action.delta_x,delta_y:action.delta_y},selector:binding.selector,expires,sensitiveSelector,proof:binding.proof?.handle??null,pageScroll:binding.pageScroll??false});
 }
 async function actuateNavigation(page, action) {
   const url=new URL(action.url);

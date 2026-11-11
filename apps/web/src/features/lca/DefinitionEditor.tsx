@@ -1,9 +1,10 @@
 import { useState } from "react";
 import type { BddStep, LcaDefinition, LcaStep, Operation } from "./client";
+import { ActionArguments } from "./ActionArguments";
 import { DefinitionSettings } from "./DefinitionSettings";
 import {
   actionSummary,
-  argumentKey,
+  argumentFields,
   groupsFor,
   identifier,
   moveAction,
@@ -339,8 +340,6 @@ function ActionProperties({
   onMove(id: string): void;
   onRemove(): void;
 }) {
-  const key = argumentKey(step.operation),
-    argument = key ? step.arguments[key] : undefined;
   const target = value.targets.find((t) => t.id === step.target_id);
   const changeTarget = (patch: Partial<NonNullable<typeof target>>) =>
     onDefinitionChange({
@@ -357,12 +356,12 @@ function ActionProperties({
           aria-label={`Step ${step.id} operation`}
           value={step.operation}
           onChange={(e) => {
-            const operation = e.target.value as Operation,
-              arg = argumentKey(operation);
+            const operation = e.target.value as Operation;
+            const defaults = newAction(operation, value);
             onChange({
               ...step,
               operation,
-              arguments: arg ? { [arg]: "" } : {},
+              arguments: defaults.arguments,
               target_id: needsTarget(operation)
                 ? (value.targets[0]?.id ?? null)
                 : null,
@@ -376,7 +375,7 @@ function ActionProperties({
           ))}
         </select>
       </label>
-      {needsTarget(step.operation) && (
+      {(needsTarget(step.operation) || step.operation === "scroll") && (
         <>
           <label>
             Target
@@ -387,7 +386,11 @@ function ActionProperties({
                 onChange({ ...step, target_id: e.target.value || null })
               }
             >
-              <option value="">Choose a target</option>
+              <option value="">
+                {step.operation === "scroll"
+                  ? "Page (no target)"
+                  : "Choose a target"}
+              </option>
               {value.targets.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name || t.value || t.id}
@@ -440,6 +443,7 @@ function ActionProperties({
                           value: "",
                           ...(kind === "role" ? { name: "" } : {}),
                           review_required: kind === "css",
+                          frame_target_id: t.frame_target_id,
                         }
                       : t,
                   ),
@@ -467,6 +471,36 @@ function ActionProperties({
               />
             </label>
           )}
+          <label>
+            Frame context
+            <select
+              aria-label="Frame context"
+              value={target.frame_target_id || ""}
+              onChange={(e) =>
+                changeTarget({ frame_target_id: e.target.value || null })
+              }
+            >
+              <option value="">Top-level page</option>
+              {value.targets
+                .filter(
+                  (t) =>
+                    t.id !== target.id &&
+                    !t.frame_target_id &&
+                    !value.targets.some(
+                      (child) => child.frame_target_id === target.id,
+                    ),
+                )
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name || t.value || t.id}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <p className="lca-muted">
+            For iframe content, select a top-level target that locates the
+            iframe. Nested frames are not supported.
+          </p>
           <p className="lca-muted">
             Shared by{" "}
             {value.steps.filter((s) => s.target_id === target.id).length}{" "}
@@ -477,65 +511,13 @@ function ActionProperties({
           </p>
         </div>
       )}
-      {key && (
-        <>
-          <label>
-            Value source
-            <select
-              aria-label={`Step ${step.id} value source`}
-              value={typeof argument === "object" ? "parameter" : "literal"}
-              onChange={(e) =>
-                onChange({
-                  ...step,
-                  arguments: {
-                    [key]:
-                      e.target.value === "parameter"
-                        ? {
-                            parameter:
-                              value.parameters.find((p) => p.type === "string")
-                                ?.name || "",
-                          }
-                        : "",
-                  },
-                })
-              }
-            >
-              <option value="literal">Literal</option>
-              <option value="parameter">String parameter</option>
-            </select>
-          </label>
-          <label>
-            {key}
-            {typeof argument === "object" ? (
-              <select
-                aria-label={`Step ${step.id} parameter`}
-                value={argument.parameter}
-                onChange={(e) =>
-                  onChange({
-                    ...step,
-                    arguments: { [key]: { parameter: e.target.value } },
-                  })
-                }
-              >
-                <option value="">Choose a parameter</option>
-                {value.parameters
-                  .filter((p) => p.type === "string")
-                  .map((p) => (
-                    <option key={p.name}>{p.name}</option>
-                  ))}
-              </select>
-            ) : (
-              <input
-                aria-label={`Step ${step.id} value`}
-                value={argument || ""}
-                onChange={(e) =>
-                  onChange({ ...step, arguments: { [key]: e.target.value } })
-                }
-              />
-            )}
-          </label>
-        </>
-      )}
+      <ActionArguments
+        key={step.operation}
+        step={step}
+        definition={value}
+        fields={argumentFields(step.operation)}
+        onChange={onChange}
+      />
       <label>
         Timeout (ms)
         <input

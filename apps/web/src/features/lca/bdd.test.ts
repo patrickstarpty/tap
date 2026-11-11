@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import type { LcaDefinition } from "./client";
 import {
+  newAction,
+  actionSummary,
   groupsFor,
   withGroups,
   moveAction,
@@ -131,4 +133,62 @@ it("refuses conflicting parameter definitions instead of changing existing data"
     /conflicts/,
   );
   expect(current.parameters[0].required).toBe(true);
+});
+
+it("creates typed defaults and summaries for common browser actions", () => {
+  expect(newAction("scroll", d)).toMatchObject({
+    arguments: { delta_x: 0, delta_y: 600 },
+  });
+  expect(newAction("scroll", d).target_id).toBeUndefined();
+  expect(newAction("press", d).arguments).toEqual({ key: "Enter" });
+  expect(newAction("wait_for", d).arguments).toEqual({ state: "visible" });
+  expect(newAction("assert_checked", d).arguments).toEqual({ checked: true });
+  expect(
+    actionSummary(
+      { ...newAction("assert_checked", d), arguments: { checked: false } },
+      d,
+    ),
+  ).toContain("false");
+});
+
+it("remaps frame and drag destination references when importing colliding targets", () => {
+  const current: LcaDefinition = {
+    ...d,
+    targets: [{ id: "frame", kind: "test_id", value: "old" }],
+  };
+  const recorded: LcaDefinition = {
+    ...d,
+    targets: [
+      { id: "item", kind: "test_id", value: "item", frame_target_id: "frame" },
+      { id: "frame", kind: "test_id", value: "new-frame" },
+      { id: "drop", kind: "test_id", value: "drop", frame_target_id: "frame" },
+    ],
+    steps: [
+      {
+        id: "drag",
+        operation: "drag_drop",
+        target_id: "item",
+        arguments: { destination_target_id: "drop" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  const next = mergeRecording(current, recorded, "bdd_legacy");
+  const frame = next.targets.find((t) => t.value === "new-frame")!;
+  expect(frame.id).not.toBe("frame");
+  expect(next.targets.find((t) => t.value === "item")?.frame_target_id).toBe(
+    frame.id,
+  );
+  expect(next.steps[1].arguments.destination_target_id).toBe(
+    next.targets.find((t) => t.value === "drop")?.id,
+  );
+});
+
+it("keeps exact rendered text assertions distinct from normalized text assertions", () => {
+  const exact = newAction("assert_text_exact", d);
+  expect(exact.arguments).toEqual({ text: "" });
+  expect(exact.target_id).toBeNull();
+  expect(
+    actionSummary({ ...exact, arguments: { text: "  exact\n text  " } }, d),
+  ).toBe("  exact\n text  ");
 });

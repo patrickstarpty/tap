@@ -179,3 +179,29 @@ def test_zero_action_stop_is_empty_completed_projection():
     projected = project_recording([], ["https://fixture.example"], 3, start_sequence=4)
     assert projected.ready and projected.definition is None
     assert projected.excluded == ()
+
+
+def test_page_scroll_receipt_is_preserved_as_replayable_action():
+    scroll = receipt(operation="scroll")
+    scroll.update(target=None, args={"delta_x": 0, "delta_y": 400})
+    projected = project_recording([scroll], ["https://fixture.example"], 1)
+    assert projected.excluded == ()
+    assert projected.definition.steps[0].operation == "scroll"
+    assert projected.definition.steps[0].arguments == {"delta_x": 0, "delta_y": 400}
+    assert projected.definition.steps[0].target_id is None
+
+
+def test_container_scroll_receipt_preserves_target_and_provenance():
+    scroll = receipt(operation="scroll")
+    scroll["args"] = {"delta_x": 20, "delta_y": -400}
+    projected = project_recording([scroll], ["https://fixture.example"], 1)
+    assert projected.definition.steps[0].target_id == projected.definition.targets[0].id
+    assert projected.definition.targets[0].value == "name"
+    assert projected.definition.steps[0].provenance["action_id"] == "act-1"
+
+
+def test_scroll_without_valid_provenance_is_rejected():
+    scroll = receipt(operation="scroll")
+    scroll.pop("pre_observation_sequence")
+    with pytest.raises(ValueError, match="provenance"):
+        project_recording([scroll], ["https://fixture.example"], 1)

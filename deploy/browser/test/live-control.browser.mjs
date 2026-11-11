@@ -434,3 +434,19 @@ for(const change of ['unavailable','expired','revision']) test(`pre-action frame
   assert.equal(attempted,0);
   assert.equal(await page.locator('body').getAttribute('data-count'),null);
 });
+
+for (const container of [false, true]) test(`scroll receipt identifies ${container?'container':'page'} for replay`,async t=>{
+  const {page,control,request}=await fixture(t);
+  if(container) await page.setContent('<div data-testid="scrollbox" style="height:100px;overflow:auto"><div style="height:1000px">content</div></div>');
+  const frame=await control.dispatch({type:'live_frame'});
+  const action={...request,frame_sequence:frame.frame_sequence,type:'scroll',delta_x:0,delta_y:80,...(container?{selector:'[data-testid="scrollbox"]'}:{})};
+  const receipt=await control.dispatch(action);
+  assert.deepEqual(receipt.extracted.control_receipt.args,{delta_x:0,delta_y:80});
+  if(container){
+    assert.equal(receipt.extracted.control_receipt.target.value,'scrollbox');
+    assert.equal(await page.getByTestId('scrollbox').evaluate(n=>n.scrollTop),80);
+  } else {
+    assert.equal(receipt.extracted.control_receipt.target,null);
+    assert.equal(await page.evaluate(()=>scrollY),80);
+  }
+});

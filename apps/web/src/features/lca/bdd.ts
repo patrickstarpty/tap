@@ -13,18 +13,68 @@ export const operationLabels: Record<Operation, string> = {
   fill: "Input text",
   select: "Select option",
   assert_text: "Assert text",
+  assert_text_exact: "Exact rendered text assertion",
   assert_url: "Assert URL",
+  scroll: "Scroll page or container",
+  scroll_into_view: "Scroll into view",
+  press: "Press key",
+  hover: "Hover",
+  double_click: "Double click",
+  right_click: "Right click",
+  check: "Check",
+  uncheck: "Uncheck",
+  drag_drop: "Drag and drop",
+  wait_for: "Wait for element",
+  assert_visible: "Assert visible",
+  assert_value: "Assert value",
+  assert_checked: "Assert checked",
+};
+export interface ArgumentField {
+  key: string;
+  type: "string" | "number" | "boolean" | "target";
+  default: string | number | boolean;
+  choices?: string[];
+}
+export const argumentFields = (operation: Operation): ArgumentField[] => {
+  switch (operation) {
+    case "navigate":
+    case "assert_url":
+      return [{ key: "url", type: "string", default: "" }];
+    case "fill":
+    case "select":
+    case "assert_value":
+      return [{ key: "value", type: "string", default: "" }];
+    case "assert_text":
+    case "assert_text_exact":
+      return [{ key: "text", type: "string", default: "" }];
+    case "press":
+      return [{ key: "key", type: "string", default: "Enter" }];
+    case "scroll":
+      return [
+        { key: "delta_x", type: "number", default: 0 },
+        { key: "delta_y", type: "number", default: 600 },
+      ];
+    case "drag_drop":
+      return [{ key: "destination_target_id", type: "target", default: "" }];
+    case "wait_for":
+      return [
+        {
+          key: "state",
+          type: "string",
+          default: "visible",
+          choices: ["visible", "hidden", "attached", "detached"],
+        },
+      ];
+    case "assert_checked":
+      return [{ key: "checked", type: "boolean", default: true }];
+    default:
+      return [];
+  }
 };
 export const argumentKey = (operation: Operation) =>
-  operation === "click"
-    ? null
-    : operation === "fill" || operation === "select"
-      ? "value"
-      : operation === "assert_text"
-        ? "text"
-        : "url";
+  argumentFields(operation)[0]?.key ?? null;
 export const needsTarget = (operation: Operation) =>
-  operation !== "navigate" && operation !== "assert_url";
+  !["navigate", "assert_url", "scroll"].includes(operation);
 export function groupsFor(definition: LcaDefinition): BddStep[] {
   return (
     definition.bdd_steps ?? [
@@ -78,13 +128,20 @@ export function newAction(
   operation: Operation,
   definition: LcaDefinition,
 ): LcaStep {
-  const key = argumentKey(operation);
+  const fields = argumentFields(operation);
   return {
     id: identifier("step"),
     operation,
-    arguments: key
-      ? { [key]: key === "url" ? definition.allowed_origins[0] || "" : "" }
-      : {},
+    arguments: Object.fromEntries(
+      fields.map((field) => [
+        field.key,
+        field.key === "url"
+          ? definition.allowed_origins[0] || ""
+          : field.type === "target"
+            ? definition.targets[0]?.id || ""
+            : field.default,
+      ]),
+    ),
     ...(needsTarget(operation)
       ? { target_id: definition.targets[0]?.id ?? null }
       : {}),
@@ -97,13 +154,22 @@ export function actionSummary(
   definition: LcaDefinition,
 ): string {
   const target = definition.targets.find((t) => t.id === step.target_id);
-  const key = argumentKey(step.operation),
-    argument = key ? step.arguments[key] : undefined;
-  const value =
-    typeof argument === "object" ? `$${argument.parameter}` : argument;
+  const values = argumentFields(step.operation).map(({ key }) => {
+    const argument = step.arguments[key];
+    if (typeof argument === "object") return `$${argument.parameter}`;
+    if (key === "destination_target_id")
+      return `→ ${definition.targets.find((t) => t.id === argument)?.name || argument}`;
+    return argument === undefined ? "" : String(argument);
+  });
   return (
-    [target?.name || target?.value, value].filter(Boolean).join(" · ") ||
-    "Configure action"
+    [
+      target?.name ||
+        target?.value ||
+        (step.operation === "scroll" ? "Page" : ""),
+      ...values,
+    ]
+      .filter((v) => v !== "" && v !== undefined)
+      .join(" · ") || "Configure action"
   );
 }
 export function mergeRecording(
@@ -122,12 +188,22 @@ export function mergeRecording(
     );
   const targets = [...current.targets],
     targetMap = new Map<string, string>();
-  for (const target of recorded.targets) {
+  // Frame references are one level deep; map page targets before their children.
+  for (const original of [...recorded.targets].sort(
+    (a, b) => Number(!!a.frame_target_id) - Number(!!b.frame_target_id),
+  )) {
+    const target = original.frame_target_id
+      ? {
+          ...original,
+          frame_target_id: targetMap.get(original.frame_target_id),
+        }
+      : original;
     const same = targets.find(
       (t) =>
         t.kind === target.kind &&
         t.value === target.value &&
         t.name === target.name &&
+        (t.frame_target_id || null) === (target.frame_target_id || null) &&
         !!t.review_required === !!target.review_required,
     );
     if (same) {
@@ -156,6 +232,17 @@ export function mergeRecording(
     return {
       ...step,
       id,
+      ...(step.operation === "drag_drop" &&
+      typeof step.arguments.destination_target_id === "string"
+        ? {
+            arguments: {
+              ...step.arguments,
+              destination_target_id:
+                targetMap.get(step.arguments.destination_target_id) ||
+                step.arguments.destination_target_id,
+            },
+          }
+        : {}),
       ...(step.target_id ? { target_id: targetMap.get(step.target_id) } : {}),
     };
   });

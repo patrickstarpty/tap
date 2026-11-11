@@ -923,3 +923,17 @@ it("appends recorded actions only to the chosen BDD step without losing existing
   expect(next.bdd_steps?.[1].action_ids).toEqual([next.steps[1].id]);
   expect(client.action).not.toHaveBeenCalled();
 });
+
+it("records bounded page and container scroll without pretending it is excluded", async () => {
+  const { client } = setup();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Start recording" }));
+  await screen.findByAltText("Live recording browser");
+  fireEvent.change(screen.getByLabelText("Recording operation"), { target: { value: "scroll" } });
+  expect(screen.queryByText(/not replayed/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Horizontal scroll (px)"), { target: { value: "30" } });
+  fireEvent.change(screen.getByLabelText("Vertical scroll (px)"), { target: { value: "-200" } });
+  fireEvent.change(screen.getByLabelText("Scroll container CSS selector (optional)"), { target: { value: "#panel" } });
+  await user.click(screen.getByRole("button", { name: "Perform action" }));
+  expect(client.action).toHaveBeenCalledWith("p", "f1", "s1", expect.objectContaining({action:expect.objectContaining({type:"scroll",delta_x:30,delta_y:-200,selector:"#panel"})}), expect.any(String), "opaque");
+});
