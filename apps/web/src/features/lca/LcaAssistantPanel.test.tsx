@@ -208,3 +208,52 @@ it("does not rotate a verified nonce on cloned context or callback rerenders", (
   expect(nextCallback).toHaveBeenCalledExactlyOnceWith(source);
   expect(onSourceChange).not.toHaveBeenCalled();
 });
+
+it("retries the same bounded handshake when iframe load precedes the child's listener, then stops after verified readiness", () => {
+  vi.useFakeTimers();
+  try {
+    const { post, init, send } = setup();
+    // The child did not receive the first init because its React effect was late.
+    post.mockImplementation((message: unknown) => {
+      const value = message as Record<string, unknown>;
+      send({ ...value, type: "lca:ready" });
+    });
+    expect(screen.getByText("Waiting for verified connection…")).toBeVisible();
+    act(() => vi.advanceTimersByTime(250));
+    expect(screen.getByText("Tapper connected")).toBeVisible();
+    expect(post.mock.calls).toHaveLength(2);
+    expect(post.mock.calls[1][0]).toEqual(init);
+    expect(post.mock.calls[1][1]).toBe("http://127.0.0.1:5173");
+    act(() => vi.advanceTimersByTime(20000));
+    expect(post.mock.calls).toHaveLength(2);
+    expect(screen.getByText("Tapper connected")).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("never extends retry bounds or accepts a forged readiness during handshake retries", () => {
+  vi.useFakeTimers();
+  try {
+    const { post, init, send } = setup();
+    post.mockImplementation((message: unknown) =>
+      send(
+        { ...(message as object), type: "lca:ready" },
+        "https://forged.example",
+      ),
+    );
+    act(() => vi.advanceTimersByTime(10000));
+    expect(screen.getByText("Tapper disconnected")).toBeVisible();
+    const attempts = post.mock.calls.length;
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThanOrEqual(40);
+    for (const [message, origin] of post.mock.calls) {
+      expect(message).toEqual(init);
+      expect(origin).toBe("http://127.0.0.1:5173");
+    }
+    act(() => vi.advanceTimersByTime(20000));
+    expect(post.mock.calls).toHaveLength(attempts);
+  } finally {
+    vi.useRealTimers();
+  }
+});

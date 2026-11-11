@@ -57,12 +57,14 @@ export function LcaAssistantPanel({
   const ready = useRef(false);
   const requests = useRef(new Set<string>());
   const connectionTimer = useRef<number | undefined>(undefined);
+  const handshakeRetry = useRef<number | undefined>(undefined);
   const [open, setOpen] = useState(true);
   const [status, setStatus] = useState<"connecting" | "ready" | "unavailable">(
     "connecting",
   );
   const disconnect = useCallback(() => {
     window.clearTimeout(connectionTimer.current);
+    window.clearInterval(handshakeRetry.current);
     ready.current = false;
     nonce.current = "";
     sourceChange.current(null);
@@ -83,17 +85,22 @@ export function LcaAssistantPanel({
     nonce.current = crypto.randomUUID();
     sourceChange.current(null);
     awaitConnection();
-    if (origin && frame.current?.isConnected) {
-      frame.current.contentWindow?.postMessage(
-        {
-          type: "lca:init",
-          schema_version: assistantSchema,
-          nonce: nonce.current,
-          context,
-        },
-        origin,
-      );
-    }
+    window.clearInterval(handshakeRetry.current);
+    const message = {
+      type: "lca:init",
+      schema_version: assistantSchema,
+      nonce: nonce.current,
+      context,
+    };
+    const sendInit = () => {
+      if (ready.current || authorityBlocked.current || !nonce.current) return;
+      if (origin && frame.current?.isConnected)
+        frame.current.contentWindow?.postMessage(message, origin);
+    };
+    // iframe load can precede the child's React effect listener. Retry the same
+    // nonce/context only until verified readiness or the existing 10s timeout.
+    handshakeRetry.current = window.setInterval(sendInit, 250);
+    sendInit();
   }, [context, origin, awaitConnection, disconnect]);
   useEffect(() => {
     // A changed authority requires a fresh child document, not a second nonce
@@ -121,6 +128,7 @@ export function LcaAssistantPanel({
         return;
       if (data.type === "lca:ready" && Object.keys(data).length === 4) {
         ready.current = true;
+        window.clearInterval(handshakeRetry.current);
         window.clearTimeout(connectionTimer.current);
         setStatus("ready");
       } else if (
@@ -140,6 +148,7 @@ export function LcaAssistantPanel({
     window.addEventListener("message", receive);
     return () => {
       window.clearTimeout(connectionTimer.current);
+      window.clearInterval(handshakeRetry.current);
       element?.removeEventListener("error", disconnect);
       window.removeEventListener("message", receive);
       ready.current = false;
