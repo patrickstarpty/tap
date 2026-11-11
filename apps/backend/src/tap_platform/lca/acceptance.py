@@ -271,6 +271,19 @@ def evaluate_contract(
     required_rows = {
         field["id"]: final_bound_reads(field, rows) for field in contract["fields"]
     }
+    if any(len(required_rows[field["id"]]) != 1 for field in contract["fields"]):
+        return {
+            "status": "not_proven",
+            "fields": [
+                {
+                    "id": field["id"],
+                    "status": "not_proven",
+                    "reason": "Original completion provenance is missing or inconsistent",
+                }
+                for field in contract["fields"]
+            ],
+            "reason": "Original completion provenance is missing or inconsistent",
+        }
     source_projection = project_agent_actions(
         rows,
         origins,
