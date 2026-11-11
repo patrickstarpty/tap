@@ -54,6 +54,35 @@ def target_locator(target_id: str, targets: dict[str, Target]) -> str:
     return f"{scope}.locator({literal('css=' + target.value)})"
 
 
+# Fixed code only: selectors, values and patterns are emitted as JSON literals.
+READ_ASSERTION_HELPER = r"""
+  const readAssertion = async (locator, args, timeout) => {
+    const deadline = Date.now() + timeout;
+    const options = () => ({timeout: Math.max(1, deadline - Date.now())});
+    const pattern = args.pattern === undefined ? null : new RegExp(args.pattern, 'u');
+    while (true) {
+      const type = await locator.getAttribute('type', options());
+      const autocomplete = await locator.getAttribute('autocomplete', options());
+      if ((type || '').toLowerCase() === 'password' || /password|one-time-code|cc-number|cc-csc/i.test(autocomplete || '')) throw new Error('Sensitive control cannot be extracted');
+      let value;
+      if (args.attribute === 'text') value = await locator.innerText(options());
+      else if (args.attribute === 'value') value = await locator.inputValue(options());
+      else if (args.attribute === 'checked') value = await locator.evaluate(node => node.getAttribute('aria-checked') ?? String(node.checked), undefined, options());
+      else value = await locator.getAttribute(args.attribute, options());
+      if (typeof value !== 'string' || value.length > 16000) throw new Error('DOM value unavailable or too large');
+      const numbers = value.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/g) || [];
+      if ((args.equals === undefined || value === args.equals)
+          && (args.contains === undefined || value.includes(args.contains))
+          && (!args.nonempty || value.trim().length > 0)
+          && (!args.positive || (numbers.length === 1 && Number(numbers[0]) > 0))
+          && (!pattern || pattern.test(value))) return value;
+      if (Date.now() >= deadline) throw new Error('Expected DOM value was not observed');
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+    }
+  };
+"""
+
+
 def generate_playwright(
     definition: DebugDefinition, parameters: Mapping[str, object] | None = None
 ) -> GeneratedPlaywright:
@@ -70,6 +99,8 @@ def generate_playwright(
         "import { test, expect } from '@playwright/test';",
         "test('LCA debug flow', async ({ page }) => {",
     ]
+    if any(s.operation == "assert_read" for s in definition.steps):
+        lines.extend(READ_ASSERTION_HELPER.strip("\n").split("\n"))
     digest = hashlib.sha256(frozen).hexdigest()
     result = {
         "schema_version": "lca-debug-result-v1",
@@ -102,6 +133,11 @@ def generate_playwright(
         elif step.operation in {"fill", "select"}:
             method = "fill" if step.operation == "fill" else "selectOption"
             command = f"{locator}.{method}({literal(args['value'])}, {options})"
+        elif step.operation == "assert_read":
+            command = f"readAssertion({locator}, {literal(args)}, {step.timeout_ms})"
+            # Named values stay in the bounded result evidence, never source/logs.
+            if "name" in args:
+                command += f".then(value => {{ result.steps[{index}].output = {{ name: {literal(args['name'])}, value }}; }})"
         elif step.operation == "assert_text_exact":
             command = f"expect.poll(() => {locator}.innerText(), {options}).toBe({literal(args['text'])})"
         elif step.operation == "assert_text":

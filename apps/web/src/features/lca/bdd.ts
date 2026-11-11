@@ -28,12 +28,14 @@ export const operationLabels: Record<Operation, string> = {
   assert_visible: "Assert visible",
   assert_value: "Assert value",
   assert_checked: "Assert checked",
+  assert_read: "Read and assert",
 };
 export interface ArgumentField {
   key: string;
   type: "string" | "number" | "boolean" | "target";
   default: string | number | boolean;
   choices?: string[];
+  optional?: boolean;
 }
 export const argumentFields = (operation: Operation): ArgumentField[] => {
   switch (operation) {
@@ -64,6 +66,41 @@ export const argumentFields = (operation: Operation): ArgumentField[] => {
           default: "visible",
           choices: ["visible", "hidden", "attached", "detached"],
         },
+      ];
+    case "assert_read":
+      return [
+        {
+          key: "attribute",
+          type: "string",
+          default: "text",
+          choices: [
+            "text",
+            "value",
+            "checked",
+            "title",
+            "alt",
+            "placeholder",
+            "role",
+            "aria-label",
+            "aria-description",
+            "aria-valuenow",
+            "aria-valuetext",
+            "aria-expanded",
+            "aria-selected",
+            "aria-disabled",
+            "aria-pressed",
+            "aria-invalid",
+            "data-testid",
+          ],
+        },
+        { key: "nonempty", type: "boolean", default: true },
+        ...["equals", "contains", "pattern", "name"].map((key) => ({
+          key,
+          type: "string" as const,
+          default: "",
+          optional: true,
+        })),
+        { key: "positive", type: "boolean", default: true, optional: true },
       ];
     case "assert_checked":
       return [{ key: "checked", type: "boolean", default: true }];
@@ -133,14 +170,16 @@ export function newAction(
     id: identifier("step"),
     operation,
     arguments: Object.fromEntries(
-      fields.map((field) => [
-        field.key,
-        field.key === "url"
-          ? definition.allowed_origins[0] || ""
-          : field.type === "target"
-            ? definition.targets[0]?.id || ""
-            : field.default,
-      ]),
+      fields
+        .filter((field) => !field.optional)
+        .map((field) => [
+          field.key,
+          field.key === "url"
+            ? definition.allowed_origins[0] || ""
+            : field.type === "target"
+              ? definition.targets[0]?.id || ""
+              : field.default,
+        ]),
     ),
     ...(needsTarget(operation)
       ? { target_id: definition.targets[0]?.id ?? null }
