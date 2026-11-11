@@ -106,6 +106,15 @@ def project_recording(
             reason = receipt["status"]
         elif operation not in {"navigate", "click", "fill", "select", "scroll"}:
             reason = "unsupported_operation"
+        elif operation == "scroll":
+            args = receipt.get("args")
+            if not isinstance(args, dict) or args.get("scroll_scope") not in {
+                "page",
+                "container",
+            }:
+                reason = "legacy_scroll_scope_unknown"
+            elif (args["scroll_scope"] == "page") != (receipt.get("target") is None):
+                raise ValueError("Scroll receipt scope does not match target")
         if reason:
             excluded.append(ExcludedAction(receipt["action_id"], sequence, reason))
             continue
@@ -153,6 +162,8 @@ def project_recording(
                 canonical["review_required"] = True
             targets.append(canonical)
             step["target_id"] = target_id
+        if operation == "scroll":
+            step["arguments"].pop("scroll_scope")
         steps.append(step)
     definition = (
         validate_definition(
