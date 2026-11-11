@@ -25,9 +25,15 @@ Controlled fixtures contain only synthetic data. They are not FWD/AIA quotations
 
 API contracts were regenerated. The exact API-surface regression deliberately includes only the two new asset endpoints. The final affected backend gate passed 624 tests (80 intentionally skipped); core `make test` passed 462 AI-backend, 83 AI-frontend, 70 TAP-backend and 9 TAP-frontend tests. The complete TAP Web source suite passed 370 tests. The final AA inspector regression passed 16 tests. All `make check` targets passed across the initial run and the corrected backend/remainder reruns. Tests use explicit source paths so a shared editable environment cannot silently import another worktree. Controlled quality-fixture gates are not live-model performance claims.
 
-## Persistence environment limit
+## MySQL retention and recovery validation
 
-Two isolated product starts successfully applied the real MySQL migrations through `0012_lca_assets`; asset creation, save/reopen and published replay used that durable SQL backend. Additional standalone migration and database-restart retention verification was blocked by Docker storage exhaustion (`No space left on device`), first on a new owned container and then on the owned host-bind container hosts file. The latter container exited; its host-backed database files and evidence were preserved. A proposed separate-schema retry stopped before database access because the container was no longer running. This batch does not claim that restart or populated-downgrade verification passed. SQLite migration/retention tests passed; repeat the MySQL retention gate after the environment can write again. No shared data was deleted or protection disabled to clear the blocker.
+Two isolated product starts successfully applied real MySQL migrations through `0012_lca_assets`; asset creation, save/reopen and published replay used that durable SQL backend. Docker storage exhaustion initially blocked additional migration and restart checks. Capacity was restored without deleting test data or weakening protection; the previously failed attempts are not counted as passes.
+
+After recovery, restarting the owned host-bind MySQL retained all four draft rows, one immutable snapshot and three asset rows with identical canonical hashes and metadata. All three upload objects retained their exact original bytes and SHA-256 hashes.
+
+A separate synthetic schema on that same owned MySQL 8.4.6 instance passed upgrade through 0012, empty downgrade/re-upgrade and connection-recreation persistence checks. A downgrade with asset data was rejected before any DROP; all eight LCA tables remained intact. The existing product `tap` schema was untouched by this migration gate. Evidence schema: `lca_gate_6b4d2b53d465451c94af87e28e813671`.
+
+These checks prove data retention, not automatic whole-stack recovery. The temporary API connections required recreation after Docker restart; no such full-stack automatic-recovery claim is made.
 
 ## Remaining boundaries
 
