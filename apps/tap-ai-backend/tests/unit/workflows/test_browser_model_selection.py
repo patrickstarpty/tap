@@ -44,3 +44,33 @@ def test_default_and_synthetic_model_remain_compatible():
         result = runner().model_execution_settings(mode, {})
         assert result["TAPPER_DEFAULT_CHAT_MODEL"] == "qwen-plus"
         assert result["TAP_BROWSER_CODING_MAX_INPUT_TOKENS"] == "129024"
+
+
+def test_real_contract_file_is_bounded_and_strictly_user_reviewed(tmp_path):
+    import json
+
+    path = tmp_path / "contract.json"
+    valid = {
+        "version": 1,
+        "reviewed": True,
+        "fields": [
+            {
+                "id": "age",
+                "value": "30",
+                "readbackValue": "30",
+                "attribute": "value",
+                "targetTexts": ["Age"],
+            }
+        ],
+    }
+    path.write_text(json.dumps(valid))
+    result = runner().load_reviewed_contract(path)
+    assert result["fields"][0]["readbackValue"] == "30"
+    assert result["reviewed"] is True
+    valid["reviewed"] = "true"
+    path.write_text(json.dumps(valid))
+    with pytest.raises(ValueError):
+        runner().load_reviewed_contract(path)
+    path.write_text("x" * 32769)
+    with pytest.raises(ValueError, match="32768"):
+        runner().load_reviewed_contract(path)

@@ -404,6 +404,20 @@ class SyntheticModel(BaseHTTPRequestHandler):
         pass
 
 
+def load_reviewed_contract(path: Path) -> dict[str, object]:
+    """Load explicit test inputs, never infer reviewed facts from a model response."""
+    from tap.modules.workflows.domain.acceptance_contract import (
+        BrowserAcceptanceContract,
+    )
+
+    with path.open("rb") as file:
+        data = file.read(32769)
+    if len(data) > 32768:
+        raise ValueError("reviewed contract file exceeds 32768 bytes")
+    contract = BrowserAcceptanceContract.model_validate_json(data)
+    return contract.model_dump(mode="json", by_alias=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("synthetic", "real"), default="synthetic")
@@ -434,6 +448,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-cost-usd", type=Decimal)
     parser.add_argument("--deadline-seconds", type=int)
     parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--acceptance-contract-file", type=Path)
     args = parser.parse_args()
     if args.lca_bridge and (args.mode != "synthetic" or args.execution_mode != "local"):
         parser.error("LCA bridge acceptance requires zero-cost synthetic local mode")
@@ -854,6 +869,15 @@ def model_execution_settings(mode: str, values: dict[str, str]) -> dict[str, str
 def main() -> int:
     args = parse_args()
     model_settings = model_execution_settings(args.mode, dict(os.environ))
+    reviewed_contract = (
+        load_reviewed_contract(args.acceptance_contract_file)
+        if args.acceptance_contract_file is not None
+        else None
+    )
+    if reviewed_contract is not None and args.mode != "real":
+        raise ValueError(
+            "contract file requires real mode; synthetic fixtures own their reviewed inputs"
+        )
     nonce = uuid.uuid4().hex[:12]
     project = f"tap-browser-core-{nonce}"
     state = Path(tempfile.mkdtemp(prefix=f"{project}-state-"))
@@ -941,6 +965,11 @@ def main() -> int:
                 "goal": args.goal,
                 "startUrl": args.start_url,
                 "inputNotes": args.input_notes,
+                **(
+                    {"acceptanceContract": reviewed_contract}
+                    if reviewed_contract is not None
+                    else {}
+                ),
                 "expected": args.expected,
                 "outputPattern": args.output_pattern,
                 "status": "succeeded",
