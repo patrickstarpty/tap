@@ -20,7 +20,9 @@ class AcceptanceField(SourceModel):
     id: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")]
     value: Annotated[str, Field(max_length=4000)]
     readback_value: Annotated[str, Field(max_length=4000)]
-    attribute: Literal["text", "value", "checked", "aria-pressed", "aria-valuenow"]
+    attribute: Literal[
+        "text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active"
+    ]
     target_texts: Annotated[
         list[Annotated[str, Field(min_length=1, max_length=200)]],
         Field(min_length=1, max_length=6),

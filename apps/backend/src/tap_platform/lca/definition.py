@@ -264,6 +264,7 @@ READ_ATTRIBUTES = frozenset(
         "aria-pressed",
         "aria-invalid",
         "data-testid",
+        "data-active",
     }
 )
 

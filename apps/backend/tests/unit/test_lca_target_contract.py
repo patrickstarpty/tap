@@ -63,3 +63,24 @@ def test_original_review_contract_rejects_wire_type_coercion(change):
     }
     with pytest.raises(ValueError):
         ReviewedAcceptanceContract.model_validate({**value, **change})
+
+
+def test_reviewed_observed_state_supports_exact_empty_data_active():
+    from tap_platform.lca.source_acceptance import ReviewedAcceptanceContract
+
+    contract = ReviewedAcceptanceContract.model_validate(
+        {
+            "version": 1,
+            "reviewed": True,
+            "fields": [
+                {
+                    "id": "frequency",
+                    "value": "Monthly",
+                    "readback_value": "",
+                    "attribute": "data-active",
+                    "target_texts": ["Monthly"],
+                }
+            ],
+        }
+    )
+    assert contract.fields[0].readback_value == ""

@@ -34,8 +34,8 @@ export function SourceAcceptanceReview({
           {contract.fields.map((field) => (
             <li key={field.id}>
               <strong>{field.id}</strong>: supplied value {field.value};
-              required readback {field.readback_value} ({field.attribute}).
-              Target: {field.target_texts.join(" / ")}
+              required readback {JSON.stringify(field.readback_value)} (
+              {field.attribute}). Target: {field.target_texts.join(" / ")}
               {field.scope_text ? `; scope: ${field.scope_text}` : ""}.
             </li>
           ))}

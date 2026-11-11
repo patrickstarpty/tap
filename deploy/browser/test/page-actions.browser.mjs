@@ -160,3 +160,13 @@ test('custom selection uses the target iframe and never the same-named parent op
   assert.equal(await frame.locator('#age').inputValue(),'30');
   assert.equal(await page.locator('body').getAttribute('data-wrong'),null);
 });
+
+test('observed selection state distinguishes an empty attribute from absence', async () => {
+  const browser = await chromium.launch({headless:true});
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button id="selected" data-active>Monthly</button><button id="other">Monthly</button>');
+    assert.equal(await readValue(page,{selector:'#selected',attribute:'data-active',equals:''}), '');
+    await assert.rejects(readValue(page,{selector:'#other',attribute:'data-active',equals:'',timeout_ms:50}));
+  } finally { await browser.close(); }
+});

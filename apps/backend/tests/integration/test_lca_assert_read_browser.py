@@ -59,6 +59,18 @@ from tap_platform.lca.generator import generate_playwright
             '<div data-testid="field" aria-valuenow="23"></div>',
             "23",
         ),
+        (
+            "data-active",
+            {"equals": ""},
+            '<button data-testid="field" data-active>Monthly</button>',
+            "",
+        ),
+        (
+            "data-active",
+            {"equals": ""},
+            '<button data-testid="field">Monthly</button>',
+            None,
+        ),
         ("text", {"positive": True}, '<div data-testid="field">1 of 2</div>', None),
         ("text", {"positive": True}, '<div data-testid="field">-12</div>', None),
         (

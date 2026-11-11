@@ -23,7 +23,7 @@ it("shows exact original reviewed inputs and readback without approving edited f
     />,
   );
   expect(
-    screen.getByText(/supplied value 30; required readback Thirty/),
+    screen.getByText(/supplied value 30; required readback "Thirty"/),
   ).toBeVisible();
   expect(
     screen.getByText(/not approval of this edited LCA flow/),
