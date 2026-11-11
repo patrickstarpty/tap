@@ -28,6 +28,7 @@ from tap.modules.workflows.adapters.browser_client import BrowserApiClient, cano
 from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox, MailItem
 from tap.modules.workflows.adapters.opencode_profiles import build_config
 from tap.modules.workflows.application.browser_steps import BrowserProgress
+from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 from tap.modules.workflows.ports.coding import CodingResult
 from tap.platform.coding.gateway import BudgetGate, CallRecord
 
@@ -744,6 +745,11 @@ class CodingRuntime:
         digest = hashlib.sha256(canonical_json_bytes(input_data)).hexdigest()
         if browser.get("input_sha256") != digest:
             raise ValueError("frozen browser input digest mismatch")
+        acceptance = BrowserAcceptanceContract.from_input_data(input_data)
+        if acceptance is not None and not self.config.live_browser:
+            raise ValueError(
+                "reviewed input contracts require receipt-backed live browser execution"
+            )
         goal = self._generation_prompt(
             str(request["goal"]),
             browser.get("start_url"),
@@ -982,7 +988,9 @@ class CodingRuntime:
                         container.set_frozen_input(canonical_json_bytes(input_data), digest)
                     )
 
-                    progress = BrowserProgress(progress_event)
+                    progress = BrowserProgress(progress_event, acceptance)
+                    if script_source is None and acceptance is not None:
+                        progress.bind_session(session, scope.project_id, task_id)
                     control = (
                         BrowserControlWait(
                             lambda: self.browser.get_control(session_id),
@@ -1123,6 +1131,13 @@ class CodingRuntime:
                                 deadline_seconds=min(105, seconds_left()),
                             )
 
+                        if item.payload.get("type") in {"navigate", "click"}:
+                            await progress.refresh_required_inputs(
+                                lambda action: final_action(
+                                    action, "pre-required-" + secrets.token_hex(16)
+                                ),
+                                "pre-" + item.identifier,
+                            )
                         return await progress.handle(item.payload, item.identifier, execute)
 
                     async def prompt_once(text: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1206,6 +1221,12 @@ class CodingRuntime:
                                 terminal_evidence={"model_terminal": terminal},
                             )
                         if self.config.live_browser and script_source is None:
+                            await progress.refresh_required_inputs(
+                                lambda action: final_action(
+                                    action, "final-required-" + secrets.token_hex(16)
+                                ),
+                                f"final-required-{repair}",
+                            )
                             if not progress.live_complete:
                                 if repair < self.config.max_repairs:
                                     goal = (
@@ -1285,7 +1306,29 @@ class CodingRuntime:
                                 )
                             ):
                                 raise ValueError("browser result evidence did not finish")
+                            progress.verify_finished_result(final_observation["result"])
                             finished = completion
+                        if acceptance is not None and finished is not None:
+                            # A reviewed contract cannot trust model-authored replay source.
+                            from tap.modules.workflows.application.direct_browser import (
+                                DirectBrowserResult,
+                                compile_replay,
+                            )
+
+                            deterministic = compile_replay(
+                                DirectBrowserResult(
+                                    "passed",
+                                    {},
+                                    progress.recorded_actions,
+                                    progress.steps,
+                                    acceptance_contract=acceptance,
+                                )
+                            ).encode()
+                            collected = {
+                                **collected,
+                                "script_base64": base64.b64encode(deterministic).decode(),
+                                "script_sha256": hashlib.sha256(deterministic).hexdigest(),
+                            }
                         encoded = collected.get("script_base64")
                         if not isinstance(encoded, str):
                             if finished is not None:

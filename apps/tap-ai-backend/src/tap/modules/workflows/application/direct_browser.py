@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from tap.modules.workflows.application.browser_steps import BrowserProgress, Emit, Execute
+from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 
 Decide = Callable[[list[dict[str, Any]], list[dict[str, Any]]], Awaitable[dict[str, Any]]]
 
@@ -113,12 +114,21 @@ class DirectBrowserResult:
     steps: dict[str, dict[str, str]] = field(default_factory=dict)
     error: str = ""
     input_request: dict[str, str] | None = None
+    acceptance_contract: BrowserAcceptanceContract | None = None
 
 
 class DirectBrowserLoop:
-    def __init__(self, decide: Decide, execute: Execute, emit: Emit, *, max_rounds: int) -> None:
+    def __init__(
+        self,
+        decide: Decide,
+        execute: Execute,
+        emit: Emit,
+        *,
+        max_rounds: int,
+        acceptance: BrowserAcceptanceContract | None = None,
+    ) -> None:
         self.decide, self.execute = decide, execute
-        self.progress = BrowserProgress(emit)
+        self.progress = BrowserProgress(emit, acceptance)
         self.max_rounds = max_rounds
         self.controls: dict[str, dict[str, Any]] = {}
         self.outputs: dict[str, str] = {}
@@ -145,7 +155,16 @@ class DirectBrowserLoop:
             {"role": "system", "content": SYSTEM},
             {
                 "role": "user",
-                "content": json.dumps({"goal": goal, "start_url": start_url}, ensure_ascii=False),
+                "content": json.dumps(
+                    {
+                        "goal": goal,
+                        "start_url": start_url,
+                        "acceptance_contract": self.progress.acceptance.model_dump(mode="json")
+                        if self.progress.acceptance
+                        else None,
+                    },
+                    ensure_ascii=False,
+                ),
             },
         ]
         for index in range(self.max_rounds):
@@ -175,7 +194,11 @@ class DirectBrowserLoop:
                 return DirectBrowserResult("blocked", input_request=response["input_request"])
             if response.get("finished"):
                 return DirectBrowserResult(
-                    "passed", self.outputs, self.actions, self.progress.steps
+                    "passed",
+                    self.outputs,
+                    self.actions,
+                    self.progress.steps,
+                    acceptance_contract=self.progress.acceptance,
                 )
             response["progress"] = {
                 "completed_step_ids": sorted(self.completed),
@@ -231,6 +254,9 @@ class DirectBrowserLoop:
                 for a in self.actions
             ):
                 raise ValueError("Verify a Then step with actual DOM values")
+            self.actions.extend(await self.progress.refresh_required_inputs(self.execute, ident))
+            if not self.progress.required_inputs_complete:
+                raise ValueError("Read and verify every reviewed input before finish")
             return {"finished": True}
         if kind not in {
             "plan",
@@ -264,6 +290,17 @@ class DirectBrowserLoop:
                 raise ValueError("DOM read requires a bounded output name")
             self.outputs.pop(name, None)
             self.completed.discard(str(action.get("step")))
+        if kind in {"navigate", "click"}:
+            self.actions.extend(await self.progress.refresh_required_inputs(self.execute, ident))
+        field = (
+            self.progress.required_fields.get(str(action.get("name", "")))
+            if kind == "read"
+            else None
+        )
+        if field is not None:
+            resolved["target_texts"] = list(field.target_texts)
+            if field.scope_text is not None:
+                resolved["scope_text"] = field.scope_text
         observation = await self.progress.handle(resolved, ident, self.execute)
         if observation.get("error"):
             self.last_failure = signature
@@ -294,12 +331,21 @@ def compile_replay(result: DirectBrowserResult) -> str:
         raise ValueError("Only successful observed paths can be compiled")
     from tap.modules.workflows.application.browser_replay import REPLAY_HELPERS
 
+    contract = result.acceptance_contract
+    if contract is not None:
+        for field in contract.fields:
+            if not any(field.matches_read(a) for a in result.actions):
+                raise ValueError("Replay is missing a reviewed input readback: " + field.id)
     lines = [
         "import { test, expect } from '@playwright/test';",
         REPLAY_HELPERS,
         "test('task', async ({ page }, testInfo) => {",
         "test.setTimeout(600000); page.setDefaultTimeout(30000);",
         "const outputs: Record<string, string | null> = {};",
+        "const acceptanceContract = "
+        + json.dumps(contract.model_dump(mode="json") if contract else None)
+        + ";",
+        "const acceptanceProofs = new Map();",
     ]
     quote = json.dumps
     for action in result.actions:
@@ -318,6 +364,7 @@ def compile_replay(result: DirectBrowserResult) -> str:
         lines.append(
             f"await test.step({quote(step['keyword'] + ' ' + step['title'])}, async () => {{"
         )
+        lines.append("const beforeUrl = page.url();")
         locator = f"page.locator({quote(action.get('selector', ''))})"
         if action.get("target_texts"):
             lines.append(f"await guardTarget(page, {quote(action)});")
@@ -383,9 +430,16 @@ def compile_replay(result: DirectBrowserResult) -> str:
                     "{timeout:30000}).not.toBe('');"
                 )
             lines.append(f"outputs[{quote(action['name'])}] = await {locator}.{reader};")
+        lines.append(
+            f"recordAcceptance(acceptanceContract, acceptanceProofs, {quote(action)}, "
+            f"beforeUrl, page.url(), outputs[{quote(action.get('name', ''))}]);"
+        )
         lines.append("});")
     lines.extend(
         [
+            "if (acceptanceContract && "
+            "acceptanceContract.fields.some(f => !acceptanceProofs.has(f.id))) "
+            "throw new Error('reviewed input proof missing or stale');",
             "await testInfo.attach('tapper-result', {body: Buffer.from(JSON.stringify(outputs)), "
             "contentType:'application/json'});",
             "});",

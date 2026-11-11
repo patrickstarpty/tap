@@ -10,6 +10,8 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
+
 
 class FrozenModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -43,7 +45,8 @@ class Requirement(FrozenModel):
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     kind: Literal["input", "result"]
     source: str = Field(min_length=1, max_length=500)
-    expected: str = Field(max_length=500)
+    expected: str = Field(max_length=4000)
+    readback_expected: str | None = Field(default=None, max_length=4000)
 
 
 class BDDStep(FrozenModel):
@@ -158,7 +161,11 @@ class BDDPlan(FrozenModel):
                     check = step.assertion
                     assert check is not None
                     expected = (
-                        "true" if step.attribute in {"checked", "aria-pressed"} else req.expected
+                        req.readback_expected
+                        if req.readback_expected is not None
+                        else "true"
+                        if step.attribute in {"checked", "aria-pressed"}
+                        else req.expected
                     )
                     if check.kind != "equals" or check.expected != expected:
                         raise ValueError("input assertion cannot weaken the requested value")
@@ -188,6 +195,38 @@ class BDDPlan(FrozenModel):
             raise ValueError("at least one actual business result is required")
         return self
 
+    def validate_acceptance(self, contract: BrowserAcceptanceContract | None) -> None:
+        if contract is None:
+            if any(req.readback_expected is not None for req in self.requirements):
+                raise ValueError("explicit readback format requires a reviewed input contract")
+            return
+        reviewed_ids = {field.id for field in contract.fields}
+        if any(
+            req.readback_expected is not None and req.id not in reviewed_ids
+            for req in self.requirements
+        ):
+            raise ValueError("unreviewed input cannot override its readback format")
+        requirements = {r.id: r for r in self.requirements}
+        for field in contract.fields:
+            req = requirements.get(field.id)
+            if req is None or req.kind != "input" or req.expected != field.value:
+                raise ValueError("BDD plan omitted or changed a reviewed input")
+            writes = [s for s in self.steps if s.requirement == field.id and s.keyword == "When"]
+            reads = [s for s in self.steps if s.requirement == field.id and s.keyword == "Then"]
+            if len(writes) != 1 or len(reads) != 1:
+                raise ValueError("BDD plan must write and verify each reviewed input")
+            write, read = writes[0], reads[0]
+            if (
+                write.value != field.value
+                or not field.matches_target(write.model_dump())
+                or not field.matches_target(read.model_dump())
+                or read.attribute != field.attribute
+                or read.assertion is None
+                or read.assertion.kind != "equals"
+                or read.assertion.expected != field.readback_value
+            ):
+                raise ValueError("BDD plan changed a reviewed input target or readback")
+
     def validate_sources(self, goal: str) -> None:
         if any(r.source not in goal for r in self.requirements):
             raise ValueError("requirement source must quote the frozen user request")
@@ -196,7 +235,10 @@ class BDDPlan(FrozenModel):
 class BDDExecutor:
     max_observations = 6
 
-    def __init__(self, plan: BDDPlan, start_url: str):
+    def __init__(
+        self, plan: BDDPlan, start_url: str, acceptance: BrowserAcceptanceContract | None = None
+    ):
+        plan.validate_acceptance(acceptance)
         self.plan, self.start_url = plan, start_url
         self.digest = hashlib.sha256(plan.model_dump_json().encode()).hexdigest()
         self.position = 0
@@ -309,6 +351,15 @@ class BDDExecutor:
                 "keyword": s.keyword,
                 "title": s.title,
                 "expected_result": s.assertion.model_dump_json() if s.assertion else s.operation,
+                **(
+                    {
+                        "verification_kind": next(
+                            r.kind for r in self.plan.requirements if r.id == s.requirement
+                        )
+                    }
+                    if s.keyword == "Then"
+                    else {}
+                ),
             }
             for s in self.plan.steps
         }

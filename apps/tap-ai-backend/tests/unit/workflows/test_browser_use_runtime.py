@@ -175,7 +175,17 @@ async def test_repeated_invalid_decision_stops_without_more_model_calls():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "mode", ["ordered", "future", "old", "native_write", "review_rejected", "unknown", "drift"]
+    "mode",
+    [
+        "ordered",
+        "future",
+        "old",
+        "native_write",
+        "review_rejected",
+        "reviewed_omission",
+        "unknown",
+        "drift",
+    ],
 )
 async def test_contract_runtime_guards_actions_before_dispatch(monkeypatch, mode):
     import json
@@ -317,7 +327,16 @@ async def test_contract_runtime_guards_actions_before_dispatch(monkeypatch, mode
     monkeypatch.setattr(browser_use, "Agent", Agent)
     monkeypatch.setattr(browser_use.Tools, "act", sdk_action)
     runtime = BrowserUseRuntime(CodingConfig.for_test(), store=None, gateway_factory=None)
-    loop = DirectBrowserLoop(None, execute, emit, max_rounds=8)
+    from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
+
+    from .test_acceptance_contract import contract_data
+
+    acceptance = (
+        BrowserAcceptanceContract.model_validate(contract_data())
+        if mode == "reviewed_omission"
+        else None
+    )
+    loop = DirectBrowserLoop(None, execute, emit, max_rounds=8, acceptance=acceptance)
     context = {
         "request": {"goal": "Read premium", "browser": {"start_url": "https://example.com"}},
         "execute": execute,
@@ -332,7 +351,7 @@ async def test_contract_runtime_guards_actions_before_dispatch(monkeypatch, mode
         "remaining_calls": 8,
         "stop_requested": stop,
     }
-    if mode == "review_rejected":
+    if mode in {"review_rejected", "reviewed_omission"}:
         with pytest.raises(ValueError, match="review"):
             await runtime._run_agent(loop, context)
         assert executed == []

@@ -2271,9 +2271,177 @@
         "title": "Body_preview_upload_api_v1_projects__project_id__knowledge_chunks_preview_post",
         "type": "object"
       },
-      "BrowserTaskRequest": {
+      "BrowserAcceptanceContract": {
         "additionalProperties": false,
         "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/BrowserRequiredInput"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Fields",
+            "type": "array"
+          },
+          "reviewed": {
+            "title": "Reviewed",
+            "type": "boolean"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "reviewed",
+          "fields"
+        ],
+        "title": "BrowserAcceptanceContract",
+        "type": "object"
+      },
+      "BrowserRequiredInput": {
+        "additionalProperties": false,
+        "properties": {
+          "attribute": {
+            "enum": [
+              "text",
+              "value",
+              "checked",
+              "aria-pressed",
+              "aria-valuenow"
+            ],
+            "title": "Attribute",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9_-]{1,80}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "readbackValue": {
+            "maxLength": 4000,
+            "title": "Readbackvalue",
+            "type": "string"
+          },
+          "scopeText": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopetext"
+          },
+          "targetTexts": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Targettexts",
+            "type": "array"
+          },
+          "value": {
+            "maxLength": 4000,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "value",
+          "readbackValue",
+          "attribute",
+          "targetTexts"
+        ],
+        "title": "BrowserRequiredInput",
+        "type": "object"
+      },
+      "BrowserTaskRequest-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptanceContract": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserAcceptanceContract"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedResult": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedresult"
+          },
+          "inputNotes": {
+            "anyOf": [
+              {
+                "maxLength": 16000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputnotes"
+          },
+          "sourceTaskId": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcetaskid"
+          },
+          "startUrl": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Starturl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "startUrl"
+        ],
+        "title": "BrowserTaskRequest",
+        "type": "object"
+      },
+      "BrowserTaskRequest-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptanceContract": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserAcceptanceContract"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "expectedResult": {
             "anyOf": [
               {
@@ -3011,7 +3179,7 @@
           "browser": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BrowserTaskRequest"
+                "$ref": "#/components/schemas/BrowserTaskRequest-Input"
               },
               {
                 "type": "null"
@@ -3427,7 +3595,7 @@
           "browser": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BrowserTaskRequest"
+                "$ref": "#/components/schemas/BrowserTaskRequest-Output"
               },
               {
                 "type": "null"
@@ -14639,6 +14807,16 @@
       "WorkflowBrowserIntent": {
         "additionalProperties": false,
         "properties": {
+          "acceptanceContract": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserAcceptanceContract"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "expectedResult": {
             "title": "Expectedresult",
             "type": "string"

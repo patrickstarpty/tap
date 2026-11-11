@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 from tap.modules.workflows.domain.models import WorkflowNodeStatus, WorkflowStatus
 
 
@@ -169,6 +170,7 @@ class WorkflowBrowserRun(WorkflowContract):
 
 
 class WorkflowBrowserIntent(WorkflowContract):
+    acceptance_contract: BrowserAcceptanceContract | None = None
     goal: str
     start_url: str
     expected_result: str

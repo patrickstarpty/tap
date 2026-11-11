@@ -269,6 +269,10 @@ class BrowserUseRuntime(DirectBrowserRuntime):
                         "Omit unused fields. Navigate has no target, requirement or value. "
                         "List each supplied input and each requested business result as a "
                         "requirement. "
+                        "input_data.acceptance_contract is user reviewed. Preserve its field IDs "
+                        "and exact value; set readback_expected to readback_value. Use its "
+                        "attribute, target_texts and scope_text on corresponding assertions. "
+                        "Never change or omit these fields. Model review is not user review. "
                         "source must be an exact quote from the user request; expected is "
                         "the input value "
                         "in the site's language, or the required result condition. "
@@ -308,6 +312,7 @@ class BrowserUseRuntime(DirectBrowserRuntime):
             request["goal"]
             + json.dumps(request["browser"].get("input_data", {}), ensure_ascii=False)
         )
+        plan.validate_acceptance(loop.progress.acceptance)
         review = await llm.ainvoke(
             [
                 SystemMessage(
@@ -336,7 +341,7 @@ class BrowserUseRuntime(DirectBrowserRuntime):
             raise ValueError(
                 "BDD plan review rejected: " + "; ".join(review.completion.issues)[:1000]
             )
-        state = BDDExecutor(plan, request["browser"]["start_url"])
+        state = BDDExecutor(plan, request["browser"]["start_url"], loop.progress.acceptance)
         saved = await loop.progress.handle(
             {
                 "type": "plan",
@@ -360,13 +365,19 @@ class BrowserUseRuntime(DirectBrowserRuntime):
             assert current is not None
             action = state.action(selector)
             receipt: dict[str, Any] = {}
+            dispatched = False
 
             async def dispatch(payload: dict[str, Any]) -> dict[str, Any]:
-                nonlocal receipt
+                nonlocal receipt, dispatched
+                dispatched = True
                 receipt = await execute(payload)
                 return receipt
 
             try:
+                if action["type"] in {"navigate", "click"}:
+                    state.actions.extend(
+                        await loop.progress.refresh_required_inputs(execute, f"pre-{sequence}")
+                    )
                 await loop.progress.handle(
                     {**action, "step": current.id}, f"bdd-{sequence}", dispatch
                 )
@@ -374,7 +385,11 @@ class BrowserUseRuntime(DirectBrowserRuntime):
                 return ActionResult(extracted_content=json.dumps(state.progress()))
             except (ValueError, TimeoutError) as error:
                 if not receipt:
-                    state.error = "unknown dispatched action outcome; do not retry"
+                    state.error = (
+                        "unknown dispatched action outcome; do not retry"
+                        if dispatched
+                        else str(error)
+                    )
                 state.failed(json.dumps(action, sort_keys=True), str(error))
                 return ActionResult(
                     error=str(error),
@@ -426,6 +441,15 @@ class BrowserUseRuntime(DirectBrowserRuntime):
                             state.error = "final frozen assertion failed"
                             return ActionResult(error=state.error, is_done=True, success=False)
                         state.outputs[read["name"]] = value
+                    try:
+                        state.actions.extend(
+                            await loop.progress.refresh_required_inputs(execute, "done-required")
+                        )
+                        if not loop.progress.required_inputs_complete:
+                            raise ValueError("missing or stale reviewed input verification")
+                    except ValueError as error:
+                        state.error = str(error)
+                        return ActionResult(error=state.error, is_done=True, success=False)
                     return ActionResult(
                         is_done=True, success=True, extracted_content=json.dumps(state.outputs)
                     )
@@ -551,4 +575,10 @@ class BrowserUseRuntime(DirectBrowserRuntime):
             return DirectBrowserResult(
                 "failed", error=state.error or llm.format_error or "BDD contract is incomplete"
             )
-        return DirectBrowserResult("passed", state.outputs, state.actions, state.display_steps())
+        return DirectBrowserResult(
+            "passed",
+            state.outputs,
+            state.actions,
+            state.display_steps(),
+            acceptance_contract=loop.progress.acceptance,
+        )

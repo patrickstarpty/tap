@@ -23,6 +23,7 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 from tap.contracts.problems import ProblemDetails as ProblemDetails
+from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 
 
 class ContractModel(BaseModel):
@@ -1259,10 +1260,25 @@ class InsightsExplanationAccepted(ContractModel):
 
 
 class BrowserTaskRequest(ContractModel):
+    acceptance_contract: BrowserAcceptanceContract | None = None
     start_url: Annotated[str, Field(strict=True, min_length=1, max_length=2048)]
     expected_result: Annotated[str, Field(strict=True, min_length=1, max_length=4000)] | None = None
     input_notes: Annotated[str, Field(strict=True, max_length=16000)] | None = None
     source_task_id: Annotated[str, Field(strict=True, min_length=1, max_length=64)] | None = None
+
+    @model_validator(mode="after")
+    def bounded_frozen_input(self) -> Self:
+        import json
+
+        data: dict[str, object] = {"notes": self.input_notes} if self.input_notes else {}
+        if self.acceptance_contract is not None:
+            data["acceptance_contract"] = self.acceptance_contract.model_dump(mode="json")
+        if (
+            len(json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode())
+            > 32768
+        ):
+            raise ValueError("browser input notes and reviewed fields exceed 32768 bytes")
+        return self
 
     @field_validator("start_url")
     @classmethod

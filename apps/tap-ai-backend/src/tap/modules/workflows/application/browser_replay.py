@@ -3,6 +3,27 @@
 # JavaScript literal shared in behavior with deploy/browser/page-actions.mjs.
 # ruff: noqa: E501
 REPLAY_HELPERS = r"""
+function recordAcceptance(contract, proofs, action, beforeUrl, afterUrl, value) {
+  if (!contract) return;
+  if (['navigate','click','fill','select','press'].includes(action.type)) {
+    const navigation=['navigate','click'].includes(action.type) && beforeUrl!==afterUrl;
+    for (const [name, proof] of proofs) {
+      if (proof.url===afterUrl || (!navigation && proof.url===beforeUrl)) proofs.delete(name);
+    }
+  } else if (action.type==='read') {
+    const field=contract.fields.find(f=>f.id===action.name);
+    if (!field) return;
+    proofs.delete(field.id);
+    if (action.equals!==field.readback_value || value!==field.readback_value ||
+        (action.attribute||'text')!==field.attribute ||
+        !Array.isArray(action.target_texts) || !action.target_texts.length ||
+        action.target_texts.some(t=>!field.target_texts.includes(t)) ||
+        (action.scope_text||null)!==(field.scope_text||null) || beforeUrl!==afterUrl) {
+      throw new Error('reviewed input readback mismatch: '+field.id);
+    }
+    proofs.set(field.id,{url:afterUrl,value});
+  }
+}
 function positiveNumber(value) {
   const numbers=String(value).replace(/,/g,'').match(/-?\d+(?:\.\d+)?/g) || [];
   return numbers.length===1 && Number(numbers[0])>0;

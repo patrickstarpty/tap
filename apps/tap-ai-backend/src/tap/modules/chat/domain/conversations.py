@@ -153,6 +153,9 @@ class FrozenBrowserIntent:
             or hashlib.sha256(canonical.encode()).hexdigest() != self.input_sha256
         ):
             raise ValueError("frozen browser input digest mismatch")
+        from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
+
+        BrowserAcceptanceContract.from_input_data(data)
 
 
 @dataclass(frozen=True, slots=True)

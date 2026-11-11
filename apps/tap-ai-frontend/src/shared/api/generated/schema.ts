@@ -2899,8 +2899,51 @@ export interface components {
              */
             upload: string;
         };
+        /** BrowserAcceptanceContract */
+        BrowserAcceptanceContract: {
+            /** Fields */
+            fields: components["schemas"]["BrowserRequiredInput"][];
+            /** Reviewed */
+            reviewed: boolean;
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
+        };
+        /** BrowserRequiredInput */
+        BrowserRequiredInput: {
+            /**
+             * Attribute
+             * @enum {string}
+             */
+            attribute: "text" | "value" | "checked" | "aria-pressed" | "aria-valuenow";
+            /** Id */
+            id: string;
+            /** Readbackvalue */
+            readbackValue: string;
+            /** Scopetext */
+            scopeText?: string | null;
+            /** Targettexts */
+            targetTexts: string[];
+            /** Value */
+            value: string;
+        };
         /** BrowserTaskRequest */
-        BrowserTaskRequest: {
+        "BrowserTaskRequest-Input": {
+            acceptanceContract?: components["schemas"]["BrowserAcceptanceContract"] | null;
+            /** Expectedresult */
+            expectedResult?: string | null;
+            /** Inputnotes */
+            inputNotes?: string | null;
+            /** Sourcetaskid */
+            sourceTaskId?: string | null;
+            /** Starturl */
+            startUrl: string;
+        };
+        /** BrowserTaskRequest */
+        "BrowserTaskRequest-Output": {
+            acceptanceContract?: components["schemas"]["BrowserAcceptanceContract"] | null;
             /** Expectedresult */
             expectedResult?: string | null;
             /** Inputnotes */
@@ -3112,7 +3155,7 @@ export interface components {
         ConversationCreateRequest: {
             /** Agentrevisionid */
             agentRevisionId?: string | null;
-            browser?: components["schemas"]["BrowserTaskRequest"] | null;
+            browser?: components["schemas"]["BrowserTaskRequest-Input"] | null;
             /**
              * Documentrevisionids
              * @default []
@@ -3254,7 +3297,7 @@ export interface components {
             agentLabel?: string | null;
             /** Agentrevisionid */
             agentRevisionId?: string | null;
-            browser?: components["schemas"]["BrowserTaskRequest"] | null;
+            browser?: components["schemas"]["BrowserTaskRequest-Output"] | null;
             /** Documentrevisionids */
             documentRevisionIds: string[];
             /** Insightsqueryid */
@@ -7209,6 +7252,7 @@ export interface components {
         };
         /** WorkflowBrowserIntent */
         WorkflowBrowserIntent: {
+            acceptanceContract?: components["schemas"]["BrowserAcceptanceContract"] | null;
             /** Expectedresult */
             expectedResult: string;
             /** Goal */

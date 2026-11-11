@@ -57,7 +57,9 @@ test-core:
 		apps/tap-ai-backend/tests/unit/knowledge/test_inline_citations.py \
 		apps/tap-ai-backend/tests/unit/test_opencode_runtime.py \
 		apps/tap-ai-backend/tests/unit/test_workflow_dispatch_browser.py \
-		apps/tap-ai-backend/tests/unit/workflows/test_browser_artifacts.py
+		apps/tap-ai-backend/tests/unit/workflows/test_browser_artifacts.py \
+		apps/tap-ai-backend/tests/unit/workflows/test_acceptance_contract.py \
+		apps/tap-ai-backend/tests/unit/workflows/test_reviewed_browser_runtime.py
 	corepack pnpm --filter @tap/ai-frontend exec vitest run --maxWorkers=2 \
 		src/features/conversations/model/stream.test.ts \
 		src/widgets/tap/workspace/agents/AgentForm.test.tsx \

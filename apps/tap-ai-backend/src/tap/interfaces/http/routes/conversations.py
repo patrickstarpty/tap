@@ -310,7 +310,11 @@ async def _input(
         from urllib.parse import urlsplit
 
         parsed = urlsplit(body.browser.start_url)
-        data = {"notes": body.browser.input_notes} if body.browser.input_notes else {}
+        data: dict[str, Any] = (
+            {"notes": body.browser.input_notes} if body.browser.input_notes else {}
+        )
+        if body.browser.acceptance_contract is not None:
+            data["acceptance_contract"] = body.browser.acceptance_contract.model_dump(mode="json")
         canonical = canonical_json_bytes(data)
         browser = FrozenBrowserIntent(
             start_url=body.browser.start_url,

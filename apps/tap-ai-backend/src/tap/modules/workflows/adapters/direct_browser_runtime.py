@@ -29,6 +29,7 @@ from tap.modules.workflows.application.direct_browser import (
     DirectBrowserLoop,
     compile_replay,
 )
+from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked
 from tap.modules.workflows.ports.coding import CodingResult
 
@@ -96,6 +97,7 @@ class DirectBrowserRuntime(CodingRuntime):
         input_sha = hashlib.sha256(canonical_json_bytes(inputs)).hexdigest()
         if browser.get("input_sha256") != input_sha:
             raise ValueError("frozen browser input digest mismatch")
+        acceptance = BrowserAcceptanceContract.from_input_data(inputs)
         expiry = datetime.fromisoformat(request["deadline_at"])
         if expiry.tzinfo is None:
             raise ValueError("browser deadline must have timezone")
@@ -257,7 +259,10 @@ class DirectBrowserRuntime(CodingRuntime):
 
         outcome = CodingResult("failed")
         try:
-            loop = DirectBrowserLoop(decide, execute, emit, max_rounds=min(remaining_calls, 60))
+            loop = DirectBrowserLoop(
+                decide, execute, emit, max_rounds=min(remaining_calls, 60), acceptance=acceptance
+            )
+            loop.progress.bind_session(session, scope.project_id, task_id)
             context = {
                 "request": request,
                 "snapshot": snapshot,
@@ -282,15 +287,28 @@ class DirectBrowserRuntime(CodingRuntime):
             elif result.status != "passed":
                 outcome = CodingResult("failed", terminal_evidence={"failure": result.error})
             else:
+                if acceptance is not None:
+                    result.actions.extend(
+                        await loop.progress.refresh_required_inputs(execute, "final-required")
+                    )
+                    if not loop.progress.live_complete:
+                        raise ValueError("missing or stale reviewed input verification")
+                    result.acceptance_contract = acceptance
                 finished = await execute({"type": "finish"})
                 observation = finished.get("observation") or {}
                 if (
                     finished.get("status") != "completed"
                     or observation.get("error")
                     or not isinstance(observation.get("result"), dict)
+                    or (
+                        acceptance is not None
+                        and hashlib.sha256(str(observation.get("url", "")).encode()).hexdigest()
+                        != loop.progress.current_url_sha256
+                    )
                 ):
                     raise ValueError("browser result evidence did not finish")
                 business = observation["result"]
+                loop.progress.verify_finished_result(business)
                 try:
                     script = await self._make_script(result, context)
                     bundle = await bounded(

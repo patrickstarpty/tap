@@ -494,6 +494,9 @@ class WorkflowQueries:
                     "startUrl": str(browser.get("start_url", "")),
                     "expectedResult": str(browser.get("expected_result", "")),
                     "inputNotes": data.get("notes") if isinstance(data, dict) else None,
+                    "acceptanceContract": data.get("acceptance_contract")
+                    if isinstance(data, dict)
+                    else None,
                 }
             input_event = next(
                 (
