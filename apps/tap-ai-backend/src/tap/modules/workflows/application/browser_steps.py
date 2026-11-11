@@ -15,6 +15,11 @@ from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceCo
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 Execute = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 _ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
+_TARGET_WRITES = {"click", "fill", "select", "press"}
+_MISSING_TARGET_ERROR = (
+    "no target matched before write; take a fresh snapshot and use its aria-ref, "
+    "or wait explicitly for an observed stable selector"
+)
 
 
 def diagnostic_url(value: object) -> str:
@@ -54,6 +59,8 @@ class BrowserProgress:
         self.input_checks: dict[str, dict[str, Any]] = {}
         self.current_url_sha256 = ""
         self.unknown_action = False
+        self.stalled_reason: str | None = None
+        self._missing_targets: dict[str, tuple[int, int]] = {}
 
     def bind_session(self, session: dict[str, Any], project_id: str, task_id: str) -> None:
         if self.acceptance is None:
@@ -320,6 +327,26 @@ class BrowserProgress:
                 "status": "unknown",
             }
         action = {key: value for key, value in payload.items() if key != "step"}
+        selector = action.get("selector")
+        if (
+            action.get("type") in _TARGET_WRITES
+            and isinstance(selector, str)
+            and selector in self._missing_targets
+        ):
+            failed_sequence, rejections = self._missing_targets[selector]
+            self._missing_targets[selector] = (failed_sequence, rejections + 1)
+            if rejections >= 1:
+                self.stalled_reason = "repeated_missing_target"
+            return {
+                "status": "rejected",
+                "action_id": action_id,
+                "error": (
+                    "Previous trusted receipt found no target before write; rejected without "
+                    "dispatch. Use a fresh observed target, or take a successful newer scoped "
+                    "snapshot of this exact selector before retrying it. Do not invent a target "
+                    "or infer one from timeout text."
+                ),
+            }
         pending_read = self.pending_proofs.get(step_id) if action.get("type") == "read" else None
         writes = {"navigate", "click", "fill", "select", "press", "scroll"}
         previous_url_sha256 = self.current_url_sha256
@@ -415,6 +442,29 @@ class BrowserProgress:
         )
         sequence = observation.get("sequence")
         fresh_sequence = type(sequence) is int and sequence > self.last_sequence
+        if (
+            isinstance(selector, str)
+            and selector
+            and type(sequence) is int
+            and fresh_sequence
+            and not self.unknown_action
+        ):
+            if (
+                action.get("type") in _TARGET_WRITES
+                and receipt.get("status") == "failed"
+                and observation.get("write_started") is False
+                and observation.get("error") == _MISSING_TARGET_ERROR
+            ):
+                # Only the inspector's exact pre-write diagnostic can establish
+                # absence. Page text and timeout messages cannot authorize retry.
+                self._missing_targets[selector] = (sequence, 0)
+            elif (
+                action.get("type") == "snapshot"
+                and completed
+                and selector in self._missing_targets
+                and sequence > self._missing_targets[selector][0]
+            ):
+                self._missing_targets.pop(selector)
         if type(sequence) is int:
             self.last_sequence = max(sequence, self.last_sequence)
         if self.unknown_action:

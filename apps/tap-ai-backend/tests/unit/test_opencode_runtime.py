@@ -1611,3 +1611,165 @@ async def test_crash_receipt_stops_model_loop_without_waiting_for_another_model_
     assert "unknown" in result.terminal_evidence["failure"]
     assert result.usage["calls"] == 0
     assert built[0].stopped and browser.canceled
+
+
+def test_generation_prompt_explains_observed_refs_and_readonly_date_widgets():
+    prompt = CodingRuntime._generation_prompt(
+        "Select a date", "https://example.com/", "Date selected", ["https://example.com"], {}
+    )
+    for guidance in (
+        "aria/Label",
+        "aria-ref=Label",
+        "invalid",
+        "existing element",
+        "text search",
+        "receipts",
+        "readonly date",
+        "year",
+        "month",
+        "day",
+        "sibling popup",
+        "options_total",
+        "options_truncated",
+    ):
+        assert guidance in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("complete_after_rejection", [False, True])
+async def test_repeated_missing_target_stops_model_forwarding_repairs_and_bundle_creation(
+    monkeypatch, complete_after_rejection
+):
+    from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox, MailItem
+
+    missing_error = (
+        "no target matched before write; take a fresh snapshot and use its aria-ref, "
+        "or wait explicitly for an observed stable selector"
+    )
+    made = []
+    forwarded = []
+    rejected_model = []
+
+    class MissingTargetBrowser(SessionBrowser):
+        def __init__(self):
+            super().__init__()
+            self.actions = []
+
+        async def action(self, _session, action, _key, **_kwargs):
+            self.actions.append(action)
+            return {
+                "status": "failed",
+                "action_id": "missing-target",
+                "observation": {
+                    "sequence": len(self.actions),
+                    "write_started": False,
+                    "error": missing_error,
+                    "url": "https://example.com/",
+                    "bounded_snapshot": "Age form",
+                },
+            }
+
+        async def bundle(self, *_args):
+            raise AssertionError("stalled browser task must not produce a bundle")
+
+    class RepeatingContainer(CompletedScriptContainer):
+        def __init__(self, root):
+            super().__init__(root)
+            self.collected = False
+            self.prompt_canceled = False
+
+        async def run_prompt(self):
+            try:
+                await super().run_prompt()
+                for number, operation in enumerate(("click", "fill", "press")):
+                    ident = f"repeat-{number}"
+                    path = self.root / "requests" / (ident + ".json")
+                    path.write_text(
+                        json.dumps(
+                            {
+                                "id": ident,
+                                "kind": "browser",
+                                "deadline_at": time.time() + 10,
+                                "payload": {
+                                    "type": operation,
+                                    "selector": "#field-age .ant-select-selection-item",
+                                    "step": "verify",
+                                    "value": str(30 + number),
+                                    "key": "Enter",
+                                },
+                            }
+                        )
+                    )
+                    path.chmod(0o600)
+                    while not (self.root / "responses" / (ident + ".json")).exists():
+                        await asyncio.sleep(0.001)
+                if complete_after_rejection:
+                    return {"terminal": "complete", "session_id": "ses_test"}
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.prompt_canceled = True
+                raise
+
+        async def collect(self):
+            self.collected = True
+            return {"input_request": {"reason": "external_block", "question": "Maybe blocked"}}
+
+    def factory(_config, root):
+        container = RepeatingContainer(root)
+        made.append(container)
+        return container
+
+    def forward(_gate, _body, _claimed, **_kwargs):
+        forwarded.append(True)
+        return {"status": 200, "contentType": "application/json", "bodyBase64": "e30="}
+
+    original_serve = CodingMailbox.serve_once
+
+    async def serve_with_queued_model(mailbox, handler):
+        handled = await original_serve(mailbox, handler)
+        if (mailbox.root / "responses" / "repeat-2.json").exists() and not rejected_model:
+            # Exercise the model handler itself while the stop marker is set,
+            # before the outer prompt loop can cancel a queued request.
+            response = await handler(
+                MailItem(
+                    "queued-model",
+                    "model",
+                    time.time() + 10,
+                    {
+                        "bodyBase64": base64.b64encode(
+                            json.dumps({"model": "qwen-plus", "messages": []}).encode()
+                        ).decode()
+                    },
+                )
+            )
+            rejected_model.append(response)
+            assert response["status"] == 409
+            if complete_after_rejection:
+                await asyncio.sleep(0.01)
+        return handled
+
+    monkeypatch.setattr(CodingMailbox, "serve_once", serve_with_queued_model)
+    monkeypatch.setattr(CodingRuntime, "_forward_gate", staticmethod(forward))
+    browser = MissingTargetBrowser()
+    journal = Journal()
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=journal,
+        container_factory=factory,
+    )
+    result = await asyncio.wait_for(
+        runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1), timeout=2
+    )
+    assert result.status == "failed"
+    assert result.terminal_evidence["failure"] == "repeated_missing_target"
+    assert result.input_request is None
+    assert result.bundle_ref is None
+    assert result.usage["calls"] == 0
+    assert len(browser.actions) == 1
+    assert not forwarded
+    assert len(rejected_model) == 1
+    assert len(made[0].goals) == 1
+    assert not made[0].collected
+    assert made[0].prompt_canceled is not complete_after_rejection
+    assert made[0].stopped and browser.canceled

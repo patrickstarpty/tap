@@ -836,3 +836,216 @@ async def test_known_failed_action_keeps_original_error_and_current_observation(
     assert result["error"] == "invalid selector before write"
     assert result["bounded_snapshot"] == "Choose age"
     assert not progress.unknown_action
+
+
+_MISSING_TARGET_ERROR = (
+    "no target matched before write; take a fresh snapshot and use its aria-ref, "
+    "or wait explicitly for an observed stable selector"
+)
+
+
+def _target_receipt(*, status="failed", sequence=8, error=_MISSING_TARGET_ERROR, **observation):
+    return {
+        "status": status,
+        "action_id": f"receipt-{sequence}",
+        "observation": {
+            "sequence": sequence,
+            "url": "https://example.com/form",
+            "bounded_snapshot": "Observed form",
+            "write_started": False,
+            "error": error,
+            **observation,
+        },
+    }
+
+
+async def _planned_target_progress(*receipts):
+    calls = []
+    remaining = list(receipts)
+
+    async def emit(*_args):
+        pass
+
+    async def execute(action):
+        calls.append(action)
+        return remaining.pop(0)
+
+    progress = BrowserProgress(emit)
+    await progress.handle(
+        {
+            "type": "plan",
+            "steps": [
+                {"id": "choose", "keyword": "When", "title": "Choose age"},
+                {"id": "recover", "keyword": "When", "title": "Recover observed target"},
+            ],
+        },
+        "plan",
+        execute,
+    )
+    return progress, calls, execute
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_type", ["click", "fill", "select", "press"])
+@pytest.mark.parametrize("retry_type", ["click", "fill", "select", "press"])
+async def test_missing_target_retries_cannot_bypass_brake_by_operation_payload_or_step(
+    initial_type, retry_type
+):
+    progress, calls, execute = await _planned_target_progress(
+        _target_receipt(), _target_receipt(status="completed", sequence=9, error=None)
+    )
+    selector = "#field-age .ant-select-selection-item"
+    initial = {"type": initial_type, "step": "choose", "selector": selector, "value": "30"}
+    await progress.handle(initial, "missing", execute)
+    first = await progress.handle(
+        {**initial, "type": retry_type, "step": "recover", "value": "40", "key": "ArrowDown"},
+        "retry-one",
+        execute,
+    )
+    assert first["status"] == "rejected"
+    assert "without dispatch" in first["error"]
+    assert "scoped snapshot" in first["error"]
+    assert progress.stalled_reason is None
+    assert not progress.unknown_action
+    assert len(calls) == 1
+
+    corrective = {"type": "click", "step": "recover", "selector": "aria-ref=fresh-age"}
+    assert not (await progress.handle(corrective, "corrective", execute)).get("error")
+    assert calls[-1] == {"type": "click", "selector": "aria-ref=fresh-age"}
+    second = await progress.handle(
+        {**initial, "type": "press", "key": "Enter"}, "retry-two", execute
+    )
+    assert second["status"] == "rejected"
+    assert progress.stalled_reason == "repeated_missing_target"
+    assert not progress.unknown_action
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "snapshot,receipt",
+    [
+        ({"selector": "#age"}, _target_receipt(sequence=9, error="scope missing")),
+        (
+            {"selector": "#age"},
+            _target_receipt(status="failed", sequence=9, error=None),
+        ),
+        (
+            {"selector": "#age"},
+            _target_receipt(status="completed", sequence=9, error="scope missing"),
+        ),
+        ({"selector": "#age"}, _target_receipt(status="completed", sequence=8, error=None)),
+        ({"selector": "#age"}, _target_receipt(status="completed", sequence=None, error=None)),
+        ({}, _target_receipt(status="completed", sequence=9, error=None)),
+        ({"selector": "#other"}, _target_receipt(status="completed", sequence=9, error=None)),
+    ],
+)
+async def test_missing_target_plan_revision_and_nonrecovering_snapshots_do_not_clear_brake(
+    snapshot, receipt
+):
+    progress, calls, execute = await _planned_target_progress(_target_receipt(), receipt)
+    action = {"type": "click", "step": "choose", "selector": "#age"}
+    await progress.handle(action, "missing", execute)
+    revision = await progress.handle(
+        {
+            "type": "plan",
+            "steps": [
+                *progress.steps.values(),
+                {"id": "another", "keyword": "And", "title": "Try observed recovery"},
+            ],
+            "reason": "Inspect current evidence",
+        },
+        "revision",
+        execute,
+    )
+    assert revision["status"] == "planned"
+    await progress.handle({"type": "snapshot", "step": "another", **snapshot}, "scope", execute)
+    retry = await progress.handle({**action, "step": "another"}, "retry", execute)
+    assert retry["status"] == "rejected"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_only_fresh_successful_exact_scoped_snapshot_recovers_target_and_retry_allowance():
+    recovered = _target_receipt(status="completed", sequence=9, error=None)
+    recovered["observation"].pop("write_started")
+    progress, calls, execute = await _planned_target_progress(
+        _target_receipt(), recovered, _target_receipt(sequence=10)
+    )
+    action = {"type": "fill", "step": "choose", "selector": "#age", "value": "30"}
+    await progress.handle(action, "missing", execute)
+    assert (await progress.handle(action, "retry-before-snapshot", execute))["status"] == "rejected"
+    await progress.handle(
+        {"type": "snapshot", "step": "recover", "selector": "#age"}, "scope", execute
+    )
+    assert (await progress.handle(action, "new-attempt", execute))["error"] == _MISSING_TARGET_ERROR
+    assert len(calls) == 3
+    assert (await progress.handle(action, "new-rejection", execute))["status"] == "rejected"
+    assert progress.stalled_reason is None
+
+
+@pytest.mark.asyncio
+async def test_out_of_order_scoped_snapshot_does_not_recover_target():
+    progress, calls, execute = await _planned_target_progress(
+        _target_receipt(),
+        _target_receipt(status="completed", sequence=11, error=None),
+        _target_receipt(status="completed", sequence=10, error=None),
+    )
+    action = {"type": "click", "step": "choose", "selector": "#age"}
+    await progress.handle(action, "missing", execute)
+    await progress.handle({"type": "snapshot", "step": "recover"}, "full", execute)
+    await progress.handle(
+        {"type": "snapshot", "step": "recover", "selector": "#age"}, "old-scope", execute
+    )
+    assert (await progress.handle(action, "retry", execute))["status"] == "rejected"
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        _target_receipt(status="completed"),
+        _target_receipt(write_started=True),
+        _target_receipt(write_started="false"),
+        _target_receipt(write_started=0),
+        _target_receipt(write_started=None),
+        _target_receipt(sequence=None),
+        _target_receipt(sequence=True),
+        _target_receipt(error="locator.click: Timeout 30000ms exceeded"),
+        _target_receipt(error="locator.click: " + _MISSING_TARGET_ERROR),
+        _target_receipt(error=_MISSING_TARGET_ERROR + "\nCall log: ..."),
+    ],
+)
+async def test_missing_target_brake_requires_exact_trusted_fresh_no_write_failure(receipt):
+    progress, calls, execute = await _planned_target_progress(
+        receipt, _target_receipt(status="completed", sequence=9, error=None)
+    )
+    action = {"type": "click", "step": "choose", "selector": "#age"}
+    await progress.handle(action, "first", execute)
+    assert not (await progress.handle(action, "second", execute)).get("error")
+    assert len(calls) == 2
+    assert progress.stalled_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_type", ["click", "select"])
+async def test_readonly_fill_failure_does_not_block_legal_same_target_recovery(recovery_type):
+    progress, calls, execute = await _planned_target_progress(
+        _target_receipt(error="target is readonly before write; use the observed date widget"),
+        _target_receipt(status="completed", sequence=9, error=None),
+    )
+    await progress.handle(
+        {"type": "fill", "step": "choose", "selector": "#date", "value": "2026-11-11"},
+        "readonly",
+        execute,
+    )
+    assert not (
+        await progress.handle(
+            {"type": recovery_type, "step": "recover", "selector": "#date", "value": "11"},
+            "recover",
+            execute,
+        )
+    ).get("error")
+    assert len(calls) == 2
+    assert progress.stalled_reason is None
