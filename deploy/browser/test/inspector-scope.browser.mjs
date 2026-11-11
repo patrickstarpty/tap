@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createDocumentProvenance} from '../document-provenance.mjs';
 import fs from 'node:fs';
 import test from 'node:test';
 import { chromium } from '@playwright/test';
@@ -22,10 +23,10 @@ async function inspector(t, iframe) {
   const source = fs.readFileSync(new URL('../inspector.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').split('try { fs.unlinkSync(socketPath); }')[0];
   const observe = await new (Object.getPrototypeOf(async function(){}).constructor)(
-    'fs', 'net', 'chromium', 'observeFields', 'readValue', 'guardTarget', 'selectValue', 'process',
+    'fs', 'net', 'chromium', 'observeFields', 'readValue', 'guardTarget', 'selectValue', 'process', 'createDocumentProvenance',
     source + '\nreturn observe;'
   )(fs, {}, {launchPersistentContext:async()=>context}, observeFields, readValue, guardTarget, selectValue,
-    {env:{TAP_BROWSER_LOCAL_DIR:'/tmp/inspector-scope-no-files'}});
+    {env:{TAP_BROWSER_LOCAL_DIR:'/tmp/inspector-scope-no-files'}}, createDocumentProvenance);
   return {page, observe};
 }
 

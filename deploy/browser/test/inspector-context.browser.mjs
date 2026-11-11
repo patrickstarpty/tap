@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createDocumentProvenance} from '../document-provenance.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,9 +36,9 @@ async function fixture(t, iframe, expandedBackground = false) {
   const source = fs.readFileSync(new URL('../inspector.mjs',import.meta.url),'utf8')
     .replace(/^import .*;\n/gm,'').split('try { fs.unlinkSync(socketPath); }')[0];
   const observe = await new (Object.getPrototypeOf(async function(){}).constructor)(
-    'fs','net','chromium','observeFields','readValue','guardTarget','selectValue','process', source+'\nreturn observe;'
+    'fs','net','chromium','observeFields','readValue','guardTarget','selectValue','process','createDocumentProvenance', source+'\nreturn observe;'
   )(fs,{}, {launchPersistentContext:async()=>context},observeFields,readValue,guardTarget,selectValue,
-    {env:{TAP_BROWSER_LOCAL_DIR:root}});
+    {env:{TAP_BROWSER_LOCAL_DIR:root}}, createDocumentProvenance);
   const tool = (await plugin()).tool.tap_browser;
   async function execute(action) {
     const pending = tool.execute({action},{directory:root,abort:new AbortController().signal,ask:async()=>{}});
