@@ -59,6 +59,9 @@ test-core:
 		apps/tap-ai-backend/tests/unit/test_workflow_dispatch_browser.py \
 		apps/tap-ai-backend/tests/unit/workflows/test_browser_artifacts.py \
 		apps/tap-ai-backend/tests/unit/workflows/test_acceptance_contract.py \
+		apps/tap-ai-backend/tests/unit/workflows/test_browser_document_acceptance.py \
+		apps/tap-ai-backend/tests/unit/workflows/test_browser_presentation.py \
+		apps/tap-ai-backend/tests/unit/workflows/test_document_replay.py \
 		apps/tap-ai-backend/tests/unit/workflows/test_reviewed_browser_runtime.py
 	corepack pnpm --filter @tap/ai-frontend exec vitest run --maxWorkers=2 \
 		src/features/conversations/model/stream.test.ts \
@@ -545,3 +548,11 @@ tap-browser-worker: ## run isolated Tapper browser worker
 	bash scripts/run-tap-browser.sh worker
 
 .PHONY: tap-browser-api tap-browser-worker
+
+.PHONY: browser-contract-test
+browser-contract-test: ## owned Chromium input-contract regressions (no models or Docker)
+	PYTHONPATH=apps/tap-ai-backend/src:apps/backend/src node --test --test-concurrency=1 \
+		deploy/browser/test/document-provenance.browser.mjs \
+		deploy/browser/test/document-replay.browser.mjs \
+		deploy/browser/test/associated-state.browser.mjs \
+		deploy/browser/test/lca-document-replay.browser.mjs

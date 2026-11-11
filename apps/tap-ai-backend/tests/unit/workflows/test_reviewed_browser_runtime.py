@@ -27,6 +27,8 @@ from .test_acceptance_contract import contract_data
         "foreign_session",
         "foreign_project",
         "foreign_task",
+        "foreign_finish",
+        "foreign_finish_observation",
     ],
 )
 async def test_reviewed_contract_gates_live_runtime_without_a_model(mode):
@@ -68,6 +70,7 @@ async def test_reviewed_contract_gates_live_runtime_without_a_model(mode):
                 "sequence": self.sequence,
                 "url": self.page,
                 "bounded_snapshot": "Owned form",
+                "documents": [{"frame_id": "main", "document_id": self.page, "url": self.page}],
             }
             if action["type"] == "read":
                 value = (
@@ -80,6 +83,8 @@ async def test_reviewed_contract_gates_live_runtime_without_a_model(mode):
                 self.outputs[action["name"]] = value
                 self.provenance[action["name"]] = {
                     "source_url": self.page,
+                    "source_frame_id": "main",
+                    "source_document_id": self.page,
                     "observation_sequence": self.sequence,
                 }
                 observation["extracted"] = {
@@ -90,6 +95,8 @@ async def test_reviewed_contract_gates_live_runtime_without_a_model(mode):
                 if mode == "stale" and action["name"] == "age":
                     observation["extracted"]["observation_sequence"] = 0
             if action["type"] == "finish":
+                if mode == "foreign_finish_observation":
+                    observation["session_id"] = "foreign"
                 observation["result"] = {
                     "outputs": [{**self.outputs, "provenance": self.provenance}]
                 }
@@ -100,7 +107,10 @@ async def test_reviewed_contract_gates_live_runtime_without_a_model(mode):
                 if mode == "unknown" and action["type"] == "read"
                 else "completed",
                 "action_id": f"receipt-{self.sequence}",
-                "session_id": "wrong" if mode == "foreign_session" else session_id,
+                "session_id": "wrong"
+                if mode == "foreign_session"
+                or (mode == "foreign_finish" and action["type"] == "finish")
+                else session_id,
                 "observation": observation,
             }
 

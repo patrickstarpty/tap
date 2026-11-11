@@ -52,6 +52,7 @@ export const BROWSER_READBACK_ATTRIBUTES = [
   "aria-pressed",
   "aria-valuenow",
   "data-active",
+  "selected_label",
 ] as const;
 
 export interface BrowserAcceptanceField {
@@ -89,6 +90,8 @@ export function browserAcceptanceValid(draft: BrowserAcceptanceDraft): boolean {
           "source_url",
           "observed_at",
           "observation_sequence",
+          "source_frame_id",
+          "source_document_id",
         ].includes(field.id) &&
         field.value.length <= 4000 &&
         field.readbackValue.length <= 4000 &&

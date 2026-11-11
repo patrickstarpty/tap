@@ -1292,6 +1292,10 @@ class CodingRuntime:
                             final_observation = completion.get("observation") or {}
                             if (
                                 completion.get("status") != "completed"
+                                or (
+                                    acceptance is not None
+                                    and completion.get("session_id") != progress.session_id
+                                )
                                 or final_observation.get("error")
                                 or not isinstance(final_observation.get("result"), dict)
                                 or (
@@ -1306,7 +1310,9 @@ class CodingRuntime:
                                 )
                             ):
                                 raise ValueError("browser result evidence did not finish")
-                            progress.verify_finished_result(final_observation["result"])
+                            progress.verify_finished_result(
+                                final_observation["result"], final_observation
+                            )
                             finished = completion
                         if acceptance is not None and finished is not None:
                             # A reviewed contract cannot trust model-authored replay source.

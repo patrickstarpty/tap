@@ -59,7 +59,7 @@ class BDDStep(FrozenModel):
     scope_text: str | None = Field(default=None, max_length=200)
     value: str | None = Field(default=None, max_length=4000)
     attribute: Literal[
-        "text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active"
+        "text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active", "selected_label"
     ] = "text"
     assertion: Assertion | None = None
 

@@ -6,7 +6,9 @@ from tap.modules.workflows.application.browser_replay import REPLAY_HELPERS
 
 
 def test_replay_proof_state_machine_fails_closed_without_document_evidence():
-    source = REPLAY_HELPERS + r"""
+    source = (
+        REPLAY_HELPERS
+        + r"""
 const assert = require('node:assert/strict');
 const contract = {fields:[{id:'age',readback_value:'30',attribute:'value',target_texts:['Age']}]};
 const action = {type:'read',name:'age',equals:'30',attribute:'value',target_texts:['Age']};
@@ -37,4 +39,5 @@ assert.equal(proofs.size,0);
 // Legacy bundles have no invented reviewed contract.
 assertAcceptance(null,proofs,[]);
 """
+    )
     subprocess.run(["node", "-e", source], check=True, capture_output=True, text=True)

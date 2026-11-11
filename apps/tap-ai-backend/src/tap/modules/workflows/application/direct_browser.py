@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from tap.modules.workflows.application.browser_presentation import model_observation
 from tap.modules.workflows.application.browser_steps import BrowserProgress, Emit, Execute
 from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 
@@ -74,7 +75,17 @@ BROWSER_TOOL: dict[str, Any] = {
                     "pattern": "^[A-Za-z0-9_-]{1,80}$",
                     "description": "Business output name for a DOM read.",
                 },
-                "attribute": {"enum": ["text", "value", "checked", "aria-valuenow", "data-active"]},
+                "attribute": {
+                    "enum": [
+                        "text",
+                        "value",
+                        "checked",
+                        "aria-pressed",
+                        "aria-valuenow",
+                        "data-active",
+                        "selected_label",
+                    ]
+                },
                 "equals": {"type": "string"},
                 "contains": {"type": "string"},
                 "nonempty": {"type": "boolean"},
@@ -146,7 +157,12 @@ class DirectBrowserLoop:
             ref = f"{observation.get('sequence')}:{index}"
             self.controls[ref] = item
             controls.append({"ref": ref, **{k: v for k, v in item.items() if k != "selector"}})
-        return {k: v for k, v in observation.items() if k not in {"fields", "screenshot_data"}} | {
+        view = model_observation(observation)
+        for control in controls:
+            if "href" in control:
+                # Controls retain original private locators in self.controls.
+                control["href"] = model_observation({"fields": [control]})["fields"][0]["href"]
+        return {k: v for k, v in view.items() if k not in {"fields", "screenshot_data"}} | {
             "controls": controls
         }
 

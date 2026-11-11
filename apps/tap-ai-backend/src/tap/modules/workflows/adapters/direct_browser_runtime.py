@@ -294,10 +294,16 @@ class DirectBrowserRuntime(CodingRuntime):
                     if not loop.progress.live_complete:
                         raise ValueError("missing or stale reviewed input verification")
                     result.acceptance_contract = acceptance
+                    # Include automatic pre/post-click receipts, not the agent's action summary.
+                    result.actions = list(loop.progress.recorded_actions)
                 finished = await execute({"type": "finish"})
                 observation = finished.get("observation") or {}
                 if (
                     finished.get("status") != "completed"
+                    or (
+                        acceptance is not None
+                        and finished.get("session_id") != loop.progress.session_id
+                    )
                     or observation.get("error")
                     or not isinstance(observation.get("result"), dict)
                     or (
@@ -308,7 +314,7 @@ class DirectBrowserRuntime(CodingRuntime):
                 ):
                     raise ValueError("browser result evidence did not finish")
                 business = observation["result"]
-                loop.progress.verify_finished_result(business)
+                loop.progress.verify_finished_result(business, observation)
                 try:
                     script = await self._make_script(result, context)
                     bundle = await bounded(

@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from tap.modules.workflows.application.browser_documents import document_map, same_document
 from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -38,7 +39,9 @@ class BrowserProgress:
         self.emit = emit
         self.acceptance = acceptance
         self.required_fields = {f.id: f for f in acceptance.fields} if acceptance else {}
-        self.required_reads: dict[str, tuple[dict[str, Any], str]] = {}
+        self.required_reads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        self.documents: dict[str, dict[str, str]] = {}
+        self.pending_proofs: dict[str, dict[str, Any]] = {}
         self.last_sequence = 0
         self.session_id: str | None = None
         self.recorded_actions: list[dict[str, Any]] = []
@@ -78,9 +81,17 @@ class BrowserProgress:
         }
         return not self.unknown_action and self.required_fields.keys() <= verified
 
-    def verify_finished_result(self, result: dict[str, Any]) -> None:
+    def verify_finished_result(self, result: dict[str, Any], observation: dict[str, Any]) -> None:
         if self.acceptance is None:
             return
+        if self.session_id is not None and observation.get("session_id") != self.session_id:
+            raise ValueError("reviewed input finish session provenance mismatch")
+        self._advance_document_proofs(
+            {"type": "finish"},
+            observation,
+            type(observation.get("sequence")) is int
+            and observation["sequence"] > self.last_sequence,
+        )
         outputs = result.get("outputs")
         if not self.required_inputs_complete or not isinstance(outputs, list) or len(outputs) != 1:
             raise ValueError("reviewed input finish evidence missing")
@@ -103,6 +114,8 @@ class BrowserProgress:
                 or output.get(name) != field.readback_value
                 or type(source.get("observation_sequence")) is not int
                 or source.get("observation_sequence") != proof["observation_sequence"]
+                or source.get("source_frame_id") != proof.get("source_frame_id")
+                or source.get("source_document_id") != proof.get("source_document_id")
                 or not isinstance(source.get("source_url"), str)
                 or hashlib.sha256(source["source_url"].encode()).hexdigest()
                 != proof["source_url_sha256"]
@@ -112,8 +125,8 @@ class BrowserProgress:
     async def refresh_required_inputs(self, execute: Execute, prefix: str) -> list[dict[str, Any]]:
         """Read known current-page fields again before leaving or finishing. No writes."""
         records = []
-        for name, (action, page) in list(self.required_reads.items()):
-            if page != self.current_url_sha256:
+        for name, (action, source) in list(self.required_reads.items()):
+            if not same_document(source, self.documents):
                 continue
             result = await self.handle(action, f"{prefix}-{name}", execute)
             proof = self.input_proofs.get(action["step"])
@@ -149,11 +162,76 @@ class BrowserProgress:
         current_inputs = [
             (self.input_checks[ident], True)
             for ident, proof in self.input_proofs.items()
-            if proof["source_url_sha256"] == self.current_url_sha256
+            if (
+                same_document(proof, self.documents)
+                if self.acceptance is not None
+                else proof["source_url_sha256"] == self.current_url_sha256
+            )
             and ident in self.input_checks
             and self.input_checks[ident].get("name") not in self.required_fields
         ]
         return current_inputs + [(action, False) for action in self.live_checks.values()]
+
+    def _advance_document_proofs(
+        self, action: dict[str, Any], observation: dict[str, Any], completed: bool
+    ) -> None:
+        """Only actual same-frame document transitions can archive pre-click evidence.
+
+        A click with a still-live document creates pending evidence, not a pass.
+        Read-only observations may resolve delayed navigation. No later write can.
+        """
+        after = document_map(observation)
+        before = self.documents
+        self.documents = after
+        writes = action.get("type") in {"navigate", "click", "fill", "select", "press", "scroll"}
+        if not completed or not after:
+            self.input_proofs.clear()
+            self.pending_proofs.clear()
+            self.live_checks.clear()
+        elif writes:
+            self.pending_proofs.clear()
+            for ident, proof in list(self.input_proofs.items()):
+                self.input_proofs.pop(ident)
+                frame = after.get(proof.get("source_frame_id", ""))
+                if not frame or not same_document(proof, before):
+                    continue  # Missing frame and previously archived evidence are not navigation.
+                if action.get("type") in {"navigate", "click"} and not same_document(proof, after):
+                    self.input_proofs[ident] = {
+                        **proof,
+                        "departure_document_id": frame["document_id"],
+                    }
+                elif action.get("type") == "click":
+                    self.pending_proofs[ident] = proof
+        else:
+            if before != after:
+                self.live_checks.clear()
+            for ident, proof in list(self.input_proofs.items()):
+                frame = after.get(proof.get("source_frame_id", ""))
+                expected = proof.get("departure_document_id", proof.get("source_document_id"))
+                if not frame or frame["document_id"] != expected:
+                    self.input_proofs.pop(ident)
+            for ident, proof in list(self.pending_proofs.items()):
+                frame = after.get(proof.get("source_frame_id", ""))
+                if (
+                    action.get("type") not in {"snapshot", "wait", "read", "screenshot"}
+                    or not frame
+                    or not same_document(proof, before)
+                ):
+                    self.pending_proofs.pop(ident)
+                elif not same_document(proof, after):
+                    if not proof.get("post_click_checked"):
+                        self.pending_proofs.pop(ident)
+                        continue
+                    self.input_proofs[ident] = {
+                        **proof,
+                        "departure_document_id": frame["document_id"],
+                    }
+                    self.pending_proofs.pop(ident)
+        self.input_checks = {
+            ident: check
+            for ident, check in self.input_checks.items()
+            if ident in self.input_proofs or ident in self.pending_proofs
+        }
 
     async def handle(
         self, payload: dict[str, Any], action_id: str, execute: Execute
@@ -242,13 +320,15 @@ class BrowserProgress:
                 "status": "unknown",
             }
         action = {key: value for key, value in payload.items() if key != "step"}
-        writes = {"navigate", "click", "fill", "select", "press"}
+        pending_read = self.pending_proofs.get(step_id) if action.get("type") == "read" else None
+        writes = {"navigate", "click", "fill", "select", "press", "scroll"}
         previous_url_sha256 = self.current_url_sha256
         if action.get("type") in writes:
             self.live_checks.clear()
         if action.get("type") == "read":
             self.live_checks.pop(step_id, None)
             self.input_proofs.pop(step_id, None)
+            self.pending_proofs.pop(step_id, None)
             self.input_checks.pop(step_id, None)
             read_name = action.get("name")
             if isinstance(read_name, str):
@@ -256,6 +336,7 @@ class BrowserProgress:
                     if check.get("name") == read_name:
                         self.input_checks.pop(ident)
                         self.input_proofs.pop(ident, None)
+                        self.pending_proofs.pop(ident, None)
                 for ident, check in list(self.live_checks.items()):
                     if check.get("name") == read_name:
                         self.live_checks.pop(ident)
@@ -291,6 +372,7 @@ class BrowserProgress:
         except Exception as error:
             if action.get("type") in writes:
                 self.input_proofs.clear()
+                self.pending_proofs.clear()
                 self.input_checks.clear()
             await self.emit(
                 "browser.action_finished",
@@ -338,7 +420,10 @@ class BrowserProgress:
         if self.unknown_action:
             self.live_checks.clear()
             self.input_proofs.clear()
+            self.pending_proofs.clear()
             self.input_checks.clear()
+        elif self.acceptance is not None:
+            self._advance_document_proofs(action, observation, completed and fresh_sequence)
         elif action.get("type") in writes:
             if not completed or not observed_url:
                 self.input_proofs.clear()
@@ -442,14 +527,16 @@ class BrowserProgress:
                     and source_url
                     and isinstance(receipt_id, str)
                     and receipt_id
+                    and (required is None or required.matches_read(action))
                     and (
-                        required is None
+                        self.acceptance is None
                         or (
-                            required.matches_read(action)
-                            and fresh_sequence
+                            fresh_sequence
                             and type(extracted.get("observation_sequence")) is int
                             and extracted.get("observation_sequence") == sequence
-                            and source_raw_url == raw_url
+                            and same_document(extracted, self.documents)
+                            and source_raw_url
+                            == self.documents[extracted["source_frame_id"]]["url"]
                         )
                     )
                 ):
@@ -458,15 +545,38 @@ class BrowserProgress:
                         "source_url_sha256": source_url_sha256,
                         "receipt_id": receipt_id,
                         "observed_value": extracted["value"],
-                        **({"observation_sequence": sequence} if required is not None else {}),
+                        **(
+                            {
+                                "observation_sequence": sequence,
+                                "source_frame_id": extracted["source_frame_id"],
+                                "source_document_id": extracted["source_document_id"],
+                            }
+                            if self.acceptance is not None
+                            else {}
+                        ),
                     }
                     self.input_checks[step_id] = action
+                    if pending_read and (
+                        pending_read.get("source_frame_id") == extracted.get("source_frame_id")
+                        and pending_read.get("source_document_id")
+                        == extracted.get("source_document_id")
+                    ):
+                        # Fresh evidence can also resolve this click's delayed navigation.
+                        self.pending_proofs[step_id] = {
+                            **self.input_proofs[step_id],
+                            "post_click_checked": True,
+                        }
                     if required is not None:
                         self.required_reads[required.id] = (
                             {**action, "step": step_id},
-                            source_url_sha256,
+                            self.input_proofs[step_id].copy(),
                         )
-            elif not source_url_sha256 or source_url_sha256 == observed_url_sha256:
+            elif (
+                same_document(extracted, self.documents)
+                and source_raw_url == self.documents[extracted["source_frame_id"]]["url"]
+                if self.acceptance is not None
+                else not source_url_sha256 or source_url_sha256 == observed_url_sha256
+            ):
                 self.live_checks[step_id] = action
         if completed:
             self.recorded_actions.append(
@@ -477,4 +587,13 @@ class BrowserProgress:
                     "url": observation.get("url"),
                 }
             )
+        if completed and action.get("type") == "click" and self.acceptance is not None:
+            for ident in list(self.pending_proofs):
+                name = str(self.input_checks.get(ident, {}).get("name", ""))
+                source_read = self.required_reads.get(name)
+                if source_read is None:
+                    continue
+                reread = await self.handle(source_read[0], f"{action_id}-verify-{name}", execute)
+                if reread.get("error") or ident not in self.input_proofs:
+                    raise ValueError("reviewed input changed or unavailable after click: " + name)
         return {**observation, "action_id": receipt.get("action_id", action_id)}

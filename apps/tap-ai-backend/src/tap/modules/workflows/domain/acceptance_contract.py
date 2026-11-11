@@ -18,7 +18,9 @@ class BrowserRequiredInput(BaseModel):
     id: str = Field(strict=True, pattern=r"^[A-Za-z0-9_-]{1,80}$")
     value: Value
     readback_value: Value
-    attribute: Literal["text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active"]
+    attribute: Literal[
+        "text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active", "selected_label"
+    ]
     target_texts: tuple[Label, ...] = Field(min_length=1, max_length=6)
     scope_text: Label | None = None
 
@@ -34,6 +36,8 @@ class BrowserRequiredInput(BaseModel):
             "source_url",
             "observed_at",
             "observation_sequence",
+            "source_frame_id",
+            "source_document_id",
         }:
             raise ValueError("reviewed input ID is reserved for browser provenance")
         return self

@@ -2917,7 +2917,7 @@ export interface components {
              * Attribute
              * @enum {string}
              */
-            attribute: "text" | "value" | "checked" | "aria-pressed" | "aria-valuenow" | "data-active";
+            attribute: "text" | "value" | "checked" | "aria-pressed" | "aria-valuenow" | "data-active" | "selected_label";
             /** Id */
             id: string;
             /** Readbackvalue */

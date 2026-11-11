@@ -2311,7 +2311,8 @@
               "checked",
               "aria-pressed",
               "aria-valuenow",
-              "data-active"
+              "data-active",
+              "selected_label"
             ],
             "title": "Attribute",
             "type": "string"

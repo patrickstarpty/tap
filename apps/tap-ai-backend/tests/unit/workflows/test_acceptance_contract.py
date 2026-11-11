@@ -145,6 +145,7 @@ async def proof_fixture(contract=None):
         state["sequence"] += 1
         if action["type"] == "navigate":
             state["page"] = action["url"]
+            state["document_id"] = f"navigation-{state['sequence']}"
         if action["type"] == "fill":
             state["value"] = action["value"]
         seq = state["sequence"]
@@ -153,7 +154,9 @@ async def proof_fixture(contract=None):
             fact = {
                 "name": action["name"],
                 "value": state["value"] if action["name"] == "age" else "42",
-                "source_url": state["page"],
+                "source_url": state.get("source_url", state["page"]),
+                "source_frame_id": state.get("frame_id", "main"),
+                "source_document_id": state.get("document_id", state["page"]),
                 "observation_sequence": seq,
             }
             if state["fault"] == "wrong_source":
@@ -165,7 +168,18 @@ async def proof_fixture(contract=None):
         return {
             "status": "unknown" if state["fault"] == "unknown" else "completed",
             "action_id": f"receipt-{seq}",
-            "observation": {"sequence": seq, "url": state["page"], "extracted": fact},
+            "observation": {
+                "sequence": seq,
+                "url": state["page"],
+                "extracted": fact,
+                "documents": [
+                    {
+                        "frame_id": state.get("frame_id", "main"),
+                        "document_id": state.get("document_id", state["page"]),
+                        "url": state.get("source_url", state["page"]),
+                    }
+                ],
+            },
         }
 
     progress = BrowserProgress(
@@ -220,8 +234,8 @@ async def test_contract_proof_survives_successful_navigation_not_return_or_faile
     )
     assert not progress.required_inputs_complete
     state["value"] = "31"
-    with pytest.raises(ValueError, match="reviewed"):
-        await progress.refresh_required_inputs(execute, "final")
+    assert await progress.refresh_required_inputs(execute, "final") == []
+    assert not progress.required_inputs_complete
 
 
 @pytest.mark.asyncio
@@ -248,21 +262,30 @@ async def test_finish_must_match_the_exact_verified_receipt_not_only_value():
                 "age": "30",
                 "provenance": {
                     "age": {
-                        "source_url": state["page"],
+                        "source_url": state.get("source_url", state["page"]),
+                        "source_frame_id": state.get("frame_id", "main"),
+                        "source_document_id": state.get("document_id", state["page"]),
                         "observation_sequence": 1,
                     }
                 },
             }
         ]
     }
-    progress.verify_finished_result(result)
+    progress.verify_finished_result(
+        result, {"documents": list(progress.documents.values()), "sequence": 2}
+    )
     for key, wrong in [("observation_sequence", 0), ("source_url", "https://example.test/other")]:
         changed = deepcopy(result)
         changed["outputs"][0]["provenance"]["age"][key] = wrong
         with pytest.raises(ValueError, match="evidence"):
-            progress.verify_finished_result(changed)
+            progress.verify_finished_result(
+                changed, {"documents": list(progress.documents.values()), "sequence": 2}
+            )
     with pytest.raises(ValueError, match="provenance"):
-        progress.verify_finished_result({"outputs": [{"premium": "42"}]})
+        progress.verify_finished_result(
+            {"outputs": [{"premium": "42"}]},
+            {"documents": list(progress.documents.values()), "sequence": 2},
+        )
 
 
 def test_http_review_contract_and_frozen_replay_keep_original_values_and_digest():
@@ -413,3 +436,11 @@ async def test_data_active_proves_empty_present_attribute_but_not_missing_state(
     state["fault"] = "unreadable"  # Missing DOM attribute returns null, not empty string.
     await progress.handle(read, "not-selected", execute)
     assert not progress.required_inputs_complete
+
+
+@pytest.mark.parametrize("name", ["source_frame_id", "source_document_id"])
+def test_document_provenance_names_cannot_be_reviewed_output_ids(name):
+    data = contract_data()
+    data["fields"][0]["id"] = name
+    with pytest.raises(ValueError, match="reserved"):
+        BrowserAcceptanceContract.model_validate(data)

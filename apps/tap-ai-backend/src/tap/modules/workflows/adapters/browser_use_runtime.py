@@ -16,6 +16,7 @@ from tap.modules.ai.domain.models import (
     text_digest,
 )
 from tap.modules.workflows.adapters.direct_browser_runtime import DirectBrowserRuntime
+from tap.modules.workflows.application.browser_presentation import model_browser_text
 from tap.modules.workflows.application.direct_browser import DirectBrowserLoop, DirectBrowserResult
 
 
@@ -104,10 +105,14 @@ class GatewayChatModel:
         # Preserve the SDK's assistant decisions and user observations as distinct turns.
         turns = [m for m in messages if m.role != "system"]
         context = (
-            turns[0].text if turns and turns[0].role == "user" else "Continue the browser task."
+            model_browser_text(turns[0].text)
+            if turns and turns[0].role == "user"
+            else "Continue the browser task."
         )
         transcript = tuple(
-            ModelMessage(role=cast(Literal["assistant", "user"], m.role), content=m.text)
+            ModelMessage(
+                role=cast(Literal["assistant", "user"], m.role), content=model_browser_text(m.text)
+            )
             for m in (turns[1:] if turns and turns[0].role == "user" else turns)
         )
         if self.progress:
@@ -371,8 +376,10 @@ class BrowserUseRuntime(DirectBrowserRuntime):
             async def dispatch(payload: dict[str, Any]) -> dict[str, Any]:
                 nonlocal receipt, dispatched
                 dispatched = True
-                receipt = await execute(payload)
-                return receipt
+                result = await execute(payload)
+                if not receipt:
+                    receipt = result  # Nested post-click input checks are separate receipts.
+                return result
 
             try:
                 if action["type"] in {"navigate", "click"}:
@@ -419,7 +426,11 @@ class BrowserUseRuntime(DirectBrowserRuntime):
                         return ActionResult(error=state.error, is_done=True, success=False)
                     steps = {step.id: step for step in state.plan.steps}
                     for record in state.actions:
-                        if record["type"] != "read" or record.get("url") != observed.get("url"):
+                        if (
+                            record["type"] != "read"
+                            or record.get("name") in loop.progress.required_fields
+                            or record.get("url") != observed.get("url")
+                        ):
                             continue
                         read = {
                             k: v
