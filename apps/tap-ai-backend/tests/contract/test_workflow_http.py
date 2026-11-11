@@ -138,6 +138,8 @@ async def _snapshot_view(
     task_status="waiting_dependency",
     node_status="paused",
     native_controls_enabled=True,
+    completion_summary=None,
+    browser_input=None,
 ):
     now = datetime(2026, 11, 6, tzinfo=UTC)
 
@@ -158,6 +160,7 @@ async def _snapshot_view(
                     "goal": "Write tests",
                     "root": {"agent_id": "orchestrator", "name": "Tapper"},
                     "candidates": [{"agent_id": "qae", "name": "Quality Engineer"}],
+                    **({"kind": "browser", "browser": browser_input} if browser_input else {}),
                     "resolved_resources": [
                         {
                             "source_id": "source-1",
@@ -225,12 +228,34 @@ async def _snapshot_view(
                         {"result": {"output": "private"}},
                         now,
                     ),
+                    *(
+                        (
+                            WorkflowEvent(
+                                "e4",
+                                "task-1",
+                                4,
+                                "child",
+                                2,
+                                "node.finished",
+                                {"summary": completion_summary},
+                                now,
+                            ),
+                        )
+                        if completion_summary is not None
+                        else ()
+                    ),
                 ),
             }
 
-    return await WorkflowQueries(Store(), native_controls_enabled=native_controls_enabled).snapshot(
-        None, "task-1"
-    )
+    class Redactor:
+        async def redact_text(self, text):
+            return text
+
+    return await WorkflowQueries(
+        Store(),
+        native_controls_enabled=native_controls_enabled,
+        redactor=Redactor() if completion_summary is not None else None,
+    ).snapshot(None, "task-1")
 
 
 @pytest.mark.asyncio
@@ -550,3 +575,68 @@ async def test_concurrent_standalone_create_reconciles_only_same_public_request(
     assert store.winner_request["deadline_at"] in ("deadline-1", "deadline-2")
     assert store.winner_request["root"] in (first["root"], second["root"])
     assert len(store.insert_requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_completed_browser_snapshot_keeps_long_proof_summary_within_http_contract():
+    import json
+
+    import httpx
+    from fastapi import FastAPI
+
+    from tap.contracts.workflows import WorkflowTaskSnapshot
+    from tap.modules.workflows.domain.delegation import child_result_summary
+
+    contract = {
+        "version": 1,
+        "reviewed": True,
+        "fields": [
+            {
+                "id": "account",
+                "value": "AC-42",
+                "readback_value": "AC-42",
+                "attribute": "value",
+                "target_texts": ["Account"],
+            }
+        ],
+    }
+    result = {
+        "status": "passed",
+        "outputs": [
+            {
+                "account": "AC-42",
+                "result": "Verified " * 80,
+                "provenance": {
+                    "account": {"source_url": "https://owned.test/form", "observation_sequence": 9}
+                },
+            }
+        ],
+    }
+    summary = child_result_summary("child", json.dumps(result))
+    assert len(summary) > 400  # Existing private summary carries its evidence reference.
+    view = await _snapshot_view(
+        task_status="succeeded",
+        node_status="succeeded",
+        completion_summary=summary,
+        browser_input={
+            "start_url": "https://owned.test/form",
+            "expected_result": "Verify account",
+            "input_data": {"acceptance_contract": contract},
+        },
+    )
+    app = FastAPI()
+
+    @app.get("/snapshot", response_model=WorkflowTaskSnapshot)
+    async def snapshot():
+        return view
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/snapshot")
+    assert response.status_code == 200
+    body = response.json()
+    child = next(node for node in body["nodes"] if node["nodeId"] == "child")
+    assert len(child["publicSummary"]) <= 400
+    assert body["events"][-1]["payload"]["summary"] == summary
+    assert body["browserIntent"]["acceptanceContract"]["fields"][0]["readbackValue"] == "AC-42"

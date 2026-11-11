@@ -410,7 +410,9 @@ def attach_node_summaries(
                 and event["attempt"] == node["attempt"]
                 and type(event["payload"].get("summary")) is str
             ):
-                node["publicSummary"] = event["payload"]["summary"]
+                # The journal summary may include an evidence suffix beyond its
+                # 400-character excerpt. Keep that full event, but honor the DTO.
+                node["publicSummary"] = event["payload"]["summary"][:400]
     return nodes
 
 
