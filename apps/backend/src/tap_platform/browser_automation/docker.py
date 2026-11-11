@@ -1179,7 +1179,9 @@ class BrowserRuntime:
             output.mkdir(mode=0o777)
             (frozen / "flow.spec.ts").write_bytes(bundle.script_bytes)
             (frozen / "inputs.json").write_text(
-                json.dumps(inputs.get("input_data", {}))
+                json.dumps(
+                    inputs.get("input_data", {}), sort_keys=True, separators=(",", ":")
+                )
             )
             (frozen / "policy.json").write_text(
                 json.dumps(
@@ -1235,7 +1237,7 @@ class BrowserRuntime:
             total_bytes = len(result_bytes)
             for item in receipt.get("evidence", []):
                 kind = item.get("kind")
-                if kind not in {"screenshot", "trace", "result", "video"}:
+                if kind not in {"screenshot", "trace", "result", "video", "download"}:
                     raise RuntimeError("invalid evidence kind")
                 path = validate_evidence_path(output, str(item.get("name", "")))
                 if not path.is_file():
@@ -1244,6 +1246,8 @@ class BrowserRuntime:
                 total_bytes += size
                 if total_bytes > limits.max_output_bytes:
                     raise RuntimeError("browser evidence exceeds limit")
+                if kind == "download" and size > 5_000_000:
+                    raise RuntimeError("download evidence exceeds limit")
                 content = path.read_bytes()
                 if kind == "screenshot" and not content.startswith(
                     b"\x89PNG\r\n\x1a\n"

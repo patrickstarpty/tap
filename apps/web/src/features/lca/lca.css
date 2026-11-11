@@ -515,3 +515,16 @@
     padding: 12px;
   }
 }
+
+.lca-page-context {
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--lca-border);
+}
+.lca-file-assets p {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.lca-asset-digest {
+  font-family: ui-monospace, monospace;
+  font-size: 10px !important;
+}

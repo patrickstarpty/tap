@@ -1,5 +1,14 @@
 import { useState } from "react";
-import type { BddStep, LcaDefinition, LcaStep, Operation } from "./client";
+import type {
+  BddStep,
+  LcaClient,
+  LcaDefinition,
+  LcaStep,
+  Operation,
+} from "./client";
+import { FileAssetArguments } from "./FileAssetArguments";
+import { PageContext } from "./PageContext";
+import { pageLifecycle } from "./pageBindings";
 import { ActionArguments } from "./ActionArguments";
 import { DefinitionSettings } from "./DefinitionSettings";
 import {
@@ -21,10 +30,14 @@ export function DefinitionEditor({
   disabled = false,
   selectedGroupId,
   onSelectGroup,
+  projectId,
+  client,
 }: {
   value: LcaDefinition;
   onChange(value: LcaDefinition): void;
   disabled?: boolean;
+  projectId?: string;
+  client?: LcaClient;
   selectedGroupId?: string;
   onSelectGroup?(id: string): void;
 }) {
@@ -280,6 +293,8 @@ export function DefinitionEditor({
               key={selected.id}
               step={selected}
               value={value}
+              projectId={projectId}
+              client={client}
               groups={groups}
               groupId={group.id}
               onChange={changeAction}
@@ -330,9 +345,13 @@ function ActionProperties({
   onDefinitionChange,
   onMove,
   onRemove,
+  projectId,
+  client,
 }: {
   step: LcaStep;
   value: LcaDefinition;
+  projectId?: string;
+  client?: LcaClient;
   groups: BddStep[];
   groupId: string;
   onChange(step: LcaStep): void;
@@ -358,14 +377,16 @@ function ActionProperties({
           onChange={(e) => {
             const operation = e.target.value as Operation;
             const defaults = newAction(operation, value);
-            onChange({
+            const next = {
               ...step,
               operation,
               arguments: defaults.arguments,
               target_id: needsTarget(operation)
                 ? (value.targets[0]?.id ?? null)
                 : null,
-            });
+            };
+            if (pageLifecycle(next)) delete next.page_id;
+            onChange(next);
           }}
         >
           {(Object.keys(operationLabels) as Operation[]).map((op) => (
@@ -375,6 +396,7 @@ function ActionProperties({
           ))}
         </select>
       </label>
+      <PageContext step={step} definition={value} onChange={onChange} />
       {(needsTarget(step.operation) || step.operation === "scroll") && (
         <>
           <label>
@@ -511,13 +533,30 @@ function ActionProperties({
           </p>
         </div>
       )}
-      <ActionArguments
-        key={step.operation}
-        step={step}
-        definition={value}
-        fields={argumentFields(step.operation)}
-        onChange={onChange}
-      />
+      {step.operation === "upload_file" ? (
+        <FileAssetArguments
+          key={step.id}
+          step={step}
+          projectId={projectId}
+          client={client}
+          onChange={onChange}
+        />
+      ) : (
+        <ActionArguments
+          key={step.operation}
+          step={step}
+          definition={value}
+          fields={argumentFields(step.operation)}
+          onChange={onChange}
+        />
+      )}
+      {step.operation === "download_file" && (
+        <p className="lca-muted">
+          Click the target and capture one download, up to 5 MB. Retrieve the
+          original bytes from this run’s evidence after replay. No destination
+          path is accepted.
+        </p>
+      )}
       <label>
         Timeout (ms)
         <input

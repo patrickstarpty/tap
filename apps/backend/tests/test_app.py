@@ -20,6 +20,8 @@ async def assert_tap_surface(app: FastAPI) -> None:
         for route in app.routes
         if type(route) in (Route, APIRoute)
     ) == [
+        ("/api/projects/{project_id}/lca/assets", ("GET",)),
+        ("/api/projects/{project_id}/lca/assets", ("POST",)),
         ("/api/projects/{project_id}/lca/flows", ("GET",)),
         ("/api/projects/{project_id}/lca/flows", ("POST",)),
         ("/api/projects/{project_id}/lca/flows/{flow_id}", ("GET",)),
@@ -86,7 +88,7 @@ async def assert_tap_surface(app: FastAPI) -> None:
         ("/openapi.json", ("GET", "HEAD")),
         ("/redoc", ("GET", "HEAD")),
     ]
-    assert len(app.routes) == 35
+    assert len(app.routes) == 37
     for route in app.routes:
         if isinstance(route, APIRoute):
             assert route.endpoint.__module__.startswith("tap_platform.")
@@ -103,6 +105,7 @@ async def assert_tap_surface(app: FastAPI) -> None:
     assert ai_route.status_code == 404
     assert schema["info"]["title"] == "TAP API"
     assert {path: set(operations) for path, operations in schema["paths"].items()} == {
+        "/api/projects/{project_id}/lca/assets": {"get", "post"},
         "/api/projects/{project_id}/lca/flows": {"get", "post"},
         "/api/projects/{project_id}/lca/flows/{flow_id}": {"get"},
         "/api/projects/{project_id}/lca/flows/{flow_id}/draft": {"put"},

@@ -46,6 +46,8 @@ const run: LcaRun = {
 };
 function client(): LcaClient {
   return {
+    listAssets: vi.fn().mockResolvedValue([]),
+    uploadAsset: vi.fn(),
     getRelease: vi.fn(),
     listReleases: vi.fn().mockResolvedValue([]),
     publish: vi.fn(),
@@ -53,6 +55,7 @@ function client(): LcaClient {
     reconcileRun: vi.fn(),
     cancelRun: vi.fn(),
     getEvidence: vi.fn(),
+    getEvidenceDownload: vi.fn(),
     listFlows: vi.fn().mockResolvedValue([flow]),
     getFlow: vi.fn().mockResolvedValue(flow),
     createFlow: vi.fn(),
@@ -458,3 +461,148 @@ it("keeps technical replay success separate from unproven reviewed requirements"
     screen.getByText(/Age: not_proven · Required target changed/),
   ).toBeVisible();
 });
+it.each([
+  ["invoice.csv", "invoice.csv"],
+  [null, "debug-download.bin"],
+])(
+  "downloads captured files as raw attachments, retaining safe name %s",
+  async (filename, expected) => {
+    const api = client();
+    vi.mocked(api.listRuns).mockResolvedValue([run]);
+    vi.mocked(api.getRun).mockResolvedValue({
+      ...run,
+      execution: {
+        status: "passed",
+        evidence: [
+          {
+            kind: "download",
+            object_ref: "download-1",
+            size_bytes: 5,
+            sha256: "a".repeat(64),
+          },
+        ],
+      },
+    });
+    const bytes = new Blob(["hello"], { type: "application/octet-stream" });
+    vi.mocked(api.getEvidenceDownload).mockResolvedValue({
+      blob: bytes,
+      filename,
+    });
+    const objectUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:captured-download");
+    const revoke = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => {});
+    let attachment: { href: string; filename: string } | undefined;
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        attachment = { href: this.href, filename: this.download };
+      });
+    try {
+      const user = await open(api);
+      await user.click(screen.getByRole("button", { name: "run-1" }));
+      await user.click(
+        await screen.findByRole("button", { name: "Download download" }),
+      );
+      expect(api.getEvidenceDownload).toHaveBeenCalledWith(
+        "p",
+        "run-1",
+        "download-1",
+      );
+      expect(objectUrl).toHaveBeenCalledWith(bytes);
+      expect(attachment).toEqual({
+        href: "blob:captured-download",
+        filename: expected,
+      });
+    } finally {
+      click.mockRestore();
+      objectUrl.mockRestore();
+      revoke.mockRestore();
+    }
+  },
+);
+
+it.each(["switch flow", "reload draft"])(
+  "does not bind a late file upload after %s with the same action ID",
+  async (action) => {
+    const api = client();
+    const uploadFlow: LcaFlow = {
+      ...flow,
+      title: "Upload A",
+      definition: {
+        ...flow.definition,
+        targets: [{ id: "input", kind: "test_id", value: "input" }],
+        steps: [
+          {
+            id: "upload",
+            operation: "upload_file",
+            target_id: "input",
+            arguments: { asset_id: "", sha256: "" },
+            timeout_ms: 10000,
+          },
+        ],
+      },
+    };
+    const other: LcaFlow = { ...uploadFlow, id: "flow-2", title: "Upload B" };
+    vi.mocked(api.listFlows).mockResolvedValue([uploadFlow, other]);
+    vi.mocked(api.getFlow).mockImplementation(async (_project, id) =>
+      id === other.id ? other : uploadFlow,
+    );
+    let finish!: (asset: Awaited<ReturnType<LcaClient["uploadAsset"]>>) => void;
+    vi.mocked(api.uploadAsset).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(
+      <LcaWorkspace
+        projectId="p"
+        client={api}
+        recorderClient={recorderClient}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Upload A" }));
+    await screen.findByText("No project files loaded.");
+    fireEvent.change(screen.getByLabelText("Choose project file"), {
+      target: { files: [new File(["hello"], "invoice.csv")] },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Upload selected file" }),
+    );
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    if (action === "switch flow") {
+      await user.click(screen.getByRole("button", { name: "Upload B" }));
+      await waitFor(() =>
+        expect(screen.getByLabelText("Flow title")).toHaveValue("Upload B"),
+      );
+    } else {
+      await user.click(
+        screen.getByRole("button", { name: "Reload saved draft" }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Discard edits and reload" }),
+      );
+      await waitFor(() => expect(api.getFlow).toHaveBeenCalledTimes(2));
+    }
+    finish({
+      id: "asset-old-flow",
+      filename: "invoice.csv",
+      sha256: "a".repeat(64),
+      content_type: "text/csv",
+      size_bytes: 5,
+      created_at: "2026-11-11T12:00:00Z",
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Upload selected file" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.getByLabelText("Step upload project file")).toHaveValue("");
+    expect(screen.queryByText(/SHA-256:/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  },
+);

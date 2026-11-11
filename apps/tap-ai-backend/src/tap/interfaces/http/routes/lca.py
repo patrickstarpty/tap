@@ -15,11 +15,11 @@ _ID = r"[A-Za-z0-9_-]{1,80}"
 _ROUTES = {
     "GET": (
         rf"(?:flows/{_ID}/recordings(?:/{_ID})?|flows|flows/{_ID}|"
-        rf"flows/{_ID}/runs|flows/{_ID}/releases|releases/{_ID}|runs/{_ID}|runs/{_ID}/evidence/{_ID})"
+        rf"flows/{_ID}/runs|flows/{_ID}/releases|releases/{_ID}|runs/{_ID}|runs/{_ID}/evidence/{_ID}|assets)"
     ),
     "POST": (
         rf"(?:flows/{_ID}/recordings/{_ID}/cancel|flows/{_ID}/recordings|"
-        rf"flows|flows/{_ID}/runs|flows/{_ID}/releases|releases/{_ID}/runs|runs/{_ID}/(?:cancel|reconcile))"
+        rf"flows|flows/{_ID}/runs|flows/{_ID}/releases|releases/{_ID}/runs|runs/{_ID}/(?:cancel|reconcile)|assets)"
     ),
     "PUT": rf"flows/{_ID}/draft",
 }
@@ -128,7 +128,17 @@ class LcaGateway:
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
         if not re.fullmatch(_ROUTES.get(request.method, r"(?!)"), path):
             raise HTTPException(404, "LCA route unavailable")
-        body = await request.body()
+        if path == "assets" and request.method == "POST":
+            parts = []
+            size = 0
+            async for part in request.stream():
+                size += len(part)
+                if size > 350_000:
+                    raise HTTPException(413, "LCA upload request too large")
+                parts.append(part)
+            body = b"".join(parts)
+        else:
+            body = await request.body()
         if len(body) > 1_000_000:
             raise HTTPException(413, "LCA request too large")
         headers = {
@@ -155,7 +165,12 @@ class LcaGateway:
                             raise HTTPException(502, "LCA response exceeds limit")
                         chunks.append(chunk)
                     safe_headers = {"Cache-Control": "no-store"}
-                    for name in ("content-type", "x-content-sha256"):
+                    for name in (
+                        "content-type",
+                        "x-content-sha256",
+                        "content-disposition",
+                        "x-content-type-options",
+                    ):
                         if name in response.headers:
                             safe_headers[name] = response.headers[name]
                     return Response(

@@ -24,7 +24,7 @@ if [ "$1" = api ]; then
     selected+=("TAP_LCA_GATEWAY_TOKEN=$TAP_LCA_GATEWAY_TOKEN")
     api_module=tap_platform.app:app
     # Do not silently create/alter user schema. Fail before serving if migrations are missing.
-    env -i "${selected[@]}" "$repo_root/.venv/bin/python" -c 'import os; from sqlalchemy import create_engine,inspect; e=create_engine(os.environ["TAP_BROWSER_DATABASE_URL"]); t=set(inspect(e).get_table_names()); assert "tap_lca_releases" in t, "Run TAP migrations through 0011_lca_releases before enabling LCA"' >/dev/null
+    env -i "${selected[@]}" "$repo_root/.venv/bin/python" -c 'import os; from sqlalchemy import create_engine,inspect; e=create_engine(os.environ["TAP_BROWSER_DATABASE_URL"]); t=set(inspect(e).get_table_names()); assert {"tap_lca_releases", "tap_lca_assets"} <= t, "Run TAP migrations through 0012_lca_assets before enabling LCA"' >/dev/null
   fi
   api_port="$("$repo_root/.venv/bin/python" -c 'import sys; from urllib.parse import urlsplit; p=urlsplit(sys.argv[1]); assert p.scheme=="http" and p.hostname=="127.0.0.1" and p.port and not (p.username or p.password or p.query or p.fragment) and p.path in ("","/"); print(p.port)' "${TAP_BROWSER_API_ORIGIN:-http://127.0.0.1:8002}")"
   exec env -i "${selected[@]}" "$repo_root/.venv/bin/uvicorn" "$api_module" --host 127.0.0.1 --port "$api_port"

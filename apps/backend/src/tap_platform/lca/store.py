@@ -112,6 +112,18 @@ recordings = Table(
 )
 
 
+assets = Table(
+    "tap_lca_assets",
+    metadata,
+    *_identity(),
+    Column("filename", String(160), nullable=False),
+    Column("content_type", String(80), nullable=False),
+    Column("sha256", String(64), nullable=False),
+    Column("size_bytes", Integer, nullable=False),
+    Column("object_ref", String(128), nullable=False),
+)
+
+
 releases = Table(
     "tap_lca_releases",
     metadata,
@@ -178,6 +190,32 @@ class LcaStore:
     ) -> dict[str, Any]:
         with self.engine.connect() as connection:
             return _get(connection, table, project_id, actor_id, resource_id)
+
+    def create_asset(
+        self, project_id: str, actor_id: str, key: str, values: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._create(
+            assets, "asset", project_id, actor_id, key, _digest(values), values
+        )
+
+    def get_asset(
+        self, project_id: str, actor_id: str, asset_id: str
+    ) -> dict[str, Any]:
+        return self._get(assets, project_id, actor_id, asset_id)
+
+    def list_assets(self, project_id: str, actor_id: str) -> list[dict[str, Any]]:
+        with self.engine.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    select(assets)
+                    .where(
+                        assets.c.project_id == project_id, assets.c.actor_id == actor_id
+                    )
+                    .order_by(assets.c.created_at.desc(), assets.c.id)
+                    .limit(100)
+                ).mappings()
+            ]
 
     def get_flow(self, project_id: str, actor_id: str, flow_id: str) -> dict[str, Any]:
         return self._get(flows, project_id, actor_id, flow_id)

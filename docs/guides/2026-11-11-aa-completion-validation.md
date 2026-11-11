@@ -179,3 +179,13 @@ missing model billing. Using the ledger's conservatively rounded cost totals,
 the original per-site allowance therefore has FWD 43 calls / USD 0.935803 and
 AIA 20 calls / USD 0.715413 remaining. This reconciliation itself used no model;
 no new paid run is started without an explicit bounded continuation decision.
+
+## Combined AA and second-batch LCA gate
+
+Integrated AA `94a331a6` with develop `164e4fb1`, preserving explicit page contexts, popup/dialog handling, project-scoped uploads/downloads, reviewed contracts, document-bound proofs, and privacy-safe model presentation. Duplicate cherry-pick conflicts were resolved using byte-identical logical bases `7f52fb84`/`9c32cdc9`, not by discarding either implementation.
+
+The combined tree passed `make check` (including 702 backend tests, 90 environment-dependent skips) and `make test` (536 AA core, 83 AA UI, 70 browser/backend core, 9 web shell tests). Additional LCA frontend tests passed 122/122; browser actions/live control passed 87/87; the explicit browser contract target passed 79/79. Contract schemas were regenerated and checked.
+
+A new eight-case real HTTP/Chromium integration matrix caught a genuine merge-boundary error: dialog arguments containing `type=confirm` could override the internal proof invalidation action type. The generator now preserves the internal action type while leaving dialog parameters unchanged. All eight cases pass, including actual second-page value 31 versus main-page value 30, seven new page/file/dialog operations invalidating old input proofs, and captured download bytes. After this fix, 91 related unit tests, the 19-case LCA document matrix, and Ruff/MyPy checks passed. Earlier page/file/read/guard browser tests passed 41/41.
+
+These gates use owned synthetic fixtures without provider charges. They do not constitute successful autonomous FWD/AIA Qwen Max validation or a completed product recording. Those require a fixed combined revision and new retained evidence.

@@ -1,4 +1,22 @@
 export interface paths {
+    "/api/projects/{project_id}/lca/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Assets */
+        get: operations["list_assets_api_projects__project_id__lca_assets_get"];
+        put?: never;
+        /** Create Asset */
+        post: operations["create_asset_api_projects__project_id__lca_assets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/lca/flows": {
         parameters: {
             query?: never;
@@ -466,6 +484,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AssetInput */
+        AssetInput: {
+            /** Content Base64 */
+            content_base64: string;
+            /** Filename */
+            filename: string;
+        };
         /** AttemptDetailContract */
         AttemptDetailContract: {
             /** Attempt */
@@ -843,6 +868,72 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_assets_api_projects__project_id__lca_assets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_asset_api_projects__project_id__lca_assets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_flows_api_projects__project_id__lca_flows_get: {
         parameters: {
             query?: never;

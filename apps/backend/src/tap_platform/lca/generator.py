@@ -16,6 +16,8 @@ from tap_platform.lca.definition import (
     validate_definition,
 )
 
+from tap_platform.lca.file_actions import FILE_ACTION_HELPER
+
 GENERATOR_VERSION = "lca-playwright-v1"
 
 
@@ -44,11 +46,14 @@ def literal(value: object) -> str:
     )
 
 
-def target_locator(target_id: str, targets: dict[str, Target]) -> str:
+def target_locator(
+    target_id: str, targets: dict[str, Target], scope: str = "page"
+) -> str:
     target = targets[target_id]
-    scope = "page"
     if target.frame_target_id is not None:
-        scope = target_locator(target.frame_target_id, targets) + ".contentFrame()"
+        scope = (
+            target_locator(target.frame_target_id, targets, scope) + ".contentFrame()"
+        )
     if target.kind == "test_id":
         return f"{scope}.getByTestId({literal(target.value)})"
     if target.kind == "role":
@@ -207,6 +212,102 @@ TARGET_CONTRACT_HELPER = r"""
   };
 """
 
+PAGE_CONTEXT_HELPER = r"""
+  const pages = new Map([['main', page]]);
+  let activePageId = 'main';
+  const getPage = id => {
+    const selected = pages.get(id);
+    if (!selected || selected.isClosed()) throw new Error('Page is missing or closed: ' + id);
+    return selected;
+  };
+  const checkPageURL = selected => {
+    const value = selected.url();
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !allowedPageOrigins.includes(url.origin)) throw new Error('Page URL is outside allowed origins');
+  };
+  const openPage = async (id, url, timeout) => {
+    const created = await page.context().newPage();
+    try {
+      await created.goto(url, {timeout});
+      checkPageURL(created);
+      pages.set(id, created);
+    } catch (error) {
+      await created.close().catch(() => {});
+      throw error;
+    }
+  };
+  const switchPage = async id => {
+    await getPage(id).bringToFront();
+    activePageId = id;
+  };
+  const closePage = async id => {
+    await getPage(id).close();
+    pages.delete(id);
+  };
+"""
+
+SCOPED_EVENT_HELPER = r"""
+  const scopedEvent = async (source, event, timeout, trigger, consume) => {
+    const deadline = Date.now() + timeout;
+    const remaining = () => {
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error('Timed out waiting for ' + event);
+      return left;
+    };
+    let handler, timer;
+    const observed = new Promise((resolve, reject) => {
+      handler = value => {
+        source.removeListener(event, handler);
+        Promise.resolve().then(() => consume(value, remaining)).then(resolve, reject);
+      };
+      source.on(event, handler);
+      timer = setTimeout(() => reject(new Error('Timed out waiting for ' + event)), timeout);
+    });
+    try {
+      const [value] = await Promise.all([observed, trigger(remaining)]);
+      return value;
+    } finally {
+      clearTimeout(timer);
+      source.removeListener(event, handler);
+    }
+  };
+"""
+
+POPUP_HELPER = r"""
+  const capturePopup = async (source, locator, id, timeout) => {
+    let captured;
+    try {
+      const created = await scopedEvent(source, 'popup', timeout,
+        remaining => locator.click({timeout: remaining()}),
+        async (popup, remaining) => {
+          captured = popup;
+          await popup.waitForURL(url => url.href !== 'about:blank', {timeout: remaining(), waitUntil: 'domcontentloaded'});
+          checkPageURL(popup);
+          return popup;
+        });
+      pages.set(id, created);
+    } catch (error) {
+      if (captured && !captured.isClosed()) await captured.close().catch(() => {});
+      throw error;
+    }
+  };
+"""
+
+DIALOG_HELPER = r"""
+  const clickDialog = async (source, locator, args, timeout) => {
+    await scopedEvent(source, 'dialog', timeout,
+      remaining => locator.click({timeout: remaining()}),
+      async dialog => {
+        if (dialog.type() !== args.type || dialog.message() !== args.message) {
+          await dialog.dismiss();
+          throw new Error('Dialog did not match the expected type and message');
+        }
+        if (args.action === 'accept') await dialog.accept(args.prompt_text);
+        else await dialog.dismiss();
+      });
+  };
+"""
+
 
 def generate_playwright(
     definition: DebugDefinition, parameters: Mapping[str, object] | None = None
@@ -234,6 +335,24 @@ def generate_playwright(
         for s in definition.steps
     ):
         lines.extend(ASSOCIATED_CONTROL_HELPER.strip("\n").split("\n"))
+    page_context = any(
+        s.page_id is not None
+        or s.operation in {"open_page", "switch_page", "close_page", "click_popup"}
+        for s in definition.steps
+    )
+    if page_context:
+        lines.append(
+            f"  const allowedPageOrigins = {literal(definition.allowed_origins)};"
+        )
+        lines.extend(PAGE_CONTEXT_HELPER.strip("\n").split("\n"))
+    if any(s.operation in {"click_popup", "click_dialog"} for s in definition.steps):
+        lines.extend(SCOPED_EVENT_HELPER.strip("\n").split("\n"))
+    if any(s.operation == "click_popup" for s in definition.steps):
+        lines.extend(POPUP_HELPER.strip("\n").split("\n"))
+    if any(s.operation == "click_dialog" for s in definition.steps):
+        lines.extend(DIALOG_HELPER.strip("\n").split("\n"))
+    if any(s.operation in {"upload_file", "download_file"} for s in definition.steps):
+        lines.extend(FILE_ACTION_HELPER.strip("\n").split("\n"))
     if any(s.operation == "assert_read" for s in definition.steps):
         lines.extend(READ_ASSERTION_HELPER.strip("\n").split("\n"))
     if contract is not None or any(
@@ -252,12 +371,8 @@ def generate_playwright(
                 f"  const acceptanceContract = {literal(contract.model_dump(exclude_unset=True))};",
                 "  const acceptanceProofs = new Map();",
                 "  let acceptanceError = false;",
-                "  const proofTargets = {"
-                + ",".join(
-                    literal(key) + ":" + target_locator(key, targets) for key in targets
-                )
-                + "};",
-                "  const proofPage = {frames:()=>page.frames(),locator:key=>proofTargets[key]};",
+                "  const proofTargets = new Map();",
+                "  const proofPage = {frames:()=>page.context().pages().flatMap(selected=>selected.frames()),locator:key=>proofTargets.get(key)};",
                 "  const documentTracker = createDocumentProvenance(proofPage);",
                 "  const guardTarget = async (scope,action) => assertTargetContract(scope.locator(action.selector),action,100);",
                 "  const readValue = async (scope,action) => readAssertion(scope.locator(action.selector),action,100);",
@@ -265,7 +380,9 @@ def generate_playwright(
         )
     elif any(step.operation == "observe" for step in definition.steps):
         lines.extend(DOCUMENT_ACCEPTANCE_HELPER.strip("\n").split("\n"))
-        lines.append("  const documentTracker = createDocumentProvenance(page);")
+        lines.append(
+            "  const documentTracker = createDocumentProvenance({frames:()=>page.context().pages().flatMap(selected=>selected.frames()),locator:selector=>page.locator(selector)});"
+        )
     digest = hashlib.sha256(frozen).hexdigest()
     result = {
         "schema_version": "lca-debug-result-v1",
@@ -288,10 +405,12 @@ def generate_playwright(
             else value
             for key, value in step.arguments.items()
         }
+        scope = "stepPage" if page_context else "page"
         locator = ""
         if step.target_id is not None:
-            locator = target_locator(step.target_id, targets)
+            locator = target_locator(step.target_id, targets, scope)
         current_action = {
+            **args,
             "type": "read"
             if step.operation == "assert_read"
             else "snapshot"
@@ -301,9 +420,8 @@ def generate_playwright(
             if step.operation
             in {"navigate", "click", "fill", "select", "press", "scroll"}
             else "fill",
-            "selector": step.target_id,
+            "selector": step.id,
             "lca_step_id": step.id,
-            **args,
             **(
                 step.target_contract.model_dump(exclude_unset=True)
                 if step.target_contract
@@ -313,7 +431,23 @@ def generate_playwright(
         if step.operation == "observe":
             command = "documentTracker.snapshot()"
         elif step.operation == "navigate":
-            command = f"page.goto({literal(args['url'])}, {options})"
+            command = f"{scope}.goto({literal(args['url'])}, {options})"
+        elif step.operation == "open_page":
+            command = f"openPage({literal(args['page_id'])}, {literal(args['url'])}, {step.timeout_ms})"
+        elif step.operation == "switch_page":
+            command = f"switchPage({literal(args['page_id'])})"
+        elif step.operation == "close_page":
+            command = f"closePage({literal(args['page_id'])})"
+        elif step.operation == "click_popup":
+            command = f"capturePopup({scope}, {locator}, {literal(args['page_id'])}, {step.timeout_ms})"
+        elif step.operation == "click_dialog":
+            command = (
+                f"clickDialog({scope}, {locator}, {literal(args)}, {step.timeout_ms})"
+            )
+        elif step.operation == "upload_file":
+            command = f"uploadFile({locator}, {literal(args)}, {step.timeout_ms})"
+        elif step.operation == "download_file":
+            command = f"captureDownload({scope}, {locator}, {literal(step.id)}, {step.timeout_ms})"
         elif step.operation == "click":
             command = f"{locator}.click({options})"
         elif step.operation in {"fill", "select"}:
@@ -333,7 +467,7 @@ def generate_playwright(
                 f"expect({locator}).toHaveText({literal(args['text'])}, {options})"
             )
         elif step.operation == "assert_url":
-            command = f"expect(page).toHaveURL({literal(args['url'])}, {options})"
+            command = f"expect({scope}).toHaveURL({literal(args['url'])}, {options})"
         elif step.operation in {
             "hover",
             "check",
@@ -355,9 +489,7 @@ def generate_playwright(
         elif step.operation == "drag_drop":
             destination = args["destination_target_id"]
             assert isinstance(destination, str)
-            command = (
-                f"{locator}.dragTo({target_locator(destination, targets)}, {options})"
-            )
+            command = f"{locator}.dragTo({target_locator(destination, targets, scope)}, {options})"
         elif step.operation == "wait_for":
             command = f"{locator}.waitFor({{ state: {literal(args['state'])}, timeout: {step.timeout_ms} }})"
         elif step.operation == "assert_visible":
@@ -374,17 +506,33 @@ def generate_playwright(
             if locator:
                 command = f"{locator}.evaluate((element, [x, y]) => element.scrollBy({{ left: x, top: y, behavior: 'instant' }}), {delta}, {options})"
             else:
-                command = f"page.evaluate(([x, y]) => window.scrollBy({{ left: x, top: y, behavior: 'instant' }}), {delta})"
+                command = f"{scope}.evaluate(([x, y]) => window.scrollBy({{ left: x, top: y, behavior: 'instant' }}), {delta})"
         guard = []
         if step.target_contract is not None:
             guard = [
                 f"        await assertTargetContract({locator}, {literal({**step.target_contract.model_dump(exclude_unset=True), 'type': 'read' if step.operation == 'assert_read' else step.operation})}, {step.timeout_ms});"
             ]
+        lines.append("      try {")
+        if page_context and step.operation not in {
+            "open_page",
+            "switch_page",
+            "close_page",
+        }:
+            page_id = (
+                literal(step.page_id) if step.page_id is not None else "activePageId"
+            )
+            lines.append(f"        const stepPage = getPage({page_id});")
         lines.extend(
             [
-                "      try {",
                 *(
                     [
+                        *(
+                            [
+                                f"        proofTargets.set({literal(step.id)}, {locator});"
+                            ]
+                            if locator
+                            else []
+                        ),
                         f"        const currentAction = {literal(current_action)};",
                         "        const beforeDocuments = await documentTracker.snapshot();",
                         "        let readProof = null;",
