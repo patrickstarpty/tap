@@ -495,6 +495,7 @@ def selected_browser_env(env: dict[str, str]) -> dict[str, str]:
         "TAP_BROWSER_IMAGE",
         "TAP_BROWSER_EXECUTION_MODE",
         "TAP_BROWSER_LOCAL_TEST_TARGET",
+        "TAP_BROWSER_LOCAL_UPSTREAM_PROXY",
         "PLAYWRIGHT_BROWSERS_PATH",
         "TAP_BROWSER_WORKER_POLL_SECONDS",
         "DOCKER_CONTEXT",
@@ -871,6 +872,9 @@ def main() -> int:
             else "0",
         }
     )
+    upstream_proxy = os.environ.get("TAP_BROWSER_LOCAL_UPSTREAM_PROXY")
+    if upstream_proxy and args.execution_mode == "local":
+        env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] = upstream_proxy
     if args.mode == "real":
         # Exercise the production model router as well as the coding runtime.
         # Readiness checks catalog metadata; it does not issue a model completion.
