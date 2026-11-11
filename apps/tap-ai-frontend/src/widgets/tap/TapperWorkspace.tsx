@@ -1452,7 +1452,18 @@ function ProjectLibraryWorkspace({
   );
 }
 
-export function TapperWorkspace() {
+export function TapperWorkspace({
+  variant = "standalone",
+  lcaContext,
+  onReviewLca,
+}: {
+  variant?: "standalone" | "lca-embedded";
+  lcaContext?: import("../../shared/api/browserContext").LcaGatewayContext;
+  onReviewLca?: (
+    source: import("../../features/workflows/components/RunDetail").LcaSourceReference,
+  ) => void;
+} = {}) {
+  const embedded = variant === "lca-embedded";
   const runtime = useRuntimeModeQuery();
   const projectId = runtime.isSuccess ? runtime.data.projectId : null;
   const knowledgeClient = useOptionalKnowledgeClient();
@@ -1477,6 +1488,7 @@ export function TapperWorkspace() {
     // tab a frame early. If that guess turns out wrong (the highlight was
     // for a different project, so `graphHighlight` below resolves to
     // `null`), the effect below undoes it.
+    if (embedded) return "tapper";
     if (optimisticLibraryGuessRef.current) return "library";
     const requested = new URLSearchParams(window.location.search).get("module");
     if (
@@ -1534,7 +1546,7 @@ export function TapperWorkspace() {
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
   const [browserAcceptanceDraft, setBrowserAcceptanceDraft] =
     useState<BrowserAcceptanceDraft>({ reviewed: false, fields: [] });
-  const [browserMode, setBrowserMode] = useState(false);
+  const [browserMode, setBrowserMode] = useState(embedded);
   const [browserStartUrl, setBrowserStartUrl] = useState("");
   const [browserNotes, setBrowserNotes] = useState("");
   const [browserExpectedResult, setBrowserExpectedResult] = useState("");
@@ -1572,7 +1584,11 @@ export function TapperWorkspace() {
       return changed ? next : current;
     });
   }, [projectId, publishedSourcesQuery.data, publishedSourcesQuery.isSuccess]);
-  const conversationRuntime = useConversationRuntime(projectId);
+  const conversationRuntime = useConversationRuntime(
+    projectId,
+    "draft",
+    lcaContext,
+  );
   const activeConversationId = conversationRuntime.conversationId;
   const latestLinkedTaskId =
     [...(conversationRuntime.detail?.turns ?? [])]
@@ -1580,6 +1596,9 @@ export function TapperWorkspace() {
       .find((turn) => turn.workflowTaskId != null)?.workflowTaskId ?? null;
   const activeWorkflowTaskId = workflowTaskId ?? latestLinkedTaskId;
   const workflow = useWorkflowTask(projectId, activeWorkflowTaskId);
+  useEffect(() => {
+    if (embedded && activeWorkflowTaskId !== null) setWorkflowPanelOpen(true);
+  }, [embedded, activeWorkflowTaskId]);
   const openWorkflow = (
     taskId: string,
     conversationId?: string | null,
@@ -1878,7 +1897,11 @@ export function TapperWorkspace() {
         ? [draft, ...restored]
         : restored;
     });
-    if (!initialDurableSelection.current && summaries.length > 0) {
+    if (
+      !initialDurableSelection.current &&
+      activeConversationId === "draft" &&
+      summaries.length > 0
+    ) {
       setActiveConversationId(summaries[0]!.conversationId);
     }
     initialDurableSelection.current = true;
@@ -2035,7 +2058,8 @@ export function TapperWorkspace() {
   const rightPanelCollapsed = sourcesCollapsed && !workflowPanelOpen;
   const knowledgeSourcesOpen =
     activeModule === "tapper" && !rightPanelCollapsed;
-  const compactSourcesDrawerOpen = isCompactViewport && knowledgeSourcesOpen;
+  const compactSourcesDrawerOpen =
+    !embedded && isCompactViewport && knowledgeSourcesOpen;
   const dismissTapperSidebar = useCallback(() => {
     pendingFocusTarget.current = {
       kind: "selector",
@@ -2754,6 +2778,11 @@ export function TapperWorkspace() {
     prompt: string,
     context?: ResendContext,
   ): Promise<boolean> => {
+    if (
+      embedded &&
+      (lcaContext === undefined || lcaContext.project_id !== projectId)
+    )
+      return false;
     const selectedSourceIds =
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
@@ -2796,6 +2825,7 @@ export function TapperWorkspace() {
             ),
           })
         : null;
+    if (embedded && browserRequest === null) return false;
     if (
       agentSelectionProblem(
         runtime.data?.workflowEnabled === true,
@@ -2970,7 +3000,12 @@ export function TapperWorkspace() {
       ]);
       latestActiveConversationId.current = accepted.conversationId;
       return true;
-    } catch {
+    } catch (error) {
+      setInsightsError(
+        error instanceof Error
+          ? error.message
+          : "Request failed. Check the connection before retrying.",
+      );
       return false;
     }
   };
@@ -3000,7 +3035,7 @@ export function TapperWorkspace() {
 
   return (
     <div
-      className={`tap-product-shell${runtime.isSuccess ? " tap-product-shell--runtime-ready" : ""}${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
+      className={`tap-product-shell${embedded ? " tap-product-shell--lca-embedded" : ""}${runtime.isSuccess ? " tap-product-shell--runtime-ready" : ""}${tapperWorkspaceActive ? " tap-product-shell--tapper-workspace" : ""}${tapperSidebarOpen ? " tap-product-shell--tapper-open" : ""}`}
     >
       <ValidationModeBanner
         state={
@@ -3011,38 +3046,40 @@ export function TapperWorkspace() {
               : "connecting"
         }
       />
-      <WorkspaceSidebar
-        activeConversationId={activeConversationId}
-        activeModule={activeModule}
-        collapsed={sidebarCollapsed}
-        conversations={conversations}
-        copy={copy}
-        locale={locale}
-        onLocaleChange={setLocale}
-        onModuleChange={selectModule}
-        onNewChat={createNewChat}
-        onSelectConversation={selectConversation}
-        historyActions={historyActions}
-        onToggleCollapsed={
-          sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
-        }
-        historyState={{
-          ...(conversationList.isError
-            ? { error: "Conversation history is unavailable." }
-            : {}),
-          hasMore: conversationList.hasNextPage,
-          isLoading: conversationList.isPending,
-          isLoadingMore: conversationList.isFetchingNextPage,
-          onLoadMore: () => {
-            if (conversationList.hasNextPage)
-              void conversationList.fetchNextPage();
-          },
-          onRetry: () => {
-            void conversationList.refetch();
-          },
-        }}
-      />
-      {mobileTapperDrawerOpen ? (
+      {!embedded ? (
+        <WorkspaceSidebar
+          activeConversationId={activeConversationId}
+          activeModule={activeModule}
+          collapsed={sidebarCollapsed}
+          conversations={conversations}
+          copy={copy}
+          locale={locale}
+          onLocaleChange={setLocale}
+          onModuleChange={selectModule}
+          onNewChat={createNewChat}
+          onSelectConversation={selectConversation}
+          historyActions={historyActions}
+          onToggleCollapsed={
+            sidebarCollapsed ? expandTapperSidebar : dismissTapperSidebar
+          }
+          historyState={{
+            ...(conversationList.isError
+              ? { error: "Conversation history is unavailable." }
+              : {}),
+            hasMore: conversationList.hasNextPage,
+            isLoading: conversationList.isPending,
+            isLoadingMore: conversationList.isFetchingNextPage,
+            onLoadMore: () => {
+              if (conversationList.hasNextPage)
+                void conversationList.fetchNextPage();
+            },
+            onRetry: () => {
+              void conversationList.refetch();
+            },
+          }}
+        />
+      ) : null}
+      {mobileTapperDrawerOpen && !embedded ? (
         <button
           type="button"
           className="tap-sidebar-scrim"
@@ -3056,6 +3093,75 @@ export function TapperWorkspace() {
         aria-hidden={mobileTapperDrawerOpen ? true : undefined}
         inert={mobileTapperDrawerOpen ? true : undefined}
       >
+        {embedded ? (
+          <header className="tap-lca-embedded-header">
+            <h2>Tapper · Browser Automation</h2>
+            <p>
+              Describe the goal and reviewed inputs. Closing the panel does not
+              cancel a run.
+            </p>
+            <label>
+              Conversation{" "}
+              <select
+                aria-label="Conversation"
+                value={activeConversationId}
+                onChange={(event) =>
+                  setActiveConversationId(event.target.value)
+                }
+                disabled={
+                  conversationRuntime.sending ||
+                  conversationRuntime.browserRecoveryPending
+                }
+              >
+                {conversations.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title || "New conversation"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={
+                conversationRuntime.sending ||
+                conversationRuntime.browserRecoveryPending ||
+                Boolean(conversationRuntime.browserRecoveryError)
+              }
+              onClick={createNewChat}
+            >
+              New conversation
+            </button>
+          </header>
+        ) : null}
+        {conversationRuntime.browserRecoveryPending ||
+        conversationRuntime.browserRecoveryError ? (
+          <section
+            aria-label="Browser request recovery"
+            className="tap-browser-recovery"
+          >
+            <p role="alert">
+              {conversationRuntime.browserRecoveryError ||
+                "The browser request receipt is unconfirmed. Recover the original request before starting another run."}
+            </p>
+            <button
+              type="button"
+              disabled={conversationRuntime.sending}
+              onClick={() => {
+                void conversationRuntime
+                  .recoverBrowser()
+                  .catch((error) =>
+                    setInsightsError(
+                      error instanceof Error
+                        ? error.message
+                        : "Browser recovery unavailable.",
+                    ),
+                  );
+              }}
+            >
+              Recover original browser request
+            </button>
+          </section>
+        ) : null}
         <div hidden={activeModule !== "tapper"}>
           <div
             className={`tap-tapper-layout${rightPanelCollapsed ? " tap-tapper-layout--sources-collapsed" : ""}`}
@@ -3119,12 +3225,19 @@ export function TapperWorkspace() {
               browserAcceptanceDraft={browserAcceptanceDraft}
               onBrowserAcceptanceChange={setBrowserAcceptanceDraft}
               browserMode={browserMode}
+              browserOptionsOpen={embedded}
+              browserModeLocked={embedded}
+              sendBlocked={
+                conversationRuntime.browserRecoveryPending ||
+                Boolean(conversationRuntime.browserRecoveryError)
+              }
               browserAvailable={runtime.data?.browserEnabled === true}
               browserStartUrl={browserStartUrl}
               browserNotes={browserNotes}
               browserExpectedResult={browserExpectedResult}
               browserSourceTaskId={browserSourceTaskId}
               onBrowserModeChange={(enabled) => {
+                if (embedded && !enabled) return;
                 setBrowserMode(enabled);
                 if (enabled && runtime.data?.browserModelAlias) {
                   updateActiveConversation((conversation) => ({
@@ -3145,7 +3258,7 @@ export function TapperWorkspace() {
                     turn.browserIntent?.acceptanceContract,
                   ),
                 );
-                setBrowserMode(turn.browserIntent != null);
+                setBrowserMode(embedded || turn.browserIntent != null);
                 setBrowserStartUrl(turn.browserIntent?.startUrl ?? "");
                 setBrowserNotes(turn.browserIntent?.inputNotes ?? "");
                 setBrowserExpectedResult(
@@ -3322,6 +3435,7 @@ export function TapperWorkspace() {
                 workflow.snapshot ? (
                   <WorkflowSidebar
                     projectId={projectId}
+                    onReviewLca={onReviewLca}
                     snapshot={workflow.snapshot}
                     connection={workflow.connection}
                     selectedNodeId={workflowNodeId}
@@ -3335,10 +3449,14 @@ export function TapperWorkspace() {
                     scrollTop={workflowScrollTop}
                     onScrollTopChange={setWorkflowScrollTop}
                     onRetryConnection={workflow.retry}
-                    onReplayed={(taskId) => {
-                      setWorkflowTaskId(taskId);
-                      setWorkflowNodeId(null);
-                    }}
+                    onReplayed={
+                      embedded
+                        ? undefined
+                        : (taskId) => {
+                            setWorkflowTaskId(taskId);
+                            setWorkflowNodeId(null);
+                          }
+                    }
                     onProvideInput={() => {
                       const intent = workflow.snapshot?.browserIntent;
                       if (!intent) return;

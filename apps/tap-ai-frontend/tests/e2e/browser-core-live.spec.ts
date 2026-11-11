@@ -111,6 +111,8 @@ for (const scenario of cases) {
       expect(csp).not.toContain("*");
       const sandbox = await iframe.getAttribute("sandbox");
       expect(sandbox?.split(/\s+/u).sort()).toEqual([
+        "allow-downloads",
+        "allow-popups",
         "allow-same-origin",
         "allow-scripts",
       ]);
@@ -354,6 +356,17 @@ for (const scenario of cases) {
     ).not.toBeVisible();
     await chat.getByText(/^Browser result ·/u).click();
     await expect(chat.getByRole("link", { name: "Screenshot" })).toBeVisible();
+    if (inlineBridge) {
+      const popupPromise = page.waitForEvent("popup");
+      await chat.getByRole("link", { name: "Screenshot" }).click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState("domcontentloaded");
+      expect(new URL(popup.url()).pathname).toContain("/browser-evidence/");
+      expect((await popup.request.get(popup.url())).ok()).toBe(true);
+      await popup.close();
+      expect(page.url()).toBe(topLevelUrl);
+    }
+
     await chat.getByText(/^Browser result ·/u).click();
     await page.screenshot({
       path: `${evidenceDir}/${scenario.name}-ui.png`,
@@ -368,7 +381,22 @@ for (const scenario of cases) {
       await page
         .getByRole("button", { name: "Open Tapper", exact: true })
         .click();
-      // Keep the embedded conversation and its verified host context in place.
+      // Hide/show is not cancellation, and an explicit reconnect keeps /embed/lca.
+      await page
+        .getByRole("button", { name: "Reconnect Tapper", exact: true })
+        .click();
+      await expect(
+        page.getByText("Tapper connected", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        chat.getByRole("textbox", { name: "Message Tapper" }),
+      ).toBeVisible();
+      const restoredFrame = page
+        .frames()
+        .find((frame) => frame.url().includes("/embed/lca"));
+      expect(restoredFrame).toBeDefined();
+      expect(new URL(restoredFrame!.url()).pathname).toBe("/embed/lca");
+      expect(page.url()).toBe(topLevelUrl);
     }
     await expect(
       chat.getByRole("button", { name: "View progress" }),
@@ -529,7 +557,7 @@ for (const scenario of cases) {
               const response = await lca.request.get(
                 new URL(
                   `/api/projects/${encodeURIComponent(runtime.projectId)}/lca/runs/${started.id}`,
-                  href!,
+                  topLevelUrl,
                 ).href,
               );
               expect(response.ok()).toBe(true);

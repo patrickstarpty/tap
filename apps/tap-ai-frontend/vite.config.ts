@@ -65,6 +65,18 @@ const apiHost = loopback("TAPPER_API_HOST", "127.0.0.1");
 const apiPort = port("TAPPER_API_PORT", 8000);
 const webHost = loopback("TAPPER_WEB_HOST", "127.0.0.1");
 const webPort = port("TAPPER_WEB_PORT", 5173);
+const lcaParent = new URL(
+  process.env.VITE_TAP_WEB_URL ?? "http://127.0.0.1:5174",
+);
+if (
+  !["http:", "https:"].includes(lcaParent.protocol) ||
+  lcaParent.username ||
+  lcaParent.password
+)
+  throw new Error("VITE_TAP_WEB_URL must be an exact HTTP(S) parent origin");
+const frameHeaders = {
+  "Content-Security-Policy": `frame-ancestors ${lcaParent.origin}`,
+};
 const apiProxy = {
   target: `http://${apiHost}:${String(apiPort)}`,
   changeOrigin: false,
@@ -127,7 +139,9 @@ export default defineConfig({
     // reload in the middle of a running session.
     entries: ["index.html", "src/**/*.worker.ts"],
   },
+  preview: { headers: frameHeaders },
   server: {
+    headers: frameHeaders,
     host: webHost,
     port: webPort,
     strictPort: true,

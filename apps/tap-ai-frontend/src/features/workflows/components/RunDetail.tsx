@@ -6,6 +6,13 @@ import { ActivityTimeline } from "./ActivityTimeline";
 import { ExecutionSteps } from "./ExecutionSteps";
 import { ProgressResources } from "./ProgressResources";
 
+export interface LcaSourceReference {
+  task_id: string;
+  execution_id: string;
+  bundle_id: string;
+  input_sha256: string;
+}
+
 export function RunDetail({
   snapshot,
   connection,
@@ -14,6 +21,7 @@ export function RunDetail({
   onRetryConnection,
   onReplay,
   onProvideInput,
+  onReviewLca,
   browserControlTransport,
 }: {
   browserControlTransport?: BrowserControlTransport;
@@ -23,6 +31,7 @@ export function RunDetail({
   onRetryConnection?: () => void;
   onReplay?: () => Promise<void>;
   onProvideInput?: () => void;
+  onReviewLca?: (source: LcaSourceReference) => void;
   onCommand?: (
     kind: "pause" | "resume" | "cancel",
     nodeId?: string,
@@ -167,12 +176,30 @@ export function RunDetail({
             Replay frozen run
           </button>
         ) : null}
-        {browserRun?.status === "passed" ? (
-          <a
-            href={`${(import.meta.env.VITE_TAP_WEB_URL || "").replace(/\/$/, "")}/?module=low-code&aa-task=${encodeURIComponent(snapshot.taskId)}`}
-          >
-            Review as LCA draft
-          </a>
+        {browserRun?.status === "passed" &&
+        snapshot.status === "succeeded" &&
+        !snapshot.replayOfTaskId ? (
+          onReviewLca ? (
+            <button
+              type="button"
+              onClick={() =>
+                onReviewLca({
+                  task_id: snapshot.taskId,
+                  execution_id: browserRun.executionId,
+                  bundle_id: browserRun.bundleId,
+                  input_sha256: browserRun.inputSha256,
+                })
+              }
+            >
+              Review as LCA draft
+            </button>
+          ) : (
+            <a
+              href={`${(import.meta.env.VITE_TAP_WEB_URL || "").replace(/\/$/, "")}/?module=low-code&aa-task=${encodeURIComponent(snapshot.taskId)}`}
+            >
+              Review as LCA draft
+            </a>
+          )
         ) : null}
         {replayError ? (
           <p role="alert">Replay could not start. Try again.</p>

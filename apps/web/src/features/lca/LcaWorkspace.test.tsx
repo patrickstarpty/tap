@@ -606,3 +606,51 @@ it.each(["switch flow", "reload draft"])(
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   },
 );
+
+it.each(["dirty draft", "active recording", "pending publication"])(
+  "keeps a controlled AA source from replacing a flow during %s", async (state) => {
+    const api = client();
+    const sourceReference = { task_id: "task1", execution_id: "exec1", bundle_id: "bundle1", input_sha256: "a".repeat(64) };
+    const recorder = {
+      ...recorderClient,
+      list: vi.fn().mockResolvedValue(state === "active recording" ? [{ session_id: "recording1", flow_id: flow.id, status: "recording", draft_version: 1 }] : []),
+    };
+    const previewFetch = vi.fn();
+    vi.stubGlobal("fetch", previewFetch);
+    try {
+      if (state === "pending publication") {
+        vi.mocked(api.listRuns).mockResolvedValue([run]);
+        vi.mocked(api.getRun).mockResolvedValue({
+          ...run, execution: { status: "passed", steps: [], evidence: [] },
+          canonical_results: [{ step_id: "open", status: "passed" }],
+          definition_snapshot: { version: 1, definition: flow.definition, digest: "abc", generator_version: "v1" },
+        });
+        vi.mocked(api.publish).mockImplementation(() => new Promise(() => {}));
+      }
+      const user = userEvent.setup();
+      const view = render(<LcaWorkspace projectId="p" client={api} recorderClient={recorder} />);
+      await user.click(await screen.findByRole("button", { name: "Checkout" }));
+      await screen.findByLabelText("Step open value");
+      if (state === "dirty draft") {
+        fireEvent.change(screen.getByLabelText("Step open value"), { target: { value: "https://example.com/unsaved" } });
+      } else if (state === "pending publication") {
+        await user.click(screen.getByRole("button", { name: "run-1" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "Publish verified version" })).toBeEnabled());
+        await user.click(screen.getByRole("button", { name: "Publish verified version" }));
+      } else {
+        await screen.findByText(/recording1/);
+      }
+      view.rerender(<LcaWorkspace projectId="p" client={api} recorderClient={recorder} sourceReference={sourceReference} />);
+      expect(screen.getByLabelText("AA task ID")).toHaveValue("task1");
+      expect(screen.getByRole("button", { name: "Preview AA task" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Preview AA task" }));
+      expect(previewFetch).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Flow title")).toHaveValue("Checkout");
+      expect(screen.getByLabelText("Step open value")).toHaveValue(state === "dirty draft" ? "https://example.com/unsaved" : "https://example.com");
+      expect(api.createFlow).not.toHaveBeenCalled();
+      expect(api.createRun).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);

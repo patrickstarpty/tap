@@ -3,6 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 
+const contextIdentity = {
+  actor_id: "actor1",
+  identity_mode: "validation",
+  gateway_instance_id: "gateway-1",
+  context_binding: "a".repeat(64),
+};
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -20,7 +26,11 @@ it.each(["/", "/?module=low-code", "/lca"])(
         return new Response(
           JSON.stringify(
             url === "/api/lca/context"
-              ? { project_id: "authorized-project", available: true }
+              ? {
+                  project_id: "authorized-project",
+                  available: true,
+                  ...contextIdentity,
+                }
               : [],
           ),
         );
@@ -65,7 +75,7 @@ it("preserves unsaved LCA edits when switching platform modules", async () => {
         new Response(
           JSON.stringify(
             url === "/api/lca/context"
-              ? { project_id: "p", available: true }
+              ? { project_id: "p", available: true, ...contextIdentity }
               : [],
           ),
         ),

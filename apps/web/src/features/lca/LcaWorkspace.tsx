@@ -11,6 +11,7 @@ import {
 } from "./client";
 import { SourceAcceptanceReview } from "./SourceAcceptanceReview";
 import { AgentDraftImport } from "./AgentDraftImport";
+import type { AgentSourceReference } from "./assistantProtocol";
 import { BddResults } from "./BddResults";
 import { groupsFor } from "./bdd";
 import { DefinitionEditor, parseParameterValue } from "./DefinitionEditor";
@@ -64,10 +65,14 @@ export function LcaWorkspace({
   projectId,
   client = defaultClient,
   recorderClient,
+  sourceReference,
+  onSourceClear,
 }: {
   projectId: string;
   client?: LcaClient;
   recorderClient?: RecorderClient;
+  sourceReference?: AgentSourceReference | null;
+  onSourceClear?: () => void;
 }) {
   return (
     <ProjectWorkspace
@@ -75,6 +80,8 @@ export function LcaWorkspace({
       projectId={projectId}
       client={client}
       recorderClient={recorderClient}
+      sourceReference={sourceReference}
+      onSourceClear={onSourceClear}
     />
   );
 }
@@ -83,10 +90,14 @@ function ProjectWorkspace({
   projectId,
   client,
   recorderClient,
+  sourceReference,
+  onSourceClear,
 }: {
   projectId: string;
   client: LcaClient;
   recorderClient?: RecorderClient;
+  sourceReference?: AgentSourceReference | null;
+  onSourceClear?: () => void;
 }) {
   const [selectedBddId, setSelectedBddId] = useState<string>();
   const [recordingActive, setRecordingActive] = useState(false);
@@ -403,8 +414,11 @@ function ProjectWorkspace({
       </header>
       <AgentDraftImport
         projectId={projectId}
+        sourceReference={sourceReference}
+        onSourceClear={onSourceClear}
         disabled={loading || locked || dirty}
         onLoad={(next, nextTitle) => {
+          if (loading || locked || dirty || lock.current) return;
           ++generation.current;
           ++runGeneration.current;
           selectedFlow.current = null;

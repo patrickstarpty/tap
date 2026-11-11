@@ -2,13 +2,15 @@
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from tap.contracts.gateway_context import GatewayContext, GatewayUnavailableContext
+from tap.interfaces.http.gateway_context import gateway_context
 from tap.interfaces.http.scope import project_authorization
 
 _ID = r"[A-Za-z0-9_-]{1,80}"
@@ -28,7 +30,7 @@ _ROUTES = {
 @dataclass(frozen=True)
 class LcaGateway:
     base_url: str
-    token: str
+    token: str = field(repr=False)
     transport: httpx.AsyncBaseTransport | None = None
 
     def __post_init__(self) -> None:
@@ -200,12 +202,22 @@ async def authorize_lca(request: Request) -> None:
 router = APIRouter(dependencies=[Depends(authorize_lca)])
 
 
-@router.get("/api/lca/context")
-async def context(request: Request) -> dict[str, object]:
-    return {
-        "project_id": request.state.project_scope.project_id,
-        "available": getattr(request.app.state, "lca_gateway", None) is not None,
-    }
+@router.get("/api/lca/context", response_model=GatewayContext | GatewayUnavailableContext)
+async def context(
+    request: Request, response: Response
+) -> GatewayContext | GatewayUnavailableContext:
+    gateway = getattr(request.app.state, "lca_gateway", None)
+    if isinstance(gateway, LcaGateway) and urlsplit(gateway.base_url).hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        raise HTTPException(
+            403, "LCA embed context unavailable", headers={"Cache-Control": "no-store"}
+        )
+    return gateway_context(
+        request, response, request.state.project_scope, available=isinstance(gateway, LcaGateway)
+    )
 
 
 @router.get("/api/projects/{project_id}/lca/{path:path}", operation_id="lca_proxy_get")

@@ -1,6 +1,8 @@
 import io
 import json
+import re
 import time
+from dataclasses import replace
 from urllib.error import HTTPError
 
 import httpx
@@ -349,7 +351,7 @@ def test_product_lca_permissions_are_action_specific():
             ),
         )
     )
-    assert client.get("/api/lca/context").status_code == 200
+    assert client.get("/api/lca/context").status_code == 403
     assert client.get("/api/projects/tapper-demo/lca/flows").status_code == 200
     assert (
         client.post(
@@ -499,3 +501,114 @@ def test_file_asset_gateway_bounds_upload_and_preserves_attachment_headers():
     assert result.content == b"captured"
     assert result.headers["content-disposition"] == 'attachment; filename="result.txt"'
     assert result.headers["x-content-type-options"] == "nosniff"
+
+
+def context_client(gateway, scope=VALIDATION_SCOPE, *, origin="http://127.0.0.1:8000"):
+    class ContextAuthority(Authority):
+        async def current(self, facts):
+            return scope
+
+    authority = ContextAuthority()
+    return TestClient(
+        create_app(
+            HttpServices(scope=scope, scope_provider=authority, authorization_policy=authority),
+            lca_gateway=gateway,
+            lca_gateway_from_environment=False,
+        ),
+        base_url=origin,
+    )
+
+
+def test_embed_context_is_authoritative_stable_bounded_and_not_a_credential():
+    gateway = LcaGateway("http://127.0.0.1:8001", "context-test-server-secret")
+    client = context_client(gateway)
+    first = client.get("/api/lca/context")
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "no-store"
+    context = first.json()
+    assert context == {
+        "available": True,
+        "project_id": "tapper-demo",
+        "actor_id": "tapper-local-user",
+        "identity_mode": "validation",
+        "gateway_instance_id": context["gateway_instance_id"],
+        "context_binding": context["context_binding"],
+    }
+    assert re.fullmatch(r"[0-9a-f]{32}", context["gateway_instance_id"])
+    assert re.fullmatch(r"[0-9a-f]{64}", context["context_binding"])
+    assert client.get("/api/lca/context").json() == context
+    # Frontends can share one gateway across their distinct loopback proxy hosts.
+    assert (
+        TestClient(client.app, base_url="http://localhost:5174").get("/api/lca/context").json()
+        == context
+    )
+    assert "context-test-server-secret" not in first.text
+    assert "8001" not in first.text
+
+
+def test_separate_same_named_gateways_never_share_embed_recovery_context():
+    first = context_client(LcaGateway("http://127.0.0.1:8001", "same-server-token"))
+    second = context_client(LcaGateway("http://127.0.0.1:8001", "same-server-token"))
+    original = first.get("/api/lca/context").json()
+    other = second.get("/api/lca/context").json()
+    assert original["gateway_instance_id"] != other["gateway_instance_id"]
+    assert original["context_binding"] != other["context_binding"]
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        replace(VALIDATION_SCOPE, actor_id="another-actor"),
+        replace(VALIDATION_SCOPE, project_id="another-project"),
+        replace(VALIDATION_SCOPE, enterprise_id="another-enterprise"),
+    ],
+)
+def test_embed_binding_changes_when_authoritative_scope_changes(scope):
+    gateway = LcaGateway("http://127.0.0.1:8001", "same-server-token")
+    client = context_client(gateway)
+    original = client.get("/api/lca/context").json()
+    client.app.state.http_services = context_client(gateway, scope).app.state.http_services
+    changed = client.get("/api/lca/context").json()
+    assert original["gateway_instance_id"] == changed["gateway_instance_id"]
+    assert original["context_binding"] != changed["context_binding"]
+
+
+@pytest.mark.parametrize("origin", ["http://192.0.2.1:8000", "https://tap.example"])
+def test_embed_context_rejects_nonloopback_request_even_with_forwarded_host(origin):
+    client = context_client(LcaGateway("http://127.0.0.1:8001", "same-server-token"), origin=origin)
+    response = client.get("/api/lca/context", headers={"X-Forwarded-Host": "127.0.0.1:8000"})
+    assert response.status_code == 403
+    assert "context_binding" not in response.text
+
+
+def test_embed_context_rejects_nonloopback_upstream_and_all_product_identities():
+    from tap.modules.access.domain.context import IdentityMode
+
+    client = context_client(LcaGateway("https://backend.example", "same-server-token"))
+    assert client.get("/api/lca/context").status_code == 403
+    client = context_client(
+        LcaGateway("http://127.0.0.1:8001", "same-server-token"),
+        replace(VALIDATION_SCOPE, identity_mode=IdentityMode.PRODUCT),
+    )
+    response = client.get("/api/lca/context")
+    assert response.status_code == 403
+    assert "context_binding" not in response.text
+
+
+def test_unavailable_embed_context_has_no_binding_and_cannot_be_cached():
+    response = context_client(None).get("/api/lca/context")
+    assert response.status_code == 200
+    assert response.json() == {"available": False, "project_id": "tapper-demo"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "headers,query",
+    [({"X-Actor-Id": "forged"}, ""), ({}, "?project_id=forged")],
+)
+def test_embed_context_cannot_be_overridden_by_caller(headers, query):
+    response = context_client(LcaGateway("http://127.0.0.1:8001", "same-server-token")).get(
+        "/api/lca/context" + query, headers=headers
+    )
+    assert response.status_code == 403
+    assert "context_binding" not in response.text

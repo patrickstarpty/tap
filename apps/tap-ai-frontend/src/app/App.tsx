@@ -1,10 +1,15 @@
+import { LcaEmbedPage } from "../pages/LcaEmbedPage";
 import { TapAiPage } from "../pages/TapAiPage";
 import { AppProviders } from "./providers";
 
 export function App() {
   return (
     <AppProviders>
-      <TapAiPage />
+      {window.location.pathname === "/embed/lca" ? (
+        <LcaEmbedPage />
+      ) : (
+        <TapAiPage />
+      )}
     </AppProviders>
   );
 }

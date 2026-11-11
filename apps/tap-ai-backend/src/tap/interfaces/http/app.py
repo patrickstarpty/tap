@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, Path, Request, status
+from fastapi import APIRouter, Depends, FastAPI, Path, Request, Response, status
 from fastapi.routing import APIRoute
 
+from tap.contracts.gateway_context import GatewayContext, GatewayUnavailableContext
 from tap.contracts.http import ChatTurnAccepted, ChatTurnRequest, RuntimeMode
 from tap.interfaces.http.dependencies import HttpServices, browser_available
+from tap.interfaces.http.gateway_context import gateway_context
 from tap.interfaces.http.middleware.origin import OriginPolicyMiddleware, validate_origins
 from tap.interfaces.http.problems import (
     problem_response,
@@ -41,7 +44,7 @@ from tap.interfaces.http.routes.prompt_suggestions import router as prompt_sugge
 from tap.interfaces.http.routes.skill_hub import router as skill_hub_router
 from tap.interfaces.http.routes.test_plans import router as test_plans_router
 from tap.interfaces.http.routes.workflows import router as workflows_router
-from tap.interfaces.http.scope import resolve_project_scope
+from tap.interfaces.http.scope import project_authorization, resolve_project_scope
 from tap.modules.access.domain.context import IdentityMode
 from tap.modules.access.domain.policy import AuthorizationDenied
 
@@ -60,6 +63,9 @@ def create_app(
     """Build the HTTP application without starting middleware or external clients."""
     app = FastAPI(title="TAP API", version="0.1.0", lifespan=lifespan)
     app.state.http_services = services or HttpServices()
+    # Public incarnation marker, independent of optional LCA configuration and
+    # credentials. A new API process invalidates browser-only recovery state.
+    app.state.gateway_instance_id = uuid4().hex
     app.state.lca_gateway = lca_gateway or (
         LcaGateway.from_environment() if lca_gateway_from_environment else None
     )
@@ -111,6 +117,27 @@ def create_app(
             workflow_enabled=request.app.state.http_services.workflow_enabled,
             browser_enabled=browser_available(request.app.state.http_services, scope),
             browser_model_alias=request.app.state.http_services.browser_model_alias,
+        )
+
+    @app.get(
+        "/api/v1/browser-context",
+        operation_id="browser_get_context",
+        response_model=GatewayContext | GatewayUnavailableContext,
+        dependencies=[Depends(project_authorization("knowledge.answer"))],
+        responses={
+            403: problem_response_metadata("Authorization denied"),
+            503: problem_response_metadata("Runtime unavailable"),
+        },
+    )
+    async def browser_context(
+        request: Request, response: Response
+    ) -> GatewayContext | GatewayUnavailableContext:
+        scope = request.state.project_scope
+        return gateway_context(
+            request,
+            response,
+            scope,
+            available=browser_available(request.app.state.http_services, scope),
         )
 
     async def project_path(project_id: str = Path(min_length=1, max_length=128)) -> str:

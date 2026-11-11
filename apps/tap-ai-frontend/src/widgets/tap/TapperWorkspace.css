@@ -4591,3 +4591,53 @@
   box-shadow: 0 22px 64px 8px rgb(17 24 39 / 24%);
   padding: 18px;
 }
+
+.tap-product-shell--lca-embedded {
+  display: block;
+  min-height: 100dvh;
+  overflow: auto;
+}
+.tap-product-shell--lca-embedded .tap-product-main {
+  min-width: 0;
+  width: 100%;
+}
+.tap-lca-embedded-header,
+.tap-browser-recovery {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--tap-line);
+}
+.tap-lca-embedded-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.tap-lca-embedded-header p {
+  font-size: 12px;
+  color: var(--tap-muted);
+}
+.tap-product-shell--lca-embedded .tap-tapper-layout {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  min-height: 0;
+}
+.tap-product-shell--lca-embedded .tap-chat {
+  min-height: 500px;
+  height: auto;
+}
+.tap-product-shell--lca-embedded .tap-sources-shell {
+  position: static;
+  width: 100%;
+  height: auto;
+  max-height: none;
+  transform: none;
+}
+.tap-product-shell--lca-embedded .tap-sources-shell[data-collapsed="true"],
+.tap-product-shell--lca-embedded .tap-panel-toggle--right-expand {
+  display: none;
+}
+.tap-product-shell--lca-embedded .tap-workflow-sidebar,
+.tap-product-shell--lca-embedded .tap-workflow-scroll {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}

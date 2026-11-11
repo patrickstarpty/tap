@@ -108,6 +108,9 @@ interface TapperChatProps {
   browserAcceptanceDraft?: BrowserAcceptanceDraft;
   onBrowserAcceptanceChange?: (draft: BrowserAcceptanceDraft) => void;
   browserMode?: boolean;
+  browserOptionsOpen?: boolean;
+  browserModeLocked?: boolean;
+  sendBlocked?: boolean;
   browserAvailable?: boolean;
   browserStartUrl?: string;
   browserNotes?: string;
@@ -199,6 +202,9 @@ export function TapperChat({
   browserAcceptanceDraft = { reviewed: false, fields: [] },
   onBrowserAcceptanceChange,
   browserMode = false,
+  browserOptionsOpen = false,
+  browserModeLocked = false,
+  sendBlocked = false,
   browserAvailable = false,
   browserStartUrl = "",
   browserNotes = "",
@@ -742,12 +748,13 @@ export function TapperChat({
       </label>
       <details
         className="tap-browser-composer"
-        open={browserSourceTaskId ? true : undefined}
+        open={browserOptionsOpen || browserSourceTaskId ? true : undefined}
       >
         <summary>Execution options</summary>
         <label htmlFor="tap-execution-mode">Execution</label>
         <select
           id="tap-execution-mode"
+          disabled={browserModeLocked}
           value={browserMode ? "browser" : "auto"}
           onChange={(event) =>
             onBrowserModeChange?.(event.target.value === "browser")
@@ -1097,6 +1104,7 @@ export function TapperChat({
               message.trim().length === 0 ||
               !modelAvailable ||
               sending ||
+              sendBlocked ||
               overSkillBudget ||
               (browserMode &&
                 !browserAcceptanceReady(browserAcceptanceDraft)) ||

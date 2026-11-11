@@ -7,7 +7,7 @@ import type {
 import { createWorkflowClient } from "../api/client";
 import { useWorkflowCommand } from "../api/queries";
 import { NodeDetails } from "./NodeDetails";
-import { RunDetail } from "./RunDetail";
+import { RunDetail, type LcaSourceReference } from "./RunDetail";
 import "./workflow.css";
 
 type Connection = "idle" | "connecting" | "live" | "reconnecting" | "error";
@@ -25,6 +25,7 @@ export function WorkflowSidebar({
   onRetryConnection,
   onReplayed,
   onProvideInput,
+  onReviewLca,
 }: {
   projectId: string;
   snapshot: WorkflowTaskSnapshot;
@@ -39,6 +40,7 @@ export function WorkflowSidebar({
   onRetryConnection?: () => void;
   onReplayed?: (taskId: string) => void;
   onProvideInput?: () => void;
+  onReviewLca?: (source: LcaSourceReference) => void;
 }) {
   const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const selection = selectedNodeId === undefined ? localNodeId : selectedNodeId;
@@ -133,6 +135,7 @@ export function WorkflowSidebar({
                 : undefined
             }
             onProvideInput={onProvideInput}
+            onReviewLca={onReviewLca}
           />
         )}
       </div>

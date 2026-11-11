@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { SourceAcceptanceReview } from "./SourceAcceptanceReview";
 import type { AcceptanceContract, LcaDefinition } from "./client";
+import {
+  boundedId,
+  isAgentSourceReference,
+  sameAgentSource,
+  type AgentSourceReference,
+} from "./assistantProtocol";
 interface Preview {
   schema_version: "aa-lca-draft-v1";
   complete: boolean;
@@ -25,33 +31,49 @@ export function AgentDraftImport({
   projectId,
   disabled,
   onLoad,
+  sourceReference,
+  onSourceClear,
 }: {
   projectId: string;
   disabled: boolean;
+  sourceReference?: AgentSourceReference | null;
+  onSourceClear?: () => void;
   onLoad: (definition: LcaDefinition, title: string) => void;
 }) {
-  const [task, setTask] = useState(
+  const [manualTask, setTask] = useState(
     () => new URLSearchParams(window.location.search).get("aa-task") ?? "",
   );
-  const [preview, setPreview] = useState<Preview | null>(null);
+  const task = sourceReference?.task_id ?? manualTask;
+  const scope = JSON.stringify([projectId, task, sourceReference ?? null]);
+  const [review, setReview] = useState<{
+    value: Preview;
+    scope: string;
+  } | null>(null);
+  const preview = review?.scope === scope && !disabled ? review.value : null;
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const active = useRef<AbortController | null>(null);
   useEffect(() => {
     active.current?.abort();
-    setPreview(null);
+    setReview(null);
     setError("");
     setLoading(false);
     return () => active.current?.abort();
-  }, [projectId]);
+  }, [scope, disabled]);
   async function inspect() {
-    if (disabled || loading || !/^[A-Za-z0-9_-]{1,80}$/.test(task)) return;
+    if (
+      disabled ||
+      loading ||
+      !boundedId(task) ||
+      (sourceReference && !isAgentSourceReference(sourceReference))
+    )
+      return;
     active.current?.abort();
     const controller = new AbortController();
     active.current = controller;
     setLoading(true);
     setError("");
-    setPreview(null);
+    setReview(null);
     try {
       const response = await fetch(
         `/api/projects/${encodeURIComponent(projectId)}/lca/agent-tasks/${encodeURIComponent(task)}/preview`,
@@ -68,7 +90,9 @@ export function AgentDraftImport({
       const value = (await response.json()) as Preview;
       if (
         value.schema_version !== "aa-lca-draft-v1" ||
-        value.source?.task_id !== task ||
+        !isAgentSourceReference(value.source) ||
+        value.source.task_id !== task ||
+        (sourceReference && !sameAgentSource(value.source, sourceReference)) ||
         !Array.isArray(value.issues) ||
         typeof value.complete !== "boolean" ||
         (value.complete && (!value.definition || value.issues.length)) ||
@@ -81,7 +105,7 @@ export function AgentDraftImport({
               value.source.execution_id))
       )
         throw new Error("AA source could not be verified.");
-      if (!controller.signal.aborted) setPreview(value);
+      if (!controller.signal.aborted) setReview({ value, scope });
     } catch (cause) {
       if (!controller.signal.aborted)
         setError(
@@ -96,7 +120,10 @@ export function AgentDraftImport({
   return (
     <details
       className="lca-recording-disclosure"
-      open={Boolean(new URLSearchParams(window.location.search).get("aa-task"))}
+      open={Boolean(
+        sourceReference ||
+        new URLSearchParams(window.location.search).get("aa-task"),
+      )}
     >
       <summary>Import an Agentic Automation result</summary>
       <p>
@@ -109,21 +136,33 @@ export function AgentDraftImport({
         AA task ID
         <input
           value={task}
+          readOnly={Boolean(sourceReference)}
           disabled={disabled || loading}
           onChange={(event) => {
             setTask(event.target.value);
-            setPreview(null);
+            setReview(null);
             setError("");
           }}
         />
       </label>
       <button
         type="button"
-        disabled={disabled || loading || !/^[A-Za-z0-9_-]{1,80}$/.test(task)}
+        disabled={disabled || loading || !boundedId(task)}
         onClick={() => void inspect()}
       >
         {loading ? "Loading AA source…" : "Preview AA task"}
       </button>
+      {sourceReference && onSourceClear ? (
+        <button type="button" onClick={onSourceClear}>
+          Clear Tapper source
+        </button>
+      ) : null}
+      {disabled && sourceReference ? (
+        <p role="status">
+          Finish recording, publication, or pending operations and save or
+          discard your current edits before importing.
+        </p>
+      ) : null}
       {error ? <p role="alert">{error}</p> : null}
       {preview ? (
         <section aria-label="AA import review">
@@ -164,18 +203,19 @@ export function AgentDraftImport({
                 type="button"
                 disabled={disabled}
                 onClick={() => {
+                  if (disabled || review?.scope !== scope) return;
                   onLoad(
                     preview.definition!,
                     `AA task ${preview.source.task_id}`,
                   );
-                  setPreview(null);
+                  setReview(null);
                 }}
               >
                 Use as unsaved draft
               </button>
             </>
           ) : null}
-          <button type="button" onClick={() => setPreview(null)}>
+          <button type="button" onClick={() => setReview(null)}>
             Close preview
           </button>
         </section>

@@ -35,6 +35,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browser Context */
+        get: operations["browser_get_context"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/ai/agent-team/export": {
         parameters: {
             query?: never;
@@ -3621,6 +3638,40 @@ export interface components {
              * @enum {string}
              */
             type: "failure";
+        };
+        /** GatewayContext */
+        GatewayContext: {
+            /** Actor Id */
+            actor_id: string;
+            /**
+             * Available
+             * @default true
+             * @constant
+             */
+            available?: true;
+            /** Context Binding */
+            context_binding: string;
+            /** Gateway Instance Id */
+            gateway_instance_id: string;
+            /**
+             * Identity Mode
+             * @default validation
+             * @constant
+             */
+            identity_mode?: "validation";
+            /** Project Id */
+            project_id: string;
+        };
+        /** GatewayUnavailableContext */
+        GatewayUnavailableContext: {
+            /**
+             * Available
+             * @default false
+             * @constant
+             */
+            available?: false;
+            /** Project Id */
+            project_id: string;
         };
         /** GraphContextReadyEvent */
         GraphContextReadyEvent: {
@@ -7999,9 +8050,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GatewayContext"] | components["schemas"]["GatewayUnavailableContext"];
                 };
             };
         };
@@ -8098,6 +8147,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    browser_get_context: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayContext"] | components["schemas"]["GatewayUnavailableContext"];
+                };
+            };
+            /** @description Authorization denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Runtime unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };

@@ -164,3 +164,29 @@ The three-pane editor selects a BDD business step, arranges its actions, and edi
 ## AA result to LCA draft bridge (2026-11-11)
 
 The TAP AI LCA gateway resolves a project-scoped completed workflow to its original browser execution and BDD event mapping, then requests a read-only projection over HTTP. TAP non-AI validates execution/session/bundle/input provenance and completion evidence before projecting stored successful action receipts. No cross-product Python import, arbitrary script interpretation, input-vault decryption, asset creation or execution occurs during preview. Confirmed controlled-action receipts provide safe inputs and semantic targets; unsupported or ambiguous history returns explicit issues and no executable definition. The TAP BDD editor loads a complete projection only after an explicit review action, as an unsaved draft. Subsequent save, verification and publication use the existing LCA lifecycle. See the [review guide](guides/2026-11-11-aa-lca-draft-review.md) for supported semantics and acceptance limits.
+
+## LCA-inline Tapper assistant (2026-11-11)
+
+The formal LCA workspace embeds the actual Tapper `/embed/lca` application in a
+persistent iframe, without cross-product source imports. It reuses the reviewed
+browser-input composer and existing automatic BDD planning/execution runtime.
+Embedded execution is fixed to Browser; standalone navigation and AA frozen-replay
+creation are hidden. Hiding the panel keeps both app states mounted and never
+cancels an execution.
+
+Parent and child independently resolve authorized validation project/actor and a
+non-secret gateway-incarnation/context binding. Exact configured origins,
+`event.source`, strict versioned messages and a per-mount nonce gate readiness and
+source review; no credentials or executable drafts cross the message boundary.
+The iframe allows only the configured parent, restricted evidence popups/downloads
+and no top navigation. Reconnect refreshes parent context without discarding the
+LCA draft. Session-scoped frozen browser intents retain the exact request/key
+before POST, fail closed on uncertain outcomes or context/storage mismatch, and
+restore accepted conversation/task state through existing durable APIs/SSE.
+
+A successful live run emits only its task/execution/bundle/input-digest reference.
+The host fetches and verifies the existing authoritative projection before a
+separate explicit unsaved-draft import; saving, current-contract debug replay and
+publication retain their existing locks. See the [inline design](superpowers/specs/2026-11-11-lca-inline-tapper-design.md)
+and [review guide](guides/2026-11-11-aa-lca-draft-review.md). This remains a loopback
+validation slice, not an enterprise SSO or production-deployment claim.

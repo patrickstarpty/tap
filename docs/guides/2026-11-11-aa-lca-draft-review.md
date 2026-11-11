@@ -55,3 +55,42 @@ The updated synthetic form harness uses the real required-input editor and revie
 The current-document implementation has a separate local Chromium matrix for both main-frame and iframe flows: immediate/delayed navigation and same-document AJAX success, plus changed-input, detached-frame, intervening-write, passive-navigation and repeated-navigation failures. These verify generated replay and its backend evidence validator, not FWD/AIA site acceptance. The final full-product reviewed-contract recording remains a separate acceptance gate.
 
 Source verification also rejects a missing or ambiguous final output, a mismatched provenance identity, and fallback to an earlier successful read after a later failed/unproven read of that name. An offline check of the earlier completed reviewed-form ledger found matching values, URLs and final read sequences after ordering the exported ledger by action sequence, but no document IDs; it correctly remains unproven under the new contract rather than being grandfathered into a pass. No stored URL or source digest was rewritten for this check.
+
+## Start from the formal LCA page
+
+Open Low Code Automation in TAP Web. Its Tapper panel is the real browser-task
+composer. Enter the natural-language goal, start URL and any reviewed required
+inputs, then **Send**. Tapper automatically plans BDD steps and executes AA. There
+is no separate pre-execution BDD approval screen. The panel exposes the existing
+workflow progress, BDD/actions, evidence and explicit cancel request.
+
+For a successful live run, select **Review as LCA draft** in the panel. The host
+stays on the same top-level page. Select **Preview AA task**, review source
+provenance and projection issues, then **Use as unsaved draft**. Save, debug replay
+and publication are still separate actions. Dirty drafts, recording and pending
+publication prevent replacement. Hiding/opening Tapper preserves its conversation
+and the current LCA draft; hiding does not cancel. AA frozen replay is not offered
+inside this panel; the normal LCA replay is available after explicit import/save.
+
+Configure `VITE_TAPPER_URL` on TAP Web and `VITE_TAP_WEB_URL` on Tapper to the exact
+other loopback app origin, and point both API proxies at the same `TAPPER_API_PORT`.
+The default origins are 127.0.0.1:5173 and 127.0.0.1:5174. An invalid URL,
+unauthorized context, different gateway instance or disconnected API prevents
+execution rather than falling back to another project. Reconnect refreshes the
+parent context while retaining the LCA editor. A changed project/actor must be
+resolved before continuing with its draft.
+
+If a POST receipt was lost, **Recover original browser request** retries only the
+session's exact frozen body and original key. Do not recreate it with a new goal
+or key. A first explicit pre-admission rejection releases the failed intent; an
+unknown outcome remains blocked, including when a later retry is denied. Accepted
+receipts can be verified read-only after an API restart. Unknown receipts cannot
+be automatically rebound to a new gateway incarnation: investigate task history
+before starting a replacement. Blocked/corrupt session storage also prevents new
+browser execution. This recovery is not unsaved-LCA autosave.
+
+The updated `--lca-bridge` harness starts at this formal LCA page, submits within
+the iframe and checks top-level URL stability, hide/show persistence, strict frame
+policy, one AA admission and zero additional model calls for import/replay. Its
+new inline full-stack result must be recorded separately; the historical
+standalone-link acceptance above does not prove this route.

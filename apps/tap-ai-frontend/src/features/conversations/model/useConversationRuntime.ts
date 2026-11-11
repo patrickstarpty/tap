@@ -22,6 +22,17 @@ import {
   reduceStreamEvent,
 } from "./stream";
 
+import {
+  BrowserRecovery,
+  browserRecoveryKey,
+  type FrozenBrowserIntent,
+} from "./browserRecovery";
+import {
+  loadBrowserContext,
+  sameLcaContext,
+  type LcaGatewayContext,
+} from "../../../shared/api/browserContext";
+
 export type ConversationSend =
   | { kind: "chat"; input: ConversationCreateRequest }
   | { kind: "insights"; input: InsightsExplanationRequest };
@@ -36,6 +47,7 @@ const terminal = (status: string | null | undefined) =>
 export function useConversationRuntime(
   projectId: string | null,
   initialConversationId = "draft",
+  recoveryContext?: LcaGatewayContext,
 ) {
   const client = useConversationClient(projectId);
   const cache = useQueryClient();
@@ -51,6 +63,81 @@ export function useConversationRuntime(
   const inFlight = useRef<symbol | null>(null);
   const pendingChat = useRef<PendingIntent | null>(null);
   const pendingInsights = useRef<PendingIntent | null>(null);
+  const recovery = useRef<BrowserRecovery | null>(null);
+  const [browserRecoveryPending, setBrowserRecoveryPending] = useState(false);
+  const [browserRecoveryError, setBrowserRecoveryError] = useState("");
+  const recoveryContextRef = useRef(recoveryContext);
+  recoveryContextRef.current = recoveryContext;
+  const getRecovery = async () => {
+    const context = await loadBrowserContext();
+    if (
+      recoveryContextRef.current &&
+      !sameLcaContext(context, recoveryContextRef.current)
+    )
+      throw new Error(
+        "Authorized browser gateway context changed. Execution is blocked. Review task history and confirm the saved request outcome before starting a replacement.",
+      );
+    if (context.project_id !== projectId)
+      throw new Error("Browser recovery context does not match this project.");
+    const store = new BrowserRecovery(window.sessionStorage, context);
+    recovery.current = store;
+    return store;
+  };
+  useEffect(() => {
+    let active = true;
+    recovery.current = null;
+    async function restore() {
+      try {
+        if (window.sessionStorage.getItem(browserRecoveryKey) === null) return;
+        const context =
+          recoveryContextRef.current ?? (await loadBrowserContext());
+        if (!active) return;
+        if (context.project_id !== projectId)
+          throw new Error(
+            "Browser recovery context does not match this project.",
+          );
+        const store = new BrowserRecovery(window.sessionStorage, context);
+        recovery.current = store;
+        let pending: FrozenBrowserIntent | null;
+        try {
+          pending = store.pending();
+        } catch (error) {
+          const reference = store.reference();
+          if (
+            !reference ||
+            reference.unconfirmed ||
+            reference.conversationId === null ||
+            client === null
+          )
+            throw error;
+          // A confirmed receipt can be restored through a read-only authorized API.
+          // Unknown POST outcomes are never rebound or cleared this way.
+          const saved = await client.get(reference.conversationId);
+          if (!active || saved.conversationId !== reference.conversationId)
+            throw error;
+          store.adoptAccepted(saved.conversationId);
+          pending = null;
+        }
+        setBrowserRecoveryPending(pending !== null);
+        const restored = store.conversation();
+        if (pending === null && restored !== null) {
+          selectionRef.current = { projectId, conversationId: restored };
+          setSelection(selectionRef.current);
+        }
+      } catch (error) {
+        if (active)
+          setBrowserRecoveryError(
+            error instanceof Error
+              ? error.message
+              : "Browser recovery unavailable.",
+          );
+      }
+    }
+    if (projectId !== null) void restore();
+    return () => {
+      active = false;
+    };
+  }, [projectId, recoveryContext?.context_binding]);
   const selectionRef = useRef(selection);
   const changeSelection = useCallback(
     (conversationId: string) => {
@@ -225,19 +312,41 @@ export function useConversationRuntime(
 
   const send = async (
     request: ConversationSend | (() => Promise<ConversationSend>),
+    recoveredIntent?: FrozenBrowserIntent,
   ): Promise<Accepted | null> => {
     if (client === null || inFlight.current !== null) return null;
     const token = Symbol("send");
     const startedGeneration = generation.current;
-    const startedSelection = selectionRef.current;
+    const startedSelection =
+      recoveredIntent === undefined
+        ? selectionRef.current
+        : { projectId, conversationId: recoveredIntent.conversationId };
     inFlight.current = token;
     setSending(true);
     const isCurrent = () => generation.current === startedGeneration;
+    let browserStore: BrowserRecovery | null = null;
+    let browserIntent: FrozenBrowserIntent | null = null;
     try {
       // Reserve before asynchronous source/Agent/Skill validation in the caller.
       const prepared =
         typeof request === "function" ? await request() : request;
       if (!isCurrent()) return null;
+      const browser =
+        prepared.kind === "chat" && prepared.input.browser != null;
+      if (browser) {
+        browserStore = await getRecovery();
+        if (!isCurrent()) return null;
+        browserIntent = browserStore.prepare(
+          startedSelection.conversationId,
+          prepared.input,
+        );
+        setBrowserRecoveryPending(true);
+        setBrowserRecoveryError("");
+      } else if (browserRecoveryPending) {
+        throw new Error(
+          "An unconfirmed browser request must be recovered before sending another message.",
+        );
+      }
       const insights = prepared.kind === "insights";
       const pendingRef = insights ? pendingInsights : pendingChat;
       const signature = JSON.stringify(
@@ -261,7 +370,11 @@ export function useConversationRuntime(
         if (insights)
           window.sessionStorage.setItem(storageKey, JSON.stringify(pending));
       }
+      if (browserIntent !== null)
+        pending = { signature, key: browserIntent.key };
       pendingRef.current = pending;
+      if (browserStore !== null && browserIntent !== null)
+        browserStore.markAttempt(browserIntent.key);
       const result =
         prepared.kind === "insights"
           ? await client.explainInsights(prepared.input, pending.key)
@@ -272,6 +385,11 @@ export function useConversationRuntime(
                 prepared.input,
                 pending.key,
               );
+      if (browserStore !== null && browserIntent !== null) {
+        browserStore.accept(browserIntent.key, result.conversationId);
+        setBrowserRecoveryPending(false);
+        setBrowserRecoveryError("");
+      }
       if (pendingRef.current === pending) {
         pendingRef.current = null;
         if (insights) window.sessionStorage.removeItem(storageKey);
@@ -290,6 +408,22 @@ export function useConversationRuntime(
       return result;
     } catch (error) {
       if (!isCurrent()) return null;
+      const rejected =
+        browserStore !== null &&
+        browserIntent !== null &&
+        browserStore.rejectUnadmitted(
+          browserIntent.key,
+          (error as { status?: number }).status ?? 0,
+        );
+      if (rejected) {
+        setBrowserRecoveryPending(false);
+        setBrowserRecoveryError("");
+      } else if (recovery.current !== null || recoveredIntent !== undefined)
+        setBrowserRecoveryError(
+          error instanceof Error
+            ? error.message
+            : "Browser receipt unconfirmed. Recover the original request.",
+        );
       throw error;
     } finally {
       if (inFlight.current === token) {
@@ -303,7 +437,8 @@ export function useConversationRuntime(
     conversationId,
     selectConversation,
     reset: () => {
-      // New chat starts a new intent even if the previous POST is unconfirmed.
+      if (browserRecoveryPending || browserRecoveryError) return;
+      // Non-browser chat retains its existing reset behavior.
       // Insights keeps its separate recovery key until acceptance.
       pendingChat.current = null;
       changeSelection("draft");
@@ -314,6 +449,14 @@ export function useConversationRuntime(
     hasActiveTurn,
     sending,
     send,
+    browserRecoveryPending,
+    browserRecoveryError,
+    recoverBrowser: async () => {
+      const store = await getRecovery();
+      const pending = store.pending();
+      if (pending === null) return null;
+      return send({ kind: "chat", input: pending.input }, pending);
+    },
     cancelError: cancelMutation.isError,
     cancel: (turnId: string) =>
       cancelMutation.isPending

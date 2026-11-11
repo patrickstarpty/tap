@@ -208,3 +208,55 @@ it("opens control only for a versioned active browser session event", async () =
     await screen.findByRole("button", { name: "Request control" }),
   ).toBeVisible();
 });
+
+it("reviews a successful live run through the explicit embedded callback without navigation and excludes frozen replay", async () => {
+  const live = {
+    ...snapshot,
+    status: "succeeded",
+    taskKind: "browser",
+    browserRun: {
+      executionId: "execution-1",
+      bundleId: "bundle-1",
+      inputSha256: "a".repeat(64),
+      status: "passed",
+      outputs: [],
+      steps: [],
+      evidence: [],
+      replayModelCalls: 0,
+    },
+  } as WorkflowTaskSnapshot;
+  let source: unknown = null;
+  const view = render(
+    <RunDetail
+      snapshot={live}
+      connection="live"
+      onSelectNode={() => undefined}
+      onReviewLca={(value) => {
+        source = value;
+      }}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Review as LCA draft" }));
+  expect(source).toEqual({
+    task_id: "task-1",
+    execution_id: "execution-1",
+    bundle_id: "bundle-1",
+    input_sha256: "a".repeat(64),
+  });
+  expect(
+    screen.queryByRole("link", { name: "Review as LCA draft" }),
+  ).toBeNull();
+  view.rerender(
+    <RunDetail
+      snapshot={{ ...live, replayOfTaskId: "original" }}
+      connection="live"
+      onSelectNode={() => undefined}
+      onReviewLca={() => undefined}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Review as LCA draft" }),
+  ).toBeNull();
+});

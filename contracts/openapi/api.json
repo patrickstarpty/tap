@@ -4642,6 +4642,79 @@
         "title": "FailureAnchor",
         "type": "object"
       },
+      "GatewayContext": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "available": {
+            "const": true,
+            "default": true,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "context_binding": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Context Binding",
+            "type": "string"
+          },
+          "gateway_instance_id": {
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Gateway Instance Id",
+            "type": "string"
+          },
+          "identity_mode": {
+            "const": "validation",
+            "default": "validation",
+            "title": "Identity Mode",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "actor_id",
+          "gateway_instance_id",
+          "context_binding"
+        ],
+        "title": "GatewayContext",
+        "type": "object"
+      },
+      "GatewayUnavailableContext": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "const": false,
+            "default": false,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "project_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "GatewayUnavailableContext",
+        "type": "object"
+      },
       "GraphContextReadyEvent": {
         "additionalProperties": false,
         "properties": {
@@ -17199,9 +17272,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Context Api Lca Context Get",
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/GatewayContext"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GatewayUnavailableContext"
+                    }
+                  ],
+                  "title": "Response Context Api Lca Context Get"
                 }
               }
             },
@@ -17343,6 +17422,52 @@
           }
         },
         "summary": "Proxy"
+      }
+    },
+    "/api/v1/browser-context": {
+      "get": {
+        "operationId": "browser_get_context",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/GatewayContext"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GatewayUnavailableContext"
+                    }
+                  ],
+                  "title": "Response Browser Get Context"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Authorization denied"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Runtime unavailable"
+          }
+        },
+        "summary": "Browser Context"
       }
     },
     "/api/v1/projects/{project_id}/ai/agent-team/export": {

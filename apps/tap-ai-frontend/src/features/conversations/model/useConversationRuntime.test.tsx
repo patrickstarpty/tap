@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createTestQueryClient } from "../../../shared/testing/renderApp";
 import type { ConversationTurnSummary } from "../api/client";
 import { conversationKeys } from "../api/queries";
+import { BrowserRecovery } from "./browserRecovery";
 import { useConversationRuntime } from "./useConversationRuntime";
 
 const json = (value: unknown, status = 200) =>
@@ -607,4 +608,219 @@ it("starts a fresh chat intent after resetting a draft with an unconfirmed send"
   });
   expect(result.current.conversationId).toBe("conversation-new");
   expect(result.current.sending).toBe(false);
+});
+
+it("recovers a lost browser POST receipt after reload with the original key and request, admitting only once", async () => {
+  const context = {
+    available: true as const,
+    project_id: "project-1",
+    actor_id: "actor-1",
+    identity_mode: "validation" as const,
+    gateway_instance_id: "gateway-1",
+    context_binding: "a".repeat(64),
+  };
+  const browser = {
+    kind: "chat" as const,
+    input: {
+      message: "Read the order",
+      modelAlias: "model-1",
+      browser: {
+        startUrl: "http://example.test/",
+        expectedResult: "Order visible",
+      },
+    },
+  };
+  const receipts = new Map<string, string>();
+  let dropped = false;
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if (request === "/api/v1/browser-context") return json(context);
+    const req = request as Request;
+    if (req.method !== "POST") return original(request, init);
+    const key = req.headers.get("Idempotency-Key")!;
+    const body = await req.text();
+    if (receipts.has(key)) expect(body).toBe(receipts.get(key));
+    else receipts.set(key, body);
+    if (!dropped) {
+      dropped = true;
+      throw new TypeError("lost receipt");
+    }
+    return json(
+      { conversationId: "conversation-1", turnId: "turn-1", state: "queued" },
+      202,
+    );
+  });
+  const cache = createTestQueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={cache}>{children}</QueryClientProvider>
+  );
+  const first = renderHook(
+    () => useConversationRuntime("project-1", "draft", context),
+    { wrapper },
+  );
+  await act(async () => {
+    await expect(first.result.current.send(browser)).rejects.toThrow(
+      "lost receipt",
+    );
+  });
+  first.unmount();
+  const reloaded = renderHook(
+    () => useConversationRuntime("project-1", "draft", context),
+    { wrapper },
+  );
+  await waitFor(() =>
+    expect(reloaded.result.current.browserRecoveryPending).toBe(true),
+  );
+  expect(receipts.size).toBe(1);
+  await act(async () => {
+    await expect(
+      reloaded.result.current.send({
+        ...browser,
+        input: { ...browser.input, message: "Different" },
+      }),
+    ).rejects.toThrow(/unconfirmed/);
+  });
+  await act(async () => {
+    await reloaded.result.current.recoverBrowser();
+  });
+  expect(receipts.size).toBe(1);
+  expect(reloaded.result.current.conversationId).toBe("conversation-1");
+  expect(reloaded.result.current.browserRecoveryPending).toBe(false);
+});
+
+it("allows standalone browser admission with LCA disabled through the independent authorized browser context", async () => {
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  const context = {
+    available: true,
+    project_id: "project-1",
+    actor_id: "actor-1",
+    identity_mode: "validation",
+    gateway_instance_id: "gateway-1",
+    context_binding: "a".repeat(64),
+  };
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if (request === "/api/lca/context")
+      return json({ available: false, project_id: "project-1" });
+    if (request === "/api/v1/browser-context") return json(context);
+    if ((request as Request).method === "POST")
+      return json(
+        { conversationId: "conversation-1", turnId: "turn-1", state: "queued" },
+        202,
+      );
+    return original(request, init);
+  });
+  const { result } = setup();
+  await act(async () => {
+    expect(
+      await result.current.send({
+        kind: "chat",
+        input: {
+          message: "Read",
+          modelAlias: "model-1",
+          requestedAgentIds: [],
+          browser: { startUrl: "http://example.test/" },
+        },
+      }),
+    ).toMatchObject({ conversationId: "conversation-1" });
+  });
+  expect(result.current.browserRecoveryPending).toBe(false);
+});
+
+it("restores a confirmed receipt read-only after gateway restart but blocks an unknown receipt", async () => {
+  const previous = {
+    available: true as const,
+    project_id: "project-1",
+    actor_id: "actor-1",
+    identity_mode: "validation" as const,
+    gateway_instance_id: "old-gateway",
+    context_binding: "a".repeat(64),
+  };
+  const current = {
+    ...previous,
+    gateway_instance_id: "new-gateway",
+    context_binding: "b".repeat(64),
+  };
+  const store = new BrowserRecovery(sessionStorage, previous);
+  const frozen = store.prepare("draft", {
+    message: "Read",
+    modelAlias: "model-1",
+    browser: { startUrl: "http://example.test/" },
+  });
+  store.accept(frozen.key, "conversation-1");
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  wire.fetcher.mockImplementation(async (request, init) =>
+    request === "/api/v1/browser-context"
+      ? json(current)
+      : original(request, init),
+  );
+  const accepted = setup();
+  await waitFor(() =>
+    expect(accepted.result.current.conversationId).toBe("conversation-1"),
+  );
+  expect(accepted.result.current.browserRecoveryError).toBe("");
+  accepted.unmount();
+  sessionStorage.clear();
+  new BrowserRecovery(sessionStorage, previous).prepare("draft", {
+    message: "Unknown",
+    modelAlias: "model-1",
+    browser: { startUrl: "http://example.test/" },
+  });
+  const unknown = setup();
+  await waitFor(() =>
+    expect(unknown.result.current.browserRecoveryError).toMatch(/unconfirmed/i),
+  );
+  expect(unknown.result.current.conversationId).toBe("draft");
+  expect(
+    new BrowserRecovery(sessionStorage, previous).pending()?.input.message,
+  ).toBe("Unknown");
+});
+
+it("allows a corrected browser request after a first definite pre-admission rejection", async () => {
+  const context = {
+    available: true,
+    project_id: "project-1",
+    actor_id: "actor-1",
+    identity_mode: "validation",
+    gateway_instance_id: "gateway-1",
+    context_binding: "a".repeat(64),
+  };
+  const wire = transport();
+  const original = wire.fetcher.getMockImplementation()!;
+  const keys: string[] = [];
+  wire.fetcher.mockImplementation(async (request, init) => {
+    if (request === "/api/v1/browser-context") return json(context);
+    const req = request as Request;
+    if (req.method !== "POST") return original(request, init);
+    keys.push(req.headers.get("Idempotency-Key")!);
+    if (keys.length === 1) return json({ detail: "bad input" }, 422);
+    return json(
+      { conversationId: "conversation-1", turnId: "turn-1", state: "queued" },
+      202,
+    );
+  });
+  const { result } = setup();
+  const request = {
+    kind: "chat" as const,
+    input: {
+      message: "Read",
+      modelAlias: "model-1",
+      browser: { startUrl: "http://example.test/" },
+    },
+  };
+  await act(async () => {
+    await expect(result.current.send(request)).rejects.toThrow();
+  });
+  expect(result.current.browserRecoveryPending).toBe(false);
+  expect(result.current.browserRecoveryError).toBe("");
+  await act(async () => {
+    await result.current.send({
+      ...request,
+      input: { ...request.input, message: "Corrected" },
+    });
+  });
+  expect(result.current.conversationId).toBe("conversation-1");
+  expect(keys[0]).not.toBe(keys[1]);
 });
