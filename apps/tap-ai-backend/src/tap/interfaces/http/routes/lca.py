@@ -85,6 +85,30 @@ class LcaGateway:
         scope = request.state.project_scope
         if scope.project_id != project_id:
             raise HTTPException(403, "LCA project forbidden")
+        agent_preview = re.fullmatch(rf"agent-tasks/({_ID})/preview", path)
+        if agent_preview:
+            if request.method != "GET":
+                raise HTTPException(405, "AA preview is read-only")
+            from fastapi.responses import JSONResponse
+
+            from tap.modules.workflows.adapters.browser_client import (
+                BrowserApiClient,
+                BrowserApiError,
+            )
+            from tap.modules.workflows.application.browser_artifacts import BrowserArtifactAdapter
+
+            services = request.app.state.http_services
+            if services.workflow_store is None or not isinstance(
+                services.browser_client, BrowserApiClient
+            ):
+                raise HTTPException(503, "AA source unavailable")
+            try:
+                result = await BrowserArtifactAdapter(
+                    services.workflow_store, services.browser_client
+                ).lca_draft(scope, agent_preview[1])
+            except (LookupError, BrowserApiError, ValueError, TimeoutError, OSError):
+                raise HTTPException(404, "AA source or compatible draft unavailable") from None
+            return JSONResponse(result, headers={"Cache-Control": "no-store"})
         control = re.fullmatch(
             rf"flows/({_ID})/recordings/({_ID})/(capability|frame|takeover|actions|stop)", path
         )

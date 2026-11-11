@@ -9,6 +9,7 @@ import {
   type RunInput,
   type Scalar,
 } from "./client";
+import { AgentDraftImport } from "./AgentDraftImport";
 import { BddResults } from "./BddResults";
 import { groupsFor } from "./bdd";
 import { DefinitionEditor, parseParameterValue } from "./DefinitionEditor";
@@ -399,6 +400,26 @@ function ProjectWorkspace({
           New debug flow
         </button>
       </header>
+      <AgentDraftImport
+        projectId={projectId}
+        disabled={loading || locked || dirty}
+        onLoad={(next, nextTitle) => {
+          ++generation.current;
+          ++runGeneration.current;
+          selectedFlow.current = null;
+          setFlow(null);
+          setDefinition(next);
+          setTitle(nextTitle);
+          setRuns([]);
+          setRun(null);
+          setInputs({});
+          setError("");
+          setConflict(false);
+          setNotice(
+            "AA actions loaded as an unsaved draft. Review targets, save, and explicitly verify this new flow before publishing.",
+          );
+        }}
+      />
       <details className="lca-recording-disclosure">
         <summary>Browser recording · append actions to a BDD step</summary>
         {flow && definition ? (

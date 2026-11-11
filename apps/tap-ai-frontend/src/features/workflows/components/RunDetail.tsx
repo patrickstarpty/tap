@@ -167,6 +167,13 @@ export function RunDetail({
             Replay frozen run
           </button>
         ) : null}
+        {browserRun?.status === "passed" ? (
+          <a
+            href={`${(import.meta.env.VITE_TAP_WEB_URL || "").replace(/\/$/, "")}/?module=low-code&aa-task=${encodeURIComponent(snapshot.taskId)}`}
+          >
+            Review as LCA draft
+          </a>
+        ) : null}
         {replayError ? (
           <p role="alert">Replay could not start. Try again.</p>
         ) : null}
