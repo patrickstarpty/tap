@@ -192,3 +192,143 @@ it("keeps exact rendered text assertions distinct from normalized text assertion
     actionSummary({ ...exact, arguments: { text: "  exact\n text  " } }, d),
   ).toBe("  exact\n text  ");
 });
+
+it("remaps imported page identities, explicit bindings and popup destinations without changing existing actions", () => {
+  const current: LcaDefinition = {
+    ...d,
+    steps: [
+      ...d.steps,
+      {
+        id: "existing_page",
+        operation: "open_page",
+        arguments: { page_id: "details", url: "https://example.com/old" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  const recorded: LcaDefinition = {
+    ...d,
+    targets: [{ id: "launch", kind: "test_id", value: "launch" }],
+    steps: [
+      {
+        id: "popup",
+        operation: "click_popup",
+        target_id: "launch",
+        arguments: { page_id: "details" },
+        timeout_ms: 10000,
+      },
+      {
+        id: "switch",
+        operation: "switch_page",
+        arguments: { page_id: "details" },
+        timeout_ms: 10000,
+      },
+      {
+        id: "read",
+        operation: "assert_url",
+        page_id: "details",
+        arguments: { url: "https://example.com/new" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  const merged = mergeRecording(current, recorded, "bdd_legacy");
+  const destination = merged.steps[2].arguments.page_id;
+  expect(destination).not.toBe("details");
+  expect(merged.steps[3].arguments.page_id).toBe(destination);
+  expect(merged.steps[4].page_id).toBe(destination);
+  expect(merged.steps.slice(0, 2)).toEqual(current.steps);
+  expect(recorded.steps[0].arguments.page_id).toBe("details");
+});
+
+it("binds imported implicit main actions instead of targeting the insertion's active popup", () => {
+  const current: LcaDefinition = {
+    ...d,
+    steps: [
+      {
+        id: "existing_page",
+        operation: "open_page",
+        arguments: { page_id: "details", url: "https://example.com" },
+        timeout_ms: 10000,
+      },
+      {
+        id: "existing_switch",
+        operation: "switch_page",
+        arguments: { page_id: "details" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  const merged = mergeRecording(current, d, "bdd_legacy");
+  expect(merged.steps[2].page_id).toBe("main");
+  expect(merged.steps.slice(0, 2)).toEqual(current.steps);
+});
+
+it("rejects imports that change the page of a later existing implicit action", () => {
+  const current: LcaDefinition = {
+    ...d,
+    steps: [...d.steps, { ...d.steps[0], id: "later" }],
+    bdd_steps: [
+      {
+        id: "first",
+        keyword: "Given",
+        description: "Open",
+        action_ids: ["open"],
+      },
+      {
+        id: "second",
+        keyword: "When",
+        description: "Continue",
+        action_ids: ["later"],
+      },
+    ],
+  };
+  const recorded: LcaDefinition = {
+    ...d,
+    steps: [
+      {
+        id: "new_page",
+        operation: "open_page",
+        arguments: { page_id: "details", url: "https://example.com" },
+        timeout_ms: 10000,
+      },
+      {
+        id: "new_switch",
+        operation: "switch_page",
+        arguments: { page_id: "details" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  expect(() => mergeRecording(current, recorded, "first")).toThrow(
+    /change.*page.*later/i,
+  );
+  expect(current.steps[1].page_id).toBeUndefined();
+});
+
+it("rejects importing actions that refer to a page already closed by the existing flow", () => {
+  const current: LcaDefinition = {
+    ...d,
+    steps: [
+      {
+        id: "new_page",
+        operation: "open_page",
+        arguments: { page_id: "details", url: "https://example.com" },
+        timeout_ms: 10000,
+      },
+      {
+        id: "new_switch",
+        operation: "switch_page",
+        arguments: { page_id: "details" },
+        timeout_ms: 10000,
+      },
+      {
+        id: "close_main",
+        operation: "close_page",
+        arguments: { page_id: "main" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  expect(() => mergeRecording(current, d, "bdd_legacy")).toThrow(/not open/);
+});

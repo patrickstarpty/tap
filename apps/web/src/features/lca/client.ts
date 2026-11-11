@@ -1,6 +1,13 @@
 /** Contracts mirror the TAP LCA API. No service credential enters the UI. */
 export type Scalar = string | number | boolean;
 export type Operation =
+  | "upload_file"
+  | "download_file"
+  | "open_page"
+  | "switch_page"
+  | "close_page"
+  | "click_popup"
+  | "click_dialog"
   | "navigate"
   | "click"
   | "fill"
@@ -41,6 +48,7 @@ export interface LcaStep {
   operation: Operation;
   arguments: Record<string, Scalar | { parameter: string }>;
   target_id?: string | null;
+  page_id?: string | null;
   timeout_ms: number;
   provenance?: Record<string, string>;
 }
@@ -120,7 +128,21 @@ export interface LcaRelease {
   definition_digest: string;
   verified_run_id: string;
 }
+export interface LcaAsset {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+}
 export interface LcaClient {
+  listAssets(project: string): Promise<LcaAsset[]>;
+  uploadAsset(
+    project: string,
+    body: { filename: string; content_base64: string },
+    key: string,
+  ): Promise<LcaAsset>;
   getRelease(
     project: string,
     id: string,
@@ -160,6 +182,11 @@ export interface LcaClient {
   reconcileRun(project: string, id: string): Promise<LcaRun>;
   cancelRun(project: string, id: string): Promise<LcaExecution>;
   getEvidence(project: string, run: string, evidence: string): Promise<Blob>;
+  getEvidenceDownload(
+    project: string,
+    run: string,
+    evidence: string,
+  ): Promise<{ blob: Blob; filename: string | null }>;
   getRun(project: string, id: string): Promise<LcaRun>;
 }
 export class LcaHttpError extends Error {
@@ -202,7 +229,22 @@ export function createLcaClient(
     if (!response.ok) throw new LcaHttpError(response.status);
     return response.json() as Promise<T>;
   }
+  async function evidenceResponse(
+    project: string,
+    run: string,
+    evidence: string,
+  ) {
+    const response = await fetcher(
+      `${base(project)}/runs/${encodeURIComponent(run)}/evidence/${encodeURIComponent(evidence)}`,
+      { credentials: "same-origin", cache: "no-store" },
+    );
+    if (!response.ok) throw new LcaHttpError(response.status);
+    return response;
+  }
   return {
+    listAssets: (p) => request(`${base(p)}/assets`),
+    uploadAsset: (p, body, key) =>
+      request(`${base(p)}/assets`, "POST", body, key),
     listFlows: (p) => request(`${base(p)}/flows`),
     getFlow: (p, id) => request(`${base(p)}/flows/${encodeURIComponent(id)}`),
     createFlow: (p, body, key) =>
@@ -222,13 +264,21 @@ export function createLcaClient(
       request(`${base(p)}/runs/${encodeURIComponent(id)}/reconcile`, "POST"),
     cancelRun: (p, id) =>
       request(`${base(p)}/runs/${encodeURIComponent(id)}/cancel`, "POST"),
-    getEvidence: async (p, run, evidence) => {
-      const response = await fetcher(
-        `${base(p)}/runs/${encodeURIComponent(run)}/evidence/${encodeURIComponent(evidence)}`,
-        { credentials: "same-origin", cache: "no-store" },
+    getEvidence: async (p, run, evidence) =>
+      (await evidenceResponse(p, run, evidence)).blob(),
+    getEvidenceDownload: async (p, run, evidence) => {
+      const response = await evidenceResponse(p, run, evidence);
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const match = /(?:^|;)\s*filename=(?:"([^"]+)"|([^;\s]+))(?:;|$)/i.exec(
+        disposition,
       );
-      if (!response.ok) throw new LcaHttpError(response.status);
-      return response.blob();
+      const candidate = match?.[1] ?? match?.[2] ?? "";
+      // Preserve the server's bounded ASCII filename; never turn a path or
+      // control-bearing header into a local filename.
+      const filename = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,159}$/.test(candidate)
+        ? candidate
+        : null;
+      return { blob: await response.blob(), filename };
     },
     getRelease: (p, id) =>
       request(`${base(p)}/releases/${encodeURIComponent(id)}`),

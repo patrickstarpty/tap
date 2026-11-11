@@ -534,7 +534,10 @@ function ProjectWorkspace({
                 )}
               </div>
               <DefinitionEditor
+                key={`${flow?.id ?? "new"}:${flow?.version ?? 0}:${generation.current}`}
                 value={definition}
+                projectId={projectId}
+                client={client}
                 selectedGroupId={selectedBddId}
                 onSelectGroup={setSelectedBddId}
                 disabled={locked}
@@ -768,12 +771,22 @@ function RunDetails({
     });
   const download = (id: string, kind: string) =>
     act(async () => {
-      const blob = await client.getEvidence(projectId, run.id, id);
+      const attachment =
+        kind === "download"
+          ? await client.getEvidenceDownload(projectId, run.id, id)
+          : {
+              blob: await client.getEvidence(projectId, run.id, id),
+              filename: null,
+            };
+      const blob = attachment.blob;
       if (!mounted.current) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `debug-evidence.${kind === "screenshot" ? "png" : kind === "trace" ? "zip" : kind === "video" ? "webm" : "json"}`;
+      link.download =
+        kind === "download"
+          ? attachment.filename || "debug-download.bin"
+          : `debug-evidence.${kind === "screenshot" ? "png" : kind === "trace" ? "zip" : kind === "video" ? "webm" : "json"}`;
       document.body.append(link);
       link.click();
       link.remove();

@@ -84,9 +84,17 @@ class Step(StrictModel):
         "assert_value",
         "assert_checked",
         "assert_read",
+        "open_page",
+        "switch_page",
+        "close_page",
+        "click_popup",
+        "click_dialog",
+        "upload_file",
+        "download_file",
     ]
     arguments: dict[str, Text | int | float | bool | ParameterReference]
     target_id: Identifier | None = None
+    page_id: Identifier | None = None
     timeout_ms: Annotated[int, Field(gt=0, le=30000)]
     provenance: dict[str, Annotated[str, Field(max_length=1024)]] = Field(
         default_factory=dict
@@ -157,13 +165,24 @@ class DebugDefinition(StrictModel):
                     raise ValueError(
                         "Frame context requires an existing top-level target"
                     )
+        live_pages = {"main"}
+        seen_pages = {"main"}
+        active_page = "main"
         for step in self.steps:
             schema = argument_schema(step.operation)
             if step.operation == "assert_read":
                 check_read_arguments(step.arguments)
+            elif step.operation == "click_dialog":
+                check_dialog_arguments(step.arguments)
             elif set(step.arguments) != set(schema):
                 raise ValueError("Operation arguments do not match its schema")
-            if step.operation in {"navigate", "assert_url"}:
+            if step.operation in {
+                "navigate",
+                "assert_url",
+                "open_page",
+                "switch_page",
+                "close_page",
+            }:
                 if step.target_id is not None:
                     raise ValueError("Page operation cannot have a target")
             elif step.operation != "scroll" or step.target_id is not None:
@@ -178,7 +197,15 @@ class DebugDefinition(StrictModel):
                     if schema[key] == "number":
                         kinds.add("integer")
                     if (
-                        key == "destination_target_id"
+                        key
+                        in {
+                            "destination_target_id",
+                            "page_id",
+                            "action",
+                            "type",
+                            "asset_id",
+                            "sha256",
+                        }
                         or parameter is None
                         or parameter.type not in kinds
                     ):
@@ -197,6 +224,37 @@ class DebugDefinition(StrictModel):
                     check_argument(
                         key, argument, schema[key], self.allowed_origins, targets
                     )
+            if step.operation in {"open_page", "switch_page", "close_page"}:
+                if step.page_id is not None:
+                    raise ValueError(
+                        "Page lifecycle operations use only arguments.page_id"
+                    )
+            elif (step.page_id or active_page) not in live_pages:
+                raise ValueError("Operation requires a live page")
+            if step.operation in {
+                "open_page",
+                "click_popup",
+                "switch_page",
+                "close_page",
+            }:
+                page_id = step.arguments["page_id"]
+                assert isinstance(page_id, str)
+                if step.operation in {"open_page", "click_popup"}:
+                    if page_id in seen_pages:
+                        raise ValueError("Page IDs cannot be reused")
+                    seen_pages.add(page_id)
+                    live_pages.add(page_id)
+                else:
+                    if page_id not in live_pages:
+                        raise ValueError("Operation requires a live page")
+                    if step.operation == "switch_page":
+                        active_page = page_id
+                    else:
+                        if page_id == active_page:
+                            raise ValueError(
+                                "Switch to another page before closing the active page"
+                            )
+                        live_pages.remove(page_id)
             if step.operation == "drag_drop":
                 destination = step.arguments["destination_target_id"]
                 assert isinstance(destination, str)
@@ -222,6 +280,17 @@ def argument_schema(operation: str) -> dict[str, str]:
             "nonempty": "boolean",
             "positive": "boolean",
         },
+        "upload_file": {"asset_id": "string", "sha256": "string"},
+        "open_page": {"page_id": "string", "url": "string"},
+        "switch_page": {"page_id": "string"},
+        "close_page": {"page_id": "string"},
+        "click_popup": {"page_id": "string"},
+        "click_dialog": {
+            "action": "string",
+            "type": "string",
+            "message": "string",
+            "prompt_text": "string",
+        },
         "navigate": {"url": "string"},
         "assert_url": {"url": "string"},
         "fill": {"value": "string"},
@@ -235,6 +304,21 @@ def argument_schema(operation: str) -> dict[str, str]:
         "drag_drop": {"destination_target_id": "string"},
         "assert_checked": {"checked": "boolean"},
     }.get(operation, {})
+
+
+def check_dialog_arguments(arguments: Mapping[str, object]) -> None:
+    if (
+        not {"action", "type", "message"} <= arguments.keys()
+        or arguments.keys() - {"action", "type", "message", "prompt_text"}
+        or arguments.get("action") not in ("accept", "dismiss")
+        or arguments.get("type") not in ("alert", "confirm", "prompt")
+    ):
+        raise ValueError("Dialog requires an explicit action, type and exact message")
+    if "prompt_text" in arguments and (arguments["action"], arguments["type"]) != (
+        "accept",
+        "prompt",
+    ):
+        raise ValueError("Prompt text applies only to accepted prompts")
 
 
 READ_ATTRIBUTES = frozenset(
@@ -322,7 +406,20 @@ def check_argument(
     key: str, value: object, kind: str, origins: list[str], targets: set[str]
 ) -> None:
     check_scalar(kind, value)
-    if key in {"delta_x", "delta_y"}:
+    if key == "asset_id":
+        if not isinstance(value, str) or not re.fullmatch(
+            r"(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})", value
+        ):
+            raise ValueError("Upload asset ID must be a UUID")
+    elif key == "sha256":
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("Upload requires a frozen SHA-256 digest")
+    elif key == "page_id":
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[a-z][a-z0-9_]{0,63}", value
+        ):
+            raise ValueError("Page ID must be a canonical identifier")
+    elif key in {"delta_x", "delta_y"}:
         assert isinstance(value, (int, float))
         if abs(value) > 10000:
             raise ValueError("Scroll delta must be between -10000 and 10000")

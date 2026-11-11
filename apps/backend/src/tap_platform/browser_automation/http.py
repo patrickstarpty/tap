@@ -410,10 +410,17 @@ def create_browser_router(
             "trace": "application/zip",
             "video": "video/webm",
             "result": "application/json",
+            "download": "application/octet-stream",
         }[row["kind"]]
-        return Response(
-            data, media_type=mime, headers={"X-Content-SHA256": row["sha256"]}
-        )
+        headers = {
+            "X-Content-SHA256": row["sha256"],
+            "X-Content-Type-Options": "nosniff",
+        }
+        if row["kind"] == "download":
+            headers["Content-Disposition"] = (
+                f'attachment; filename="download-{row["id"]}.bin"'
+            )
+        return Response(data, media_type=mime, headers=headers)
 
     return router
 

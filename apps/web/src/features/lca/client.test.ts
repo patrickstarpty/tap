@@ -52,3 +52,36 @@ it("reads evidence only through its project and run authorized route", async () 
   );
   expect(fetcher.mock.calls[0][1].credentials).toBe("same-origin");
 });
+
+it.each([
+  ['attachment; filename="invoice.csv"', "invoice.csv"],
+  ['attachment; filename="report_2026.pdf"', "report_2026.pdf"],
+  ['attachment; filename="../invoice.csv"', null],
+  ['attachment; filename="C:\\report.pdf"', null],
+  ['attachment; filename="invoice\u0001.csv"', null],
+  ['attachment; filename=".."', null],
+  [null, null],
+])(
+  "preserves only a safe attachment filename from %s",
+  async (header, filename) => {
+    const headers = new Headers();
+    if (header) headers.set("Content-Disposition", header);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(new Response("file-bytes", { headers }));
+    const download = await createLcaClient(fetcher).getEvidenceDownload(
+      "p",
+      "run-1",
+      "download-1",
+    );
+    expect(download.filename).toBe(filename);
+    expect(await download.blob.text()).toBe("file-bytes");
+    expect(fetcher.mock.calls[0][0]).toBe(
+      "/api/projects/p/lca/runs/run-1/evidence/download-1",
+    );
+    expect(fetcher.mock.calls[0][1]).toEqual({
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  },
+);

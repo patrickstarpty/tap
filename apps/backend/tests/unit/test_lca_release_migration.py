@@ -26,7 +26,22 @@ def test_release_upgrade_matches_metadata_and_refuses_loss(tmp_path):
     ):
         base.upgrade()
         releases.upgrade()
-        assert compare_metadata(MigrationContext.configure(connection), metadata) == []
+        assert (
+            compare_metadata(
+                MigrationContext.configure(
+                    connection,
+                    opts={
+                        "include_object": lambda obj,
+                        name,
+                        kind,
+                        reflected,
+                        compared: name != "tap_lca_assets"
+                    },
+                ),
+                metadata,
+            )
+            == []
+        )
         connection.execute(
             text(
                 "INSERT INTO tap_lca_releases VALUES ('r','p','a','now','f','s',1,'title','run','digest')"

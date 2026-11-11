@@ -31,7 +31,7 @@ class BrowserObjectStore:
     def persist(
         self, data: bytes, *, kind: str, max_bytes: int
     ) -> tuple[str, str, int]:
-        if kind not in {"script", "input", *_SIGNATURES}:
+        if kind not in {"script", "input", "upload", "download", *_SIGNATURES}:
             raise ValueError("unsupported browser object")
         if not isinstance(data, bytes) or not data or len(data) > max_bytes:
             raise ValueError("invalid browser object size")
@@ -125,7 +125,9 @@ class BrowserEvidenceSink:
             )
         )
         return Evidence(
-            kind=cast(Literal["screenshot", "trace", "result", "video"], kind),
+            kind=cast(
+                Literal["screenshot", "trace", "result", "video", "download"], kind
+            ),
             object_ref=row["id"],
             sha256=sha,
             size_bytes=size,

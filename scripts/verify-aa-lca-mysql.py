@@ -7,7 +7,7 @@ Run from the repository root with an explicitly approved EXISTING network:
 
 Requires the already-cached official mysql:8.4.6 image and Docker. Creates no
 network, publishes only an ephemeral loopback port, and removes only its own
-label-verified container plus anonymous volume. No .env is loaded. The seven LCA
+label-verified container plus anonymous volume. No .env is loaded. The eight LCA
 tables are synthetic and disposable. Populated downgrade must refuse retention
 loss; empty downgrade must succeed. No paid services are used.
 """
@@ -41,7 +41,7 @@ def docker(*args: str) -> str:
 def verify(url: str) -> None:
     os.environ["TAP_DATABASE_URL"] = url
     engine = create_engine(url)
-    for i in range(60):
+    for i in range(180):
         try:
             with engine.connect() as c:
                 c.execute(text("SELECT 1"))
@@ -53,11 +53,11 @@ def verify(url: str) -> None:
     cfg = Config(str(ROOT / "apps/backend/alembic.ini"))
     command.upgrade(cfg, "0009_browser_control")
     assert not any(t.startswith("tap_lca_") for t in inspect(engine).get_table_names())
-    command.upgrade(cfg, "0011_lca_releases")
+    command.upgrade(cfg, "head")
     assert set(metadata.tables) <= set(inspect(engine).get_table_names())
     command.downgrade(cfg, "0009_browser_control")
     assert not any(t.startswith("tap_lca_") for t in inspect(engine).get_table_names())
-    command.upgrade(cfg, "0011_lca_releases")
+    command.upgrade(cfg, "head")
     store = LcaStore(engine)
     canonical = b'{"title":"' + b"x" * 70000 + b'","steps":[]}'
     f = store.create_flow(
@@ -101,9 +101,25 @@ def verify(url: str) -> None:
         s,
         r["id"],
     )
+    asset = store.create_asset(
+        "synthetic-project",
+        "synthetic-owner",
+        "asset",
+        {
+            "filename": "fixture.txt",
+            "content_type": "application/octet-stream",
+            "sha256": "a" * 64,
+            "size_bytes": 1,
+            "object_ref": "aa/" + "a" * 64,
+        },
+    )
     engine.dispose()
     engine = create_engine(url)
     recovered = LcaStore(engine)
+    assert (
+        recovered.get_asset("synthetic-project", "synthetic-owner", asset["id"])
+        == asset
+    )
     assert (
         recovered.get_release("synthetic-project", "synthetic-owner", release["id"])[
             "snapshot_id"
@@ -149,13 +165,13 @@ def verify(url: str) -> None:
     with engine.connect() as c:
         assert (
             c.execute(text("SELECT version_num FROM tap_alembic_version")).scalar_one()
-            == "0011_lca_releases"
+            == "0012_lca_assets"
         )
     print(
         json.dumps(
             {
                 "mysql": "8.4.6",
-                "tables": 7,
+                "tables": 8,
                 "empty_downgrade": "passed",
                 "large_draft_bytes": len(canonical),
                 "reconnect_persistence": "passed",
@@ -213,6 +229,25 @@ def main() -> None:
         verify(
             f"mysql+pymysql://root:{password}@127.0.0.1:{port}/tap_synthetic_migration"
         )
+    except Exception:
+        if container:
+            # Initialization can take longer on a busy desktop. Keep a bounded,
+            # credential-redacted diagnostic before removing this owned fixture.
+            try:
+                details = subprocess.run(
+                    ["docker", "logs", "--tail", "40", container],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                print(
+                    (details.stdout + details.stderr)[-4000:].replace(
+                        password, "[redacted]"
+                    )
+                )
+            except (OSError, subprocess.SubprocessError):
+                print("Owned MySQL startup diagnostics unavailable.")
+        raise
     finally:
         if container:
             actual = json.loads(docker("inspect", container))[0]

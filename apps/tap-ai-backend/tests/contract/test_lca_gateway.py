@@ -453,3 +453,49 @@ def test_aa_preview_is_scoped_read_only_and_uses_server_workflow_source(monkeypa
     assert response.headers["cache-control"] == "no-store"
     assert client.get(path.replace("tapper-demo", "other")).status_code == 403
     assert len(calls) == 1
+
+
+def test_file_asset_gateway_bounds_upload_and_preserves_attachment_headers():
+    received = []
+
+    def backend(request):
+        received.append(request)
+        if request.method == "POST":
+            return httpx.Response(201, json={"id": "asset"})
+        return httpx.Response(
+            200,
+            content=b"captured",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Disposition": 'attachment; filename="result.txt"',
+                "X-Content-Type-Options": "nosniff",
+                "X-Content-SHA256": "a" * 64,
+            },
+        )
+
+    authority = Authority()
+    client = TestClient(
+        create_app(
+            HttpServices(
+                scope=VALIDATION_SCOPE, scope_provider=authority, authorization_policy=authority
+            ),
+            allowed_origins=frozenset({"http://127.0.0.1:5174"}),
+            lca_gateway=LcaGateway(
+                "http://127.0.0.1:8001", "test-server-token", httpx.MockTransport(backend)
+            ),
+        )
+    )
+    path = "/api/projects/tapper-demo/lca/assets"
+    headers = {"Origin": "http://127.0.0.1:5174", "Idempotency-Key": "selected-file"}
+    response = client.post(
+        path, json={"filename": "file.txt", "content_base64": "YQ=="}, headers=headers
+    )
+    assert response.status_code == 201
+    assert received[0].headers["x-lca-actor"] == VALIDATION_SCOPE.actor_id
+    assert received[0].headers["idempotency-key"] == "selected-file"
+    assert client.post(path, content=b"x" * 350001, headers=headers).status_code == 413
+    assert len(received) == 1
+    result = client.get("/api/projects/tapper-demo/lca/runs/run/evidence/evidence")
+    assert result.content == b"captured"
+    assert result.headers["content-disposition"] == 'attachment; filename="result.txt"'
+    assert result.headers["x-content-type-options"] == "nosniff"

@@ -12,9 +12,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from tap_platform.access import AccessPrincipal
 from tap_platform.browser_automation.service import Conflict, Forbidden
 
+from .assets import safe_filename
 from .service import LcaService
 from .recorder import LcaRecorder
 from .store import LcaConflict, LcaNotFound
+
+
+class AssetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    filename: str = Field(min_length=1, max_length=1024)
+    content_base64: str = Field(min_length=1, max_length=341336)
 
 
 class FlowInput(BaseModel):
@@ -101,6 +108,20 @@ def create_lca_router(
         ):
             raise HTTPException(400, "Valid Idempotency-Key required")
         return value
+
+    @router.get("/assets")
+    def list_assets(project_id: str, request: Request) -> Any:
+        return invoke(request, project_id, lambda svc, actor: svc.list_assets(actor))
+
+    @router.post("/assets", status_code=201)
+    def create_asset(project_id: str, body: AssetInput, request: Request) -> Any:
+        return invoke(
+            request,
+            project_id,
+            lambda svc, actor: svc.create_asset(
+                actor, key(request), body.filename, body.content_base64
+            ),
+        )
 
     @router.get("/flows")
     def list_flows(project_id: str, request: Request) -> Any:
@@ -286,12 +307,18 @@ def create_lca_router(
             "video": "video/webm",
             "trace": "application/zip",
             "result": "application/json",
+            "download": "application/octet-stream",
         }[row["kind"]]
-        return Response(
-            data,
-            media_type=mime,
-            headers={"X-Content-SHA256": row["sha256"], "Cache-Control": "no-store"},
-        )
+        headers = {
+            "X-Content-SHA256": row["sha256"],
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if row["kind"] == "download":
+            headers["Content-Disposition"] = (
+                f'attachment; filename="{safe_filename(row.get("filename", "download-" + row["id"] + ".bin"))}"'
+            )
+        return Response(data, media_type=mime, headers=headers)
 
     return router
 
@@ -324,6 +351,8 @@ class DelegatedLcaAuthorizer:
                 enabled=True,
                 actions=frozenset(
                     {
+                        "lca.assets.create",
+                        "lca.assets.read",
                         "lca.releases.publish",
                         "lca.releases.read",
                         "lca.flows.create",

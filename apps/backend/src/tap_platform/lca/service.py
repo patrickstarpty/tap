@@ -8,15 +8,30 @@ an internal service boundary; gateway authentication remains the caller's job.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from tap_platform.access import AccessPrincipal
-from tap_platform.browser_automation.service import BrowserService, digest
+from tap_platform.browser_automation.service import (
+    BrowserService,
+    canonical_bytes as input_bytes,
+    digest,
+)
 
+from .assets import (
+    MAX_ASSET_BYTES,
+    MAX_FROZEN_INPUT_BYTES,
+    asset_content_type,
+    decode_asset,
+    public_asset,
+    safe_filename,
+    upload_references,
+)
 from .definition import (
+    DebugDefinition,
     SCHEMA_VERSION,
     canonical_bytes,
     resolve_parameters,
@@ -66,6 +81,66 @@ class LcaService:
             enabled=True,
         )
 
+    def create_asset(
+        self, principal: AccessPrincipal, key: str, filename: str, content_base64: str
+    ) -> dict[str, Any]:
+        project, actor = self._authorize(principal, "lca.assets.create")
+        name = safe_filename(filename)
+        data = decode_asset(content_base64)
+        ref, sha, size = self.browser.objects.persist(
+            data, kind="upload", max_bytes=MAX_ASSET_BYTES
+        )
+        return public_asset(
+            self.store.create_asset(
+                project,
+                actor,
+                key,
+                {
+                    "filename": name,
+                    "content_type": asset_content_type(name),
+                    "sha256": sha,
+                    "size_bytes": size,
+                    "object_ref": ref,
+                },
+            )
+        )
+
+    def list_assets(self, principal: AccessPrincipal) -> list[dict[str, Any]]:
+        project, actor = self._authorize(principal, "lca.assets.read")
+        return [public_asset(row) for row in self.store.list_assets(project, actor)]
+
+    def _asset_inputs(
+        self,
+        project: str,
+        actor: str,
+        definition: DebugDefinition,
+        inputs: Mapping[str, object],
+    ) -> dict[str, Any]:
+        manifest = {}
+        for ref in upload_references(definition):
+            row = self.store.get_asset(project, actor, str(ref["asset_id"]))
+            if row["sha256"] != ref["sha256"]:
+                raise ValueError("Upload asset hash mismatch")
+            data = self.browser.objects.read(
+                row["object_ref"], row["sha256"], max_bytes=MAX_ASSET_BYTES
+            )
+            if len(data) != row["size_bytes"]:
+                raise ValueError("Upload asset size mismatch")
+            manifest[row["id"]] = {
+                "filename": row["filename"],
+                "content_type": row["content_type"],
+                "sha256": row["sha256"],
+                "content_base64": base64.b64encode(data).decode("ascii"),
+            }
+        frozen = dict(inputs)
+        if manifest:
+            if "__lca_assets" in frozen:
+                raise ValueError("Reserved upload manifest parameter")
+            frozen["__lca_assets"] = manifest
+        if len(input_bytes(frozen)) > MAX_FROZEN_INPUT_BYTES:
+            raise ValueError("Frozen input exceeds limit")
+        return frozen
+
     def create_flow(
         self,
         principal: AccessPrincipal,
@@ -77,12 +152,14 @@ class LcaService:
         project, actor = self._authorize(principal, "lca.flows.create")
         if not isinstance(title, str) or not title.strip() or len(title) > 256:
             raise ValueError("Flow title must be nonempty and bounded")
+        parsed = validate_definition(definition)
+        self._asset_inputs(project, actor, parsed, {})
         return self.store.create_flow(
             project,
             actor,
             key,
             title,
-            canonical_bytes(validate_definition(definition)),
+            canonical_bytes(parsed),
             provenance,
         )
 
@@ -105,12 +182,14 @@ class LcaService:
         project, actor = self._authorize(principal, "lca.drafts.save")
         self.store.get_flow(project, actor, flow_id)
         self._version(expected_version)
+        parsed = validate_definition(definition)
+        self._asset_inputs(project, actor, parsed, {})
         return self.store.save_draft(
             project,
             actor,
             flow_id,
             expected_version,
-            canonical_bytes(validate_definition(definition)),
+            canonical_bytes(parsed),
             provenance,
         )
 
@@ -122,9 +201,9 @@ class LcaService:
     ) -> GeneratedPlaywright:
         project, actor = self._authorize(principal, "lca.drafts.generate")
         flow = self.store.get_flow(project, actor, flow_id)
-        return generate_playwright(
-            validate_definition(json.loads(flow["canonical_bytes"])), parameters
-        )
+        definition = validate_definition(json.loads(flow["canonical_bytes"]))
+        self._asset_inputs(project, actor, definition, {})
+        return generate_playwright(definition, parameters)
 
     @staticmethod
     def _version(version: int) -> None:
@@ -161,6 +240,8 @@ class LcaService:
         definition = validate_definition(json.loads(flow["canonical_bytes"]))
         # Validate supplied data before publishing any run intent.
         inputs = resolve_parameters(definition, parameters)
+        bundle_inputs = self._asset_inputs(project, actor, definition, inputs)
+        input_digest = digest(bundle_inputs)
         snapshot = self.store.freeze_snapshot(
             project,
             actor,
@@ -179,8 +260,8 @@ class LcaService:
                 "task_id": flow_id,
                 "script": generated.source,
                 "sha256": hashlib.sha256(generated.source.encode()).hexdigest(),
-                "input_data": inputs,
-                "input_sha256": generated.input_digest,
+                "input_data": bundle_inputs,
+                "input_sha256": input_digest,
                 "allowed_origins": snapshot["allowed_origins"],
             },
             "lca-bundle-" + digest([actor, key, identity]),
@@ -191,13 +272,13 @@ class LcaService:
             key,
             snapshot["id"],
             bundle["bundle_id"],
-            generated.input_digest,
+            input_digest,
             {
                 "request_identity": identity,
                 "browser_request": {
                     "task_id": flow_id,
                     "bundle_id": bundle["bundle_id"],
-                    "input_sha256": generated.input_digest,
+                    "input_sha256": input_digest,
                 },
             },
         )
@@ -277,6 +358,8 @@ class LcaService:
             return self._reconcile(principal, prior)
         definition = validate_definition(json.loads(snapshot["canonical_bytes"]))
         inputs = resolve_parameters(definition, parameters)
+        bundle_inputs = self._asset_inputs(project, actor, definition, inputs)
+        input_digest = digest(bundle_inputs)
         generated = generate_playwright(definition, inputs)
         bundle = self.browser.create_bundle(
             self._browser_principal(principal),
@@ -284,8 +367,8 @@ class LcaService:
                 "task_id": release["flow_id"],
                 "script": generated.source,
                 "sha256": hashlib.sha256(generated.source.encode()).hexdigest(),
-                "input_data": inputs,
-                "input_sha256": generated.input_digest,
+                "input_data": bundle_inputs,
+                "input_sha256": input_digest,
                 "allowed_origins": snapshot["allowed_origins"],
             },
             "lca-release-bundle-" + digest([actor, key, identity]),
@@ -296,14 +379,14 @@ class LcaService:
             key,
             snapshot["id"],
             bundle["bundle_id"],
-            generated.input_digest,
+            input_digest,
             {
                 "request_identity": identity,
                 "release_id": release_id,
                 "browser_request": {
                     "task_id": release["flow_id"],
                     "bundle_id": bundle["bundle_id"],
-                    "input_sha256": generated.input_digest,
+                    "input_sha256": input_digest,
                 },
             },
             classification="published",
@@ -392,9 +475,27 @@ class LcaService:
             or row["task_id"] != run["flow_id"]
         ):
             raise PermissionError("LCA evidence unavailable")
-        return self.browser.read_evidence(
+        row, data = self.browser.read_evidence(
             self._browser_principal(principal), evidence_id
         )
+        if row["kind"] == "download":
+            # Filename is display metadata only, bound to the captured bytes in
+            # the trusted execution receipt, never used as a storage path.
+            execution = self.browser.store.get(
+                "execution", project, run["execution_id"]
+            )
+            receipt = execution.get("result") if execution else None
+            refs = receipt.get("evidence", []) if isinstance(receipt, dict) else []
+            names = [
+                item.get("filename")
+                for item in refs
+                if isinstance(item, dict)
+                and item.get("kind") == "download"
+                and item.get("sha256") == row["sha256"]
+            ]
+            if names and isinstance(names[0], str):
+                row = {**row, "filename": safe_filename(names[0])}
+        return row, data
 
     @staticmethod
     def _canonical_results(

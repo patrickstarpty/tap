@@ -5,10 +5,22 @@ import type {
   LcaStep,
   Operation,
 } from "./client";
+import {
+  pageContextBefore,
+  pageContextError,
+  pageLifecycle,
+} from "./pageBindings";
 export const identifier = (prefix: string) =>
   `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 export const operationLabels: Record<Operation, string> = {
+  upload_file: "Upload project file",
+  download_file: "Click and capture download",
   navigate: "Open page",
+  open_page: "Open new page",
+  switch_page: "Switch page",
+  close_page: "Close page",
+  click_popup: "Click and capture popup",
+  click_dialog: "Click and handle dialog",
   click: "Click",
   fill: "Input text",
   select: "Select option",
@@ -33,12 +45,62 @@ export const operationLabels: Record<Operation, string> = {
 export interface ArgumentField {
   key: string;
   type: "string" | "number" | "boolean" | "target";
+  literalOnly?: boolean;
+  multiline?: boolean;
   default: string | number | boolean;
   choices?: string[];
   optional?: boolean;
 }
 export const argumentFields = (operation: Operation): ArgumentField[] => {
   switch (operation) {
+    case "upload_file":
+      return [
+        { key: "asset_id", type: "string", default: "", literalOnly: true },
+        { key: "sha256", type: "string", default: "", literalOnly: true },
+      ];
+    case "open_page":
+      return [
+        { key: "page_id", type: "string", default: "", literalOnly: true },
+        { key: "url", type: "string", default: "" },
+      ];
+    case "click_popup":
+    case "switch_page":
+    case "close_page":
+      return [
+        { key: "page_id", type: "string", default: "", literalOnly: true },
+      ];
+    case "click_dialog":
+      return [
+        {
+          key: "action",
+          type: "string",
+          default: "accept",
+          choices: ["accept", "dismiss"],
+          literalOnly: true,
+        },
+        {
+          key: "type",
+          type: "string",
+          default: "confirm",
+          choices: ["alert", "confirm", "prompt"],
+          literalOnly: true,
+        },
+        {
+          key: "message",
+          type: "string",
+          default: "",
+          literalOnly: true,
+          multiline: true,
+        },
+        {
+          key: "prompt_text",
+          type: "string",
+          default: "",
+          literalOnly: true,
+          multiline: true,
+          optional: true,
+        },
+      ];
     case "navigate":
     case "assert_url":
       return [{ key: "url", type: "string", default: "" }];
@@ -111,7 +173,14 @@ export const argumentFields = (operation: Operation): ArgumentField[] => {
 export const argumentKey = (operation: Operation) =>
   argumentFields(operation)[0]?.key ?? null;
 export const needsTarget = (operation: Operation) =>
-  !["navigate", "assert_url", "scroll"].includes(operation);
+  ![
+    "navigate",
+    "assert_url",
+    "scroll",
+    "open_page",
+    "switch_page",
+    "close_page",
+  ].includes(operation);
 export function groupsFor(definition: LcaDefinition): BddStep[] {
   return (
     definition.bdd_steps ?? [
@@ -264,23 +333,44 @@ export function mergeRecording(
       );
     if (!existing) parameters.push(parameter);
   }
+  const usedPages = pageContextBefore(current).used;
+  const pageMap = new Map<string, string>([["main", "main"]]);
+  for (const step of recorded.steps) {
+    const error = pageContextError(recorded, step);
+    if (error) throw new Error(`Cannot import action ${step.id}: ${error}`);
+    if (!["open_page", "click_popup"].includes(step.operation)) continue;
+    const original = String(step.arguments.page_id);
+    let id = original;
+    while (usedPages.has(id)) id = identifier("page");
+    usedPages.add(id);
+    pageMap.set(original, id);
+  }
   const ids = new Set(current.steps.map((s) => s.id));
+  const originallyImplicit = new Set<string>();
   const added = recorded.steps.map((step) => {
     const id = ids.has(step.id) ? identifier("step") : step.id;
     ids.add(id);
+    const args = { ...step.arguments };
+    if (
+      step.operation === "drag_drop" &&
+      typeof args.destination_target_id === "string"
+    )
+      args.destination_target_id =
+        targetMap.get(args.destination_target_id) || args.destination_target_id;
+    if (
+      (pageLifecycle(step) || step.operation === "click_popup") &&
+      typeof args.page_id === "string"
+    )
+      args.page_id = pageMap.get(args.page_id) || args.page_id;
+    const sourcePage =
+      step.page_id ?? pageContextBefore(recorded, step.id).active;
+    if (step.page_id == null) originallyImplicit.add(id);
     return {
       ...step,
       id,
-      ...(step.operation === "drag_drop" &&
-      typeof step.arguments.destination_target_id === "string"
-        ? {
-            arguments: {
-              ...step.arguments,
-              destination_target_id:
-                targetMap.get(step.arguments.destination_target_id) ||
-                step.arguments.destination_target_id,
-            },
-          }
+      arguments: args,
+      ...(!pageLifecycle(step)
+        ? { page_id: pageMap.get(sourcePage) || sourcePage }
         : {}),
       ...(step.target_id ? { target_id: targetMap.get(step.target_id) } : {}),
     };
@@ -292,7 +382,7 @@ export function mergeRecording(
     throw new Error(
       "Recording exceeds the flow's target, parameter, or origin limits.",
     );
-  return withGroups(
+  const merged = withGroups(
     {
       ...current,
       steps: [...current.steps, ...added],
@@ -306,6 +396,28 @@ export function mergeRecording(
         : g,
     ),
   );
+  for (const step of merged.steps) {
+    const error = pageContextError(merged, step);
+    if (error) throw new Error(`Cannot import action ${step.id}: ${error}`);
+    const existing = current.steps.find((item) => item.id === step.id);
+    const context = pageContextBefore(merged, step.id);
+    if (
+      existing &&
+      existing.page_id == null &&
+      !pageLifecycle(existing) &&
+      context.active !== pageContextBefore(current, existing.id).active
+    )
+      throw new Error(
+        `Import would change the page of existing action ${step.id}. Add an explicit page binding to that action first.`,
+      );
+    if (
+      !existing &&
+      originallyImplicit.has(step.id) &&
+      step.page_id === context.active
+    )
+      delete step.page_id;
+  }
+  return merged;
 }
 export function groupStatus(
   ids: string[],

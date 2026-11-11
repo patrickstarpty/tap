@@ -10,7 +10,7 @@ export function exportFiles(root) {
       if (entry.name !== 'test-results') throw new Error('unknown output directory');
       continue;
     }
-    if (!entry.isFile() || !/^(result\.json|(?:screenshot|trace|video)-\d+\.(?:png|zip|webm))$/.test(entry.name)) {
+    if (!entry.isFile() || !/^(result\.json|(?:screenshot|trace|video)-\d+\.(?:png|zip|webm)|download-\d+\.bin)$/.test(entry.name)) {
       throw new Error('unknown output file');
     }
     if (files.length >= 32) throw new Error('too many output files');
@@ -19,6 +19,7 @@ export function exportFiles(root) {
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile()) throw new Error('nonregular output denied');
+      if (entry.name.startsWith('download-') && stat.size > 5000000) throw new Error('download output too large');
       total += stat.size;
       if (total > 80_000_000) throw new Error('output too large');
       files.push({ name: entry.name, data: fs.readFileSync(fd).toString('base64') });

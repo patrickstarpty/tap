@@ -71,7 +71,7 @@ class BrowserObservation:
 
 @dataclass(frozen=True)
 class Evidence:
-    kind: Literal["screenshot", "trace", "result", "video"]
+    kind: Literal["screenshot", "trace", "result", "video", "download"]
     object_ref: str
     sha256: str
     size_bytes: int
