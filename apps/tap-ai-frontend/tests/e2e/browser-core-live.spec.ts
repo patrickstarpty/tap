@@ -82,12 +82,49 @@ for (const scenario of cases) {
     expect(runtime.workflowEnabled).toBe(true);
     const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
 
-    await page.goto("/");
-    await page.getByRole("button", { name: "New chat" }).click();
+    const inlineBridge = process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1";
+    const hostUrl = process.env.TAPPER_BROWSER_CORE_LCA_URL;
+    let admissionRequests = 0;
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname.endsWith("/conversations")
+      )
+        admissionRequests += 1;
+    });
+    await page.goto(inlineBridge ? hostUrl! : "/");
+    const topLevelUrl = page.url();
+    const chat = inlineBridge
+      ? page.frameLocator('iframe[title="Tapper LCA assistant"]')
+      : page;
+    if (inlineBridge) {
+      await expect(
+        page.getByText("Tapper connected", { exact: true }),
+      ).toBeVisible();
+      const iframe = page.locator('iframe[title="Tapper LCA assistant"]');
+      const frameUrl = await iframe.getAttribute("src");
+      expect(new URL(frameUrl!).pathname).toBe("/embed/lca");
+      const frameResponse = await page.request.get(frameUrl!);
+      expect(frameResponse.ok()).toBe(true);
+      const csp = frameResponse.headers()["content-security-policy"];
+      expect(csp).toContain(`frame-ancestors ${new URL(topLevelUrl).origin}`);
+      expect(csp).not.toContain("*");
+      const sandbox = await iframe.getAttribute("sandbox");
+      expect(sandbox?.split(/\s+/u).sort()).toEqual([
+        "allow-same-origin",
+        "allow-scripts",
+      ]);
+    }
+    await chat
+      .getByRole("button", {
+        name: inlineBridge ? "New conversation" : "New chat",
+        exact: true,
+      })
+      .click();
     await expect(
-      page.getByRole("checkbox", { name: "Browser run" }),
+      chat.getByRole("checkbox", { name: "Browser run" }),
     ).toHaveCount(0);
-    await page
+    await chat
       .getByRole("textbox", { name: "Message Tapper" })
       .fill(
         `${process.env.TAPPER_BROWSER_CORE_SYNTHETIC === "1" ? "[e2e-workflow:browser] " : ""}${scenario.goal}\nWebsite: ${scenario.startUrl}\n${scenario.inputNotes ?? ""}\nExpected: ${scenario.expected}`,
@@ -118,19 +155,20 @@ for (const scenario of cases) {
           }
         : undefined);
     if (acceptanceContract) {
-      await page.getByText("Execution options", { exact: true }).click();
-      await page
+      if (!inlineBridge)
+        await chat.getByText("Execution options", { exact: true }).click();
+      await chat
         .getByLabel("Execution", { exact: true })
         .selectOption("browser");
-      await page
+      await chat
         .getByLabel("Start URL", { exact: true })
         .fill(scenario.startUrl);
       for (const [offset, requirement] of acceptanceContract.fields.entries()) {
         const index = offset + 1;
-        await page
+        await chat
           .getByRole("button", { name: "Add required input", exact: true })
           .click();
-        const field = page.getByRole("group", {
+        const field = chat.getByRole("group", {
           name: `Required input ${index}`,
           exact: true,
         });
@@ -156,9 +194,9 @@ for (const scenario of cases) {
         }
       }
       await expect(
-        page.getByRole("button", { name: "Send", exact: true }),
+        chat.getByRole("button", { name: "Send", exact: true }),
       ).toBeDisabled();
-      await page
+      await chat
         .getByRole("checkbox", {
           name: "I reviewed every required input and its expected readback.",
           exact: true,
@@ -170,7 +208,7 @@ for (const scenario of cases) {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname.endsWith("/conversations"),
     );
-    await page.getByRole("button", { name: "Send" }).click();
+    await chat.getByRole("button", { name: "Send" }).click();
     const accepted = await acceptedResponse;
     expect(accepted.status(), await accepted.text()).toBe(202);
     if (acceptanceContract) {
@@ -309,24 +347,35 @@ for (const scenario of cases) {
     expect(evidence.trace).toBeDefined();
     if (process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE !== "1")
       expect(evidence.video).toBeDefined();
-    await page.getByRole("button", { name: "View progress" }).click();
-    await expect(page.getByText(/^Browser result ·/u)).toBeVisible();
+    await chat.getByRole("button", { name: "View progress" }).click();
+    await expect(chat.getByText(/^Browser result ·/u)).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Screenshot" }),
+      chat.getByRole("link", { name: "Screenshot" }),
     ).not.toBeVisible();
-    await page.getByText(/^Browser result ·/u).click();
-    await expect(page.getByRole("link", { name: "Screenshot" })).toBeVisible();
-    await page.getByText(/^Browser result ·/u).click();
+    await chat.getByText(/^Browser result ·/u).click();
+    await expect(chat.getByRole("link", { name: "Screenshot" })).toBeVisible();
+    await chat.getByText(/^Browser result ·/u).click();
     await page.screenshot({
       path: `${evidenceDir}/${scenario.name}-ui.png`,
       fullPage: true,
     });
-    await page.reload();
+    if (!inlineBridge) await page.reload();
+    else {
+      expect(page.url()).toBe(topLevelUrl);
+      await page
+        .getByRole("button", { name: "Hide Tapper", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Open Tapper", exact: true })
+        .click();
+      // Keep the embedded conversation and its verified host context in place.
+    }
     await expect(
-      page.getByRole("button", { name: "View progress" }),
+      chat.getByRole("button", { name: "View progress" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "View progress" }).click();
-    await expect(page.getByText(/^Browser result ·/u)).toBeVisible();
+    if (!inlineBridge)
+      await chat.getByRole("button", { name: "View progress" }).click();
+    await expect(chat.getByText(/^Browser result ·/u)).toBeVisible();
 
     const foreign = `/api/v1/projects/foreign-project/workflows/${taskId}`;
     expect((await page.request.get(foreign)).status()).toBeGreaterThanOrEqual(
@@ -343,13 +392,13 @@ for (const scenario of cases) {
       process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" &&
       scenario.name === "form"
     ) {
-      const link = page.getByRole("link", { name: "Review as LCA draft" });
+      const link = chat.getByRole("button", { name: "Review as LCA draft" });
       await expect(link).toBeVisible();
-      const href = await link.getAttribute("href");
-      expect(href).toContain(`aa-task=${taskId}`);
+      expect(page.url()).toBe(topLevelUrl);
       const lca = page;
       {
         await link.click();
+        expect(page.url()).toBe(topLevelUrl);
         await expect(lca.getByLabel("AA task ID")).toHaveValue(taskId);
         const previewResponse = lca.waitForResponse((response) =>
           new URL(response.url()).pathname.endsWith(
@@ -517,6 +566,40 @@ for (const scenario of cases) {
         );
         expect((await sourceAfterImport.json()).budgetUsed?.model_calls).toBe(
           snapshot.budgetUsed?.model_calls,
+        );
+        expect(page.url()).toBe(topLevelUrl);
+        expect(admissionRequests).toBe(1);
+        const conversationAfter = await page.request.get(
+          `${root}/conversations/${conversationId}`,
+        );
+        expect(conversationAfter.ok()).toBe(true);
+        const conversationBody = (await conversationAfter.json()) as {
+          turns: { workflowTaskId: string | null }[];
+        };
+        expect(
+          conversationBody.turns
+            .map((turn) => turn.workflowTaskId)
+            .filter(Boolean),
+        ).toEqual([taskId]);
+        writeFileSync(
+          `${evidenceDir}/form-inline-lca-journey.json`,
+          JSON.stringify(
+            {
+              provider:
+                process.env.TAPPER_BROWSER_CORE_SYNTHETIC === "1"
+                  ? "synthetic"
+                  : "real",
+              topLevelUrlUnchanged: page.url() === topLevelUrl,
+              conversationAdmissions: admissionRequests,
+              taskId,
+              runId: started.id,
+              modelCallsBeforeImport: snapshot.budgetUsed?.model_calls,
+              modelCallsAfterReplay: (await sourceAfterImport.json()).budgetUsed
+                ?.model_calls,
+            },
+            null,
+            2,
+          ),
         );
         writeFileSync(
           `${evidenceDir}/form-lca-bridge-run.json`,

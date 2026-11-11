@@ -987,6 +987,10 @@ def main() -> int:
                 "TAPPER_BROWSER_CORE_LCA_BRIDGE": "1",
             }
         )
+    if args.lca_bridge:
+        env["VITE_TAPPER_URL"] = env["TAPPER_WEB_BASE_URL"]
+        env["VITE_TAP_WEB_URL"] = f"http://127.0.0.1:{env['TAP_WEB_PORT']}"
+        env["TAPPER_BROWSER_CORE_LCA_URL"] = env["VITE_TAP_WEB_URL"] + "/?module=low-code"
     upstream_proxy = os.environ.get("TAP_BROWSER_LOCAL_UPSTREAM_PROXY")
     if upstream_proxy and args.execution_mode == "local":
         env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] = upstream_proxy
@@ -1378,6 +1382,8 @@ def main() -> int:
                 env["TAPPER_API_BASE_URL"] + "/health/ready", app, app_log, api=True
             )
             helpers.wait_ready(env["TAPPER_WEB_BASE_URL"] + "/", app, app_log)
+            if args.lca_bridge:
+                helpers.wait_ready(env["TAPPER_BROWSER_CORE_LCA_URL"], app, app_log)
             phase = "chat-browser-e2e"
             run_playwright(
                 env,
