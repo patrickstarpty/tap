@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createDocumentProvenance } from './document-provenance.mjs';
 import {createLiveControl, serialDispatcher} from './live-control.mjs';
 import net from 'node:net';
 import { observeFields, readValue, guardTarget, selectValue } from './page-actions.mjs';
@@ -18,6 +19,7 @@ const context = await chromium.launchPersistentContext(localRoot ? `${localRoot}
   ...(!controlled ? {recordVideo: { dir: localRoot ? `${localRoot}/videos` : '/tmp/browser-videos', size: { width: 1280, height: 800 } }} : {}),
 });
 const page = context.pages()[0] || await context.newPage();
+const documentProvenance = createDocumentProvenance(page);
 let pageCrashed = false;
 page.on('crash', () => { pageCrashed = true; });
 // Chromium binds CDP to loopback; Docker publishes only the task's host-loopback port.
@@ -31,7 +33,7 @@ if (!localRoot && !controlled) net.createServer(client => {
 let sequence = 0;
 const resultValues = Object.create(null);
 const resultProvenance = Object.create(null);
-const reservedOutputNames = new Set(['final_url', 'provenance', 'source_url', 'observed_at', 'observation_sequence']);
+const reservedOutputNames = new Set(['final_url', 'provenance', 'source_url', 'observed_at', 'observation_sequence', 'source_frame_id', 'source_document_id']);
 let finished = false;
 let video_data = null;
 async function finishRecording() {
@@ -97,8 +99,9 @@ async function observe(action, actuate) {
   let result_data = null;
   try {
   if (action.type === 'recording') {
+    const documents = await documentProvenance.snapshot();
     await finishRecording();
-    return {session_id:process.env.TAP_BROWSER_SESSION, sequence:++sequence, url:page.url(), title:'', bounded_snapshot:'', fields:[], screenshot_ref:null, video_data, error:null};
+    return {session_id:process.env.TAP_BROWSER_SESSION, sequence:++sequence, url:page.url(), title:'', bounded_snapshot:'', fields:[], documents, screenshot_ref:null, video_data, error:null};
   }
   if (!['navigate', 'snapshot', 'click', 'fill', 'select', 'press', 'wait', 'screenshot', 'read', 'finish', 'scroll'].includes(action.type)) {
     throw new Error('unsupported action');
@@ -140,8 +143,8 @@ async function observe(action, actuate) {
   if (!actuate && action.type === 'press') await page.locator(action.selector).press(bounded(action.key, 100), { timeout: 30_000 });
   if (action.type === 'wait') await page.locator(action.selector).waitFor({ timeout: 30_000 });
   if (action.type === 'read') {
-    const value = await readValue(page, action);
-    const provenance = {source_url:page.url(), observation_sequence:sequence + 1, observed_at:new Date().toISOString()};
+    const {value, ...source} = await documentProvenance.read(action, readValue);
+    const provenance = {...source, observation_sequence:sequence + 1, observed_at:new Date().toISOString()};
     extracted = {name:action.name, value, ...provenance};
     resultValues[action.name] = value;
     resultProvenance[action.name] = provenance;
@@ -157,13 +160,14 @@ async function observe(action, actuate) {
     const trace = fs.readFileSync(tracePath);
     if (trace.length > 5000000) throw new Error('session trace exceeds evidence limit');
     trace_data = trace.toString('base64');
+    const documents = await documentProvenance.snapshot();
     await finishRecording();
     finished = true;
     // Recording closes the context; the final DOM-backed result and evidence are
     // already captured. Do not query a closed page and misclassify completion.
     return { session_id: process.env.TAP_BROWSER_SESSION, sequence: ++sequence,
       url: bounded(page.url(), 2048), title: '', bounded_snapshot: '', fields: [],
-      screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, error: null };
+      screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, documents, error: null };
   }
   if (action.type === 'screenshot') {
     const image = await page.screenshot({ fullPage: false, timeout: 30_000 });
@@ -172,7 +176,7 @@ async function observe(action, actuate) {
   }
   } catch (error) {
     if(controlled && actuate) {
-      return {session_id:process.env.TAP_BROWSER_SESSION,sequence:++sequence,url:bounded(page.url(),2048),title:'',bounded_snapshot:'',fields:[],screenshot_ref:null,error:controlledFailure(error)};
+      return {session_id:process.env.TAP_BROWSER_SESSION,sequence:++sequence,url:bounded(page.url(),2048),title:'',bounded_snapshot:'',fields:[],documents:await documentProvenance.snapshot(),screenshot_ref:null,error:controlledFailure(error)};
     }
     action_error = bounded(error.message, 1000);
   }
@@ -199,6 +203,7 @@ async function observe(action, actuate) {
     if (scopeFailed) snapshot = fullSnapshot;
   }
   return { session_id: process.env.TAP_BROWSER_SESSION, sequence, url: bounded(page.url(), 2048),
+    documents: await documentProvenance.snapshot(),
     title: bounded(await page.title().catch(() => ''), 256), bounded_snapshot: bounded(snapshot), fields,
     screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, ...(write_started !== undefined ? {write_started} : {}), error: pageCrashed ? 'browser page crashed' + (action_error ? '\n' + action_error : '') : action_error };
 }
@@ -230,7 +235,7 @@ net.createServer(client => {
     try { client.end(JSON.stringify(await dispatch(JSON.parse(data)))); }
     catch (error) { client.end(JSON.stringify({ session_id: process.env.TAP_BROWSER_SESSION,
       sequence: ++sequence, url: bounded(page.url(), 2048), title: '', bounded_snapshot: '',
-      fields: [], screenshot_ref: null, error: controlled ? controlledRequestFailure(error) : bounded(error.message, 1000) })); }
+      fields: [], documents: [], screenshot_ref: null, error: controlled ? controlledRequestFailure(error) : bounded(error.message, 1000) })); }
   });
 }).listen(socketPath, () => fs.chmodSync(socketPath, 0o600));
 if (localRoot) process.once('SIGTERM', async () => {

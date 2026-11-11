@@ -67,6 +67,7 @@ class BrowserObservation:
     result: dict[str, Any] | None = None
     evidence: tuple[dict[str, Any], ...] = ()
     write_started: bool | None = None
+    documents: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import {createDocumentProvenance} from '../document-provenance.mjs';
 import {createLiveControl, serialDispatcher} from '../live-control.mjs';
 
 // Run the real inspector action handler with controlled browser lifecycle events.
@@ -9,10 +10,11 @@ async function inspector({ crashDuringSnapshot = false, snapshotError = false, l
   let closed = false;
   let crash;
   let url = 'https://example.com/quote';
+  let documentVersion = 0;
   const page = {
     on: (event, callback) => { if (event === 'crash') crash = callback; },
     url: () => url,
-    goto: async next => { url = next; },
+    goto: async next => { url = next; documentVersion++; },
     title: async () => 'Quote',
     screenshot: async () => Buffer.from('png'),
     video: () => ({ path: async () => '/tmp/video.webm' }),
@@ -23,6 +25,13 @@ async function inspector({ crashDuringSnapshot = false, snapshotError = false, l
       return '- heading "Quote"';
     },
   };
+  page.frames = () => closed ? [] : [page];
+  page.isDetached = () => closed;
+  page.evaluateHandle = async () => {
+    const captured = documentVersion;
+    return {evaluate:async () => !closed && captured === documentVersion, dispose:async () => {}};
+  };
+  page.locator = () => ({elementHandle:async () => ({ownerFrame:async () => page, evaluate:async () => true, dispose:async () => {}})});
   const context = {
     pages: () => [page],
     close: async () => { closed = true; },
@@ -31,7 +40,7 @@ async function inspector({ crashDuringSnapshot = false, snapshotError = false, l
   const source = (await fs.readFile(new URL('../inspector.mjs', import.meta.url), 'utf8'))
     .replace(/^import .*;\n/gm, '').split('try { fs.unlinkSync(socketPath); }')[0];
   const {handler,requestFailure} = await new (Object.getPrototypeOf(async function() {}).constructor)(
-    'fs', 'net', 'chromium', 'observeFields', 'readValue', 'guardTarget', 'selectValue', 'process', 'Date', 'createLiveControl', 'serialDispatcher',
+    'fs', 'net', 'chromium', 'observeFields', 'readValue', 'guardTarget', 'selectValue', 'process', 'Date', 'createLiveControl', 'serialDispatcher', 'createDocumentProvenance',
     source + '\nreturn {handler:observe,requestFailure:controlledRequestFailure};'
   )(
     { readFileSync: () => Buffer.from('evidence') },
@@ -44,7 +53,7 @@ async function inspector({ crashDuringSnapshot = false, snapshotError = false, l
     async (_page, action) => { if (action.selector === '#wrong') throw new Error('target mismatch'); },
     async () => {},
     {env:{TAP_BROWSER_LOCAL_DIR:localRoot, TAP_BROWSER_LOCAL_HEADLESS:headless, TAP_BROWSER_CONTROLLED:controlled?'1':undefined}},
-    class extends Date { constructor() { super(now()); } }, createLiveControl, serialDispatcher,
+    class extends Date { constructor() { super(now()); } }, createLiveControl, serialDispatcher, createDocumentProvenance,
   );
   return { handler, requestFailure, launch, crash: () => crash(), closed: () => closed };
 }
@@ -58,6 +67,7 @@ test('finish retains successful evidence after closing the recording context', a
   assert.equal(output.premium, '10.62');
   assert.equal(output.final_url, 'https://example.com/quote');
   assert.deepEqual(output.provenance.premium, {
+    source_frame_id: result.documents[0].frame_id, source_document_id: result.documents[0].document_id,
     source_url: 'https://example.com/quote', observation_sequence: 1,
     observed_at: '2026-11-09T00:00:00.000Z',
   });
@@ -112,8 +122,8 @@ test('finish preserves each field read source and time across two pages', async 
   assert.equal(Object.hasOwn(output, 'source_url'), false);
   assert.equal(Object.hasOwn(output, 'observed_at'), false);
   assert.deepEqual(output.provenance, {
-    age: { source_url: 'https://example.com/form', observation_sequence: 2, observed_at: '2026-11-09T01:00:00.000Z' },
-    premium: { source_url: 'https://example.com/quote', observation_sequence: 4, observed_at: '2026-11-09T01:01:00.000Z' },
+    age: { source_frame_id:age.extracted.source_frame_id, source_document_id:age.extracted.source_document_id, source_url: 'https://example.com/form', observation_sequence: 2, observed_at: '2026-11-09T01:00:00.000Z' },
+    premium: { source_frame_id:premium.extracted.source_frame_id, source_document_id:premium.extracted.source_document_id, source_url: 'https://example.com/quote', observation_sequence: 4, observed_at: '2026-11-09T01:01:00.000Z' },
   });
   assert.deepEqual(age.extracted, { name: 'age', value: '30', ...output.provenance.age });
   assert.deepEqual(premium.extracted, { name: 'premium', value: '10.62', ...output.provenance.premium });
