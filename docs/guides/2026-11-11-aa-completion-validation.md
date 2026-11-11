@@ -127,3 +127,23 @@ The broader repository `make test` and `make check` passed after the bridge and
 assert_read implementation; browser socket tests required the authorized local
 execution context rather than the restricted sandbox. The subsequent readonly
 and zero-match inspector changes passed 16 real Chromium context/alias tests.
+
+After Docker was expanded without deleting data, the same unused AIA reservation
+was resumed. It reached the result iframe and read HKD 35.00 monthly, but did not
+set the requested synthetic DOB 1996-11-08. Its attempted later proof instead
+referenced the default 11-11-2008 and stale refs from the previous iframe. The task
+ended failed with no published frozen bundle. A visible premium alone is not a
+valid requested quote and is not reported as successful acceptance.
+
+That final run recorded 23 calls / USD 0.180625. Across the four actual provider
+runs the ledger records 57 calls / USD 0.348784. Earlier unresolved reservations
+remain conservatively retained; no further paid run is started under this pass.
+The startup-only failed attempt had an empty usage manifest and no model call.
+
+This result separates three concerns: browser tools must support the operation;
+the model must choose correct actions and preserve requested inputs; acceptance
+must prove both inputs and output. Fixing locator recovery does not prove reliable
+planning, and reading any positive premium does not prove the right profile.
+The next evaluation should compare exact requested-input compliance, current-page
+readback, final-result provenance and frozen replay, rather than headline model
+names or a screenshot of a quote.
