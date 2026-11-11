@@ -35,3 +35,14 @@ These checks use controlled fixtures with no external model calls or new model
 spend. They do not establish autonomous FWD/AIA quotation success, AI-generated
 LCA draft integration, or full release/remote-CI completion. Those remain separate
 acceptance requirements.
+
+## Public FWD tool-level preflight
+
+With the task-owned local Browser runtime and existing configured upstream proxy,
+opening the public MyTerm Plus quote page, selecting synthetic age `30` through
+the current observed readonly combobox, and exact `value=30` readback all returned
+no error. The browser was confirmed stopped afterward. This used no model and
+submitted no application, contact details or payment. It proves this tool-level
+interaction works today, not an autonomous full quote task or recorded acceptance
+video. The probe had no evidence sink, so its cleanup reported that no session
+recording was persisted; observation JSON was saved separately.
