@@ -403,7 +403,7 @@ for (const scenario of cases) {
           .getByRole("combobox", { name: /^Step .+ target$/u })
           .selectOption(resultRead!.target_id!);
         await lca
-          .getByRole("textbox", { name: /^Step .+ text value$/u })
+          .getByRole("textbox", { name: /^Step .+ value$/u })
           .fill("AC-42 / 120 / MATCH");
         await lca.screenshot({
           path: `${evidenceDir}/form-lca-edited-assertion.png`,
