@@ -77,3 +77,19 @@ Synthetic model accounting is fixture data, not billed provider usage. Independe
 review of the recovery change found no blockers; 48 persistence/progress tests
 also passed independently. Public autonomous quotation and AA-to-LCA UI acceptance
 remain distinct checks.
+
+## Bounded real FWD attempt and readonly action correction
+
+The first actual `qwen-plus` / `dashscope/qwen-plus` run selected `fill` for the
+readonly age combobox. Playwright never found an editable target and timed out;
+the unknown-write fence correctly halted the run instead of duplicating it or
+claiming a quote. Recorded usage was 10 calls / USD 0.040543. Because the audit
+remained recovering rather than fully settled, the full attempt reservation
+(30 calls / USD 0.50) is retained against the approved cap, not recycled.
+
+Direct fill now checks the resolved element's actual `readOnly` property before
+invocation and returns a known pre-write error suggesting `select`/inspection.
+It never converts a timeout or post-dispatch outcome to safe failure, and it does
+not force a site's control into an editable state. The real Chromium regression
+failed before the change (30-second timeout, `write_started=true`) and passed
+afterward with `write_started=false` and no click/open/write on the control.

@@ -277,3 +277,11 @@ test('malformed selector is rejected before a write is started with recoverable 
   assert.equal(result.write_started,false);
   assert.ok(result.bounded_snapshot);
 });
+
+test('readonly fill is rejected before dispatch so the agent can choose select', async t=>{
+  const {execute,page} = await fixture(t,false);
+  const result=await execute({type:'fill',step:'operate',selector:'#age',value:'30'});
+  assert.match(result.error,/readonly.*select/i);
+  assert.equal(result.write_started,false);
+  assert.equal(await page.locator('#age').getAttribute('data-writes'),null);
+});
