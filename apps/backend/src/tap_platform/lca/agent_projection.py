@@ -126,10 +126,6 @@ def project_agent_actions(
             or not bdd["title"].strip()
         ):
             reason = "missing_business_step"
-        if reason is None and (
-            request.get("target_texts") or request.get("scope_text")
-        ):
-            reason = "target_contract_requires_review"
         selector = request.get("selector", "")
         target_facts = [
             field
@@ -234,6 +230,17 @@ def project_agent_actions(
             "operation": operation,
             "arguments": arguments,
             "timeout_ms": request.get("timeout_ms", 30000),
+            **(
+                {
+                    "target_contract": {
+                        key: request[key]
+                        for key in ("target_texts", "scope_text")
+                        if key in request
+                    }
+                }
+                if "target_texts" in request or "scope_text" in request
+                else {}
+            ),
             "provenance": {
                 "source": "aa",
                 "source_action_id": identity,

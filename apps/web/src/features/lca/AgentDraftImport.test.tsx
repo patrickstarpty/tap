@@ -100,3 +100,24 @@ it("rejects a response for another source task", async () => {
   );
   expect(screen.queryByText("Use as unsaved draft")).toBeNull();
 });
+
+it("rejects a reviewed preview that would lose its frozen contract on import", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...result,
+        contract_review_status: "reviewed",
+        acceptance_contract: { version: 1, reviewed: true, fields: [] },
+      }),
+    }),
+  );
+  render(<AgentDraftImport projectId="p1" onLoad={vi.fn()} disabled={false} />);
+  fireEvent.change(screen.getByLabelText("AA task ID"), {
+    target: { value: "task1" },
+  });
+  fireEvent.click(screen.getByText("Preview AA task"));
+  await screen.findByText("AA source could not be verified.");
+  expect(screen.queryByText("Use as unsaved draft")).toBeNull();
+});

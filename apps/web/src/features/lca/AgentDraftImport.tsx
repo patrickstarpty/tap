@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { LcaDefinition } from "./client";
+import { SourceAcceptanceReview } from "./SourceAcceptanceReview";
+import type { AcceptanceContract, LcaDefinition } from "./client";
 interface Preview {
   schema_version: "aa-lca-draft-v1";
   complete: boolean;
+  acceptance_contract?: AcceptanceContract | null;
+  contract_review_status?: "reviewed" | "legacy_unreviewed" | "invalid";
   definition: LcaDefinition | null;
   issues: {
     action_id: string;
@@ -68,7 +71,14 @@ export function AgentDraftImport({
         value.source?.task_id !== task ||
         !Array.isArray(value.issues) ||
         typeof value.complete !== "boolean" ||
-        (value.complete && (!value.definition || value.issues.length))
+        (value.complete && (!value.definition || value.issues.length)) ||
+        (value.complete &&
+          value.contract_review_status === "reviewed" &&
+          (value.definition?.source_acceptance?.review_status !== "reviewed" ||
+            value.definition.source_acceptance.source.input_sha256 !==
+              value.source.input_sha256 ||
+            value.definition.source_acceptance.source.execution_id !==
+              value.source.execution_id))
       )
         throw new Error("AA source could not be verified.");
       if (!controller.signal.aborted) setPreview(value);
@@ -122,6 +132,10 @@ export function AgentDraftImport({
             {preview.source.execution_id} · original script bundle:{" "}
             {preview.source.bundle_id}
           </p>
+          <SourceAcceptanceReview
+            status={preview.contract_review_status ?? "legacy_unreviewed"}
+            contract={preview.acceptance_contract ?? null}
+          />
           {preview.issues.length ? (
             <>
               <p role="alert">

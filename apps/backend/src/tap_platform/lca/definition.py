@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .source_acceptance import SourceAcceptance, TargetContract
+
 SCHEMA_VERSION = "lca-debug-v1"
 MAX_STEPS = 100
 ARIA_ROLES = frozenset(
@@ -87,6 +89,7 @@ class Step(StrictModel):
     ]
     arguments: dict[str, Text | int | float | bool | ParameterReference]
     target_id: Identifier | None = None
+    target_contract: TargetContract | None = None
     timeout_ms: Annotated[int, Field(gt=0, le=30000)]
     provenance: dict[str, Annotated[str, Field(max_length=1024)]] = Field(
         default_factory=dict
@@ -110,6 +113,8 @@ class BddStep(StrictModel):
 
 class DebugDefinition(StrictModel):
     schema_version: Literal["lca-debug-v1"]
+    # Immutable original AA evidence, not approval of later edited actions.
+    source_acceptance: SourceAcceptance | None = None
     allowed_origins: Annotated[list[str], Field(min_length=1, max_length=8)]
     targets: Annotated[list[Target], Field(max_length=100)]
     parameters: Annotated[list[Parameter], Field(max_length=100)]
@@ -121,6 +126,9 @@ class DebugDefinition(StrictModel):
 
     @model_validator(mode="after")
     def references(self) -> "DebugDefinition":
+        for step in self.steps:
+            if step.target_contract is not None and step.target_id is None:
+                raise ValueError("Target contract requires an explicit target")
         for ids in (
             [t.id for t in self.targets],
             [p.name for p in self.parameters],
@@ -310,7 +318,7 @@ def check_read_arguments(arguments: Mapping[str, object]) -> None:
             raise ValueError("Read boolean conditions must be true")
         if key == "name" and (
             not isinstance(value, str)
-            or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value)
         ):
             raise ValueError("Read output name must be an identifier")
         if key == "pattern":

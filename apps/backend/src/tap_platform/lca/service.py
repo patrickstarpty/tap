@@ -16,7 +16,9 @@ from typing import Any
 from tap_platform.access import AccessPrincipal
 from tap_platform.browser_automation.service import BrowserService, digest
 
+from .acceptance import evaluate_contract, validate_source_metadata
 from .definition import (
+    DebugDefinition,
     SCHEMA_VERSION,
     canonical_bytes,
     resolve_parameters,
@@ -82,9 +84,24 @@ class LcaService:
             actor,
             key,
             title,
-            canonical_bytes(validate_definition(definition)),
+            canonical_bytes(self._checked_definition(project, definition)),
             provenance,
         )
+
+    def _checked_definition(self, project: str, definition: object) -> DebugDefinition:
+        checked = validate_definition(definition)
+        if checked.source_acceptance is not None:
+            try:
+                validate_source_metadata(
+                    self.browser,
+                    project,
+                    checked.source_acceptance.model_dump(exclude_unset=True),
+                )
+            except (ValueError, OSError, KeyError, TypeError) as error:
+                raise ValueError(
+                    "Original source acceptance could not be verified"
+                ) from error
+        return checked
 
     def get_flow(self, principal: AccessPrincipal, flow_id: str) -> dict[str, Any]:
         project, actor = self._authorize(principal, "lca.flows.read")
@@ -103,14 +120,22 @@ class LcaService:
         provenance: Any = None,
     ) -> dict[str, Any]:
         project, actor = self._authorize(principal, "lca.drafts.save")
-        self.store.get_flow(project, actor, flow_id)
+        previous = self.store.get_flow(project, actor, flow_id)
         self._version(expected_version)
+        # An imported flow cannot erase its original reviewed requirements by
+        # deleting a client-side metadata field. Editing its actions is allowed.
+        old_source = json.loads(previous["canonical_bytes"]).get("source_acceptance")
+        checked = validate_definition(definition).model_dump(exclude_unset=True)
+        if old_source is not None:
+            if checked.get("source_acceptance") not in (None, old_source):
+                raise ValueError("Original source acceptance cannot be replaced")
+            checked["source_acceptance"] = old_source
         return self.store.save_draft(
             project,
             actor,
             flow_id,
             expected_version,
-            canonical_bytes(validate_definition(definition)),
+            canonical_bytes(self._checked_definition(project, checked)),
             provenance,
         )
 
@@ -224,6 +249,7 @@ class LcaService:
             or run["canonical_results_error"]
             or not run["canonical_results"]
             or any(item["status"] != "passed" for item in run["canonical_results"])
+            or run["contract_acceptance"]["status"] == "not_proven"
         ):
             raise LcaConflict(
                 "Publication requires a verified passing replay of every step"
@@ -356,6 +382,13 @@ class LcaService:
             "execution": execution,
             "canonical_results": canonical_results,
             "canonical_results_error": canonical_error,
+            "contract_acceptance": evaluate_contract(
+                self.browser,
+                project,
+                json.loads(snapshot["canonical_bytes"]),
+                execution,
+                canonical_results,
+            ),
             "definition_snapshot": {
                 "version": snapshot["version"],
                 "definition": json.loads(snapshot["canonical_bytes"]),

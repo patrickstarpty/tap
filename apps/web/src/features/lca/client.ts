@@ -36,11 +36,43 @@ export interface LcaParameter {
   required: boolean;
   default?: Scalar;
 }
+export interface AcceptanceContract {
+  version: 1;
+  reviewed: true;
+  fields: {
+    id: string;
+    value: string;
+    readback_value: string;
+    attribute: string;
+    target_texts: string[];
+    scope_text?: string | null;
+  }[];
+}
+export interface SourceAcceptance {
+  source: {
+    task_id: string;
+    execution_id: string;
+    bundle_id: string;
+    input_sha256: string;
+  };
+  input_sha256: string;
+  review_status: "reviewed" | "legacy_unreviewed";
+  acceptance_contract: AcceptanceContract | null;
+}
+export interface ContractAcceptance {
+  status: "passed" | "not_proven" | "legacy_unreviewed";
+  fields: { id: string; status: "passed" | "not_proven"; reason: string }[];
+  reason: string;
+}
 export interface LcaStep {
   id: string;
   operation: Operation;
   arguments: Record<string, Scalar | { parameter: string }>;
   target_id?: string | null;
+  target_contract?: {
+    target_texts: string[];
+    scope_text?: string | null;
+  } | null;
   timeout_ms: number;
   provenance?: Record<string, string>;
 }
@@ -57,6 +89,7 @@ export interface LcaDefinition {
   parameters: LcaParameter[];
   steps: LcaStep[];
   bdd_steps?: BddStep[];
+  source_acceptance?: SourceAcceptance | null;
 }
 export interface LcaFlow {
   id: string;
@@ -100,6 +133,7 @@ export interface LcaRun {
     output?: { name: string; value: string };
   }> | null;
   canonical_results_error?: string | null;
+  contract_acceptance?: ContractAcceptance;
   definition_snapshot?: {
     version: number;
     definition: LcaDefinition;

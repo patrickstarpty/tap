@@ -83,6 +83,34 @@ READ_ASSERTION_HELPER = r"""
 """
 
 
+# Same bounded semantic guard as the AA runtime; literals only.
+TARGET_CONTRACT_HELPER = r"""
+  const assertTargetContract = async (locator, contract, timeout) => {
+  if (!contract.target_texts) return; // Older frozen bundles retain their original contract.
+  if (!Array.isArray(contract.target_texts) || !contract.target_texts.length) throw new Error('missing target contract');
+  const facts = await locator.evaluate(node => ({
+    labels: [node.id, node.getAttribute('name'), node.getAttribute('aria-label'),
+      ...(node.labels ? [...node.labels].map(n=>n.textContent) : []),
+      node.textContent, ...(node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id=>document.getElementById(id)?.textContent)].filter(Boolean),
+    scopes: [node.closest('label'), node.parentElement, node.parentElement?.parentElement]
+      .filter(n=>n && !['BODY','HTML'].includes(n.tagName) && (n.textContent || '').length <= 600)
+      .map(n=>(n.innerText || n.textContent).trim())
+      .filter(text=>text !== (node.innerText || node.textContent || '').trim()).slice(0,1),
+    type: node.getAttribute('type'), autocomplete: node.getAttribute('autocomplete') || '',
+  }), {timeout});
+  const matches = (text, expected) => {
+    const value = String(text).normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+    const term = String(expected).normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return Boolean(term) && new RegExp('(^|[^\\p{L}\\p{N}])'+escaped+'($|[^\\p{L}\\p{N}])','u').test(value);
+  };
+  if (facts.type === 'password' || /password|one-time-code|cc-number|cc-csc/.test(facts.autocomplete)) throw new Error('sensitive target');
+  if (!contract.target_texts.some(term=>facts.labels.some(text=>matches(text,term)))) throw new Error('target does not match frozen BDD contract');
+  if (contract.scope_text && !facts.scopes.some(text=>matches(text,contract.scope_text))) throw new Error('scope does not match frozen BDD contract');
+  };
+"""
+
+
 def generate_playwright(
     definition: DebugDefinition, parameters: Mapping[str, object] | None = None
 ) -> GeneratedPlaywright:
@@ -101,6 +129,8 @@ def generate_playwright(
     ]
     if any(s.operation == "assert_read" for s in definition.steps):
         lines.extend(READ_ASSERTION_HELPER.strip("\n").split("\n"))
+    if any(step.target_contract is not None for step in definition.steps):
+        lines.extend(TARGET_CONTRACT_HELPER.strip("\n").split("\n"))
     digest = hashlib.sha256(frozen).hexdigest()
     result = {
         "schema_version": "lca-debug-result-v1",
@@ -187,9 +217,15 @@ def generate_playwright(
                 command = f"{locator}.evaluate((element, [x, y]) => element.scrollBy({{ left: x, top: y, behavior: 'instant' }}), {delta}, {options})"
             else:
                 command = f"page.evaluate(([x, y]) => window.scrollBy({{ left: x, top: y, behavior: 'instant' }}), {delta})"
+        guard = []
+        if step.target_contract is not None:
+            guard = [
+                f"        await assertTargetContract({locator}, {literal(step.target_contract.model_dump(exclude_unset=True))}, {step.timeout_ms});"
+            ]
         lines.extend(
             [
                 "      try {",
+                *guard,
                 f"        await {command};",
                 f"        result.steps[{index}].status = 'passed';",
                 "      } catch (error) {",

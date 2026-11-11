@@ -1,11 +1,14 @@
 """Authorize a read-only LCA projection from a completed live AA execution."""
 
+import json
 from typing import Any
 
 from tap_platform.access import AccessPrincipal
 from tap_platform.browser_automation.service import BrowserService, Forbidden, Invalid
 
 from .agent_projection import project_agent_actions
+from .definition import validate_definition
+from .source_acceptance import SourceAcceptance, ReviewedAcceptanceContract
 
 
 def export_agent_draft(
@@ -91,5 +94,49 @@ def export_agent_draft(
     result = project_agent_actions(
         rows, bundle["allowed_origins"], plan, action_steps, source
     )
+    # Read only the content-addressed original bundle inputs. Never infer a
+    # contract from the model's plan, current form or edited LCA definition.
+    try:
+        input_data = json.loads(
+            browser.objects.read(
+                bundle["input_ref"], bundle["input_sha256"], max_bytes=1_000_000
+            )
+        )
+    except (ValueError, OSError, TypeError) as error:
+        raise Invalid("Frozen AA inputs unavailable or invalid") from error
+    if not isinstance(input_data, dict):
+        raise Invalid("Frozen AA inputs unavailable or invalid")
+    raw_contract = input_data.get("acceptance_contract")
+    result["acceptance_contract"] = raw_contract
+    result["contract_review_status"] = "legacy_unreviewed"
+    try:
+        if "acceptance_contract" in input_data:
+            ReviewedAcceptanceContract.model_validate(raw_contract)
+            result["contract_review_status"] = "reviewed"
+        source_acceptance = SourceAcceptance.model_validate(
+            {
+                "source": source,
+                "input_sha256": bundle["input_sha256"],
+                "review_status": result["contract_review_status"],
+                "acceptance_contract": raw_contract,
+            }
+        ).model_dump(exclude_unset=True)
+    except ValueError:
+        result["contract_review_status"] = "invalid"
+        result["complete"] = False
+        result["definition"] = None
+        result["issues"].append(
+            {
+                "action_id": "",
+                "sequence": 0,
+                "operation": "",
+                "reason": "invalid_source_acceptance_contract",
+            }
+        )
+    else:
+        if result["definition"] is not None:
+            result["definition"] = validate_definition(
+                {**result["definition"], "source_acceptance": source_acceptance}
+            ).model_dump(exclude_unset=True)
     result["evidence"] = execution["evidence"]
     return result

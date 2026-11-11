@@ -160,6 +160,7 @@ class SyntheticModel(BaseHTTPRequestHandler):
     stages: dict[str, int] = {}
     calls: dict[str, int] = {}
     observed: set[str] = set()
+    reviewed_bridge = False
 
     def do_GET(self) -> None:
         if self.path != "/stats":
@@ -321,6 +322,48 @@ class SyntheticModel(BaseHTTPRequestHandler):
                         },
                     ]
                 )
+            if name == "form" and self.reviewed_bridge:
+                # The real UI supplies/reviews the contract. This zero-cost
+                # decision fixture only performs its requested DOM readbacks.
+                actions[0]["steps"][2:2] = [
+                    {
+                        "id": "verify_account",
+                        "keyword": "Then",
+                        "title": "Verify supplied account",
+                        "verification_kind": "input",
+                    },
+                    {
+                        "id": "verify_amount",
+                        "keyword": "Then",
+                        "title": "Verify supplied amount",
+                        "verification_kind": "input",
+                    },
+                ]
+                click_index = next(
+                    index
+                    for index, action in enumerate(actions)
+                    if action.get("type") == "click"
+                )
+                actions[click_index:click_index] = [
+                    {
+                        "type": "read",
+                        "step": "verify_account",
+                        "selector": "[name=account]",
+                        "name": "account",
+                        "attribute": "value",
+                        "equals": "AC-42",
+                        "target_texts": ["Account"],
+                    },
+                    {
+                        "type": "read",
+                        "step": "verify_amount",
+                        "selector": "[name=amount]",
+                        "name": "amount",
+                        "attribute": "value",
+                        "equals": "120",
+                        "target_texts": ["Amount"],
+                    },
+                ]
             command = None
             if stage < len(actions):
                 if (
@@ -1257,6 +1300,7 @@ def main() -> int:
                 raise RuntimeError("owned site did not become ready")
         if args.mode == "synthetic":
             env["TAPPER_BROWSER_CORE_SYNTHETIC"] = "1"
+            SyntheticModel.reviewed_bridge = args.lca_bridge
             model = ThreadingHTTPServer(("127.0.0.1", 0), SyntheticModel)
             model_thread = Thread(target=model.serve_forever, daemon=True)
             model_thread.start()

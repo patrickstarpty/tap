@@ -434,3 +434,27 @@ it("shows validated named read outputs beside canonical action results", async (
     await screen.findByText("Output quote: AC-42 / 120 / MATCH"),
   ).toBeVisible();
 });
+
+it("keeps technical replay success separate from unproven reviewed requirements", async () => {
+  const api = client();
+  api.getRun = vi.fn().mockResolvedValue({
+    ...run,
+    canonical_results: [{ step_id: "read", status: "passed" }],
+    contract_acceptance: {
+      status: "not_proven",
+      reason: "",
+      fields: [
+        { id: "Age", status: "not_proven", reason: "Required target changed" },
+      ],
+    },
+    execution: { status: "passed", steps: [], evidence: [] },
+  });
+  const user = await open(api);
+  await user.click(screen.getByRole("button", { name: "Debug replay" }));
+  expect(
+    await screen.findByText(/technical replay success does not prove/),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/Age: not_proven · Required target changed/),
+  ).toBeVisible();
+});

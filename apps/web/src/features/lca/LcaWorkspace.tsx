@@ -9,6 +9,7 @@ import {
   type RunInput,
   type Scalar,
 } from "./client";
+import { SourceAcceptanceReview } from "./SourceAcceptanceReview";
 import { AgentDraftImport } from "./AgentDraftImport";
 import { BddResults } from "./BddResults";
 import { groupsFor } from "./bdd";
@@ -420,6 +421,12 @@ function ProjectWorkspace({
           );
         }}
       />
+      {definition?.source_acceptance ? (
+        <SourceAcceptanceReview
+          status={definition.source_acceptance.review_status}
+          contract={definition.source_acceptance.acceptance_contract}
+        />
+      ) : null}
       <details className="lca-recording-disclosure">
         <summary>Browser recording · append actions to a BDD step</summary>
         {flow && definition ? (
@@ -648,6 +655,7 @@ function ProjectWorkspace({
                   }
                   verifiedRunId={
                     run?.execution?.status === "passed" &&
+                    run.contract_acceptance?.status !== "not_proven" &&
                     run.definition_snapshot?.version === flow.version &&
                     run.canonical_results?.length &&
                     run.canonical_results.every(
@@ -795,9 +803,37 @@ function RunDetails({
         <dd>{run.definition_digest}</dd>
         <dt>Input digest</dt>
         <dd>{run.input_digest}</dd>
-        <dt>Execution</dt>
+        <dt>Technical execution</dt>
         <dd>{run.execution?.status || "Awaiting execution receipt"}</dd>
       </dl>
+      <section aria-label="Current requirements acceptance">
+        <h4>Current requirements acceptance</h4>
+        <p>
+          {run.contract_acceptance?.status === "passed"
+            ? "Passed: this execution proved every original reviewed requirement."
+            : run.contract_acceptance?.status === "not_proven"
+              ? "Not proven: technical replay success does not prove all reviewed requirements."
+              : "Legacy / unreviewed: no reviewed source requirements are certified by this replay."}
+        </p>
+        {run.contract_acceptance?.status === "not_proven" ? (
+          <p>
+            You can save edits and run technical checks. To establish changed
+            reviewed requirements or bindings, create a new reviewed AA task and
+            import its successful result as a new LCA flow.
+          </p>
+        ) : null}
+        {run.contract_acceptance?.reason ? (
+          <p>{run.contract_acceptance.reason}</p>
+        ) : null}
+        <ul>
+          {run.contract_acceptance?.fields.map((field) => (
+            <li key={field.id}>
+              {field.id}: {field.status}
+              {field.reason ? ` · ${field.reason}` : ""}
+            </li>
+          ))}
+        </ul>
+      </section>
       {run.execution?.status === "unknown" && (
         <p className="lca-error">
           Outcome unknown. Do not automatically repeat this run.

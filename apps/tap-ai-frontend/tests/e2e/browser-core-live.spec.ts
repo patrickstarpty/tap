@@ -11,6 +11,18 @@ type CoreCase = {
   status: "succeeded" | "failed" | "awaiting_input" | "canceled";
   outputPattern?: string;
   replay?: boolean;
+  acceptanceContract?: {
+    version: 1;
+    reviewed: true;
+    fields: {
+      id: string;
+      value: string;
+      readbackValue: string;
+      attribute: string;
+      targetTexts: string[];
+      scopeText?: string | null;
+    }[];
+  };
 };
 
 type CoreRun = {
@@ -80,6 +92,79 @@ for (const scenario of cases) {
       .fill(
         `${process.env.TAPPER_BROWSER_CORE_SYNTHETIC === "1" ? "[e2e-workflow:browser] " : ""}${scenario.goal}\nWebsite: ${scenario.startUrl}\n${scenario.inputNotes ?? ""}\nExpected: ${scenario.expected}`,
       );
+    const acceptanceContract =
+      scenario.acceptanceContract ??
+      (process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" &&
+      scenario.name === "form"
+        ? {
+            version: 1 as const,
+            reviewed: true as const,
+            fields: [
+              {
+                id: "account",
+                value: "AC-42",
+                readbackValue: "AC-42",
+                attribute: "value",
+                targetTexts: ["Account"],
+              },
+              {
+                id: "amount",
+                value: "120",
+                readbackValue: "120",
+                attribute: "value",
+                targetTexts: ["Amount"],
+              },
+            ],
+          }
+        : undefined);
+    if (acceptanceContract) {
+      await page.getByText("Execution options", { exact: true }).click();
+      await page
+        .getByLabel("Execution", { exact: true })
+        .selectOption("browser");
+      await page
+        .getByLabel("Start URL", { exact: true })
+        .fill(scenario.startUrl);
+      for (const [offset, requirement] of acceptanceContract.fields.entries()) {
+        const index = offset + 1;
+        await page
+          .getByRole("button", { name: "Add required input", exact: true })
+          .click();
+        const field = page.getByRole("group", {
+          name: `Required input ${index}`,
+          exact: true,
+        });
+        await field
+          .getByLabel("Field ID", { exact: true })
+          .fill(requirement.id);
+        await field
+          .getByLabel("Input value", { exact: true })
+          .fill(requirement.value);
+        await field
+          .getByLabel("Expected readback value", { exact: true })
+          .fill(requirement.readbackValue);
+        await field
+          .getByRole("combobox", { name: "Readback attribute", exact: true })
+          .selectOption(requirement.attribute);
+        await field
+          .getByLabel("Exact business labels (one per line)", { exact: true })
+          .fill(requirement.targetTexts.join("\n"));
+        if ("scopeText" in requirement && requirement.scopeText) {
+          await field
+            .getByLabel("Scope text (optional)", { exact: true })
+            .fill(requirement.scopeText);
+        }
+      }
+      await expect(
+        page.getByRole("button", { name: "Send", exact: true }),
+      ).toBeDisabled();
+      await page
+        .getByRole("checkbox", {
+          name: "I reviewed every required input and its expected readback.",
+          exact: true,
+        })
+        .check();
+    }
     const acceptedResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -88,6 +173,19 @@ for (const scenario of cases) {
     await page.getByRole("button", { name: "Send" }).click();
     const accepted = await acceptedResponse;
     expect(accepted.status(), await accepted.text()).toBe(202);
+    if (acceptanceContract) {
+      const submitted = accepted.request().postDataJSON();
+      expect(submitted.browser.acceptanceContract.reviewed).toBe(true);
+      expect(
+        submitted.browser.acceptanceContract.fields.map(
+          (field: { id: string }) => field.id,
+        ),
+      ).toEqual(acceptanceContract.fields.map((field) => field.id));
+      writeFileSync(
+        `${evidenceDir}/${scenario.name}-reviewed-input-request.json`,
+        JSON.stringify(submitted.browser, null, 2),
+      );
+    }
     const { conversationId } = (await accepted.json()) as {
       conversationId: string;
     };
@@ -240,9 +338,9 @@ for (const scenario of cases) {
       await expect(link).toBeVisible();
       const href = await link.getAttribute("href");
       expect(href).toContain(`aa-task=${taskId}`);
-      const lca = await page.context().newPage();
-      try {
-        await lca.goto(href!);
+      const lca = page;
+      {
+        await link.click();
         await expect(lca.getByLabel("AA task ID")).toHaveValue(taskId);
         await lca.getByRole("button", { name: "Preview AA task" }).click();
         await expect(
@@ -286,6 +384,10 @@ for (const scenario of cases) {
             output?: { name: string; value: string };
           }[];
           canonical_results_error?: string | null;
+          contract_acceptance?: {
+            status: string;
+            fields: { id: string; status: string }[];
+          };
         } = {};
         await expect
           .poll(
@@ -304,7 +406,14 @@ for (const scenario of cases) {
           )
           .toBe("passed");
         expect(completed.canonical_results_error).toBeNull();
-        expect(completed.canonical_results).toHaveLength(6);
+        expect(completed.canonical_results?.length).toBeGreaterThanOrEqual(8);
+        expect(completed.contract_acceptance?.status).toBe("passed");
+        expect(completed.contract_acceptance?.fields).toHaveLength(2);
+        expect(
+          completed.contract_acceptance?.fields.every(
+            (field) => field.status === "passed",
+          ),
+        ).toBe(true);
         expect(
           completed.canonical_results?.every(
             (step) => step.status === "passed",
@@ -318,7 +427,9 @@ for (const scenario of cases) {
         expect(JSON.stringify(completed.execution?.result)).toContain(
           "AC-42 / 120 / MATCH",
         );
-        const sourceAfterImport = await page.request.get(taskPath);
+        const sourceAfterImport = await page.request.get(
+          new URL(taskPath, origin).href,
+        );
         expect((await sourceAfterImport.json()).budgetUsed?.model_calls).toBe(
           snapshot.budgetUsed?.model_calls,
         );
@@ -337,8 +448,6 @@ for (const scenario of cases) {
           path: `${evidenceDir}/form-lca-bridge-ui.png`,
           fullPage: true,
         });
-      } finally {
-        await lca.close();
       }
     }
     if (!scenario.replay) return;

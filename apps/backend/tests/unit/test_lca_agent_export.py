@@ -1,5 +1,6 @@
 """AA export authority and immutable source bindings."""
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 import pytest
@@ -11,11 +12,15 @@ from tap_platform.browser_automation.objects import BrowserObjectStore
 from tap_platform.lca.agent_export import export_agent_draft
 
 
-def fixture(tmp_path):
+def fixture(tmp_path, input_data=None):
     engine = create_engine(f"sqlite:///{tmp_path / 'db'}")
     metadata.create_all(engine)
     browser = BrowserService(
         BrowserStore(engine), BrowserObjectStore(tmp_path / "objects")
+    )
+
+    input_ref, input_sha, _ = browser.objects.persist(
+        json.dumps(input_data or {}).encode(), kind="input", max_bytes=1_000_000
     )
 
     def put(kind, ident, **values):
@@ -37,8 +42,8 @@ def fixture(tmp_path):
         task_id="task",
         sha256="b" * 64,
         script_ref="script",
-        input_sha256="a" * 64,
-        input_ref="input",
+        input_sha256=input_sha,
+        input_ref=input_ref,
         allowed_origins=["https://example.com"],
     )
     evidence = [
@@ -49,7 +54,7 @@ def fixture(tmp_path):
         "run",
         task_id="task",
         bundle_id="bundle",
-        input_sha256="a" * 64,
+        input_sha256=input_sha,
         status="passed",
         request={"mode": "live", "session_id": "session"},
         cancel_requested=False,
@@ -89,7 +94,7 @@ def fixture(tmp_path):
     body = {
         "task_id": "task",
         "bundle_id": "bundle",
-        "input_sha256": "a" * 64,
+        "input_sha256": input_sha,
         "plan": [{"id": "open", "keyword": "Given", "title": "Open"}],
         "action_steps": {"a1": "open"},
     }
