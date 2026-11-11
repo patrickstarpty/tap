@@ -1,11 +1,16 @@
 import { defineConfig } from '@playwright/test';
 
+const runtime = process.env.TAP_BROWSER_RUNTIME_DIR || '/opt/browser';
+const frozen = process.env.TAP_BROWSER_FROZEN_DIR || '/opt/browser/frozen';
+const output = process.env.TAP_BROWSER_OUTPUT_DIR || '/opt/browser/output';
 export default defineConfig({
-  testDir: '/opt/browser/frozen', testMatch: 'flow.spec.ts', workers: 1,
+  testDir: frozen, testMatch: 'flow.spec.ts', workers: 1,
   timeout: Number(process.env.TAP_BROWSER_TEST_TIMEOUT || 120_000),
-  retries: 0, reporter: [['/opt/browser/reporter.mjs']],
-  outputDir: '/opt/browser/output/test-results',
-  use: { browserName: 'chromium', headless: true, screenshot: 'on', trace: 'on',
+  retries: 0, reporter: [[`${runtime}/reporter.mjs`]],
+  outputDir: `${output}/test-results`,
+  use: { browserName: 'chromium', headless: !process.env.TAP_BROWSER_LOCAL_DIR || process.env.TAP_BROWSER_LOCAL_HEADLESS !== 'false', screenshot: 'on', trace: 'on', video: 'on',
     proxy: { server: process.env.TAP_BROWSER_PROXY },
-    launchOptions: { chromiumSandbox: true }, viewport: { width: 1280, height: 800 } },
+    ignoreHTTPSErrors: Boolean(process.env.TAP_BROWSER_LOCAL_DIR),
+    launchOptions: { chromiumSandbox: true,
+      ...(process.env.TAP_BROWSER_LOCAL_EXECUTABLE_PATH ? {executablePath:process.env.TAP_BROWSER_LOCAL_EXECUTABLE_PATH} : {}) }, viewport: { width: 1280, height: 800 } },
 });

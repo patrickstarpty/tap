@@ -4,14 +4,15 @@ import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const MAX_REQUEST_BYTES = 131072;
+const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1048576;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-export async function mailboxRequest(root, kind, payload, timeoutMs = 30000) {
+export async function mailboxRequest(root, kind, payload, timeoutMs = 30000, signal) {
   if (!['model', 'browser'].includes(kind) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600000) {
     throw new Error('invalid mailbox operation');
   }
+  signal?.throwIfAborted();
   const id = crypto.randomBytes(16).toString('hex');
   const requestPath = path.join(root, 'requests', `${id}.json`);
   const responsePath = path.join(root, 'responses', `${id}.json`);
@@ -20,11 +21,12 @@ export async function mailboxRequest(root, kind, payload, timeoutMs = 30000) {
   const temporary = path.join(root, 'requests', `${id}.tmp`);
   const deadlineAt = Date.now() + timeoutMs;
   const envelope = Buffer.from(JSON.stringify({ id, kind, deadline_at: deadlineAt / 1000, payload }));
-  if (envelope.length > 196608) throw new Error('mailbox request exceeds size cap');
+  if (envelope.length > 12 * 1024 * 1024) throw new Error('mailbox request exceeds size cap');
   fs.writeFileSync(temporary, envelope, { flag: 'wx', mode: 0o600 });
   fs.renameSync(temporary, requestPath);
   try {
     while (Date.now() < deadlineAt) {
+      signal?.throwIfAborted();
       try {
         const stat = fs.lstatSync(responsePath);
         if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077)) throw new Error('unsafe mailbox response');
@@ -65,7 +67,7 @@ export function createModelShim({ root, token, port = 39001, deadlineAt = null }
     try {
       for await (const chunk of request) {
         size += chunk.length;
-        if (size > (measure ? 2097152 : MAX_REQUEST_BYTES)) {
+        if (size > MAX_REQUEST_BYTES) {
           response.writeHead(413, { 'Content-Length': '0' }).end();
           return;
         }
@@ -94,7 +96,14 @@ export function createModelShim({ root, token, port = 39001, deadlineAt = null }
           typeof result.contentType !== 'string' || !/^(?:application\/json|text\/event-stream)(?:;[^\r\n]{0,80})?$/.test(result.contentType)) {
         throw new Error('invalid model response envelope');
       }
-      response.writeHead(result.status, { 'Content-Type': result.contentType, 'Content-Length': String(body.length) });
+      let status = result.status;
+      if (status === 429 && result.contentType.startsWith('application/json')) {
+        let error;
+        try { error = JSON.parse(body.toString('utf8')).error; } catch {}
+        // A task budget cannot recover through rate-limit retries. Preserve real upstream 429s.
+        if (error?.type === 'tap_budget_exhausted' && error.retryable === false) status = 402;
+      }
+      response.writeHead(status, { 'Content-Type': result.contentType, 'Content-Length': String(body.length) });
       response.end(body);
     } catch {
       if (!response.headersSent) response.writeHead(502, { 'Content-Length': '0' }).end();

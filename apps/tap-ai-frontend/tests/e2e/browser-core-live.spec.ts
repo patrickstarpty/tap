@@ -47,20 +47,11 @@ const taskTimeoutMs = Number(
   process.env.TAPPER_BROWSER_CORE_TASK_TIMEOUT_MS ?? 240_000,
 );
 
-async function syntheticModelCalls(
-  page: import("@playwright/test").Page,
-): Promise<number | null> {
-  if (process.env.TAPPER_BROWSER_CORE_SYNTHETIC !== "1") return null;
-  const response = await page.request.get(
-    `${process.env.LITELLM_BASE_URL}/stats`,
-  );
-  expect(response.ok()).toBe(true);
-  const body = (await response.json()) as { calls: Record<string, number> };
-  return Object.values(body.calls).reduce((sum, count) => sum + count, 0);
-}
-
 test.skip(!active, "requires isolated browser core supervisor");
-test.describe.configure({ mode: "serial", timeout: taskTimeoutMs * 2 + 120_000 });
+test.describe.configure({
+  mode: "serial",
+  timeout: taskTimeoutMs * 2 + 120_000,
+});
 
 for (const scenario of cases) {
   test(`${scenario.name}: Chat to persisted browser receipt`, async ({
@@ -209,6 +200,7 @@ for (const scenario of cases) {
     }
     expect(evidence.screenshot).toBeDefined();
     expect(evidence.trace).toBeDefined();
+    expect(evidence.video).toBeDefined();
     await page.getByRole("button", { name: "View progress" }).click();
     await expect(page.getByText(/^Browser result ·/u)).toBeVisible();
     await expect(
@@ -240,7 +232,7 @@ for (const scenario of cases) {
       ).status(),
     ).toBeGreaterThanOrEqual(400);
     if (!scenario.replay) return;
-    const modelCallsBeforeReplay = await syntheticModelCalls(page);
+    const modelCallsBeforeReplay = snapshot.budgetUsed?.model_calls;
     const replayResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -271,10 +263,22 @@ for (const scenario of cases) {
     expect(replay.browserRun!.executionId).not.toBe(run.executionId);
     expect(replay.browserRun!.replayModelCalls).toBe(0);
     expect(replay.budgetUsed?.model_calls ?? 0).toBe(0);
-    expect(await syntheticModelCalls(page)).toBe(modelCallsBeforeReplay);
+    const replayVideo = replay.browserRun!.evidence.find(
+      (item) => item.kind === "video",
+    );
+    expect(replayVideo).toBeDefined();
+    expect(replayVideo!.evidenceId).not.toBe(evidence.video.evidenceId);
+    const videoResponse = await page.request.get(replayVideo!.url);
+    expect(videoResponse.ok()).toBe(true);
+    writeFileSync(
+      `${evidenceDir}/${scenario.name}-replay.webm`,
+      await videoResponse.body(),
+    );
+
     const originalAgain = (await (
       await page.request.get(taskPath)
     ).json()) as CoreSnapshot;
+    expect(originalAgain.budgetUsed?.model_calls).toBe(modelCallsBeforeReplay);
     expect(originalAgain.browserRun!.executionId).toBe(run.executionId);
     expect(originalAgain.browserRun!.evidence).toEqual(run.evidence);
     writeFileSync(
@@ -343,19 +347,20 @@ test("cancel active browser coding through the run detail", async ({
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(
-          `${process.env.LITELLM_BASE_URL}/stats`,
-        );
+        const response = await page.request.get(`${root}/workflows/${taskId}`);
         expect(response.ok()).toBe(true);
-        const body = (await response.json()) as {
-          calls: Record<string, number>;
-          observed: string[];
-        };
-        return body.observed.includes("cancel") ? (body.calls.cancel ?? 0) : 0;
+        const body = (await response.json()) as CoreSnapshot;
+        return (
+          body.events?.filter(
+            (event) =>
+              event.kind === "browser.action_finished" &&
+              event.payload.observation_sequence,
+          ).length ?? 0
+        );
       },
       { timeout: 90_000, intervals: [500, 1000, 2000] },
     )
-    .toBeGreaterThanOrEqual(2);
+    .toBeGreaterThanOrEqual(1);
   await page.getByRole("button", { name: "View progress" }).click();
   await page.getByRole("button", { name: "Request cancel" }).click();
   let snapshot = {} as CoreSnapshot;

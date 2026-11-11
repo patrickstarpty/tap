@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import secrets
 import shutil
 import subprocess
 import tarfile
@@ -19,10 +20,10 @@ RIPGREP_ARCHIVE_SHA256 = (
 RIPGREP_MEMBER = "ripgrep-15.1.0-aarch64-unknown-linux-gnu/rg"
 BROWSER_IMAGE = "tapper-browser-runtime:1.62.1-arm64"
 BROWSER_IMAGE_ID = (
-    "sha256:60cbf6735f945b534fb0b8aca25e6ee6f257fcb6ee051231c5f2812e5b3a8dce"
+    "sha256:7b8133ca22e829241c4d405c4146ae6b000150bf9b1e61bdd462b05c4a812117"
 )
 CODING_IMAGE = "tapper-coding-runtime:1.19.5-arm64"
-FILES = ("model-shim.mjs", "browserctl.mjs", "opencode-client.mjs")
+FILES = ("model-shim.mjs", "browserctl.mjs", "browser-tools.mjs", "opencode-client.mjs")
 
 
 def validate_binary(path: Path) -> None:
@@ -48,6 +49,60 @@ def validate_ripgrep_archive(path: Path) -> bytes:
         return binary.read()
 
 
+def verify_browser_image_sources(root: Path, image: str) -> None:
+    """Reject stale runtime scripts before creating tasks or spending model calls."""
+    folder = root / "deploy/browser"
+    sources = sorted((*folder.glob("*.mjs"), *folder.glob("*.sh")))
+    if not sources:
+        raise ValueError("browser source files missing")
+    container_name = "tapper-image-check-" + secrets.token_hex(8)
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                container_name,
+                "--network=none",
+                "--read-only",
+                "--cap-drop=ALL",
+                "--security-opt=no-new-privileges",
+                "--entrypoint",
+                "sha256sum",
+                image,
+                *(f"/opt/browser/{path.name}" for path in sources),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        # Killing a docker CLI does not cancel the engine-side container creation.
+        # Remove only this probe's resource; never restart the shared engine here.
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        raise
+    actual = {}
+    for line in result.stdout.splitlines():
+        digest, name = line.split(maxsplit=1)
+        actual[name.strip()] = digest
+    stale = [
+        path.name
+        for path in sources
+        if actual.get(f"/opt/browser/{path.name}")
+        != hashlib.sha256(path.read_bytes()).hexdigest()
+    ]
+    if stale:
+        raise ValueError("browser image source mismatch: " + ", ".join(stale))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--opencode-binary", type=Path, required=True)
@@ -64,6 +119,7 @@ def main() -> None:
     )
     if inspected.stdout.strip() != BROWSER_IMAGE_ID:
         raise ValueError("browser base image digest mismatch")
+    verify_browser_image_sources(root, inspected.stdout.strip())
     with tempfile.TemporaryDirectory(prefix="tapper-coding-build-") as temporary:
         context = Path(temporary)
         shutil.copyfile(args.opencode_binary, context / "opencode")

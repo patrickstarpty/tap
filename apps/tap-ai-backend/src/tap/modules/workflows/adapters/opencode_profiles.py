@@ -22,7 +22,12 @@ def _agent(value: object, expected: str) -> dict[str, str]:
 
 
 def build_config(
-    request: dict[str, Any], shim_origin: str, shim_token: str, *, output_tokens: int
+    request: dict[str, Any],
+    shim_origin: str,
+    shim_token: str,
+    *,
+    output_tokens: int,
+    input_tokens: int = 129024,
 ) -> dict[str, Any]:
     """Build an inline config with no inherited provider or writable permissions."""
     parsed = urlsplit(shim_origin)
@@ -35,8 +40,9 @@ def build_config(
         or parsed.fragment
         or not shim_token
         or not 512 <= output_tokens <= 8192
+        or input_tokens < 1
     ):
-        raise ValueError("invalid fixed OpenCode model endpoint")
+        raise ValueError("invalid fixed OpenCode model endpoint or input window")
     alias = request.get("model_alias")
     if not isinstance(alias, str) or not _MODEL.fullmatch(alias):
         raise ValueError("frozen model alias invalid")
@@ -64,7 +70,15 @@ def build_config(
         "mode": "primary",
         "model": model,
         "prompt": root["instruction"],
-        "permission": {**shared, "edit": "allow", "bash": "allow", "task": delegation},
+        "permission": {
+            **shared,
+            "edit": "allow",
+            "bash": "allow",
+            "task": delegation,
+            "tap_browser": "allow",
+            "todowrite": "allow",
+            "skill": "allow",
+        },
     }
     for name in requested:
         frozen = _agent(indexed[name], name)
@@ -83,15 +97,13 @@ def build_config(
         }
     return {
         "autoupdate": False,
-        "plugin": [],
+        "plugin": ["file:///opt/tapper/browser-tools.mjs"],
+        "compaction": {"auto": True, "prune": True},
         "enabled_providers": ["litellm"],
         "model": model,
         "small_model": model,
         "default_agent": "orchestrator",
-        "tools": {
-            name: False
-            for name in ("webfetch", "websearch", "question", "todowrite", "skill", "lsp")
-        },
+        "tools": {name: False for name in ("webfetch", "websearch", "question", "lsp")},
         "agent": agent,
         "provider": {
             "litellm": {
@@ -100,7 +112,11 @@ def build_config(
                 "models": {
                     alias: {
                         "name": alias,
-                        "limit": {"context": 129024, "input": 129024, "output": output_tokens},
+                        "limit": {
+                            "context": input_tokens,
+                            "input": input_tokens,
+                            "output": output_tokens,
+                        },
                     }
                 },
             }

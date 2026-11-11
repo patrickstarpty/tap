@@ -483,14 +483,25 @@ def test_only_milvus_transport_imports_pymilvus() -> None:
     assert consumers == {transport}
 
 
-def test_only_parser_supervisor_owns_native_process_capability() -> None:
-    """Native process authority is confined to one explicit implementation file."""
-    process_callers = {
-        path for path in recursive_python_files(BACKEND_SOURCE) if native_process_calls(path)
-    }
+def test_only_approved_supervisors_own_native_process_capability() -> None:
+    """ADR-037/038 approve OpenCode supervision; local mode is in architecture.md.
 
-    parser_supervisor = BACKEND_SOURCE / "entrypoints" / "tapper_parser_worker.py"
-    assert process_callers == {parser_supervisor}
+    Ownership is file-specific, not an adapter-layer exemption. Even approved
+    supervisors may only use exec: shell and other process primitives stay forbidden.
+    """
+    approved_owners = {
+        BACKEND_SOURCE / "entrypoints" / "tapper_parser_worker.py": {
+            "asyncio.create_subprocess_exec"
+        },
+        WORKFLOWS / "adapters" / "opencode_runtime.py": {"asyncio.create_subprocess_exec"},
+        WORKFLOWS / "adapters" / "local_opencode.py": {"asyncio.create_subprocess_exec"},
+    }
+    process_callers = {
+        path: calls
+        for path in recursive_python_files(BACKEND_SOURCE)
+        if (calls := native_process_calls(path))
+    }
+    assert process_callers == approved_owners
 
 
 def test_application_cannot_import_parser_supervisor_or_docker_client() -> None:

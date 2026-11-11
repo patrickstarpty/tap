@@ -40,4 +40,4 @@ http.createServer((request, response) => {
   }
   response.writeHead(body ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' });
   response.end(body ?? '<h1>Not found</h1>');
-}).listen(8080, '0.0.0.0');
+}).listen(Number(process.env.TAP_CORE_SITE_PORT || 8080), process.env.TAP_CORE_SITE_HOST || '0.0.0.0');

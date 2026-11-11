@@ -228,7 +228,7 @@ async def replay(
             "description": "Scoped browser evidence file",
             "content": {
                 media_type: {"schema": {"type": "string", "format": "binary"}}
-                for media_type in ("image/png", "application/zip", "application/json")
+                for media_type in ("image/png", "application/zip", "application/json", "video/webm")
             },
         },
         404: problem_response_metadata("Browser evidence unavailable"),
@@ -302,3 +302,163 @@ async def logs(
         )
     except (LookupError, ValueError) as error:
         return _problem(request, error)
+
+
+def browser_control_gateway(request: Request):
+    from tap.interfaces.http.browser_capabilities import BrowserCapabilities
+    from tap.interfaces.http.browser_control_gateway import BrowserControlGateway
+
+    services = request.app.state.http_services
+    if not isinstance(services.browser_client, BrowserApiClient):
+        raise KnowledgeRuntimeUnavailable
+    capabilities = getattr(request.app.state, "browser_panel_capabilities", None)
+    if capabilities is None:
+        capabilities = BrowserCapabilities()
+        request.app.state.browser_panel_capabilities = capabilities
+    return BrowserControlGateway(
+        workflow_service(request).queries, services.browser_client, capabilities
+    )
+
+
+@router.post("/{task_id}/browser-control/{session_id}/panel", operation_id="workflow_browser_panel")
+async def browser_panel(task_id: str, session_id: str, request: Request):
+    from fastapi.responses import JSONResponse
+
+    try:
+        result = await browser_control_gateway(request).issue(
+            request.state.project_scope, task_id, session_id
+        )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except (PermissionError, LookupError, BrowserApiError, ValueError, TimeoutError, OSError):
+        return problem_response("workflow-control-unavailable", request)
+
+
+@router.get(
+    "/{task_id}/browser-control/{session_id}/state", operation_id="workflow_browser_control_state"
+)
+async def browser_control_state(
+    task_id: str,
+    session_id: str,
+    request: Request,
+    capability: str = Header(alias="X-Browser-Capability"),
+):
+    from fastapi.responses import JSONResponse
+
+    try:
+        result = await browser_control_gateway(request).state(
+            request.state.project_scope, task_id, session_id, capability
+        )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except (PermissionError, LookupError, BrowserApiError, ValueError, TimeoutError, OSError):
+        return problem_response("workflow-control-unavailable", request)
+
+
+@router.post(
+    "/{task_id}/browser-control/{session_id}/commands",
+    operation_id="workflow_browser_control_command",
+)
+async def browser_control_command(
+    task_id: str,
+    session_id: str,
+    body: dict,
+    request: Request,
+    capability: str = Header(alias="X-Browser-Capability"),
+    key: str = Depends(source_command_key),
+):
+    from fastapi.responses import JSONResponse
+
+    if (
+        set(body) != {"operation", "expectedEpoch"}
+        or body.get("operation") not in {"takeover", "handback"}
+        or type(body.get("expectedEpoch")) is not int
+        or body["expectedEpoch"] < 0
+    ):
+        return problem_response("request-validation", request)
+    try:
+        result = await browser_control_gateway(request).command(
+            request.state.project_scope,
+            task_id,
+            session_id,
+            capability,
+            body["operation"],
+            body["expectedEpoch"],
+            key,
+        )
+        return JSONResponse(result, status_code=202, headers={"Cache-Control": "no-store"})
+    except (PermissionError, LookupError, BrowserApiError, ValueError, TimeoutError, OSError):
+        return problem_response("workflow-control-unavailable", request)
+
+
+@router.get(
+    "/{task_id}/browser-control/{session_id}/frame", operation_id="workflow_browser_live_frame"
+)
+async def browser_live_frame(
+    task_id: str,
+    session_id: str,
+    request: Request,
+    capability: str = Header(alias="X-Browser-Capability"),
+):
+    from fastapi.responses import JSONResponse
+
+    try:
+        result = await browser_control_gateway(request).frame(
+            request.state.project_scope, task_id, session_id, capability
+        )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except BrowserApiError as error:
+        if error.status == 409:
+            return JSONResponse(
+                {"status": "pending"}, status_code=409, headers={"Cache-Control": "no-store"}
+            )
+        return problem_response("workflow-control-unavailable", request)
+    except (PermissionError, LookupError, ValueError, TimeoutError, OSError):
+        return problem_response("workflow-control-unavailable", request)
+
+
+@router.post(
+    "/{task_id}/browser-control/{session_id}/actions", operation_id="workflow_browser_human_action"
+)
+async def browser_human_action(
+    task_id: str,
+    session_id: str,
+    body: dict,
+    request: Request,
+    capability: str = Header(alias="X-Browser-Capability"),
+    key: str = Depends(source_command_key),
+):
+    from fastapi.responses import JSONResponse
+
+    if (
+        set(body) != {"action", "expectedEpoch"}
+        or not isinstance(body.get("action"), dict)
+        or type(body.get("expectedEpoch")) is not int
+        or body["expectedEpoch"] < 0
+    ):
+        return problem_response("request-validation", request)
+    try:
+        result = await browser_control_gateway(request).action(
+            request.state.project_scope,
+            task_id,
+            session_id,
+            capability,
+            body["action"],
+            body["expectedEpoch"],
+            key,
+        )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except BrowserApiError as error:
+        if error.status == 409:
+            return JSONResponse(
+                {
+                    "status": "unknown",
+                    "reason": (
+                        "Action was not confirmed. "
+                        "Check the prior receipt before sending another action."
+                    ),
+                },
+                status_code=409,
+                headers={"Cache-Control": "no-store"},
+            )
+        return problem_response("workflow-control-unavailable", request)
+    except (PermissionError, LookupError, ValueError, TimeoutError, OSError):
+        return problem_response("workflow-control-unavailable", request)

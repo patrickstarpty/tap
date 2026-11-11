@@ -111,6 +111,10 @@ export interface AutomationRun {
   evidenceKind: "none";
   startedAt: string;
   finishedAt: string;
+  definitionSnapshot?: {
+    revision: number;
+    feature: BddFeature;
+  };
   scenarioResults: readonly RunScenarioResult[];
   logs: readonly string[];
 }

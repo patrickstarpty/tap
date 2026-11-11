@@ -33,6 +33,8 @@ from tap.interfaces.http.routes.knowledge_documents import router as knowledge_d
 from tap.interfaces.http.routes.knowledge_graph import router as knowledge_graph_router
 from tap.interfaces.http.routes.knowledge_reviews import router as knowledge_reviews_router
 from tap.interfaces.http.routes.knowledge_sources import router as knowledge_sources_router
+from tap.interfaces.http.routes.lca import LcaGateway
+from tap.interfaces.http.routes.lca import router as lca_router
 from tap.interfaces.http.routes.model_calls import router as model_calls_router
 from tap.interfaces.http.routes.model_catalog import router as model_catalog_router
 from tap.interfaces.http.routes.prompt_suggestions import router as prompt_suggestions_router
@@ -52,10 +54,13 @@ def create_app(
     lifespan: Lifespan | None = None,
     validation_mode: bool = False,
     allowed_origins: frozenset[str] = frozenset(),
+    lca_gateway: LcaGateway | None = None,
 ) -> FastAPI:
     """Build the HTTP application without starting middleware or external clients."""
     app = FastAPI(title="TAP API", version="0.1.0", lifespan=lifespan)
     app.state.http_services = services or HttpServices()
+    app.state.lca_gateway = lca_gateway or LcaGateway.from_environment()
+    app.include_router(lca_router)
     validate_origins(allowed_origins)
     app.state.validation_mode = validation_mode
     app.add_middleware(OriginPolicyMiddleware, allowed_origins=allowed_origins)

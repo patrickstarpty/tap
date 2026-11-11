@@ -44,6 +44,27 @@ const target: Validator = (value) =>
     deviceId: string,
     label: string,
   })(value);
+const revision: Validator = (value) =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
+const feature = object({
+  title: string,
+  scenarios: array(
+    object({
+      id: string,
+      title: string,
+      sourceTestPlanScenarioId: nullableString,
+      steps: array(
+        object({
+          id: string,
+          keyword,
+          text: string,
+          sourceTestPlanStepId: nullableString,
+          actions: array(action),
+        }),
+      ),
+    }),
+  ),
+});
 const validState = object({
   automations: array(
     object({
@@ -55,28 +76,9 @@ const validState = object({
       status: oneOf("draft", "ready"),
       testPlanId: nullableString,
       updatedAt: string,
-      revision: (value) =>
-        Number.isSafeInteger(value) && (value as number) >= 0,
+      revision,
       supportedPlatforms: array(oneOf("ios", "android")),
-      feature: object({
-        title: string,
-        scenarios: array(
-          object({
-            id: string,
-            title: string,
-            sourceTestPlanScenarioId: nullableString,
-            steps: array(
-              object({
-                id: string,
-                keyword,
-                text: string,
-                sourceTestPlanStepId: nullableString,
-                actions: array(action),
-              }),
-            ),
-          }),
-        ),
-      }),
+      feature,
     }),
   ),
   testPlans: array(
@@ -109,6 +111,8 @@ const validState = object({
       startedAt: string,
       finishedAt: string,
       logs: array(string),
+      definitionSnapshot: (value) =>
+        value === undefined || object({ revision, feature })(value),
       scenarioResults: array(
         object({
           bddScenarioId: string,

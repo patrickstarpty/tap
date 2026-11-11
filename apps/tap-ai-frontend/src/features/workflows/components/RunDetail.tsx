@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { WorkflowCommandView, WorkflowTaskSnapshot } from "../api/client";
+import { BrowserControl, type BrowserControlTransport } from "./BrowserControl";
+import { createBrowserControlTransport } from "./browserControlTransport";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { ExecutionSteps } from "./ExecutionSteps";
 import { ProgressResources } from "./ProgressResources";
@@ -12,7 +14,9 @@ export function RunDetail({
   onRetryConnection,
   onReplay,
   onProvideInput,
+  browserControlTransport,
 }: {
+  browserControlTransport?: BrowserControlTransport;
   snapshot: WorkflowTaskSnapshot;
   connection: "idle" | "connecting" | "live" | "reconnecting" | "error";
   onSelectNode: (nodeId: string) => void;
@@ -56,6 +60,32 @@ export function RunDetail({
         : null;
   const browser = snapshot.taskKind === "browser";
   const browserRun = snapshot.browserRun;
+  const controlEvent = snapshot.events.findLast(
+    (event) =>
+      event.kind === "browser.session_started" &&
+      event.payload.control_version === "browser-control-v1" &&
+      typeof event.payload.session_id === "string",
+  );
+  const sessionId = controlEvent?.payload.session_id;
+  const controlTransport = useMemo(
+    () =>
+      browserControlTransport ??
+      (typeof sessionId === "string"
+        ? createBrowserControlTransport(
+            snapshot.projectId,
+            snapshot.taskId,
+            sessionId,
+          )
+        : null),
+    [browserControlTransport, sessionId, snapshot.projectId, snapshot.taskId],
+  );
+  const recording = snapshot.events.findLast(
+    (event) => event.kind === "browser.recording_saved",
+  );
+  const recordingId = recording?.payload.evidence_id;
+  const scriptFailure = snapshot.events.findLast(
+    (event) => event.kind === "browser.script_failed",
+  );
   const replay = async () => {
     if (!onReplay || pending) return;
     setPending(true);
@@ -70,6 +100,16 @@ export function RunDetail({
   };
   return (
     <div className="tap-workflow-overview">
+      {!browserRun && typeof recordingId === "string" ? (
+        <section aria-label="Browser recording">
+          <h3>Recording</h3>
+          <video
+            controls
+            preload="metadata"
+            src={`/api/v1/projects/${encodeURIComponent(snapshot.projectId)}/workflows/${snapshot.taskId}/browser-evidence/${recordingId}`}
+          />
+        </section>
+      ) : null}
       <section className="tap-workflow-progress" aria-label="Task overview">
         <p className="tap-workflow-status" data-status={snapshot.status}>
           {snapshot.status.replaceAll("_", " ")}
@@ -157,11 +197,30 @@ export function RunDetail({
           ) : null}
         </section>
       ) : null}
+      {browser && typeof sessionId === "string" && controlTransport ? (
+        <BrowserControl
+          key={`${snapshot.taskId}:${sessionId}`}
+          transport={controlTransport}
+        />
+      ) : null}
       <ExecutionSteps snapshot={snapshot} />
       <div className="tap-progress-resources">
         <section aria-label="Outputs" className="tap-progress-resource">
           <h2>Outputs</h2>
-          {!browserRun && !snapshot.artifacts.length ? (
+          {scriptFailure ? (
+            <div role="status">
+              <p>Task completed. Replay script could not be saved.</p>
+              <details>
+                <summary>Script details</summary>
+                <p>
+                  {String(
+                    scriptFailure.payload.error ?? "Script storage failed",
+                  )}
+                </p>
+              </details>
+            </div>
+          ) : null}
+          {!scriptFailure && !browserRun && !snapshot.artifacts.length ? (
             <p className="tap-workflow-empty">Results will appear here</p>
           ) : null}
           {snapshot.artifacts.length ? (
@@ -241,13 +300,23 @@ export function RunDetail({
                             ? "Screenshot"
                             : item.kind === "trace"
                               ? "Trace"
-                              : "Result file"}
+                              : item.kind === "video"
+                                ? "Recording"
+                                : "Result file"}
                         </a>
                         {item.kind === "screenshot" ? (
                           <img
                             src={item.url}
                             alt="Browser run screenshot"
                             loading="lazy"
+                          />
+                        ) : null}
+                        {item.kind === "video" ? (
+                          <video
+                            controls
+                            preload="metadata"
+                            src={item.url}
+                            aria-label="Browser run recording"
                           />
                         ) : null}
                       </li>

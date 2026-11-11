@@ -1,0 +1,114 @@
+{
+  "date": "2026-11-11",
+  "scope": "Sanitized acceptance facts from retained local evidence. No raw traces, session headers, tokens, databases or real personal data. Historical test quotes, not current prices or insurance advice.",
+  "aia": {
+    "scenario": {
+      "dob": "08-11-1996",
+      "gender": "female",
+      "smoking": "no",
+      "sum_assured_hkd": 500000
+    },
+    "product": "AIA Cancer Care Essence",
+    "business_result": "passed",
+    "monthly_premium_hkd": 60.0,
+    "official_api_code": "200",
+    "official_api_success": true,
+    "version": 3,
+    "run_id": "8ef139165a45445e8ef8e05b93fa6332",
+    "definition_digest": "a2d41a194ce6e12a54cb2f1ed401d599ea169d40b6da1982c3339367ca2be398",
+    "canonical_results": [
+      {
+        "step_id": "recorded_57244d9bcceed5a8a9e8de1f",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_fa00aa648e6c31ad0965b52e",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_f99dc74e51a85fe6cff72418",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_1de8a21bdd3aec0566d0a84b",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_a7ac14bc6560658a9378915c",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_23eba49d7f258c4239300878",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_9187d93de2bea55ec23b5e90",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_bfca3d2e2bb4c3a238f95828",
+        "status": "passed"
+      },
+      {
+        "step_id": "recorded_4c8dacfcfdb9aac04fbb738e",
+        "status": "passed"
+      },
+      {
+        "step_id": "step_1edab462b9be",
+        "status": "passed"
+      },
+      {
+        "step_id": "step_f89fad65cfaf",
+        "status": "passed"
+      },
+      {
+        "step_id": "step_2a8d7c7e939c",
+        "status": "passed"
+      }
+    ],
+    "model_calls": 0,
+    "persistent_reload_verified": true,
+    "root_cause_caveat": "Female synthetic scenario succeeded twice; prior male Code903 cause not established."
+  },
+  "fwd": {
+    "date": "2026-11-11",
+    "source": "https://www.fwd.com.hk/online-insurance/term-life/en/",
+    "synthetic_scenario": {
+      "age": 30,
+      "gender": "male",
+      "smoker": false,
+      "sum_insured_hkd": 2000000,
+      "renewal_term_years": 10
+    },
+    "quote": {
+      "plan": "Standard MyTerm Plus",
+      "monthly_net_hkd": 10.62,
+      "monthly_gross_hkd": 106.2,
+      "promotion": "GOODGA,90% off first-year premium",
+      "promotion_end": "2026-11-11 23:59:59 site time"
+    },
+    "lca_route": "Actual navigation recorded and imported; age30 clicks and two quote assertions added through LCA editor; independent generated replay",
+    "draft_version": 6,
+    "run_id": "a2b6a588037e4490b92ac3337591f319",
+    "execution_id": "dcae315cfda94fceae66dd28b46a1d4a",
+    "definition_digest": "208dd5529eecba2b30fd98b4794ddbaae689a561efa3091f62302a6f3dad65a5",
+    "canonical_steps_passed": 5,
+    "canonical_steps_total": 5,
+    "reload_saved_draft_verified": true,
+    "limitations": [
+      "Live age-dropdown recording remains blocked on whole-page freshness fallback; this success uses supported editor-authored steps, not a claim that full live recording is fixed."
+    ],
+    "no_application_or_purchase": true
+  },
+  "source_sha256": {
+    ".local/aia-positive-20261111/REPORT.txt": "9d2d731111390ff2b5483c94d3e8393110833d8cb352cf1ca7d48cdab6c24ae0",
+    ".local/aia-positive-20261111/acceptance-summary.json": "7e834a25afa6695471d6401064bd59abe4b6d7ef43a2ebdf13435e0e76e229d5",
+    ".local/aia-positive-20261111/saved-definition-v3.json": "c789763570fc5e0323d4953a14a87c6fcc42544694e830740dfdd48edd59398e",
+    ".local/aia-positive-20261111/api-response-redacted.json": "2264382f6d081f405cafe34d8659a6b9d4de9614e8ef30c82cb0cea44ed53e95",
+    ".local/fwd-positive-20261111/delivery/REPORT.txt": "200830297ec5b4023a9c1b74ae5a91348836339fb12f52543040f6ca9a71af96",
+    ".local/fwd-positive-20261111/delivery/acceptance-summary.json": "a63f69c9d4999e4eace0feb2be451849d8605d26460c6af2b4bbedcb5cd36373",
+    ".local/fwd-positive-20261111/delivery/saved-definition.json": "e633f3d9eb3a5cc5fa7b8cbbe8997973c54bcd5b94e159f30fa20a33e990892b",
+    ".local/fwd-positive-20261111/delivery/replay-result.json": "d5b31775f2ad4776f00b50dc25fe5b2684d35d9a767ef1541678c7d210f60b8c",
+    ".local/fwd-positive-20261111/delivery/api-response-redacted.json": "d22545d663f1d8e488af5dda6d5cf9729ff6fe94825b19b1c99a7a167c1ef1d6"
+  }
+}

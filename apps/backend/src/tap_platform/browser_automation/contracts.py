@@ -15,14 +15,14 @@ class BrowserLimits:
     memory_mb: int = 1024
     cpus: float = 1.0
     pids: int = 128
-    max_output_bytes: int = 5_000_000
+    max_output_bytes: int = 80_000_000
 
     def __post_init__(self) -> None:
         if not (1 <= self.deadline_seconds <= 600 and 128 <= self.memory_mb <= 4096):
             raise ValueError("browser limits out of range")
         if not (0 < self.cpus <= 2 and 32 <= self.pids <= 512):
             raise ValueError("browser limits out of range")
-        if not 1_000 <= self.max_output_bytes <= 10_000_000:
+        if not 1_000 <= self.max_output_bytes <= 80_000_000:
             raise ValueError("browser output limit out of range")
 
 
@@ -63,11 +63,14 @@ class BrowserObservation:
     fields: tuple[dict[str, Any], ...]
     screenshot_ref: str | None
     error: str | None
+    extracted: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    evidence: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
 class Evidence:
-    kind: Literal["screenshot", "trace", "result"]
+    kind: Literal["screenshot", "trace", "result", "video"]
     object_ref: str
     sha256: str
     size_bytes: int
@@ -87,3 +90,78 @@ class BrowserExecution:
     steps: tuple[dict[str, Any], ...]
     evidence: tuple[Evidence, ...]
     failure_code: str | None
+
+
+ControlState = Literal[
+    "agent_active",
+    "takeover_pending",
+    "human_active",
+    "handback_pending",
+    "blocked",
+    "closed",
+]
+
+
+@dataclass(frozen=True)
+class SemanticTarget:
+    kind: Literal["test_id", "role_name", "css"]
+    value: str
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("test_id", "role_name", "css") or not self.value:
+            raise ValueError("invalid semantic target")
+        if self.kind == "role_name" and not self.name:
+            raise ValueError("role target requires accessible name")
+
+
+@dataclass(frozen=True)
+class BrowserActionReceipt:
+    command_id: str
+    action_id: str
+    sequence: int
+    actor_kind: Literal["agent", "human"]
+    control_epoch: int
+    status: Literal[
+        "pending",
+        "running",
+        "dispatching",
+        "rejected",
+        "completed",
+        "failed",
+        "unknown",
+        "canceled",
+    ]
+    operation: str
+    pre_observation_sequence: int | None
+    target: SemanticTarget | None
+    args: dict[str, Any]
+    post_observation_sequence: int | None
+    evidence_refs: tuple[dict[str, Any], ...] = ()
+    schema_version: Literal["browser-control-v1"] = "browser-control-v1"
+
+    def __post_init__(self) -> None:
+        if self.operation not in {
+            "navigate",
+            "preflight",
+            "snapshot",
+            "click",
+            "fill",
+            "select",
+            "press",
+            "wait",
+            "screenshot",
+            "read",
+            "finish",
+            "scroll",
+        }:
+            raise ValueError("unsupported browser operation")
+        if (
+            self.sequence < 1
+            or self.control_epoch < 0
+            or not self.command_id
+            or not self.action_id
+        ):
+            raise ValueError("invalid action receipt identity")
+        if self.actor_kind not in ("agent", "human"):
+            raise ValueError("invalid action receipt actor")

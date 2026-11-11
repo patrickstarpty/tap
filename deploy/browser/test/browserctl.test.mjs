@@ -45,3 +45,23 @@ test('structured stdin preserves apostrophes and selectors without shell quoting
   await assert.rejects(readAction(['--stdin'], Readable.from(['x'.repeat(16385)])), /size cap/);
   await assert.rejects(readAction(['--stdin'], Readable.from(['{"type":"evaluate","code":"x"}'])), /unsupported/);
 });
+
+test('business plans distinguish exact input proof from final result checks', () => {
+  const input = {id:'age', keyword:'Then', title:'Confirm requested age', verification_kind:'input'};
+  const plan = {type:'plan', steps:[input, {id:'quote',keyword:'Then',title:'Verify quote',verification_kind:'result'}]};
+  assert.deepEqual(validateAction(plan), plan);
+  assert.throws(() => validateAction({type:'plan',steps:[{...input,keyword:'When'}]}), /step/);
+  assert.throws(() => validateAction({type:'plan',steps:[{...input,verification_kind:'skip'}]}), /step/);
+});
+
+test('plan error identifies And result verification and tells the agent how to fix it', () => {
+  const plan = {type:'plan', steps:[
+    {id:'step_1',keyword:'Given',title:'Open product page'},
+    {id:'step_2',keyword:'When',title:'Select product'},
+    {id:'step_3',keyword:'And',title:'Fill form'},
+    {id:'step_4',keyword:'Then',title:'Verify inputs',verification_kind:'input'},
+    {id:'step_5',keyword:'And',title:'Verify premium',verification_kind:'result'},
+  ]};
+  assert.throws(() => validateAction(plan), /step 5 \(id step_5\).*verification_kind.*Then.*change keyword to Then or remove verification_kind/i);
+  assert.throws(() => validateAction({type:'plan',steps:[{id:'verify',keyword:'Then',title:'Verify',verification_kind:'skip'}]}), /step 1 \(id verify\).*verification_kind.*input.*result/);
+});

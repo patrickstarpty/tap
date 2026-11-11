@@ -1,4 +1,5 @@
 import { ConfigProvider } from "antd";
+import { LcaApplication } from "./LcaApplication";
 import { TapProductPrototype } from "./widgets/tap/TapProductPrototype";
 import { tapperTheme } from "./widgets/tap/PrototypeTheme";
 import "./widgets/tap/PrototypeTheme.css";
@@ -34,7 +35,7 @@ export function App() {
     return () => { delete document.documentElement.dataset.tapPrototype; };
   }, [isPrototype]);
   return <ConfigProvider theme={tapperTheme}>
-    {isPrototype ? <TapProductPrototype /> : <TapApplication />}
+    {window.location.pathname === "/lca" ? <LcaApplication /> : isPrototype ? <TapProductPrototype /> : <TapApplication />}
   </ConfigProvider>;
 }
 
@@ -85,6 +86,7 @@ function TapApplication() {
         showFooter={false}
       />
       <main className="tap-product-main tap-runtime-main">
+        {section === "automation" ? <a href="/lca">Real debug flows</a> : null}
         {section === "automation" ? <WorkspaceTransfer
           state={state}
           onRestore={(restored) => {

@@ -8,7 +8,13 @@ from fastapi import FastAPI
 from sqlalchemy import create_engine
 
 from tap_platform.access import AccessPrincipal
-from tap_platform.browser_automation.http import create_browser_router
+from tap_platform.browser_automation.http import (
+    create_browser_router,
+    browser_service_from_environment,
+)
+from tap_platform.lca.http import create_lca_router, DelegatedLcaAuthorizer
+from tap_platform.lca.service import LcaService
+from tap_platform.lca.store import LcaStore
 from tap_platform.browser_automation.service import BrowserService
 from tap_platform.insights.adapters.clickhouse import ClickHouseInsightsStore
 from tap_platform.insights.adapters.mysql import SqlAlchemyReportLedger
@@ -125,6 +131,22 @@ def create_app(
             query_service=query_service,
         )
     )
+
+    lca_service = None
+    lca_authorizer = None
+    lca_token = os.getenv("TAP_LCA_GATEWAY_TOKEN")
+    if lca_token:
+        if browser_service is None:
+            browser_service, browser_principal, browser_token = (
+                browser_service_from_environment()
+            )
+        if browser_service is None or browser_principal is None:
+            raise RuntimeError("LCA requires configured TAP browser authority")
+        lca_service = LcaService(
+            LcaStore(browser_service.store.engine), browser_service
+        )
+        lca_authorizer = DelegatedLcaAuthorizer(lca_token, browser_principal.project_id)
+    app.include_router(create_lca_router(lca_service, lca_authorizer))
 
     if browser_service is not None:
         app.include_router(

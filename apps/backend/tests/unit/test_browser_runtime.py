@@ -65,10 +65,10 @@ def test_bundle_requires_single_frozen_entry_and_digest() -> None:
 
 
 def test_browser_evidence_default_handles_bounded_page_trace() -> None:
-    assert BrowserLimits().max_output_bytes == 5_000_000
+    assert BrowserLimits().max_output_bytes == 80_000_000
     assert BrowserLimits(max_output_bytes=1_000_000).max_output_bytes == 1_000_000
     with pytest.raises(ValueError, match="browser output limit"):
-        BrowserLimits(max_output_bytes=10_000_001)
+        BrowserLimits(max_output_bytes=80_000_001)
 
 
 @pytest.mark.asyncio

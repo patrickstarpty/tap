@@ -264,6 +264,11 @@ async def test_early_browser_session_stop_proof_reaches_dispatch_only_when_autho
     ("failure", "category", "summary"),
     [
         (
+            {"category": "budget_cost", "tool": "bash", "summary": "sk-secret"},
+            "budget_cost",
+            "Task stopped: budget_cost",
+        ),
+        (
             {
                 "category": "missing_frozen_input",
                 "tool": "bash",

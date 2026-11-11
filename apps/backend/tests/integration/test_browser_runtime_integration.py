@@ -44,7 +44,7 @@ class FakeDocker:
             ),
             None,
         )
-        network = created[-1] if created else ""
+        network = created[-1] if created else "network"
         labels = {
             created[index + 1].split("=", 1)[0]: created[index + 1].split("=", 1)[1]
             for index, value in enumerate(created or ())
@@ -97,6 +97,8 @@ class FakeDocker:
                 ),
                 "",
             )
+        if argv[:2] == ("docker", "port"):
+            return CommandResult(0, "127.0.0.1:49152\n", "")
         return CommandResult(0, "ok", "")
 
 
@@ -105,7 +107,13 @@ async def test_inspector_applies_network_gate_before_browser_process() -> None:
     client = FakeDocker([])
     runtime = BrowserRuntime(client, image="browser:test")
     handle = await runtime.start_inspector("t1", ("https://example.com",), 60)
+    assert handle.cdp_url == "http://127.0.0.1:49152"
     commands = [argv for argv, _ in client.commands]
+    network_command = next(
+        c for c in commands if c[:3] == ("docker", "network", "create")
+    )
+    assert "--internal" in network_command
+    assert network_command[network_command.index("--subnet") + 1].endswith("/28")
     gate_index = next(
         i for i, argv in enumerate(commands) if "/opt/browser/network-policy.sh" in argv
     )
@@ -1148,3 +1156,145 @@ async def test_public_web_mode_reaches_proxy_and_preserves_private_destination_g
             )
     finally:
         assert (await runtime.cancel(handle))["stopped"] is True
+
+
+@pytest.mark.asyncio
+async def test_direct_read_action_preserves_dom_facts():
+    class ReadDocker(FakeDocker):
+        async def run(self, argv, stdin=None, *, max_stdout=1_000_000):
+            result = await super().run(argv, stdin, max_stdout=max_stdout)
+            if argv[:3] == ("docker", "exec", "-i"):
+                data = json.loads(result.stdout)
+                data["extracted"] = {"name": "age", "value": "30"}
+                return CommandResult(0, json.dumps(data), "")
+            return result
+
+    runtime = BrowserRuntime(ReadDocker([]), "browser:test")
+    handle = await runtime.start_inspector(
+        "read-task", ("https://example.com",), 60, session_id="read-session"
+    )
+    try:
+        result = await runtime.observe(
+            handle,
+            {
+                "type": "read",
+                "selector": "#age",
+                "attribute": "value",
+                "name": "age",
+                "equals": "30",
+            },
+        )
+        assert result.extracted == {"name": "age", "value": "30"}
+    finally:
+        await runtime.cancel(handle)
+
+
+@pytest.mark.asyncio
+async def test_live_finish_persists_result_trace_and_screenshot_in_session():
+    class FinishDocker(FakeDocker):
+        async def run(self, argv, stdin=None, *, max_stdout=1_000_000):
+            result = await super().run(argv, stdin, max_stdout=max_stdout)
+            if argv[:3] == ("docker", "exec", "-i"):
+                data = json.loads(result.stdout)
+                data.update(
+                    screenshot_data=base64.b64encode(b"png").decode(),
+                    trace_data=base64.b64encode(b"zip").decode(),
+                    result_data={"outputs": [{"quote": "10.62"}]},
+                )
+                return CommandResult(0, json.dumps(data), "")
+            return result
+
+    saved = []
+
+    class Sink:
+        def persist(
+            self,
+            project_id,
+            task_id,
+            execution_id,
+            kind,
+            data,
+            max_bytes,
+            *,
+            session_id=None,
+        ):
+            saved.append((kind, project_id, task_id, session_id))
+            return Evidence(
+                kind, kind + "-ref", hashlib.sha256(data).hexdigest(), len(data)
+            )
+
+    runtime = BrowserRuntime(
+        FinishDocker([]), "browser:test", evidence_sink=Sink(), project_id="p1"
+    )
+    handle = await runtime.start_inspector(
+        "t1", ("https://example.com",), 60, session_id="s1"
+    )
+    try:
+        result = await runtime.observe(handle, {"type": "finish"})
+        assert {e["kind"] for e in result.evidence} == {"result", "trace", "screenshot"}
+        assert result.result == {"outputs": [{"quote": "10.62"}]}
+        assert {r[1:] for r in saved} == {("p1", "t1", "s1")}
+    finally:
+        await runtime.cancel(handle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("TAP_RUN_BROWSER_RUNTIME_INTEGRATION") != "1",
+    reason="requires the local pinned browser image",
+)
+async def test_crashed_inspector_never_reports_successful_empty_snapshot():
+    class RecordingSink:
+        def persist(
+            self,
+            project_id,
+            task_id,
+            execution_id,
+            kind,
+            data,
+            max_bytes,
+            *,
+            session_id=None,
+        ):
+            assert kind == "video"
+            assert data.startswith(b"\x1a\x45\xdf\xa3")
+            assert 0 < len(data) <= max_bytes
+            return Evidence(
+                kind, "crash-video", hashlib.sha256(data).hexdigest(), len(data)
+            )
+
+    runtime = BrowserRuntime(
+        SubprocessDockerClient(),
+        "tapper-browser-runtime:1.62.1-arm64",
+        evidence_sink=RecordingSink(),
+        project_id="crash-probe",
+    )
+    task_id = f"crash-probe-{os.getpid()}-{time.monotonic_ns()}"
+    handle = await runtime.start_inspector(
+        task_id,
+        ("https://example.com",),
+        120,
+        session_id=task_id,
+        network_mode="public_web",
+    )
+    try:
+        # Crash a blank page through the test-only CDP client; no external site/model call.
+        script = """(async()=>{
+          const pages=await fetch('http://127.0.0.1:9222/json/list').then(r=>r.json());
+          const ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);
+          await new Promise(resolve=>ws.addEventListener('open',resolve,{once:true}));
+          ws.send(JSON.stringify({id:1,method:'Page.crash'}));
+          await new Promise(resolve=>setTimeout(resolve,1500)); ws.close();
+        })().catch(()=>process.exitCode=1);"""
+        crashed = await runtime.client.run(
+            ("docker", "exec", handle.container, "node", "-e", script)
+        )
+        assert crashed.exit_code == 0
+        result = await runtime.observe(handle, {"type": "snapshot"})
+        assert result.error and "crash" in result.error.lower()
+        repeated = await runtime.observe(handle, {"type": "snapshot"})
+        assert repeated.error and "crash" in repeated.error.lower()
+    finally:
+        stop = await runtime.cancel(handle)
+        assert stop["stopped"]
+        assert {item["kind"] for item in stop["evidence"]} == {"video"}

@@ -4236,3 +4236,38 @@ async def test_schema_instructions_count_toward_the_request_byte_bound():
     await gateway._validate(
         replace(fits, prompt_digest=digest(fits.prompt)), ModelOperation.STRUCTURED
     )
+
+
+@pytest.mark.asyncio
+async def test_named_tool_choice_and_user_observations_reach_provider():
+    from tap.modules.ai.domain.models import ModelMessage
+
+    sent = []
+
+    def respond(incoming):
+        sent.append(json.loads(incoming.content))
+        return success(incoming)
+
+    gateway = configured_gateway(respond)
+    await gateway.chat(
+        _tool_request(
+            tool_choice="knowledge_search",
+            messages=(ModelMessage(role="user", content="Fresh page observation"),),
+        )
+    )
+    assert sent[0]["tool_choice"] == {"type": "function", "function": {"name": "knowledge_search"}}
+    assert sent[0]["messages"][-1] == {"role": "user", "content": "Fresh page observation"}
+
+
+@pytest.mark.asyncio
+async def test_forced_tool_outside_offered_tools_is_rejected_before_provider():
+    sent = []
+
+    def respond(incoming):
+        sent.append(incoming)
+        return success(incoming)
+
+    gateway = configured_gateway(respond)
+    with pytest.raises(ModelGatewayRejected):
+        await gateway.chat(_tool_request(tool_choice="unoffered_action"))
+    assert not sent

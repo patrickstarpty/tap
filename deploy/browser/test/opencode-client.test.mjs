@@ -138,3 +138,51 @@ test('blocked outcome is bounded and cannot be interpreted as script success', (
   assert.throws(() => parseInputRequest('{"reason":"passed","question":"done"}'), /input request/);
   assert.throws(() => parseInputRequest(JSON.stringify({ reason: 'external_block', question: 'x'.repeat(2001) })), /input request/);
 });
+
+
+test('native compaction continues the same task and summary alone is not completion', () => {
+  const original = {info:{id:'u1',role:'user'},parts:[{type:'text',text:'original goal'}]};
+  const action = {info:{id:'a1',role:'assistant',parentID:'u1',finish:'tool-calls'},parts:[]};
+  const compact = {info:{id:'u2',role:'user'},parts:[{type:'compaction',auto:true}]};
+  const summary = {info:{id:'a2',role:'assistant',parentID:'u2',summary:true,finish:'stop'},parts:[]};
+  const resume = {info:{id:'u3',role:'user'},parts:[{type:'text',synthetic:true,metadata:{compaction_continue:true},text:'Continue'}]};
+  const final = {info:{id:'a3',role:'assistant',parentID:'u3',finish:'stop'},parts:[]};
+  const history = [original,action,compact,summary,resume,final];
+  assert.equal(terminalMessages(history.slice(0,4),'u1'), 'incomplete');
+  assert.equal(terminalMessages(history,'u1'), 'complete');
+  const failed = {...final,info:{...final.info,error:{name:'ProviderError'}}};
+  assert.equal(terminalMessages([...history.slice(0,5),failed],'u1'),'failed');
+  assert.equal(terminalFailure([...history.slice(0,5),failed],'u1').category,'assistant_error');
+  const foreign = {...resume,parts:[{type:'text',text:'another task'}]};
+  assert.equal(terminalMessages([...history.slice(0,4),foreign,final],'u1'),'incomplete');
+});
+
+test('local session creation can exceed five seconds without being retried', async () => {
+  const http = await import('node:http');
+  const { api } = await import('../opencode-client.mjs');
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    setTimeout(() => response.writeHead(200, { 'content-type': 'application/json' }).end('{"id":"ses_slow"}'), 5200);
+  });
+  const previous = process.env.OPENCODE_SERVER_PASSWORD;
+  process.env.OPENCODE_SERVER_PASSWORD = 'test-local-password';
+  await new Promise(resolve => server.listen(39002, '127.0.0.1', resolve));
+  try {
+    assert.deepEqual(await api('POST', '/session', {}), { status: 200, value: { id: 'ses_slow' } });
+    assert.equal(requests, 1);
+    await assert.rejects(api('POST', '/session', {}, 25), /POST \/session timed out/);
+    assert.equal(requests, 2);
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_SERVER_PASSWORD;
+    else process.env.OPENCODE_SERVER_PASSWORD = previous;
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('terminal budget reason is reported without raw provider data', () => {
+  const user = {info:{id:'u',role:'user'},parts:[]};
+  const failure = {info:{role:'assistant',parentID:'u',error:{name:'APIError',data:{statusCode:402,responseBody:JSON.stringify({error:{type:'tap_budget_exhausted',code:'budget_cost',retryable:false,message:'private'}})}}},parts:[]};
+  assert.deepEqual(terminalFailure([user,failure],'u'),{category:'budget_cost',tool:null,summary:'Task stopped: budget_cost'});
+});

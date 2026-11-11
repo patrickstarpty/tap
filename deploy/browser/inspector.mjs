@@ -1,91 +1,224 @@
 import fs from 'node:fs';
+import {createLiveControl, serialDispatcher} from './live-control.mjs';
 import net from 'node:net';
+import { observeFields, readValue, guardTarget, selectValue } from './page-actions.mjs';
 import { chromium } from '@playwright/test';
 
-const socketPath = '/tmp/inspector.sock';
+const controlled = process.env.TAP_BROWSER_CONTROLLED === '1';
+const localRoot = process.env.TAP_BROWSER_LOCAL_DIR;
+const socketPath = process.env.TAP_BROWSER_SOCKET || '/tmp/inspector.sock';
+const tracePath = localRoot ? `${localRoot}/session-trace.zip` : '/tmp/session-trace.zip';
 const proxy = process.env.TAP_BROWSER_PROXY;
-const context = await chromium.launchPersistentContext('/home/browser/profile', {
-  headless: true, chromiumSandbox: true, proxy: { server: proxy },
+const context = await chromium.launchPersistentContext(localRoot ? `${localRoot}/profile` : '/home/browser/profile', {
+  headless: !localRoot || process.env.TAP_BROWSER_LOCAL_HEADLESS !== 'false', chromiumSandbox: true, proxy: { server: proxy },
+  ...(localRoot ? {ignoreHTTPSErrors:true} : {}),
+  ...(process.env.TAP_BROWSER_LOCAL_EXECUTABLE_PATH ? {executablePath:process.env.TAP_BROWSER_LOCAL_EXECUTABLE_PATH} : {}),
+  args: controlled ? [] : [localRoot ? '--remote-debugging-port=0' : '--remote-debugging-port=9222'],
   viewport: { width: 1280, height: 800 },
+  ...(!controlled ? {recordVideo: { dir: localRoot ? `${localRoot}/videos` : '/tmp/browser-videos', size: { width: 1280, height: 800 } }} : {}),
 });
 const page = context.pages()[0] || await context.newPage();
+let pageCrashed = false;
+page.on('crash', () => { pageCrashed = true; });
+// Chromium binds CDP to loopback; Docker publishes only the task's host-loopback port.
+if (!localRoot && !controlled) net.createServer(client => {
+  const upstream = net.connect(9222, '127.0.0.1');
+  client.pipe(upstream).pipe(client);
+  client.on('error', () => upstream.destroy());
+  upstream.on('error', () => client.destroy());
+  client.on('close', () => upstream.destroy());
+}).listen(9223, '0.0.0.0');
 let sequence = 0;
+const resultValues = Object.create(null);
+const resultProvenance = Object.create(null);
+const reservedOutputNames = new Set(['final_url', 'provenance', 'source_url', 'observed_at', 'observation_sequence']);
+let finished = false;
+let video_data = null;
+async function finishRecording() {
+  if (controlled) { await context.close(); return; }
+  if (video_data) return;
+  const video = page.video();
+  await context.close();
+  video_data = fs.readFileSync(await video.path()).toString('base64');
+}
+await context.tracing.start({screenshots:true, snapshots:true});
+let traceActive = true;
 const bounded = (value, max = 16_000) => String(value || '').slice(0, max);
+const controlledFailureCategories = new Map([
+  ['target not actionable','target_not_actionable'],
+  ['target obscured or outside viewport','target_obscured_or_outside_viewport'],
+  ['bound target changed','target_changed'],
+  ['bound target type changed','target_changed'],
+  ['sensitive target unavailable','sensitive_target'],
+  ['human capability expired','authority_expired'],
+  ['controlled scroll did not settle','scroll_settle_timeout'],
+  ['frame target proof changed','frame_target_changed'],
+]);
+function controlledFailure(error) {
+  // Playwright wraps fixed callback errors with this prefix and a stack. Never
+  // project arbitrary exception text, locators or controlled input arguments.
+  const message=typeof error?.message==='string'?error.message.split('\n',1)[0].replace(/^(?:elementHandle|jsHandle)\.evaluate: Error: /,''):'';
+  const category=controlledFailureCategories.get(message);
+  return 'controlled action outcome unknown'+(category?`: ${category}`:'');
+}
+const controlledRequestFailureCategories = new Map([
+  ['stale frame; frame unavailable','frame_unavailable'],
+  ['stale frame; control generation changed','frame_control_generation_changed'],
+  ['stale frame; frame expired','frame_expired'],
+  ['stale frame; page revision changed','frame_revision_changed'],
+  ['frame target proof changed','frame_target_changed'],
+  ['capture fence timed out','capture_timeout'],
+  ['capture fence restoration failed','capture_restore_failed'],
+  ['viewport mismatch','viewport_mismatch'],
+  ['stale or missing control generation','control_generation_stale'],
+  ['human capability expired','authority_expired'],
+  ['target missing or ambiguous','target_missing_or_ambiguous'],
+  ['sensitive target unavailable','sensitive_target'],
+  ['nested frame target unsupported in live control','nested_frame_unsupported'],
+]);
+function controlledRequestFailure(error) {
+  // Diagnostic categories only: this does not assert retry safety or change a
+  // receipt's unknown status. Arbitrary errors never cross the private socket.
+  const message=typeof error?.message==='string'?error.message.split('\n',1)[0].replace(/^(?:elementHandle|jsHandle)\.evaluate: Error: /,''):'';
+  const category=controlledRequestFailureCategories.get(message);
+  return 'controlled browser request rejected'+(category?`: ${category}`:'');
+}
 
-async function observe(action) {
+async function observe(action, actuate) {
+  if (pageCrashed && action.type !== 'recording') throw new Error('browser page crashed');
   let screenshot_ref = null;
   let screenshot_data = null;
   let action_error = null;
+  let extracted = null;
+  let trace_data = null;
+  let result_data = null;
   try {
-  if (!['navigate', 'snapshot', 'click', 'fill', 'select', 'press', 'wait', 'screenshot'].includes(action.type)) {
+  if (action.type === 'recording') {
+    await finishRecording();
+    return {session_id:process.env.TAP_BROWSER_SESSION, sequence:++sequence, url:page.url(), title:'', bounded_snapshot:'', fields:[], screenshot_ref:null, video_data, error:null};
+  }
+  if (!['navigate', 'snapshot', 'click', 'fill', 'select', 'press', 'wait', 'screenshot', 'read', 'finish', 'scroll'].includes(action.type)) {
     throw new Error('unsupported action');
   }
-  if (action.type === 'navigate') {
-    await page.goto(action.url, { timeout: 15_000, waitUntil: 'domcontentloaded' });
+  if (finished) throw new Error('browser session already finished');
+  if (action.type === 'read') {
+    if (typeof action.name !== 'string' || !/^[A-Za-z0-9_\-]{1,80}$/.test(action.name) || reservedOutputNames.has(action.name)) throw new Error('invalid output name');
+    // A failed reread must remove its old evidence even if the target guard fails.
+    delete resultValues[action.name];
+    delete resultProvenance[action.name];
   }
-  if (action.type === 'click') await page.locator(action.selector).click({ timeout: 10_000 });
-  if (action.type === 'fill') await page.locator(action.selector).fill(bounded(action.value, 4000), { timeout: 10_000 });
-  if (action.type === 'select') await page.locator(action.selector).selectOption(bounded(action.value, 1000), { timeout: 10_000 });
-  if (action.type === 'press') await page.locator(action.selector).press(bounded(action.key, 100), { timeout: 10_000 });
-  if (action.type === 'wait') await page.locator(action.selector).waitFor({ timeout: 10_000 });
+  if (['click','fill','select','press','read','wait'].includes(action.type)) await guardTarget(page, action);
+  if (!actuate && action.type === 'navigate') {
+    await page.goto(action.url, { timeout: 45_000, waitUntil: 'domcontentloaded' });
+  }
+  if(controlled && actuate) {
+    // Never trace raw controlled values, including failed evaluation arguments.
+    // Only a later safe agent segment is retained as evidence.
+    if(traceActive) { await context.tracing.stop(); traceActive=false; }
+    await actuate();
+    if(action.actor_kind==='agent') { await context.tracing.start({screenshots:true,snapshots:true}); traceActive=true; }
+  }
+  if (!actuate && action.type === 'click') await page.locator(action.selector).click({ timeout: 30_000 });
+  if (!actuate && action.type === 'fill') await page.locator(action.selector).fill(bounded(action.value, 4000), { timeout: 30_000 });
+  if (!actuate && action.type === 'scroll') await page.mouse.wheel(action.delta_x, action.delta_y);
+  if (!actuate && action.type === 'select') await selectValue(page, action);
+  if (!actuate && action.type === 'press') await page.locator(action.selector).press(bounded(action.key, 100), { timeout: 30_000 });
+  if (action.type === 'wait') await page.locator(action.selector).waitFor({ timeout: 30_000 });
+  if (action.type === 'read') {
+    const value = await readValue(page, action);
+    const provenance = {source_url:page.url(), observation_sequence:sequence + 1, observed_at:new Date().toISOString()};
+    extracted = {name:action.name, value, ...provenance};
+    resultValues[action.name] = value;
+    resultProvenance[action.name] = provenance;
+  }
+  if (action.type === 'finish') {
+    if(controlled&&!traceActive) throw new Error('safe trace unavailable after failed controlled write');
+    if (!Object.keys(resultValues).length) throw new Error('no observed business results');
+    // Provenance records historical reads; final_url only describes the final page.
+    result_data = {outputs:[{...resultValues, final_url:page.url(), provenance:{...resultProvenance}}]};
+    if (Buffer.byteLength(JSON.stringify(result_data)) > 32768) throw new Error('business output too large');
+    screenshot_data = (await page.screenshot({fullPage:false,timeout:30000})).toString('base64');
+    await context.tracing.stop({path:tracePath});
+    const trace = fs.readFileSync(tracePath);
+    if (trace.length > 5000000) throw new Error('session trace exceeds evidence limit');
+    trace_data = trace.toString('base64');
+    await finishRecording();
+    finished = true;
+    // Recording closes the context; the final DOM-backed result and evidence are
+    // already captured. Do not query a closed page and misclassify completion.
+    return { session_id: process.env.TAP_BROWSER_SESSION, sequence: ++sequence,
+      url: bounded(page.url(), 2048), title: '', bounded_snapshot: '', fields: [],
+      screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, error: null };
+  }
   if (action.type === 'screenshot') {
-    const image = await page.screenshot({ fullPage: false, timeout: 10_000 });
+    const image = await page.screenshot({ fullPage: false, timeout: 30_000 });
     screenshot_data = image.toString('base64');
     screenshot_ref = null;
   }
   } catch (error) {
+    if(controlled && actuate) {
+      return {session_id:process.env.TAP_BROWSER_SESSION,sequence:++sequence,url:bounded(page.url(),2048),title:'',bounded_snapshot:'',fields:[],screenshot_ref:null,error:controlledFailure(error)};
+    }
     action_error = bounded(error.message, 1000);
   }
   sequence++;
-  const fields = await page.locator('input,select,textarea,button,a[href],[role="combobox"],[role="radio"],[role="checkbox"],[role="option"],[contenteditable="true"]').evaluateAll(nodes => {
-    const unique = selector => document.querySelectorAll(selector).length === 1;
-    const selectorFor = node => {
-      if (node.id && unique(`#${CSS.escape(node.id)}`)) return `#${CSS.escape(node.id)}`;
-      for (const attribute of ['data-testid', 'name', 'aria-label']) {
-        const value = node.getAttribute(attribute);
-        if (!value) continue;
-        const candidate = `${node.tagName.toLowerCase()}[${attribute}=${JSON.stringify(value)}]`;
-        if (unique(candidate)) return candidate;
-      }
-      const parts = [];
-      for (let element = node; element && element !== document.body; element = element.parentElement) {
-        const siblings = [...element.parentElement.children].filter(item => item.tagName === element.tagName);
-        parts.unshift(`${element.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(element) + 1})`);
-        const candidate = parts.join(' > ');
-        if (unique(candidate)) return candidate;
-      }
-      return `body > ${parts.join(' > ')}`;
-    };
-    return nodes.filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')
-      .sort((a, b) => Number(a.tagName === 'A') - Number(b.tagName === 'A'))
-      .slice(0, 100).map(node => ({
-        tag: node.tagName.toLowerCase(), name: node.getAttribute('name'), id: node.id,
-        type: node.getAttribute('type'), role: node.getAttribute('role'), selector: selectorFor(node),
-        label: (node.getAttribute('aria-label') || (node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim() || [...(node.labels || [])].map(label => label.textContent).join(' ') || node.textContent || '').trim().slice(0, 200),
-        value: node.type === 'password' ? '[hidden]' : String(node.value ?? '').slice(0, 200),
-        checked: node.checked ?? node.getAttribute('aria-checked'), disabled: Boolean(node.disabled),
-        options: node.tagName === 'SELECT' ? [...node.options].slice(0, 30).map(o => ({ label: o.label, value: o.value })) : [],
-      }));
-  }).catch(() => []);
+  const fields = await observeFields(page, action);
   // Official Playwright CLI uses this same AI snapshot API and aria-ref engine.
   // Re-observe after every action so references describe the current page.
-  const snapshotRoot = action.type === 'snapshot' && action.selector ? page.locator(action.selector) : page;
-  const snapshot = await snapshotRoot.ariaSnapshot({ mode: 'ai', timeout: 10_000 }).catch(() => '');
+  const scoped = action.type === 'snapshot' && action.selector;
+  const snapshotRoot = scoped ? page.locator(action.selector) : page;
+  let scopeFailed = false;
+  let snapshot = await snapshotRoot.ariaSnapshot({ mode: 'ai', timeout: 30_000 }).catch(error => {
+    scopeFailed = true;
+    action_error ||= bounded(error.message, 1000);
+    return '';
+  });
+  if (scoped) {
+    // Playwright replaces this frame's ref map with each AI snapshot. Restore
+    // the full-page maps so observing a scope cannot invalidate other DOM refs.
+    const fullSnapshot = await page.ariaSnapshot({ mode: 'ai', timeout: 30_000 }).catch(error => {
+      action_error ||= bounded(error.message, 1000);
+      return '';
+    });
+    // Keep the scoped error, but return usable context for the next decision.
+    if (scopeFailed) snapshot = fullSnapshot;
+  }
   return { session_id: process.env.TAP_BROWSER_SESSION, sequence, url: bounded(page.url(), 2048),
     title: bounded(await page.title().catch(() => ''), 256), bounded_snapshot: bounded(snapshot), fields,
-    screenshot_ref, screenshot_data, error: action_error };
+    screenshot_ref, screenshot_data, trace_data, result_data, extracted, video_data, error: pageCrashed ? 'browser page crashed' + (action_error ? '\n' + action_error : '') : action_error };
 }
 
+const liveControl = controlled ? createLiveControl({page,observe,onControl:async kind=>{
+  // Stop without a path discards the old segment. Never record human inputs.
+  if(traceActive) { await context.tracing.stop(); traceActive=false; }
+  if(kind==='agent') { await context.tracing.start({screenshots:true,snapshots:true}); traceActive=true; }
+}}) : null;
+let socketQueue=Promise.resolve();
+function dispatch(action) {
+  if(liveControl) return liveControl.dispatch(action);
+  const pending=socketQueue.then(()=>observe(action));
+  socketQueue=pending.catch(()=>{});
+  return pending;
+}
+
+// The private local root is newly created; never unlink a different owner's socket.
 try { fs.unlinkSync(socketPath); } catch {}
 net.createServer(client => {
   let data = '';
+  let received = false;
   client.on('data', async chunk => {
+    if(received) return;
     data += chunk;
     if (data.length > 16_384) { client.destroy(); return; }
     if (!data.endsWith('\n')) return;
-    try { client.end(JSON.stringify(await observe(JSON.parse(data)))); }
+    received = true;
+    try { client.end(JSON.stringify(await dispatch(JSON.parse(data)))); }
     catch (error) { client.end(JSON.stringify({ session_id: process.env.TAP_BROWSER_SESSION,
       sequence: ++sequence, url: bounded(page.url(), 2048), title: '', bounded_snapshot: '',
-      fields: [], screenshot_ref: null, error: bounded(error.message, 1000) })); }
+      fields: [], screenshot_ref: null, error: controlled ? controlledRequestFailure(error) : bounded(error.message, 1000) })); }
   });
-}).listen(socketPath);
+}).listen(socketPath, () => fs.chmodSync(socketPath, 0o600));
+if (localRoot) process.once('SIGTERM', async () => {
+  await context.close().catch(() => {});
+  process.exit(0);
+});

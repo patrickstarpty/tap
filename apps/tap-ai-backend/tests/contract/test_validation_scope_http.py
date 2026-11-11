@@ -70,6 +70,8 @@ def test_project_route_and_runtime_report_server_authority():
         "actorId": "tapper-local-user",
         "identityMode": "validation",
         "workflowEnabled": False,
+        "browserEnabled": False,
+        "browserModelAlias": None,
     }
 
 

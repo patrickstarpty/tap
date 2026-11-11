@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
+import time
 import uuid
 from dataclasses import asdict, replace
 from typing import Any, Protocol
+from collections.abc import Awaitable, Callable
 
 from .contracts import BrowserLimits, BrowserExecution, BrowserObservation
-from .docker import BrowserRuntime, InspectorHandle, SubprocessDockerClient
+from .docker import (
+    BrowserRuntime,
+    EvidenceSink,
+    InspectorHandle,
+    SubprocessDockerClient,
+)
 from .http import browser_service_from_environment
 from .objects import BrowserEvidenceSink
 from .service import BrowserService
@@ -26,7 +34,12 @@ class Runtime(Protocol):
         *,
         session_id: str,
         network_mode: str = "declared_origins",
+        control_enabled: bool = False,
     ) -> InspectorHandle: ...
+    async def read_frame(self, handle: InspectorHandle) -> dict[str, Any]: ...
+    async def synchronize_control(
+        self, handle: InspectorHandle, controller_kind: str, epoch: int
+    ) -> BrowserObservation: ...
     async def observe(
         self, handle: InspectorHandle, action: dict[str, Any]
     ) -> BrowserObservation: ...
@@ -54,19 +67,25 @@ class BrowserWorker:
         runtime: Runtime,
         project_id: str,
         owner: str | None = None,
+        *,
+        input_fetcher: Callable[[str, str, str], Awaitable[dict[str, Any]]]
+        | None = None,
     ) -> None:
         self.service = service
         self.runtime = runtime
         self.project_id = project_id
         self.owner = owner or uuid.uuid4().hex
+        self.input_fetcher = input_fetcher
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._handles: dict[str, InspectorHandle] = {}
         self._attempted_sessions: set[str] = set()
         self._canceling: set[str] = set()
+        self._frame_capture_at: dict[str, tuple[int, float]] = {}
 
     async def tick(self) -> None:
         store = self.service.store
         store.expire_lost(self.project_id)
+        self.service.inputs.purge_expired()
         for row in store.cancel_requests("execution", self.project_id, self.owner):
             if row["id"] not in self._canceling:
                 self._canceling.add(row["id"])
@@ -75,6 +94,41 @@ class BrowserWorker:
             if row["id"] not in self._canceling:
                 self._canceling.add(row["id"])
                 await self._cancel_session(row)
+        for session_id in tuple(self._handles):
+            cleanup = store.claim_recording_cleanup(
+                self.project_id, session_id, self.owner
+            )
+            if cleanup is not None and session_id not in self._canceling:
+                self._canceling.add(session_id)
+                await self._cancel_session(cleanup)
+        for session_id, handle in tuple(self._handles.items()):
+            pending = store.pending_control(self.project_id, session_id, self.owner)
+            if pending is not None:
+                kind = (
+                    "human"
+                    if pending["control_state"] == "takeover_pending"
+                    else "agent"
+                )
+                try:
+                    observation = await self.runtime.synchronize_control(
+                        handle, kind, pending["control_epoch"] + 1
+                    )
+                    if observation.error:
+                        raise RuntimeError("browser control synchronization failed")
+                    store.complete_control(
+                        self.project_id,
+                        session_id,
+                        self.owner,
+                        write_channel_revoked=True,
+                        expected_epoch=pending["control_epoch"],
+                        observation=asdict(observation),
+                    )
+                except BaseException:
+                    # Revocation/observation outcome is uncertain: never silently retry.
+                    store.update(
+                        "session", self.project_id, session_id, control_state="blocked"
+                    )
+        await self._refresh_frames()
         session = store.claim("session", self.project_id, self.owner, 630)
         if session is not None:
             task = asyncio.create_task(self._start_session(session))
@@ -91,6 +145,58 @@ class BrowserWorker:
             self._tasks[execution["id"]] = task
             task.add_done_callback(self._on_done(execution["id"]))
 
+    async def _refresh_frames(self) -> None:
+        frames = getattr(self.service, "frames", None)
+        if frames is None:
+            return
+        frames.purge_expired()
+        for session_id, handle in tuple(self._handles.items()):
+            row = self.service.store.get("session", self.project_id, session_id)
+            if (
+                row is None
+                or row.get("control_version") != "browser-control-v1"
+                or row["status"] != "active"
+                or row["cancel_requested"]
+                or row["control_state"] in {"blocked", "closed"}
+                or (row.get("deadline_at") or "") <= now()
+                or (row.get("observer_until") or "") <= now()
+            ):
+                frames.delete(session_id)
+                self._frame_capture_at.pop(session_id, None)
+                continue
+            previous = self._frame_capture_at.get(session_id)
+            if (
+                previous
+                and previous[0] == row["control_epoch"]
+                and time.monotonic() - previous[1] < 1
+            ):
+                continue
+            try:
+                frame = await self.runtime.read_frame(handle)
+                current = self.service.store.get("session", self.project_id, session_id)
+                if (
+                    current
+                    and not current["cancel_requested"]
+                    and current["status"] == "active"
+                    and current["control_state"] not in {"blocked", "closed"}
+                    and (current.get("deadline_at") or "") > now()
+                    and current["control_epoch"] == row["control_epoch"]
+                    and frame.get("control_epoch") == row["control_epoch"]
+                ):
+                    frames.publish(
+                        session_id, frame, control_epoch=row["control_epoch"]
+                    )
+                    self._frame_capture_at[session_id] = (
+                        row["control_epoch"],
+                        time.monotonic(),
+                    )
+                else:
+                    frames.delete(session_id)
+                    self._frame_capture_at.pop(session_id, None)
+            except Exception:
+                frames.delete(session_id)
+                self._frame_capture_at.pop(session_id, None)
+
     def _on_done(self, resource_id: str) -> Any:
         def remove(_: asyncio.Task[None]) -> None:
             self._tasks.pop(resource_id, None)
@@ -106,16 +212,17 @@ class BrowserWorker:
         self._attempted_sessions.add(row["id"])
         try:
             runtime = self.runtime
+            options: dict[str, Any] = {}
+            if row.get("control_version") == "browser-control-v1":
+                options["control_enabled"] = True
+            if row["request"].get("network_mode") == "public_web":
+                options["network_mode"] = "public_web"
             handle = await runtime.start_inspector(
                 row["task_id"],
                 tuple(row["request"]["allowed_origins"]),
                 row["request"]["deadline_seconds"],
                 session_id=row["id"],
-                **(
-                    {"network_mode": "public_web"}
-                    if row["request"].get("network_mode") == "public_web"
-                    else {}
-                ),
+                **options,
             )
             self._handles[row["id"]] = handle
             if not self.service.store.publish_owned(
@@ -125,6 +232,7 @@ class BrowserWorker:
                 self.owner,
                 cancel_requested=False,
                 status="active",
+                observation={"cdp_url": handle.cdp_url},
             ):
                 current = self.service.store.get("session", self.project_id, row["id"])
                 if current and current["cancel_requested"]:
@@ -133,6 +241,9 @@ class BrowserWorker:
                     await self.runtime.cancel(handle)
                     self._handles.pop(row["id"], None)
         except BaseException:
+            logging.getLogger(__name__).exception(
+                "Browser session start failed: %s", row["id"]
+            )
             current = self.service.store.get("session", self.project_id, row["id"])
             if current and not current["cancel_requested"]:
                 self.service.store.publish_owned(
@@ -145,11 +256,89 @@ class BrowserWorker:
                 )
 
     async def _observe(self, row: dict[str, Any]) -> None:
+        reserved = self.service.store.reserve_dispatch(
+            self.project_id, row["id"], self.owner
+        )
+        if reserved is None:
+            return
+        row = reserved
         try:
             handle = self._handles[row["session_id"]]
-            observation = await self.runtime.observe(handle, row["request"])
+            request = dict(row["request"])
+            session = self.service.store.get(
+                "session", self.project_id, row["session_id"]
+            )
+            if session and session.get("control_version") == "browser-control-v1":
+                request.update(
+                    actor_kind=row["actor_kind"],
+                    control_epoch=row["control_epoch"],
+                    actor_expires_at=row.get("actor_expires_at"),
+                )
+            if "input_ref" in request:
+                probe = {
+                    key: request[key]
+                    for key in (
+                        "selector",
+                        "x",
+                        "y",
+                        "frame_sequence",
+                        "viewport",
+                        "actor_kind",
+                        "control_epoch",
+                        "actor_expires_at",
+                    )
+                    if key in request
+                }
+                probe.update(type="preflight", operation=request["type"])
+                checked = await self.runtime.observe(handle, probe)
+                safe = (checked.extracted or {}).get("preflight") or {}
+                if checked.error or safe.get("safe") is not True:
+                    self.service.inputs.discard(request["input_ref"])
+                    self.service.store.publish_action(
+                        self.project_id, row, self.owner, status="failed"
+                    )
+                    return
+                if self.input_fetcher is None:
+                    payload = self.service.consume_input_for_dispatch(
+                        self.project_id, row["session_id"], row["id"]
+                    )
+                else:
+                    payload = await self.input_fetcher(
+                        self.project_id, row["session_id"], row["id"]
+                    )
+                input_key = "key" if request["type"] == "press" else "value"
+                if set(payload) != {input_key} or not isinstance(
+                    payload[input_key], str
+                ):
+                    raise ValueError("invalid ephemeral input payload")
+                request.pop("input_ref")
+                request.update(payload)
+            if not self.service.store.confirm_dispatch(
+                self.project_id, row["session_id"], row["id"], self.owner
+            ):
+                return
+            observation = await self.runtime.observe(handle, request)
+            if request.get("type") != "preflight":
+                self._frame_capture_at.pop(row["session_id"], None)
+                self.service.frames.delete(row["session_id"])
+            if row["request"].get("input_ref") and observation.error:
+                # A failed write never records supplied values or runtime diagnostics.
+                observation = replace(
+                    observation,
+                    error="controlled input outcome unavailable",
+                    bounded_snapshot="",
+                    fields=(),
+                    extracted=None,
+                    result=None,
+                    evidence=(),
+                    screenshot_ref=None,
+                )
             observation = replace(
-                observation, session_id=row["session_id"], sequence=row["sequence"]
+                observation,
+                session_id=row["session_id"],
+                sequence=observation.sequence
+                if session and session.get("control_version") == "browser-control-v1"
+                else row["sequence"],
             )
             if observation.screenshot_ref is not None:
                 self.service.verify_inspector_evidence(
@@ -158,11 +347,25 @@ class BrowserWorker:
                     row["session_id"],
                     observation.screenshot_ref,
                 )
+            for item in observation.evidence:
+                self.service.verify_inspector_evidence(
+                    self.project_id,
+                    handle.task_id,
+                    row["session_id"],
+                    item["object_ref"],
+                )
             self.service.store.publish_action(
                 self.project_id,
                 row,
                 self.owner,
-                status="completed",
+                status=(
+                    "unknown"
+                    if row["request"].get("type")
+                    not in {"snapshot", "read", "screenshot", "wait", "preflight"}
+                    else "failed"
+                )
+                if observation.error
+                else "completed",
                 observation=asdict(observation),
             )
         except BaseException:
@@ -172,6 +375,9 @@ class BrowserWorker:
 
     async def _cancel_session(self, row: dict[str, Any]) -> None:
         session_id = row["id"]
+        self._frame_capture_at.pop(session_id, None)
+        self.service.frames.delete(session_id)
+        self.service.inputs.discard_session(self.project_id, session_id)
         handle = self._handles.get(session_id)
         interrupted = False
         try:
@@ -378,21 +584,64 @@ class BrowserWorker:
                 task.cancel()
 
 
+def runtime_from_environment(sink: EvidenceSink | None, project_id: str) -> Runtime:
+    mode = os.getenv("TAP_BROWSER_EXECUTION_MODE", "docker")
+    if mode == "local":
+        from .local import LocalBrowserRuntime
+
+        return LocalBrowserRuntime(
+            evidence_sink=sink,
+            project_id=project_id,
+            node_binary=os.getenv("TAP_BROWSER_LOCAL_NODE_BINARY", "node"),
+            test_target=os.getenv("TAP_BROWSER_LOCAL_TEST_TARGET"),
+            upstream_proxy=os.getenv("TAP_BROWSER_LOCAL_UPSTREAM_PROXY"),
+            executable_path=os.getenv("TAP_BROWSER_LOCAL_EXECUTABLE_PATH"),
+            headless=os.getenv("TAP_BROWSER_LOCAL_HEADLESS", "true").lower() != "false",
+        )
+    if mode != "docker":
+        raise ValueError("invalid browser execution mode")
+    image = os.getenv("TAP_BROWSER_IMAGE")
+    if not image:
+        raise RuntimeError("TAP_BROWSER_IMAGE required")
+    return BrowserRuntime(
+        SubprocessDockerClient(),
+        image,
+        evidence_sink=sink,
+        project_id=project_id,
+    )
+
+
+def input_fetcher_from_environment() -> (
+    Callable[[str, str, str], Awaitable[dict[str, Any]]] | None
+):
+    if os.getenv("TAP_BROWSER_CONTROL_ENABLED", "false").lower() != "true":
+        return None
+    from .input_transport import WorkerInputClient
+
+    worker_token = os.getenv("TAP_BROWSER_WORKER_TOKEN", "")
+    if worker_token and worker_token in {
+        os.getenv("TAP_BROWSER_ACCESS_TOKEN"),
+        os.getenv("TAP_BROWSER_GATEWAY_TOKEN"),
+    }:
+        raise ValueError("browser worker credential must be distinct")
+    return WorkerInputClient(
+        os.getenv("TAP_BROWSER_API_ORIGIN", ""),
+        os.getenv("TAP_BROWSER_WORKER_TOKEN", ""),
+    )
+
+
 def main() -> None:
     service, principal, _ = browser_service_from_environment()
     if service is None or principal is None:
         raise RuntimeError("TAP browser configuration required")
-    image = os.getenv("TAP_BROWSER_IMAGE")
-    if not image:
-        raise RuntimeError("TAP_BROWSER_IMAGE required")
     sink = BrowserEvidenceSink(service.store, service.objects)
-    runtime = BrowserRuntime(
-        SubprocessDockerClient(),
-        image,
-        evidence_sink=sink,
-        project_id=principal.project_id,
+    runtime = runtime_from_environment(sink, principal.project_id)
+    worker = BrowserWorker(
+        service,
+        runtime,
+        principal.project_id,
+        input_fetcher=input_fetcher_from_environment(),
     )
-    worker = BrowserWorker(service, runtime, principal.project_id)
 
     async def serve() -> None:
         loop = asyncio.get_running_loop()

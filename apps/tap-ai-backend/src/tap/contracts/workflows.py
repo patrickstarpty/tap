@@ -151,7 +151,7 @@ class WorkflowBrowserStep(WorkflowContract):
 
 class WorkflowBrowserEvidence(WorkflowContract):
     evidence_id: str
-    kind: Literal["screenshot", "trace", "result"]
+    kind: Literal["screenshot", "trace", "result", "video"]
     sha256: str
     url: str
 

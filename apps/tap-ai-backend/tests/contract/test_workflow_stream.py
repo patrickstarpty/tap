@@ -189,3 +189,36 @@ def test_task_failure_exposes_a_redacted_reason_for_diagnosis():
     )
     public = project_event(event, redact=lambda s: s.replace("secret", "[redacted]"))
     assert public["payload"]["reason"] == "browser timeout [redacted]"
+
+
+def test_script_failure_preserves_specific_reason_without_exposing_private_context():
+    event = WorkflowEvent(
+        "script-failed",
+        "task-1",
+        10,
+        "node-1",
+        1,
+        "browser.script_failed",
+        {"error": "Storage unavailable secret", "execution_token": "private"},
+        datetime(2026, 11, 6, tzinfo=UTC),
+    )
+    public = project_event(event, redact=lambda s: s.replace("secret", "[redacted]"))
+    assert public["kind"] == "browser.script_failed"
+    assert public["payload"]["error"] == "Storage unavailable [redacted]"
+    assert "private" not in str(public)
+
+
+def test_failed_browser_recording_remains_downloadable_in_public_progress():
+    event = WorkflowEvent(
+        "recording-saved",
+        "task-1",
+        11,
+        "node-1",
+        1,
+        "browser.recording_saved",
+        {"evidence_id": "video-1", "execution_token": "private"},
+        datetime(2026, 11, 6, tzinfo=UTC),
+    )
+    public = project_event(event)
+    assert public["kind"] == "browser.recording_saved"
+    assert public["payload"] == {"evidence_id": "video-1"}

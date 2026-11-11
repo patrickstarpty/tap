@@ -156,6 +156,25 @@ _WORKFLOW_DELEGATE_SCHEMA: Mapping[str, object] = {
 }
 
 TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
+    "browser.step": ToolDefinition(
+        tool_id="browser.step",
+        wire_name="browser_step",
+        names={"en": "Browser action", "zh": "浏览器操作"},
+        descriptions={
+            "en": "Observe, act on and verify the current browser page.",
+            "zh": "观察当前网页、操作控件并核对结果。",
+        },
+        required=False,
+        default_enabled=True,
+        model_callable=True,
+        platform=True,
+        tasks=frozenset({"workflow"}),
+        input_schema={
+            "type": "object",
+            "required": ["type"],
+            "properties": {"type": {"type": "string"}},
+        },
+    ),
     "workflow.delegate": ToolDefinition(
         tool_id="workflow.delegate",
         wire_name="workflow_delegate",

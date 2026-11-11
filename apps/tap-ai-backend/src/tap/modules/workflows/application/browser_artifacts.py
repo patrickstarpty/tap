@@ -9,15 +9,15 @@ from typing import Any
 from urllib.parse import quote
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.workflows.adapters.browser_client import BrowserApiClient
+from tap.modules.workflows.ports.browser import BrowserArtifactReader
 from tap.modules.workflows.ports.store import WorkflowStore
 
 _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
-_KINDS = {"screenshot", "trace", "result"}
+_KINDS = {"screenshot", "trace", "result", "video"}
 
 
 class BrowserArtifactAdapter:
-    def __init__(self, store: WorkflowStore, client: BrowserApiClient) -> None:
+    def __init__(self, store: WorkflowStore, client: BrowserArtifactReader) -> None:
         self.store = store
         self.client = client
 
@@ -139,6 +139,12 @@ class BrowserArtifactAdapter:
         if _ID.fullmatch(evidence_id) is None:
             raise LookupError("browser evidence unavailable")
         snapshot = await self.store.snapshot(scope, task_id)
+        for event in snapshot["events"]:
+            if (
+                event.kind == "browser.recording_saved"
+                and event.payload.get("evidence_id") == evidence_id
+            ):
+                return await self.client.read_evidence(evidence_id)
         view = await self.project(scope, task_id, snapshot)
         if view is None or not any(item["evidenceId"] == evidence_id for item in view["evidence"]):
             raise LookupError("browser evidence unavailable")

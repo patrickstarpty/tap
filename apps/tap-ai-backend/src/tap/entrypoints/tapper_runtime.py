@@ -227,6 +227,11 @@ class TapperSettings:
     workflow_max_seconds: int = 900
     workflow_max_attempts: int = 3
     browser_coding_enabled: bool = False
+    browser_control_enabled: bool = False
+    browser_gateway_token: str = field(default="", repr=False)
+    browser_worker_token: str = field(default="", repr=False)
+    browser_execution_mode: str = "docker"
+    browser_local_opencode_binary: str = ""
     browser_api_origin: str = ""
     browser_project_id: str = ""
     browser_access_token: str = field(default="", repr=False)
@@ -256,7 +261,22 @@ class TapperSettings:
                 "TAPPER_GRAPH_EXTRACTION_TIMEOUT_SECONDS is too short for "
                 "TAPPER_GRAPH_EXTRACTION_MAX_TOKENS"
             )
+        if self.browser_control_enabled and (
+            not self.browser_coding_enabled
+            or len(self.browser_gateway_token) < 32
+            or self.browser_gateway_token == self.browser_access_token
+            or len(self.browser_worker_token) < 32
+            or self.browser_worker_token in {self.browser_access_token, self.browser_gateway_token}
+        ):
+            raise ValueError("browser control requires coding and a separate gateway credential")
+        if self.browser_execution_mode not in {"docker", "local"}:
+            raise ValueError("invalid browser execution mode")
         if self.browser_coding_enabled:
+            if (
+                self.browser_execution_mode == "local"
+                and not Path(self.browser_local_opencode_binary).is_absolute()
+            ):
+                raise ValueError("local coding requires an absolute OpenCode binary path")
             from tap.modules.workflows.adapters.browser_client import BrowserApiClient
             from tap.modules.workflows.adapters.opencode_runtime import CodingConfig
 
@@ -271,6 +291,7 @@ class TapperSettings:
                 browser_token=self.browser_access_token,
                 image=self.browser_coding_image,
                 image_id=self.browser_coding_image_id,
+                require_coding_image=self.browser_execution_mode == "docker",
                 model_origin=self.litellm_base_url,
                 model_key=self.litellm_api_key,
                 max_input_tokens=self.browser_coding_max_input_tokens,
@@ -278,6 +299,8 @@ class TapperSettings:
                 input_price_per_million=self.browser_coding_input_price_per_million,
                 output_price_per_million=self.browser_coding_output_price_per_million,
                 model_alias=self.browser_coding_model_alias,
+                live_browser=True,
+                control_enabled=self.browser_control_enabled,
             )
 
     @classmethod
@@ -806,6 +829,22 @@ class TapperSettings:
                 choices=frozenset({"true", "false"}),
             )
             == "true",
+            browser_control_enabled=_fixed_choice(
+                values,
+                "TAP_BROWSER_CONTROL_ENABLED",
+                default="false",
+                choices=frozenset({"true", "false"}),
+            )
+            == "true",
+            browser_gateway_token=_value(values, "TAP_BROWSER_GATEWAY_TOKEN", ""),
+            browser_worker_token=_value(values, "TAP_BROWSER_WORKER_TOKEN", ""),
+            browser_execution_mode=_fixed_choice(
+                values,
+                "TAP_BROWSER_EXECUTION_MODE",
+                default="docker",
+                choices=frozenset({"docker", "local"}),
+            ),
+            browser_local_opencode_binary=_value(values, "TAP_BROWSER_LOCAL_OPENCODE_BINARY", ""),
             browser_api_origin=_value(values, "TAP_BROWSER_API_ORIGIN", ""),
             browser_project_id=_value(values, "TAP_BROWSER_PROJECT_ID", ""),
             browser_access_token=_value(values, "TAP_BROWSER_ACCESS_TOKEN", ""),
@@ -1276,6 +1315,9 @@ async def create_api_runtime(
                         settings.browser_api_origin,
                         settings.browser_project_id,
                         settings.browser_access_token,
+                        gateway_token=settings.browser_gateway_token
+                        if settings.browser_control_enabled
+                        else None,
                     )
                     if settings.browser_coding_enabled
                     else None
@@ -1490,6 +1532,28 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
     owner = f"workflow:{gethostname()}:{getpid()}:{uuid4().hex}"
     coding = None
     if settings.browser_coding_enabled:
+        from functools import partial
+        from shutil import which
+
+        from tap.modules.workflows.adapters.opencode_runtime import (
+            CodingContainer,
+            DockerCodingContainer,
+        )
+
+        container_factory: Callable[[CodingConfig, Path], CodingContainer] = DockerCodingContainer
+        if settings.browser_execution_mode == "local":
+            from tap.modules.workflows.adapters.local_opencode import LocalCodingContainer
+
+            node = which("node")
+            if node is None:
+                raise RuntimeError("local coding requires Node.js")
+            container_factory = partial(
+                LocalCodingContainer,
+                opencode_binary=Path(settings.browser_local_opencode_binary),
+                node_binary=Path(node),
+                client_path=Path(__file__).resolve().parents[5]
+                / "deploy/browser/opencode-client.mjs",
+            )
         coding = CodingRuntime(
             CodingConfig(
                 browser_origin=settings.browser_api_origin,
@@ -1497,6 +1561,7 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
                 browser_token=settings.browser_access_token,
                 image=settings.browser_coding_image,
                 image_id=settings.browser_coding_image_id,
+                require_coding_image=settings.browser_execution_mode == "docker",
                 model_origin=settings.litellm_base_url,
                 model_key=settings.litellm_api_key,
                 max_input_tokens=settings.browser_coding_max_input_tokens,
@@ -1504,8 +1569,11 @@ async def create_workflow_worker_runtime(settings: TapperSettings) -> WorkerRunt
                 input_price_per_million=settings.browser_coding_input_price_per_million,
                 output_price_per_million=settings.browser_coding_output_price_per_million,
                 model_alias=settings.browser_coding_model_alias,
+                live_browser=True,
+                control_enabled=settings.browser_control_enabled,
             ),
             store=store,
+            container_factory=container_factory,
         )
     runtime = NativeWorkflowRuntime(
         store,

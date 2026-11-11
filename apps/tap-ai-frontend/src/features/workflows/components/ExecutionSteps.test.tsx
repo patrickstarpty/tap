@@ -85,3 +85,42 @@ it("only a persisted execution receipt can mark a BDD assertion passed", () => {
   expect(screen.getByText("Passed")).toBeVisible();
   expect(screen.getByText("Not run")).toBeVisible();
 });
+
+it.each(["running", "failed"])(
+  "preserves unknown action outcomes in %s snapshots",
+  (status) => {
+    render(
+      <ExecutionSteps
+        snapshot={
+          {
+            ...snapshot,
+            status,
+            events: [
+              ...snapshot.events,
+              {
+                eventId: "uncertain",
+                taskId: "task-1",
+                nodeId: "root",
+                attempt: 1,
+                occurredAt: "2026-11-10T00:00:00Z",
+                sequence: 2,
+                kind: "browser.action_finished",
+                payload: {
+                  step_id: "open",
+                  action_id: "submit",
+                  outcome: "unknown",
+                },
+              } as WorkflowTaskSnapshot["events"][number],
+            ],
+          } as WorkflowTaskSnapshot
+        }
+      />,
+    );
+    expect(screen.getByText("Outcome unknown")).toBeVisible();
+    expect(
+      screen.getByText("Check what happened before repeating this action."),
+    ).toBeVisible();
+    expect(screen.queryByText("Needs attention")).toBeNull();
+    expect(screen.queryByText("Passed")).toBeNull();
+  },
+);

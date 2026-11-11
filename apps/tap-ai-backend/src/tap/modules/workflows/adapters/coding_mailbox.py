@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 _ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
-_MAX_REQUEST = 196_608
+_MAX_REQUEST = 12 * 1024 * 1024
 _MAX_RESPONSE = 1_400_000
 
 

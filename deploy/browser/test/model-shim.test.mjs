@@ -79,7 +79,7 @@ test('model shim preserves status, content type and body through mailbox', async
   }
 });
 
-test('model shim enforces raw 128 KiB request and 1 MiB response limits', async () => {
+test('model shim enforces raw 8 MiB request and 1 MiB response limits', async () => {
   const root = fixture();
   const server = createModelShim({ root, token: 'local-token', port: 0 });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -94,10 +94,10 @@ test('model shim enforces raw 128 KiB request and 1 MiB response limits', async 
   try {
     const url = `http://127.0.0.1:${server.address().port}/v1/chat/completions`;
     const headers = { authorization: 'Bearer local-token' };
-    const full = await fetch(url, { method: 'POST', headers, body: Buffer.alloc(131072, 120) });
+    const full = await fetch(url, { method: 'POST', headers, body: Buffer.alloc(8 * 1024 * 1024, 120) });
     assert.equal(full.status, 200);
     assert.equal((await full.arrayBuffer()).byteLength, 1048576);
-    const oversizedRequest = await fetch(url, { method: 'POST', headers, body: Buffer.alloc(131073, 120) });
+    const oversizedRequest = await fetch(url, { method: 'POST', headers, body: Buffer.alloc(8 * 1024 * 1024 + 1, 120) });
     assert.equal(oversizedRequest.status, 413);
     responseBytes = 1048577;
     const oversizedResponse = await fetch(url, { method: 'POST', headers, body: '{}' });
@@ -144,3 +144,29 @@ for (const [elapsed, expectedStatus] of [[31000, 200], [61000, 502]]) {
     }
   });
 }
+
+test('only local terminal budget errors stop SDK retries; provider 429 is preserved', async () => {
+  const root = fixture();
+  const server = createModelShim({root,token:'local-token',port:0});
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  let local = true;
+  const responder = setInterval(() => {
+    for (const name of fs.readdirSync(path.join(root,'requests')).filter(x=>x.endsWith('.json'))) {
+      const error = local ? {type:'tap_budget_exhausted',code:'budget_cost',retryable:false,message:'Task stopped: budget_cost'} : {type:'rate_limit_error',message:'try later'};
+      fs.writeFileSync(path.join(root,'responses',name), JSON.stringify({status:429,contentType:'application/json',bodyBase64:Buffer.from(JSON.stringify({error})).toString('base64')}),{mode:0o600});
+      fs.unlinkSync(path.join(root,'requests',name));
+    }
+  },5);
+  try {
+    const send = () => fetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`,{method:'POST',headers:{authorization:'Bearer local-token'},body:'{}'});
+    const denied = await send();
+    assert.equal(denied.status,402);
+    assert.equal((await denied.json()).error.code,'budget_cost');
+    local = false;
+    assert.equal((await send()).status,429);
+  } finally {
+    clearInterval(responder);
+    await new Promise(resolve=>server.close(resolve));
+    fs.rmSync(root,{recursive:true,force:true});
+  }
+});

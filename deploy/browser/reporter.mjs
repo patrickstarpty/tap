@@ -73,20 +73,21 @@ export default class TrustedReporter {
       errors: this.errors, evidence, nonce: this.nonce };
   }
   async onEnd() {
+    const output = process.env.TAP_BROWSER_OUTPUT_DIR || '/opt/browser/output';
     const evidence = [];
     for (const test of this.tests) {
       for (const attachment of test.attachments) {
         const kind = attachment.name.includes('trace') ? 'trace' :
-          attachment.name.includes('screenshot') ? 'screenshot' : null;
+          attachment.name.includes('screenshot') ? 'screenshot' : attachment.name === 'video' ? 'video' : null;
         if (kind && fs.existsSync(attachment.path)) {
-          const name = `${kind}-${evidence.length}${kind === 'trace' ? '.zip' : '.png'}`;
-          fs.copyFileSync(attachment.path, `/opt/browser/output/${name}`);
+          const name = `${kind}-${evidence.length}${kind === 'trace' ? '.zip' : kind === 'video' ? '.webm' : '.png'}`;
+          fs.copyFileSync(attachment.path, `${output}/${name}`);
           evidence.push({ kind, name });
         }
       }
     }
     const receipt = this.buildReceipt(evidence);
-    fs.writeFileSync('/opt/browser/output/result.json.tmp', JSON.stringify(receipt), { mode: 0o600 });
-    fs.renameSync('/opt/browser/output/result.json.tmp', '/opt/browser/output/result.json');
+    fs.writeFileSync(`${output}/result.json.tmp`, JSON.stringify(receipt), { mode: 0o600 });
+    fs.renameSync(`${output}/result.json.tmp`, `${output}/result.json`);
   }
 }

@@ -18,6 +18,7 @@ _SIGNATURES = {
     "screenshot": b"\x89PNG\r\n\x1a\n",
     "trace": b"PK\x03\x04",
     "result": b"{",
+    "video": b"\x1a\x45\xdf\xa3",
 }
 
 
@@ -104,7 +105,7 @@ class BrowserEvidenceSink:
         if session_id is not None:
             session = self.store.get("session", project_id, session_id)
             if (
-                kind != "screenshot"
+                kind not in {"screenshot", "trace", "result", "video"}
                 or execution_id != task_id
                 or session is None
                 or session["task_id"] != task_id
@@ -124,7 +125,7 @@ class BrowserEvidenceSink:
             )
         )
         return Evidence(
-            kind=cast(Literal["screenshot", "trace", "result"], kind),
+            kind=cast(Literal["screenshot", "trace", "result", "video"], kind),
             object_ref=row["id"],
             sha256=sha,
             size_bytes=size,

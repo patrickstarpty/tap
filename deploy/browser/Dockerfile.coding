@@ -1,10 +1,10 @@
 FROM tapper-browser-runtime:1.62.1-arm64
 USER root
-RUN mkdir -p /opt/opencode /opt/tapper
+RUN mkdir -p /opt/opencode /opt/tapper/config/opencode && touch /opt/tapper/config/opencode/.gitignore
 COPY opencode /opt/opencode/opencode
 COPY rg /usr/local/bin/rg
-COPY model-shim.mjs browserctl.mjs opencode-client.mjs /opt/tapper/
-RUN chmod 0555 /opt/opencode/opencode /usr/local/bin/rg /opt/tapper/*.mjs && chmod 0555 /opt/opencode /opt/tapper
+COPY model-shim.mjs browserctl.mjs browser-tools.mjs opencode-client.mjs /opt/tapper/
+RUN chmod 0555 /opt/opencode/opencode /usr/local/bin/rg /opt/tapper/*.mjs && chmod 0555 /opt/opencode /opt/tapper /opt/tapper/config /opt/tapper/config/opencode
 USER browser
 WORKDIR /workspace
 CMD ["node", "/opt/tapper/opencode-client.mjs", "daemon"]

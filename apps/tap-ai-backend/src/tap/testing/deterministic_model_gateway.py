@@ -596,6 +596,17 @@ class DeterministicModelGateway(LiteLLMModelGateway):
         self, request: ModelRequest, payload: dict[str, Any], attempts: GatewayAttempts
     ) -> tuple[dict[str, Any], httpx.Headers]:
         attempts.count = 1
+        from tap.testing.direct_browser_fixture import browser_fixture
+
+        browser_script = browser_fixture(request)
+        if browser_script is not None:
+            if (
+                "Core cancel:" in request.context
+                and '"type": "snapshot"'
+                in browser_script["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+            ):
+                await asyncio.sleep(5)
+            return browser_script, httpx.Headers()
         scripted = _workflow_script_body(request)
         if scripted is not None:
             if "Fulfill only the delegated objective" in request.prompt and not any(

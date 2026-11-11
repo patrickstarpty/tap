@@ -38,13 +38,19 @@ _ALLOWED_FIELDS = frozenset(
         "n",
     }
 )
-_MESSAGE_FIELDS = frozenset({"role", "content", "name", "tool_call_id", "tool_calls"})
+_MESSAGE_FIELDS = frozenset(
+    {"role", "content", "name", "tool_call_id", "tool_calls", "reasoning_content"}
+)
 
 
 def _safe_message(message: object) -> bool:
     if not isinstance(message, dict) or set(message) - _MESSAGE_FIELDS:
         return False
     if message.get("role") not in {"system", "developer", "user", "assistant", "tool"}:
+        return False
+    if "reasoning_content" in message and (
+        message.get("role") != "assistant" or not isinstance(message["reasoning_content"], str)
+    ):
         return False
     content = message.get("content")
     if content is not None and not isinstance(content, str):
@@ -79,11 +85,7 @@ def _allowed_payload(
     if raw.get("model") != model_alias or raw.get("n", 1) != 1 or type(raw.get("n", 1)) is not int:
         return None
     messages = raw.get("messages")
-    if (
-        not isinstance(messages, list)
-        or len(messages) > 100
-        or not all(_safe_message(message) for message in messages)
-    ):
+    if not isinstance(messages, list) or not all(_safe_message(message) for message in messages):
         return None
     requested = raw.get("max_tokens", raw.get("max_completion_tokens", output_limit))
     if type(requested) is not int or not 0 < requested <= output_limit:
@@ -347,9 +349,27 @@ class BudgetGate:
                             gate._elapsed_ms(),
                         )
                     )
+                terminal = reason.startswith("budget_") or reason == "durable_reservation"
+                body = (
+                    json.dumps(
+                        {
+                            "error": {
+                                "type": "tap_budget_exhausted",
+                                "code": reason,
+                                "message": "Task stopped: " + reason,
+                                "retryable": False,
+                            }
+                        }
+                    ).encode()
+                    if terminal
+                    else b""
+                )
                 self.send_response(status)
-                self.send_header("Content-Length", "0")
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
+                if body:
+                    self.wfile.write(body)
 
             def do_POST(self) -> None:
                 if self.path != "/v1/chat/completions":

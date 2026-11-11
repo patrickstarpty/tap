@@ -154,7 +154,11 @@ export function createSimulatedRun({
     automationId: automation.id,
     testPlanIdAtRun: automation.testPlanId,
     triggeredFrom,
-    target,
+    target: { ...target },
+    definitionSnapshot: {
+      revision: automation.revision,
+      feature: structuredClone(automation.feature),
+    },
     status: "completed",
     executionMode: "simulated",
     evidenceKind: "none",

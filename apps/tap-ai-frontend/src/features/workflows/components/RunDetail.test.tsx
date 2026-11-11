@@ -122,3 +122,89 @@ it("shows persisted browser values and evidence and offers frozen replay", async
   );
   expect(replay).toHaveBeenCalledOnce();
 });
+
+it("distinguishes a completed browser task from an unavailable replay script", () => {
+  render(
+    <RunDetail
+      snapshot={{
+        ...snapshot,
+        status: "succeeded",
+        taskKind: "browser",
+        events: [
+          {
+            eventId: "script-failed",
+            taskId: "task-1",
+            sequence: 1,
+            nodeId: "node-1",
+            attempt: 1,
+            occurredAt: "2026-11-08T00:00:00Z",
+            kind: "browser.script_failed",
+            payload: { error: "Storage unavailable" },
+          },
+        ] as WorkflowTaskSnapshot["events"],
+      }}
+      connection="live"
+      onSelectNode={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText("Task completed. Replay script could not be saved."),
+  ).toBeVisible();
+  expect(screen.queryByText("Results will appear here")).toBeNull();
+});
+
+it("opens control only for a versioned active browser session event", async () => {
+  const transport = {
+    issue: vi.fn(async () => ({
+      capability: "panel-token",
+      controllerId: "panel-one",
+      control: {
+        control_state: "agent_active" as const,
+        control_epoch: 0,
+        controller_kind: "agent" as const,
+        controller_id: "agent-one",
+        deadline_at: new Date(Date.now() + 60000).toISOString(),
+        allowed_controls: ["request_takeover"],
+      },
+    })),
+    state: vi.fn(),
+    control: vi.fn(),
+  };
+  const event = {
+    eventId: "session-started",
+    taskId: "task-1",
+    sequence: 1,
+    nodeId: "node-one",
+    attempt: 1,
+    occurredAt: new Date().toISOString(),
+    kind: "browser.session_started",
+    payload: {
+      session_id: "browser-one",
+      control_version: "browser-control-v1",
+    },
+  };
+  const { rerender } = render(
+    <RunDetail
+      snapshot={{ ...snapshot, taskKind: "browser" }}
+      connection="live"
+      onSelectNode={vi.fn()}
+      browserControlTransport={transport}
+    />,
+  );
+  expect(screen.queryByRole("region", { name: "Live browser" })).toBeNull();
+  rerender(
+    <RunDetail
+      snapshot={{
+        ...snapshot,
+        taskKind: "browser",
+        events: [event] as WorkflowTaskSnapshot["events"],
+      }}
+      connection="live"
+      onSelectNode={vi.fn()}
+      browserControlTransport={transport}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Request control" }),
+  ).toBeVisible();
+});

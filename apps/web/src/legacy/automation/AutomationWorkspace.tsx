@@ -213,13 +213,11 @@ function actionCode(action: ImplementationAction): string {
 }
 
 function RunHistory({
-  automation,
   runs,
   locale,
   productPrototype = false,
   label,
 }: {
-  automation: Automation;
   runs: readonly AutomationRun[];
   locale: Locale;
   productPrototype?: boolean;
@@ -263,33 +261,40 @@ function RunHistory({
                     {run.target.label} · {text.triggeredFrom}{" "}
                     {run.triggeredFrom}
                   </p>
+                  <p className="tap-simulation-note">
+                    {run.definitionSnapshot
+                      ? `${locale === "zh" ? "版本" : "Revision"} ${run.definitionSnapshot.revision}`
+                      : locale === "zh"
+                        ? "历史定义不可用"
+                        : "Historical definition unavailable"}
+                  </p>
                   {run.scenarioResults.map((scenarioResult) => {
-                    const scenario = automation.feature.scenarios.find(
+                    const scenario = run.definitionSnapshot?.feature.scenarios.find(
                       ({ id }) => id === scenarioResult.bddScenarioId,
                     );
-                    if (scenario === undefined) return null;
                     return (
                       <div
                         className="tap-run-scenario"
                         key={scenarioResult.bddScenarioId}
                       >
-                        <strong>{scenario.title}</strong>
+                        <strong>{scenario?.title ?? scenarioResult.bddScenarioId}</strong>
                         {scenarioResult.steps.map((stepResult) => {
-                          const step = scenario.steps.find(
+                          const step = scenario?.steps.find(
                             ({ id }) => id === stepResult.bddStepId,
                           );
-                          if (step === undefined) return null;
                           return (
                             <div
                               className="tap-run-step"
                               key={stepResult.bddStepId}
                             >
                               <span>
-                                {step.keyword} {step.text}
+                                {step ? `${step.keyword} ${step.text}` : stepResult.bddStepId}
                               </span>
                               <small>
-                                {step.actions
-                                  .map(({ action }) => action)
+                                {stepResult.actions
+                                  .map(({ actionId }) =>
+                                    step?.actions.find(({ id }) => id === actionId)?.action ?? actionId,
+                                  )
                                   .join(" → ") || text.noActions}
                               </small>
                             </div>
@@ -444,7 +449,6 @@ export function AutomationRunPanel({
       </div>
       <RunHistory
         productPrototype={productPrototype}
-        automation={automation}
         runs={runs}
         locale={locale}
         label={historyLabel ?? text.runHistory}

@@ -3341,7 +3341,7 @@ def test_native_workflow_settings_default_off_and_bounded():
             TapperSettings.from_mapping(S3_SETTINGS | {name: bad})
 
 
-def test_browser_coding_settings_require_finite_pricing_image_and_cost_cap():
+def test_opencode_browser_settings_require_finite_budget_and_pinned_coding_image():
     settings = S3_SETTINGS | {
         "TAP_BROWSER_CODING_ENABLED": "true",
         "TAP_WORKFLOW_MAX_COST_MICROS": "500000",
@@ -3354,13 +3354,14 @@ def test_browser_coding_settings_require_finite_pricing_image_and_cost_cap():
     }
     frozen = TapperSettings.from_mapping(settings)
     assert frozen.browser_coding_enabled
+    with pytest.raises(ValueError, match="coding configuration"):
+        TapperSettings.from_mapping(settings | {"TAP_BROWSER_CODING_IMAGE_ID": ""})
     assert frozen.browser_coding_max_input_tokens == 129024
     assert frozen.browser_coding_max_output_tokens == 2048
     for name, bad in (
         ("TAP_WORKFLOW_MAX_COST_MICROS", "0"),
         ("TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION", "0"),
         ("TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION", "nan"),
-        ("TAP_BROWSER_CODING_IMAGE_ID", "sha256:short"),
         ("TAP_BROWSER_API_ORIGIN", "https://example.com"),
     ):
         with pytest.raises(ValueError):
@@ -3373,3 +3374,36 @@ async def test_native_workflow_worker_requires_enabled_configuration():
 
     with pytest.raises(ValueError, match="disabled"):
         await create_workflow_worker_runtime(TapperSettings.from_mapping(S3_SETTINGS))
+
+
+def test_local_coding_configuration_requires_explicit_mode_and_absolute_binary():
+    settings = S3_SETTINGS | {
+        "TAP_BROWSER_CODING_ENABLED": "true",
+        "TAP_WORKFLOW_MAX_COST_MICROS": "1000000",
+        "TAP_BROWSER_API_ORIGIN": "http://127.0.0.1:8002",
+        "TAP_BROWSER_PROJECT_ID": "project-a",
+        "TAP_BROWSER_ACCESS_TOKEN": "x" * 16,
+        "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": "0.4",
+        "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": "1.2",
+        "TAP_BROWSER_EXECUTION_MODE": "local",
+        "TAP_BROWSER_LOCAL_OPENCODE_BINARY": "/private/tmp/opencode",
+    }
+    local = TapperSettings.from_mapping(settings)
+    assert local.browser_execution_mode == "local"
+    assert local.browser_local_opencode_binary == "/private/tmp/opencode"
+    for overrides in (
+        {"TAP_BROWSER_EXECUTION_MODE": "unknown"},
+        {"TAP_BROWSER_LOCAL_OPENCODE_BINARY": "opencode"},
+        {"TAP_BROWSER_LOCAL_OPENCODE_BINARY": ""},
+        {"TAP_BROWSER_EXECUTION_MODE": "docker"},
+    ):
+        with pytest.raises(ValueError):
+            TapperSettings.from_mapping(settings | overrides)
+
+
+def test_browser_control_is_opt_in_and_requires_separate_gateway_credential():
+    settings = TapperSettings.from_mapping(S3_SETTINGS)
+    assert settings.browser_control_enabled is False
+    assert settings.browser_gateway_token == ""
+    with pytest.raises(ValueError, match="browser control"):
+        TapperSettings.from_mapping({**S3_SETTINGS, "TAP_BROWSER_CONTROL_ENABLED": "true"})

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
-const root = '/tmp/tapper-task-ca';
+const root = process.env.TAP_BROWSER_LOCAL_DIR ? path.join(process.env.TAP_BROWSER_LOCAL_DIR, 'ca') : '/tmp/tapper-task-ca';
 
 function openssl(...args) {
   execFileSync('openssl', args, { stdio: 'ignore', timeout: 10_000 });

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -101,7 +102,7 @@ def synthetic_script(name: str) -> str:
         return (
             common
             + """test('query order', async ({ page }, testInfo) => {
-  const input = JSON.parse(fs.readFileSync('/opt/browser/frozen/inputs.json', 'utf8'));
+  const input = JSON.parse(fs.readFileSync(process.env.TAP_BROWSER_INPUTS_PATH || '/opt/browser/frozen/inputs.json', 'utf8'));
   const notes = Object.fromEntries([...input.goal.matchAll(/(customer|region|account|amount)=([A-Za-z0-9-]+)/g)].map(match => [match[1], match[2]]));
   await page.goto('http://example.test/');
   await page.getByLabel('Customer').fill(notes.customer);
@@ -121,7 +122,7 @@ def synthetic_script(name: str) -> str:
         return (
             common
             + """test('check request form', async ({ page }, testInfo) => {
-  const input = JSON.parse(fs.readFileSync('/opt/browser/frozen/inputs.json', 'utf8'));
+  const input = JSON.parse(fs.readFileSync(process.env.TAP_BROWSER_INPUTS_PATH || '/opt/browser/frozen/inputs.json', 'utf8'));
   const notes = Object.fromEntries([...input.goal.matchAll(/(customer|region|account|amount)=([A-Za-z0-9-]+)/g)].map(match => [match[1], match[2]]));
   await page.goto('http://example.test/review');
   await page.getByLabel('Account').fill(notes.account);
@@ -178,7 +179,7 @@ class SyntheticModel(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         size = int(self.headers.get("Content-Length", "0"))
-        if size < 1 or size > 131072:
+        if size < 1 or size > 8 * 1024 * 1024:
             self.send_error(413)
             return
         request = json.loads(self.rfile.read(size))
@@ -197,18 +198,25 @@ class SyntheticModel(BaseHTTPRequestHandler):
         name = str(names[0]) if has_tools else "probe"
         self.calls[name] = self.calls.get(name, 0) + 1
         stage = self.stages.get(name, 0) if has_tools else -1
-        if not has_tools:
-            command = None
-            description = ""
-        elif stage == 0:
-            plan = {"type": "plan", "steps": [
-                {"id": "inspect", "keyword": "Given", "title": "Inspect the requested page", "expected_result": "The requested page is available"},
-                {"id": "verify", "keyword": "Then", "title": "Verify requested result", "expected_result": "The result matches the request"},
-            ]}
-            command = f"node /opt/tapper/browserctl.mjs '{json.dumps(plan)}'"
-            description = "Persist BDD plan before actions"
-        elif stage == 1:
-            start = (
+        tool = None
+        if has_tools:
+            definitions = {item["function"]["name"] for item in request["tools"]}
+            if "tap_browser" not in definitions:
+                self.send_error(422, "native browser tool missing")
+                return
+            observations = []
+            for message in request["messages"]:
+                if message.get("role") != "tool":
+                    continue
+                try:
+                    observed = json.loads(message.get("content", ""))
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(observed, dict) and observed.get("sequence"):
+                    observations.append(observed)
+            if observations:
+                self.observed.add(name)
+            start_url = (
                 "http://example.test/"
                 if name == "cancel"
                 else next(
@@ -217,60 +225,158 @@ class SyntheticModel(BaseHTTPRequestHandler):
                     if case["name"] == name
                 )
             )
-            command = f"node /opt/tapper/browserctl.mjs '{json.dumps({'type': 'navigate', 'url': start, 'step': 'inspect'})}'"
-            description = "Inspect actual approved page"
-        elif stage == 2:
-            if not any(
-                title in body
-                for title in ("Tapper Core Site", "Request review", "Travel checklist")
-            ):
-                self.send_error(422)
-                return
-            self.observed.add(name)
-            if name == "cancel":
-                command = "sleep 90"
-            elif name == "missing-input":
-                command = (
-                    "cat > /workspace/tapper-input-request.json <<'EOF'\n"
-                    + json.dumps(
+            actions = [
+                {
+                    "type": "plan",
+                    "steps": [
                         {
-                            "reason": "missing_input",
-                            "question": "Provide the account PIN in a new run.",
+                            "id": "inspect",
+                            "keyword": "Given",
+                            "title": "Inspect the requested page",
+                        },
+                        {
+                            "id": "operate",
+                            "keyword": "When",
+                            "title": "Apply supplied inputs",
+                        },
+                        {
+                            "id": "verify",
+                            "keyword": "Then",
+                            "title": "Verify requested result",
+                        },
+                    ],
+                },
+                {"type": "navigate", "step": "inspect", "url": start_url},
+            ]
+            if name in {"lookup", "wrong-expected", "form"}:
+                first, second = (
+                    ("account", "amount") if name == "form" else ("customer", "region")
+                )
+                values = {
+                    key: re.search(rf"{key}=([A-Za-z0-9-]+)", body)[1]
+                    for key in (first, second)
+                }
+                if name == "lookup":
+                    # Exercise a real recoverable tool error in the OpenCode session.
+                    actions.append(
+                        {
+                            "type": "fill",
+                            "step": "operate",
+                            "selector": "[",
+                            "value": values[first],
                         }
                     )
-                    + "\nEOF"
+                actions.extend(
+                    [
+                        {
+                            "type": "fill",
+                            "step": "operate",
+                            "selector": f"[name={first}]",
+                            "value": values[first],
+                        },
+                        {
+                            "type": "fill" if name == "form" else "select",
+                            "step": "operate",
+                            "selector": f"[name={second}]",
+                            "value": values[second],
+                        },
+                        {
+                            "type": "click",
+                            "step": "operate",
+                            "selector": "button[type=submit]",
+                        },
+                        {
+                            "type": "read",
+                            "step": "verify",
+                            "selector": "#result",
+                            "name": "result",
+                            "nonempty": True,
+                            **(
+                                {"contains": "ORDER-WRONG", "timeout_ms": 100}
+                                if name == "wrong-expected"
+                                else {}
+                            ),
+                        },
+                    ]
                 )
-            else:
-                command = (
-                    "cat > /workspace/flow.spec.ts <<'EOF'\n"
-                    + synthetic_script(name).replace(
-                        "async ({ page }, testInfo) => {\n",
-                        "async ({ page }, testInfo) => {\n  await test.step('Then Verify requested result', async () => {\n",
-                        1,
-                    ).removesuffix("});\n") + "  });\n});\n"
-                    + "EOF"
+            elif name == "multipage":
+                actions.extend(
+                    [
+                        {
+                            "type": "click",
+                            "step": "operate",
+                            "selector": "a[href='/journey/details']",
+                        },
+                        {
+                            "type": "click",
+                            "step": "operate",
+                            "selector": "a[href='/journey/finish']",
+                        },
+                        {
+                            "type": "read",
+                            "step": "verify",
+                            "selector": "#journey-result",
+                            "name": "result",
+                            "equals": "Three pages reviewed",
+                        },
+                    ]
                 )
-            description = "Write observed browser task"
-        else:
             command = None
-            description = ""
-        if has_tools:
+            if stage < len(actions):
+                if (
+                    stage == 3
+                    and name == "lookup"
+                    and not any(o.get("error") for o in observations)
+                ):
+                    self.send_error(
+                        422, "tool failure was not returned to the same session"
+                    )
+                    return
+                tool = {
+                    "index": 0,
+                    "id": f"call_{name}_{stage}",
+                    "type": "function",
+                    "function": {
+                        "name": "tap_browser",
+                        "arguments": json.dumps({"action": actions[stage]}),
+                    },
+                }
+            elif stage == len(actions):
+                if name == "cancel":
+                    command = "sleep 90"
+                elif name == "missing-input":
+                    command = (
+                        "cat > tapper-input-request.json <<'EOF'\n"
+                        + json.dumps(
+                            {
+                                "reason": "missing_input",
+                                "question": "Provide the account PIN in a new run.",
+                            }
+                        )
+                        + "\nEOF"
+                    )
+                else:
+                    command = (
+                        "cat > flow.spec.ts <<'EOF'\n"
+                        + synthetic_script(name)
+                        + "EOF"
+                    )
+            if command is not None:
+                tool = {
+                    "index": 0,
+                    "id": f"call_{name}_{stage}",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": json.dumps(
+                            {
+                                "command": command,
+                                "description": "Save the observed task artifact",
+                            }
+                        ),
+                    },
+                }
             self.stages[name] = stage + 1
-        tool = (
-            None
-            if command is None
-            else {
-                "index": 0,
-                "id": f"call_{name}_{stage}",
-                "type": "function",
-                "function": {
-                    "name": "bash",
-                    "arguments": json.dumps(
-                        {"command": command, "description": description}
-                    ),
-                },
-            }
-        )
         chunk = {
             "id": f"chatcmpl-{name}-{stage}",
             "object": "chat.completion.chunk",
@@ -304,6 +410,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("synthetic", "real"), default="synthetic")
     parser.add_argument(
+        "--execution-mode", choices=("docker", "local"), default="docker"
+    )
+    parser.add_argument("--opencode-binary", type=Path)
+
+    parser.add_argument(
         "--case",
         choices=(
             "lookup",
@@ -325,6 +436,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deadline-seconds", type=int)
     parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
+    if args.execution_mode == "local" and (
+        args.opencode_binary is None
+        or not args.opencode_binary.is_absolute()
+        or not args.opencode_binary.is_file()
+    ):
+        parser.error("local execution requires an existing absolute --opencode-binary")
     if args.mode == "synthetic" and args.site != "owned":
         parser.error("synthetic mode requires the owned site")
     if args.mode == "real":
@@ -376,6 +493,9 @@ def selected_browser_env(env: dict[str, str]) -> dict[str, str]:
         "TAP_BROWSER_ACCESS_TOKEN",
         "TAP_BROWSER_TOKEN_EXPIRES_AT",
         "TAP_BROWSER_IMAGE",
+        "TAP_BROWSER_EXECUTION_MODE",
+        "TAP_BROWSER_LOCAL_TEST_TARGET",
+        "PLAYWRIGHT_BROWSERS_PATH",
         "TAP_BROWSER_WORKER_POLL_SECONDS",
         "DOCKER_CONTEXT",
     )
@@ -709,18 +829,31 @@ def main() -> int:
                 datetime.now(UTC) + timedelta(hours=1)
             ).isoformat(),
             "TAP_BROWSER_IMAGE": BROWSER_IMAGE,
+            "TAP_BROWSER_EXECUTION_MODE": args.execution_mode,
+            "TAP_BROWSER_LOCAL_OPENCODE_BINARY": str(args.opencode_binary or ""),
             "TAP_BROWSER_WORKER_POLL_SECONDS": "0.05",
             "TAP_BROWSER_API_ORIGIN": f"http://127.0.0.1:{browser_port}",
             "TAP_BROWSER_CODING_ENABLED": "true",
             "TAP_BROWSER_CODING_IMAGE": CODING_IMAGE,
             "TAP_BROWSER_SERVICE_MODE": "external",
-            "TAP_BROWSER_CODING_MODEL_ALIAS": "qwen-plus",
-            "TAP_BROWSER_CODING_MAX_INPUT_TOKENS": "129024",
-            "TAP_BROWSER_CODING_MAX_OUTPUT_TOKENS": "4096" if args.mode == "real" else "2048",
-            "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": "0.4",
-            "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": "1.2",
+            "TAP_BROWSER_CODING_MODEL_ALIAS": os.environ.get(
+                "TAP_BROWSER_CODING_MODEL_ALIAS", "qwen-plus"
+            ),
+            "TAPPER_MODEL_TIMEOUT_SECONDS": "60" if args.mode == "real" else "15",
+            "TAP_BROWSER_CODING_MAX_INPUT_TOKENS": os.environ.get(
+                "TAP_BROWSER_CODING_MAX_INPUT_TOKENS", "129024"
+            ),
+            "TAP_BROWSER_CODING_MAX_OUTPUT_TOKENS": "4096"
+            if args.mode == "real"
+            else "2048",
+            "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": os.environ.get(
+                "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION", "0.4"
+            ),
+            "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": os.environ.get(
+                "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION", "1.2"
+            ),
             "TAP_WORKFLOW_MAX_MODEL_CALLS": str(
-                args.max_model_calls if args.mode == "real" else 8
+                args.max_model_calls if args.mode == "real" else 12
             ),
             "TAP_WORKFLOW_MAX_COST_MICROS": str(
                 int(args.max_cost_usd * 1_000_000) if args.mode == "real" else 500_000
@@ -775,9 +908,10 @@ def main() -> int:
         json.dumps(
             {
                 "mode": args.mode,
+                "execution_mode": args.execution_mode,
                 "site": args.site,
                 "project": project,
-                "max_model_calls": args.max_model_calls if args.mode == "real" else 8,
+                "max_model_calls": args.max_model_calls if args.mode == "real" else 12,
                 "max_cost_usd": str(
                     args.max_cost_usd if args.mode == "real" else Decimal("0.50")
                 ),
@@ -792,6 +926,7 @@ def main() -> int:
 
     site_name = f"{project}-site"
     site_id = None
+    local_site = None
     app = browser_api = browser_worker = None
     model = model_thread = None
     compose = None
@@ -799,19 +934,45 @@ def main() -> int:
     success = False
     phase = "preflight"
     try:
-        for image in (BROWSER_IMAGE, CODING_IMAGE):
-            helpers.run(
-                ["docker", "image", "inspect", image, "--format", "{{.Id}}"], env
+        if args.execution_mode == "local":
+            version = subprocess.run(
+                [str(args.opencode_binary), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=True,
             )
-        env["TAP_BROWSER_CODING_IMAGE_ID"] = helpers.run(
-            ["docker", "image", "inspect", CODING_IMAGE, "--format", "{{.Id}}"], env
-        )
+            if version.stdout.strip() != "1.19.5":
+                raise RuntimeError("local OpenCode version mismatch")
+        else:
+            for image in (BROWSER_IMAGE, CODING_IMAGE):
+                helpers.run(
+                    ["docker", "image", "inspect", image, "--format", "{{.Id}}"], env
+                )
+            env["TAP_BROWSER_CODING_IMAGE_ID"] = subprocess.check_output(
+                ["docker", "image", "inspect", CODING_IMAGE, "--format", "{{.Id}}"],
+                text=True,
+            ).strip()
+            image_spec = importlib.util.spec_from_file_location(
+                "browser_image_builder", ROOT / "scripts/build_coding_image.py"
+            )
+            assert image_spec and image_spec.loader
+            image_builder = importlib.util.module_from_spec(image_spec)
+            image_spec.loader.exec_module(image_builder)
+            image_builder.verify_browser_image_sources(ROOT, BROWSER_IMAGE)
         from tap.entrypoints.tapper_runtime import TapperSettings
 
         TapperSettings.from_mapping(env)
-        helpers.run(["bash", "scripts/build-tapper-parser.sh", "verify"], env)
+        if args.execution_mode == "docker":
+            helpers.run(["bash", "scripts/build-tapper-parser.sh", "verify"], env)
         phase = "compose-config"
         override = helpers.write_owned_data_override(state)
+        owned_config = json.loads(override.read_text())
+        subnet = str(ipaddress.IPv4Address("10.224.0.0") + (int(project[-3:], 16) << 8))
+        owned_config["networks"] = {
+            "default": {"ipam": {"config": [{"subnet": subnet + "/24"}]}}
+        }
+        override.write_text(json.dumps(owned_config), encoding="utf-8")
         compose = [
             "docker",
             "--context",
@@ -932,7 +1093,36 @@ def main() -> int:
             env,
         )
         phase = "site-startup"
-        if args.site == "owned":
+        if args.site == "owned" and args.execution_mode == "local":
+            site_port = helpers.free_ports(1)[0]
+            env["TAP_BROWSER_LOCAL_TEST_TARGET"] = f"http://127.0.0.1:{site_port}"
+            local_site = subprocess.Popen(
+                ["node", str(SITE_SCRIPT)],
+                cwd=ROOT,
+                env={
+                    **env,
+                    "TAP_CORE_SITE_HOST": "127.0.0.1",
+                    "TAP_CORE_SITE_PORT": str(site_port),
+                },
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            for _ in range(40):
+                if local_site.poll() is not None:
+                    raise RuntimeError("owned local site exited")
+                try:
+                    with urlopen(
+                        env["TAP_BROWSER_LOCAL_TEST_TARGET"], timeout=1
+                    ) as response:
+                        if response.status == 200:
+                            break
+                except OSError:
+                    pass
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("owned local site did not become ready")
+        elif args.site == "owned":
             site_id = helpers.run(
                 [
                     "docker",
@@ -1070,22 +1260,20 @@ def main() -> int:
                 + 180,
             )
         if args.mode == "synthetic":
-            missing = {
-                str(case["name"]) for case in scenarios
-            } - SyntheticModel.observed
-            if missing:
-                raise RuntimeError(
-                    "synthetic model did not receive real page observations"
+            # Decisions now use the native journaled gateway; require actual page
+            # observations in the persisted task, not the obsolete HTTP coding fixture.
+            for case in scenarios:
+                snapshot = json.loads(
+                    (artifacts / f"{case['name']}-snapshot.json").read_text()
                 )
-            (artifacts / "synthetic-model.json").write_text(
-                json.dumps(
-                    {
-                        "calls": SyntheticModel.calls,
-                        "observed": sorted(SyntheticModel.observed),
-                    },
-                    indent=2,
-                )
-            )
+                if not any(
+                    e["kind"] == "browser.action_finished"
+                    and e["payload"].get("observation_sequence")
+                    for e in snapshot["events"]
+                ):
+                    raise RuntimeError(
+                        "native browser fixture did not receive a page observation"
+                    )
         success = True
     except BaseException as error:
         (artifacts / "failure.txt").write_text(
@@ -1114,7 +1302,7 @@ def main() -> int:
                 (artifacts / "failure-cancel.json").write_text(
                     json.dumps({"error_type": type(error).__name__})
                 )
-        for process in (app, browser_worker, browser_api):
+        for process in (app, browser_worker, browser_api, local_site):
             if process is not None:
                 helpers.stop_owned_group(process, grace=125 if process is app else 35)
         if model is not None:

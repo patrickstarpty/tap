@@ -100,3 +100,15 @@ async def test_browser_artifact_adapter_rejects_receipt_bound_to_other_task() ->
     adapter = BrowserArtifactAdapter(None, Client())
     with pytest.raises(LookupError):
         await adapter.project(VALIDATION_SCOPE, "task-1", snapshot)
+
+
+def test_browser_transport_error_preserves_application_read_contract() -> None:
+    from tap.modules.workflows.adapters.browser_client import BrowserApiError
+    from tap.modules.workflows.ports.browser import BrowserReadError
+
+    error = BrowserApiError(503, "unavailable")
+    assert isinstance(error, BrowserReadError)
+    assert isinstance(error, RuntimeError)
+    assert error.status == 503
+    assert error.detail == "unavailable"
+    assert str(error) == "browser API 503: unavailable"

@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -40,6 +41,12 @@ _ACTIONS = {
     "press",
     "wait",
     "screenshot",
+    "read",
+    "finish",
+    "recording",
+    "preflight",
+    "scroll",
+    "control_sync",
 }
 
 
@@ -149,6 +156,7 @@ class InspectorHandle:
     allowed_origins: tuple[str, ...]
     session_id: str | None = None
     network_mode: str = "declared_origins"
+    cdp_url: str | None = None
 
 
 @dataclass
@@ -214,10 +222,12 @@ class BrowserRuntime:
         )
         self._handles: dict[str, InspectorHandle] = {}
         self._executions: dict[str, ExecutionState] = {}
+        self._controlled_handles: set[str] = set()
         self._inspector_expiries: dict[str, asyncio.Task[None]] = {}
         self._inspector_deadlines: dict[str, float] = {}
         self._inspector_resources: dict[str, OwnedResources] = {}
         self._inspector_teardowns: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        self._recordings: dict[str, list[dict[str, Any]]] = {}
         self._inspector_pending: set[str] = set()
         self._inspector_starts: dict[str, asyncio.Task[Any]] = {}
         self._inspector_start_receipts: dict[
@@ -309,7 +319,20 @@ class BrowserRuntime:
 
         try:
             await acquire(
-                ("docker", "network", "create", "--internal", *label, network),
+                (
+                    "docker",
+                    "network",
+                    "create",
+                    "--internal",
+                    "--subnet",
+                    str(
+                        ipaddress.IPv4Address("10.240.0.0")
+                        + (int(resources.attempt_id[:4], 16) << 4)
+                    )
+                    + "/28",
+                    *label,
+                    network,
+                ),
                 "network",
             )
             proxy_env = json.dumps(
@@ -331,6 +354,8 @@ class BrowserRuntime:
                     *label,
                     "--network",
                     "bridge",
+                    "--publish",
+                    "127.0.0.1::9223",
                     "--read-only",
                     "--tmpfs",
                     "/tmp:rw,nosuid,nodev,size=16m",
@@ -524,6 +549,69 @@ class BrowserRuntime:
         except (TimeoutError, ValueError, IndexError, KeyError, TypeError):
             return False
 
+    async def _launch_inspector(
+        self,
+        browser: str,
+        proxy: str,
+        network: str,
+        *,
+        deadline_at: float,
+        control_enabled: bool = False,
+    ) -> str | None:
+        await self._require(
+            (
+                "docker",
+                "exec",
+                "-d",
+                *(("-e", "TAP_BROWSER_CONTROLLED=1") if control_enabled else ()),
+                browser,
+                "node",
+                "/opt/browser/inspector.mjs",
+            ),
+            deadline_at=deadline_at,
+        )
+        for attempt in range(20):
+            ready = await self._call(
+                (
+                    "docker",
+                    "exec",
+                    browser,
+                    "test",
+                    "-S",
+                    "/tmp/inspector.sock",
+                ),
+                deadline_at=deadline_at,
+            )
+            if ready.exit_code == 0:
+                break
+            await asyncio.sleep(min(0.25, max(0, deadline_at - time.monotonic())))
+        else:
+            raise RuntimeError("inspector did not become ready")
+        if control_enabled:
+            return None
+        browser_details = json.loads(
+            await self._require(("docker", "inspect", browser), deadline_at=deadline_at)
+        )[0]
+        browser_ip = browser_details["NetworkSettings"]["Networks"][network][
+            "IPAddress"
+        ]
+        await self._require(
+            (
+                "docker",
+                "exec",
+                "-d",
+                proxy,
+                "node",
+                "/opt/browser/cdp-relay.mjs",
+                browser_ip,
+            ),
+            deadline_at=deadline_at,
+        )
+        port = await self._require(
+            ("docker", "port", proxy, "9223/tcp"), deadline_at=deadline_at
+        )
+        return "http://" + port.strip()
+
     async def start_inspector(
         self,
         task_id: str,
@@ -532,6 +620,7 @@ class BrowserRuntime:
         *,
         session_id: str | None = None,
         network_mode: str = "declared_origins",
+        control_enabled: bool = False,
     ) -> InspectorHandle:
         if not 1 <= deadline <= 600:
             raise ValueError("invalid deadline")
@@ -557,40 +646,13 @@ class BrowserRuntime:
                 resources=resources,
                 network_mode=network_mode,
             )
-            try:
-                await self._require(
-                    (
-                        "docker",
-                        "exec",
-                        "-d",
-                        browser,
-                        "node",
-                        "/opt/browser/inspector.mjs",
-                    ),
-                    deadline_at=deadline_at,
-                )
-                for attempt in range(20):
-                    ready = await self._call(
-                        (
-                            "docker",
-                            "exec",
-                            browser,
-                            "test",
-                            "-S",
-                            "/tmp/inspector.sock",
-                        ),
-                        deadline_at=deadline_at,
-                    )
-                    if ready.exit_code == 0:
-                        break
-                    await asyncio.sleep(
-                        min(0.25, max(0, deadline_at - time.monotonic()))
-                    )
-                else:
-                    raise RuntimeError("inspector did not become ready")
-            except BaseException:
-                resources.cleanup_confirmed = await self._cleanup(resources)
-                raise
+            cdp_url = await self._launch_inspector(
+                browser,
+                proxy,
+                network,
+                deadline_at=deadline_at,
+                **({"control_enabled": True} if control_enabled else {}),
+            )
             handle = InspectorHandle(
                 task_id,
                 browser,
@@ -599,7 +661,10 @@ class BrowserRuntime:
                 allowed_origins,
                 session_id,
                 network_mode,
+                cdp_url,
             )
+            if control_enabled:
+                self._controlled_handles.add(task_id)
             self._handles[task_id] = handle
             self._inspector_handle_owners[task_id] = session_id
             self._inspector_resources[task_id] = resources
@@ -704,11 +769,91 @@ class BrowserRuntime:
             raise TimeoutError("browser deadline exceeded")
         return stored
 
+    async def _inspect(
+        self,
+        handle: InspectorHandle,
+        payload: bytes,
+        *,
+        deadline_at: float,
+        max_stdout: int,
+    ) -> CommandResult:
+        return await self._call(
+            ("docker", "exec", "-i", handle.container, "node", "/opt/browser/ctl.mjs"),
+            payload,
+            deadline_at=deadline_at,
+            max_stdout=max_stdout,
+        )
+
+    async def _live_request(
+        self, handle: InspectorHandle, action: dict[str, Any]
+    ) -> dict[str, Any]:
+        self._owned(handle)
+        if handle.task_id not in self._controlled_handles:
+            raise ValueError("live control unavailable for legacy inspector")
+        deadline_at = self._inspector_deadlines[handle.task_id]
+        if time.monotonic() >= deadline_at:
+            raise TimeoutError("inspector expired")
+        payload = json.dumps(action, separators=(",", ":")).encode()
+        if len(payload) > 16_384:
+            raise ValueError("browser action too large")
+        result = await self._inspect(
+            handle, payload, deadline_at=deadline_at, max_stdout=1_000_000
+        )
+        if result.exit_code:
+            raise RuntimeError("live browser transport failed")
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict) or data.get("error"):
+            raise ValueError("live browser request rejected")
+        return data
+
+    async def read_frame(self, handle: InspectorHandle) -> dict[str, Any]:
+        # Ephemeral bytes never pass through the evidence sink.
+        return await self._live_request(handle, {"type": "live_frame"})
+
+    async def preflight_human_action(
+        self, handle: InspectorHandle, action: dict[str, Any]
+    ) -> dict[str, Any]:
+        # Values are excluded from the private probe as well as its response.
+        allowed = {
+            "type",
+            "selector",
+            "x",
+            "y",
+            "delta_x",
+            "delta_y",
+            "frame_sequence",
+            "viewport",
+            "actor_kind",
+            "control_epoch",
+            "actor_expires_at",
+        }
+        probe = {key: value for key, value in action.items() if key in allowed}
+        return await self._live_request(
+            handle, {"type": "human_preflight", "action": probe}
+        )
+
+    async def synchronize_control(
+        self, handle: InspectorHandle, controller_kind: str, epoch: int
+    ) -> BrowserObservation:
+        data = await self._live_request(
+            handle,
+            {
+                "type": "control_sync",
+                "controller_kind": controller_kind,
+                "control_epoch": epoch,
+            },
+        )
+        for key in ("screenshot_data", "trace_data", "video_data", "result_data"):
+            data.pop(key, None)
+        return BrowserObservation(**data)
+
     async def observe(
         self, handle: InspectorHandle, action: dict[str, Any]
     ) -> BrowserObservation:
         self._owned(handle)
         deadline_at = self._inspector_deadlines[handle.task_id]
+        if action.get("type") == "recording":
+            deadline_at = time.monotonic() + 30
         if time.monotonic() >= deadline_at:
             raise TimeoutError("inspector expired")
         if action.get("type") not in _ACTIONS:
@@ -722,14 +867,21 @@ class BrowserRuntime:
         if len(json.dumps(action)) > 16_384:
             raise ValueError("browser action too large")
         payload = json.dumps(action, separators=(",", ":")).encode()
-        result = await self._call(
-            ("docker", "exec", "-i", handle.container, "node", "/opt/browser/ctl.mjs"),
+        result = await self._inspect(
+            handle,
             payload,
             deadline_at=deadline_at,
+            max_stdout=100_000_000
+            if action["type"] in {"finish", "recording"}
+            else 1_000_000,
         )
         if result.exit_code:
             raise RuntimeError("browser inspection failed")
         data = json.loads(result.stdout)
+        saved_evidence = []
+        trace_data = data.pop("trace_data", None)
+        video_data = data.pop("video_data", None)
+        result_data = data.pop("result_data", None)
         screenshot_data = data.pop("screenshot_data", None)
         if screenshot_data is not None:
             if self.evidence_sink is None or self.project_id is None:
@@ -748,15 +900,71 @@ class BrowserRuntime:
                 session_id=handle.session_id,
             )
             data["screenshot_ref"] = stored.object_ref
+            saved_evidence.append(asdict(stored))
+        for kind, value, cap in (
+            ("trace", trace_data, 5_000_000),
+            ("video", video_data, 64_000_000),
+            ("result", result_data, 32768),
+        ):
+            if value is None:
+                continue
+            if (
+                action["type"] not in {"finish", "recording"}
+                or self.evidence_sink is None
+                or self.project_id is None
+            ):
+                raise RuntimeError("finished session evidence sink required")
+            content = (
+                base64.b64decode(value, validate=True)
+                if kind in {"trace", "video"}
+                else json.dumps(value).encode()
+            )
+            if len(content) > cap:
+                raise RuntimeError("session evidence exceeds limit")
+            stored = await self._persist(
+                self.project_id,
+                handle.task_id,
+                handle.task_id,
+                kind,
+                content,
+                cap,
+                deadline_at=deadline_at,
+                session_id=handle.session_id,
+            )
+            saved_evidence.append(asdict(stored))
+            if kind == "video":
+                self._recordings[handle.task_id] = [asdict(stored)]
+        if action["type"] == "finish" and not data.get("error"):
+            if not {
+                "screenshot",
+                "trace",
+                "result",
+            }.issubset({item["kind"] for item in saved_evidence}):
+                raise RuntimeError("incomplete finished session evidence")
+            data["result"] = result_data
+        data["evidence"] = tuple(saved_evidence)
         return BrowserObservation(**data)
 
     async def cancel(self, handle: InspectorHandle) -> dict[str, Any]:
         self._owned(handle)
         teardown = self._inspector_teardowns.get(handle.task_id)
         if teardown is None:
-            teardown = asyncio.create_task(self._teardown_inspector(handle))
+            teardown = asyncio.create_task(self._record_and_teardown(handle))
             self._inspector_teardowns[handle.task_id] = teardown
         return await asyncio.shield(teardown)
+
+    async def _record_and_teardown(self, handle: InspectorHandle) -> dict[str, Any]:
+        recording_error = None
+        try:
+            if handle.task_id not in self._recordings:
+                await self.observe(handle, {"type": "recording"})
+        except Exception as error:
+            recording_error = str(error)[:300]
+        receipt = await self._teardown_inspector(handle)
+        receipt["evidence"] = self._recordings.pop(handle.task_id, [])
+        if recording_error:
+            receipt["recording_error"] = recording_error
+        return receipt
 
     async def _teardown_inspector(self, handle: InspectorHandle) -> dict[str, Any]:
         resources = self._inspector_resources[handle.task_id]
@@ -765,6 +973,7 @@ class BrowserRuntime:
         except Exception:
             stopped = False
         if stopped:
+            self._controlled_handles.discard(handle.task_id)
             self._handles.pop(handle.task_id, None)
             self._inspector_handle_owners.pop(handle.task_id, None)
             self._inspector_resources.pop(handle.task_id, None)
@@ -889,6 +1098,68 @@ class BrowserRuntime:
             self._executions.pop(execution_id, None)
         return result
 
+    async def _run_replay(
+        self,
+        frozen: Path,
+        bundle: BrowserBundle,
+        limits: BrowserLimits,
+        state: ExecutionState,
+    ) -> tuple[CommandResult, Any]:
+        task_id = state.task_id
+        mounts = (
+            "--mount",
+            f"type=bind,src={frozen},dst=/opt/browser/frozen,readonly",
+            "--tmpfs",
+            "/opt/browser/output:rw,nosuid,nodev,size=16m,nr_inodes=256,uid=10001,gid=10001",
+        )
+        _, _, browser = await self._create_environment(
+            task_id,
+            bundle.allowed_origins,
+            limits.deadline_seconds,
+            mounts,
+            limits=limits,
+            deadline_at=state.deadline_at,
+            state=state,
+            resources=state.resources,
+            network_mode=bundle.network_mode,
+        )
+        # A distinct execution container receives only this frozen entry and output directory.
+        result: CommandResult | None = None
+        result = await self._call(
+            (
+                "docker",
+                "exec",
+                "-i",
+                browser,
+                "node",
+                "/opt/browser/runner.mjs",
+            ),
+            json.dumps(
+                {"deadline_seconds": max(1, int(state.deadline_at - time.monotonic()))}
+            ).encode(),
+            deadline_at=state.deadline_at,
+        )
+        if state.cancel_requested:
+            raise asyncio.CancelledError
+        exported = await self._call(
+            (
+                "docker",
+                "exec",
+                "-i",
+                browser,
+                "node",
+                "/opt/browser/export.mjs",
+            ),
+            max_stdout=110_000_000,
+            deadline_at=state.deadline_at,
+        )
+        if exported.exit_code != 0:
+            raise RuntimeError(
+                f"browser evidence collection failed: {exported.stderr[:300]}"
+            )
+        files = json.loads(exported.stdout)
+        return result, files
+
     async def _execute_work(
         self,
         bundle: BrowserBundle,
@@ -918,62 +1189,7 @@ class BrowserRuntime:
                     }
                 )
             )
-            mounts = (
-                "--mount",
-                f"type=bind,src={frozen},dst=/opt/browser/frozen,readonly",
-                "--tmpfs",
-                "/opt/browser/output:rw,nosuid,nodev,size=16m,nr_inodes=256,uid=10001,gid=10001",
-            )
-            _, _, browser = await self._create_environment(
-                task_id,
-                bundle.allowed_origins,
-                limits.deadline_seconds,
-                mounts,
-                limits=limits,
-                deadline_at=state.deadline_at,
-                state=state,
-                resources=state.resources,
-                network_mode=bundle.network_mode,
-            )
-            # A distinct execution container receives only this frozen entry and output directory.
-            result: CommandResult | None = None
-            result = await self._call(
-                (
-                    "docker",
-                    "exec",
-                    "-i",
-                    browser,
-                    "node",
-                    "/opt/browser/runner.mjs",
-                ),
-                json.dumps(
-                    {
-                        "deadline_seconds": max(
-                            1, int(state.deadline_at - time.monotonic())
-                        )
-                    }
-                ).encode(),
-                deadline_at=state.deadline_at,
-            )
-            if state.cancel_requested:
-                raise asyncio.CancelledError
-            exported = await self._call(
-                (
-                    "docker",
-                    "exec",
-                    "-i",
-                    browser,
-                    "node",
-                    "/opt/browser/export.mjs",
-                ),
-                max_stdout=24_000_000,
-                deadline_at=state.deadline_at,
-            )
-            if exported.exit_code != 0:
-                raise RuntimeError(
-                    f"browser evidence collection failed: {exported.stderr[:300]}"
-                )
-            files = json.loads(exported.stdout)
+            result, files = await self._run_replay(frozen, bundle, limits, state)
             if not isinstance(files, list) or len(files) > 32:
                 raise RuntimeError("invalid browser evidence export")
             collected = 0
@@ -1019,7 +1235,7 @@ class BrowserRuntime:
             total_bytes = len(result_bytes)
             for item in receipt.get("evidence", []):
                 kind = item.get("kind")
-                if kind not in {"screenshot", "trace", "result"}:
+                if kind not in {"screenshot", "trace", "result", "video"}:
                     raise RuntimeError("invalid evidence kind")
                 path = validate_evidence_path(output, str(item.get("name", "")))
                 if not path.is_file():

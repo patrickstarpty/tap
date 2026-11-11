@@ -27,7 +27,7 @@ def test_browser_evidence_success_contract_lists_actual_file_types() -> None:
         "/api/v1/projects/{project_id}/workflows/{task_id}/browser-evidence/{evidence_id}"
     ]["get"]
     success = operation["responses"]["200"]["content"]
-    assert set(success) == {"image/png", "application/zip", "application/json"}
+    assert set(success) == {"image/png", "application/zip", "application/json", "video/webm"}
     assert all(
         value["schema"] == {"type": "string", "format": "binary"} for value in success.values()
     )

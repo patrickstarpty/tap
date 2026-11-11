@@ -1,0 +1,248 @@
+.lca-workspace {
+  --lca-border: #dce3ec;
+  --lca-muted: #58677c;
+  padding: 28px;
+  color: #17253a;
+  background: #f8fafc;
+  max-width: 1500px;
+  margin: auto;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+}
+.lca-workspace * {
+  box-sizing: border-box;
+}
+.lca-workspace header,
+.lca-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.lca-workspace h1 {
+  font-size: 28px;
+  margin: 0;
+}
+.lca-workspace h2 {
+  font-size: 18px;
+  margin: 22px 0 12px;
+}
+.lca-workspace h3 {
+  font-size: 16px;
+}
+.lca-eyebrow {
+  color: #465b85;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.lca-workspace button {
+  border: 1px solid #cad4e3;
+  background: white;
+  color: #233c60;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+.lca-workspace button:hover:not(:disabled) {
+  background: #eef3fb;
+}
+.lca-workspace button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.lca-workspace :focus-visible {
+  outline: 3px solid #5979d4;
+  outline-offset: 2px;
+}
+.lca-workspace label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.lca-workspace input:not([type="checkbox"]),
+.lca-workspace select,
+.lca-workspace textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  padding: 8px;
+  background: white;
+  color: inherit;
+  font: inherit;
+}
+.lca-workspace input[type="checkbox"] {
+  width: auto;
+  align-self: flex-start;
+}
+.lca-workspace textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.lca-recording {
+  padding: 14px 18px;
+  border: 1px solid var(--lca-border);
+  border-radius: 8px;
+  margin: 20px 0;
+  background: #edf2f8;
+}
+.lca-recording p {
+  margin: 4px 0 0;
+}
+.lca-error {
+  color: #8f302d;
+  background: #fff0ed;
+  padding: 12px;
+  border: 1px solid #ebc6be;
+  border-radius: 6px;
+  margin: 12px 0;
+}
+.lca-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 24px;
+}
+.lca-layout nav button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+.lca-layout nav button[aria-current="page"] {
+  background: #e8effb;
+  border-color: #809acf;
+}
+.lca-layout main {
+  background: white;
+  padding: 20px;
+  border: 1px solid var(--lca-border);
+  border-radius: 10px;
+  min-width: 0;
+}
+.lca-workspace fieldset {
+  border: 1px solid var(--lca-border);
+  border-radius: 7px;
+  padding: 12px;
+  margin: 14px 0;
+  min-width: 0;
+}
+.lca-workspace legend {
+  padding: 0 5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.lca-definition {
+  border: 0 !important;
+  padding: 0 !important;
+}
+.lca-workspace details {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--lca-border);
+  border-radius: 7px;
+}
+.lca-workspace summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.lca-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+.lca-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.lca-steps {
+  list-style: none;
+  padding: 0;
+}
+.lca-muted {
+  color: var(--lca-muted);
+  font-size: 12px;
+}
+.lca-workspace pre {
+  background: #f5f7fb;
+  padding: 12px;
+  overflow: auto;
+  max-height: 360px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lca-workspace dd {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+.lca-workspace dt {
+  color: var(--lca-muted);
+  font-size: 12px;
+}
+.lca-run {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--lca-border);
+  margin-top: 16px;
+}
+.lca-run .lca-diagnostic {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.lca-empty {
+  padding: 40px 15px;
+  color: var(--lca-muted);
+}
+@media (max-width: 760px) {
+  .lca-workspace {
+    padding: 14px;
+  }
+  .lca-layout {
+    grid-template-columns: 1fr;
+  }
+  .lca-fields {
+    grid-template-columns: 1fr;
+  }
+  .lca-workspace header,
+  .lca-editor-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+.lca-recorder {
+  margin: 20px 0;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid var(--lca-border);
+  border-radius: 12px;
+}
+.lca-recorder button {
+  margin: 4px 8px 4px 0;
+}
+.lca-recorder fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.lca-recorder label {
+  display: grid;
+  gap: 4px;
+}
+.lca-live-frame {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  border: 1px solid var(--lca-border);
+  margin: 16px 0;
+  cursor: crosshair;
+}

@@ -1,0 +1,188 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+async function setup(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-native-tool-'));
+  for (const name of ['requests', 'responses', 'acks']) fs.mkdirSync(path.join(root, name));
+  const old = process.env.TAP_CODING_MAILBOX;
+  process.env.TAP_CODING_MAILBOX = root;
+  t.after(() => {
+    if (old === undefined) delete process.env.TAP_CODING_MAILBOX;
+    else process.env.TAP_CODING_MAILBOX = old;
+    fs.rmSync(root, {recursive:true, force:true});
+  });
+  const {default: plugin} = await import('../browser-tools.mjs');
+  const loaded = await plugin();
+  return {root, tool: loaded.tool.tap_browser};
+}
+
+test('native browser tool preserves failure context and complete current controls', async t => {
+  const {root, tool} = await setup(t);
+  const asks = [];
+  const action = {type:'read', step:'verify', selector:'#quote', name:'quote', positive:true};
+  const context = {directory:root, abort:new AbortController().signal, ask:async item => asks.push(item)};
+  const pending = tool.execute({action}, context);
+  let file;
+  for (let i=0; i<100 && !file; i++) {
+    file = fs.readdirSync(path.join(root, 'requests')).find(name => name.endsWith('.json'));
+    if (!file) await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(file, 'native tool must dispatch to existing mailbox');
+  const envelope = JSON.parse(fs.readFileSync(path.join(root, 'requests', file)));
+  assert.equal(envelope.kind, 'browser');
+  assert.deepEqual(envelope.payload, action);
+  const observation = {action_id:'a1', sequence:12, error:'Expected DOM value was not observed; actual: 0',
+    bounded_snapshot:'page '.repeat(2200), fields:Array.from({length:80}, (_, i)=>({selector:`#field-${i}`}))};
+  fs.writeFileSync(path.join(root, 'responses', file), JSON.stringify(observation), {mode:0o600});
+  const compact = JSON.parse(await pending);
+  assert.equal(compact.error, observation.error);
+  assert.equal(compact.action_id, 'a1');
+  assert.equal(compact.sequence, 12);
+  assert.ok(JSON.stringify(compact).length < 8000);
+  assert.equal(compact.fields, undefined);
+  assert.deepEqual(JSON.parse(fs.readFileSync(compact.evidence_file, 'utf8')), observation);
+  assert.match(fs.readFileSync(compact.evidence_file, 'utf8'), /field-79/);
+  assert.equal(fs.statSync(compact.evidence_file).mode & 0o077, 0);
+  assert.equal(asks[0].permission, 'tap_browser');
+  assert.deepEqual(asks[0].patterns, ['read']);
+});
+
+test('native tool rejects unsupported actions and canceled calls before dispatch', async t => {
+  const {root, tool} = await setup(t);
+  const controller = new AbortController();
+  const context = {abort:controller.signal, ask:async()=>{}};
+  await assert.rejects(tool.execute({action:{type:'evaluate', code:'x'}}, context), /unsupported/);
+  controller.abort();
+  await assert.rejects(tool.execute({action:{type:'snapshot', step:'observe'}}, context), /abort/i);
+  assert.deepEqual(fs.readdirSync(path.join(root,'requests')), []);
+});
+
+test('permission refusal does not dispatch a browser action', async t => {
+  const {root, tool} = await setup(t);
+  await assert.rejects(tool.execute({action:{type:'click',selector:'#next',step:'next'}}, {
+    abort:new AbortController().signal, ask:async()=>{throw new Error('permission denied');},
+  }), /permission denied/);
+  assert.deepEqual(fs.readdirSync(path.join(root,'requests')), []);
+});
+
+test('successful reads keep actual values without repeating the page', async t => {
+  const {root, tool} = await setup(t);
+  const responder = setInterval(() => {
+    for (const file of fs.readdirSync(path.join(root, 'requests')).filter(x => x.endsWith('.json'))) {
+      fs.writeFileSync(path.join(root, 'responses', file), JSON.stringify({
+        sequence:2, error:null, extracted:{quote:'123.45'}, bounded_snapshot:'irrelevant '.repeat(2000),
+        fields:[{selector:'#quote',value:'123.45'}],
+      }), {mode:0o600});
+    }
+  }, 5);
+  try {
+    const result = JSON.parse(await tool.execute({action:{type:'read',step:'price',selector:'#quote',name:'quote',positive:true}}, {
+      directory:root, abort:new AbortController().signal, ask:async()=>{},
+    }));
+    assert.deepEqual(result.extracted, {quote:'123.45'});
+    assert.ok(JSON.stringify(result).length < 1000);
+    assert.match(fs.readFileSync(result.evidence_file, 'utf8'), /irrelevant/);
+  } finally { clearInterval(responder); }
+});
+
+test('evidence storage failure preserves a completed action receipt instead of inviting retry', async t => {
+  const {root, tool} = await setup(t);
+  fs.writeFileSync(path.join(root,'.tap-browser-observations'),'occupied');
+  let dispatched = 0;
+  const receipt = {sequence:5,error:null,extracted:{accepted:'yes'},bounded_snapshot:'Confirmation',fields:[]};
+  const responder = setInterval(() => {
+    for (const name of fs.readdirSync(path.join(root,'requests')).filter(x=>x.endsWith('.json'))) {
+      dispatched++;
+      fs.writeFileSync(path.join(root,'responses',name),JSON.stringify(receipt),{mode:0o600});
+      fs.unlinkSync(path.join(root,'requests',name));
+    }
+  },5);
+  try {
+    const result = JSON.parse(await tool.execute({action:{type:'click',step:'submit',selector:'#submit'}},{directory:root,abort:new AbortController().signal,ask:async()=>{}}));
+    assert.equal(result.sequence,5);
+    assert.equal(result.error,null);
+    assert.deepEqual(result.extracted,{accepted:'yes'});
+    assert.equal(result.bounded_snapshot,'Confirmation');
+    assert.ok(result.evidence_storage_error);
+    assert.equal(dispatched,1);
+  } finally { clearInterval(responder); }
+});
+
+async function exchange(tool, root, action) {
+  const pending = tool.execute({action}, {
+    directory:root, abort:new AbortController().signal, ask:async()=>{},
+  });
+  let files = [];
+  for (let i=0; i<100 && !files.length; i++) {
+    files = fs.readdirSync(path.join(root,'requests')).filter(name=>name.endsWith('.json'));
+    if (!files.length) await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  assert.equal(files.length,1, 'one tool call must dispatch exactly one browser action');
+  const file = files[0];
+  const request = JSON.parse(fs.readFileSync(path.join(root,'requests',file),'utf8'));
+  fs.writeFileSync(path.join(root,'responses',file),JSON.stringify({status:'completed'}),{mode:0o600});
+  await pending;
+  assert.equal(fs.readdirSync(path.join(root,'requests')).filter(name=>name.endsWith('.json')).length,0);
+  assert.equal(fs.existsSync(path.join(root,'acks',file)),true);
+  return request.payload;
+}
+
+test('explicit live snapshot aliases dispatch one canonical action without mutating caller input', async t => {
+  const {root,tool} = await setup(t);
+  for (const [action,canonical] of [
+    [{type:'fill',step:'age',selector:"textbox[ref='f6e53']",value:'30'},'aria-ref=f6e53'],
+    [{type:'click',step:'quote',selector:'link[ref="e98"]'},'aria-ref=e98'],
+    [{type:'snapshot',step:'scope',selector:"generic[ref='f4e46']"},'aria-ref=f4e46'],
+  ]) {
+    const original = structuredClone(action);
+    const sent = await exchange(tool,root,action);
+    assert.deepEqual(sent,{...original,selector:canonical});
+    assert.deepEqual(action,original);
+  }
+});
+
+test('CSS opt-out, compound selectors, and non-alias selectors pass through byte-for-byte', async t => {
+  const {root,tool} = await setup(t);
+  for (const selector of [
+    "css=textbox[ref='f6e53']",
+    "textbox[ref='f6e53'] > span",
+    "section textbox[ref='f6e53']",
+    "[ref='f6e53']",
+    "input[ref='f6e53']",
+    "textbox[ref='f6e53'] ",
+    "textbox[ref='f6e53']\n",
+    "textbox[ref='f6e53']\r\n",
+    "textbox[ref='f6e53\"]",
+    "textbox[ref='e0']",
+    "textbox[ref='other']",
+    'aria-ref=f6e53',
+    '#age',
+  ]) {
+    const sent = await exchange(tool,root,{type:'click',step:'target',selector});
+    assert.equal(sent.selector,selector);
+  }
+});
+
+for (const [type, terms] of [
+  ['fill', [/editable/i, /readonly/i]],
+  ['select', [/native/i, /radio/i, /checkbox/i, /custom/i, /exact/i, /read/i]],
+]) {
+  test(`native tool describes ${type} control semantics and readback`, async t => {
+    const {tool} = await setup(t);
+    const action = tool.args.action.oneOf.find(item => item.properties.type.const === type);
+    const guidance = `${action.description || ''} ${action.properties.value.description || ''}`;
+    for (const term of terms) assert.match(guidance, term);
+    assert.match(action.properties.value.description || '', /value/i);
+  });
+}
+
+test('native read schema distinguishes control state from visible label text', async t => {
+  const {tool} = await setup(t);
+  const read = tool.args.action.oneOf.find(item => item.properties.type.const === 'read');
+  const guidance = read.properties.attribute.description || '';
+  for (const term of [/text.*default/i, /value.*input.*select/i, /checked.*radio.*checkbox/i,
+    /true.*false/i, /aria-valuenow.*slider/i, /label/i]) assert.match(guidance, term);
+});

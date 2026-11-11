@@ -4,6 +4,7 @@ import hashlib
 import json
 import time
 import traceback
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Thread
@@ -220,6 +221,39 @@ class CompletedScriptContainer(MailContainer):
         }
 
 
+@pytest.mark.asyncio
+async def test_script_synthesis_uses_evidence_without_opening_or_replaying_browser():
+    containers = []
+
+    def factory(_config, root):
+        container = CompletedScriptContainer(root)
+        containers.append(container)
+        return container
+
+    # No browser methods: synthesis must not acquire or write a browser.
+    runtime = CodingRuntime(
+        CodingConfig.for_test(), browser=object(), store=Journal(), container_factory=factory
+    )
+    result = await runtime.run(
+        "task-a",
+        request(replay=False),
+        {},
+        None,
+        "lease",
+        "node",
+        1,
+        script_source={
+            "steps": [],
+            "actions": [{"operation": "click"}],
+            "outputs": {"quote": "42"},
+        },
+    )
+    assert result.status == "passed"
+    assert "test('task'" in result.terminal_evidence["script"]
+    assert containers[0].stopped
+    assert "successful operations" in containers[0].goals[0]
+
+
 class ReceiptBrowser(SessionBrowser):
     def __init__(self, receipts):
         super().__init__()
@@ -357,6 +391,36 @@ async def test_coding_generation_receives_exact_frozen_input_before_prompt():
     )
     assert result.status == "canceled"
     assert built[0].frozen_input == (encoded, hashlib.sha256(encoded).hexdigest())
+
+
+@pytest.mark.asyncio
+async def test_coding_runtime_passes_configured_input_window_to_opencode_profile():
+    built = []
+
+    class CapturingContainer(MailContainer):
+        async def start(self, config, *_args):
+            self.profile_limit = config["provider"]["litellm"]["models"]["qwen-plus"]["limit"]
+
+    def make_container(_config, root):
+        container = CapturingContainer(root, wait_forever=True)
+        built.append(container)
+        return container
+
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), max_input_tokens=30720),
+        browser=SessionBrowser(),
+        store=Journal(),
+        container_factory=make_container,
+    )
+
+    async def cancel():
+        return bool(built and built[0].frozen_input)
+
+    result = await runtime.run(
+        "task-a", request(replay=False), {}, None, "lease", "node", 1, stop_requested=cancel
+    )
+    assert result.status == "canceled"
+    assert built[0].profile_limit == {"context": 30720, "input": 30720, "output": 2048}
 
 
 @pytest.mark.asyncio
@@ -819,8 +883,9 @@ async def test_coding_command_timeout_traceback_omits_underlying_secret(monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("not_ready", [RuntimeError, TimeoutError])
 async def test_coding_start_allows_serve_to_become_ready_after_thirty_seconds(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, not_ready
 ):
     class Clock:
         value = 0.0
@@ -844,7 +909,7 @@ async def test_coding_start_allows_serve_to_become_ready_after_thirty_seconds(
         clock.value += min(timeout, 2)
         if clock.value >= 39:
             return b'{"ready":true}'
-        raise RuntimeError("not ready")
+        raise not_ready("not ready")
 
     monkeypatch.setattr(DockerCodingContainer, "_command", staticmethod(command))
     await container.start({}, "shim", 60)
@@ -1222,3 +1287,327 @@ async def test_external_block_without_page_observation_gets_bounded_repair_not_u
     assert len(made[0].goals) == runtime.config.max_repairs + 1
     assert "No page observation" in made[0].goals[-1]
     assert made[0].stopped and browser.canceled
+
+
+class LiveReceiptBrowser(ReceiptBrowser):
+    def __init__(self):
+        super().__init__([])
+        self.actions = []
+        self.registered = []
+
+    async def action(self, _session, action, _key, **_kwargs):
+        self.actions.append(action)
+        return {
+            "status": "completed",
+            "action_id": "finish-a" if action["type"] == "finish" else "read-a",
+            "observation": {
+                "sequence": len(self.actions),
+                "url": "https://example.com",
+                "bounded_snapshot": "Quote 42",
+                "error": None,
+                "extracted": {"name": "quote", "value": "42"} if action["type"] == "read" else None,
+                "result": {"outputs": [{"quote": "42"}]} if action["type"] == "finish" else None,
+            },
+        }
+
+    async def request(self, method, path, body, key):
+        assert (method, path) == ("POST", "/executions")
+        self.registered.append(body)
+        return {
+            "status": "passed",
+            "execution_id": "live-a",
+            "bundle_id": "bundle-a",
+            "result": {"outputs": [{"quote": "42"}]},
+        }
+
+
+class LiveReadContainer(CompletedScriptContainer):
+    async def run_prompt(self):
+        terminal = await super().run_prompt()
+        if len(self.goals) > 1:
+            ident = "read-live"
+            body = {
+                "id": ident,
+                "kind": "browser",
+                "deadline_at": time.time() + 10,
+                "payload": {
+                    "type": "read",
+                    "step": "verify",
+                    "selector": "#q",
+                    "name": "quote",
+                    "positive": True,
+                },
+            }
+            path = self.root / "requests" / (ident + ".json")
+            path.write_text(json.dumps(body))
+            path.chmod(0o600)
+            while not (self.root / "responses" / (ident + ".json")).exists():
+                await asyncio.sleep(0.01)
+        return terminal
+
+
+@pytest.mark.asyncio
+async def test_live_opencode_repairs_missing_verification_in_same_session_without_replay():
+    from dataclasses import replace
+
+    browser = LiveReceiptBrowser()
+    built = []
+
+    def factory(_config, root):
+        container = LiveReadContainer(root)
+        built.append(container)
+        return container
+
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=Journal(),
+        container_factory=factory,
+    )
+    result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert result.status == "passed"
+    assert result.provider_session_id == "ses_test"
+    assert len(built) == 1 and len(built[0].goals) == 2
+    assert "read" in built[0].goals[1]
+    assert browser.limits == []
+    assert [action["type"] for action in browser.actions] == ["read", "read", "finish"]
+    assert browser.registered[0]["finish_action_id"] == "finish-a"
+    assert browser.registered[0]["live_session_id"] == "session-a"
+    assert result.terminal_evidence["result"]["outputs"] == [{"quote": "42"}]
+    assert built[0].stopped and browser.canceled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leaves_page", [True, False])
+async def test_live_completion_rechecks_only_current_page_conditions(leaves_page):
+    from dataclasses import replace
+
+    class MultiPageBrowser(LiveReceiptBrowser):
+        def __init__(self):
+            super().__init__()
+            self.page = "https://example.com/form"
+
+        async def action(self, _session, action, _key, **_kwargs):
+            self.actions.append(action)
+            if action["type"] == "click" and leaves_page:
+                self.page = "https://example.com/result"
+            if (
+                action["type"] == "read"
+                and action["name"] == "age"
+                and self.page != "https://example.com/form"
+            ):
+                raise AssertionError("final verification reread a departed form")
+            value = "30" if action["type"] == "read" and action["name"] == "age" else "42"
+            return {
+                "status": "completed",
+                "action_id": f"receipt-{len(self.actions)}",
+                "observation": {
+                    "url": self.page,
+                    "bounded_snapshot": "Form" if self.page.endswith("form") else "Quote 42",
+                    "error": None,
+                    "extracted": {"name": action["name"], "value": value}
+                    if action["type"] == "read"
+                    else None,
+                    "result": {"outputs": [{"quote": "42"}]}
+                    if action["type"] == "finish"
+                    else None,
+                },
+            }
+
+    class MultiPageContainer(CompletedScriptContainer):
+        async def run_prompt(self):
+            payloads = [
+                {
+                    "type": "plan",
+                    "steps": [
+                        {"id": "open", "keyword": "Given", "title": "Open form"},
+                        {"id": "enter", "keyword": "When", "title": "Enter age"},
+                        {
+                            "id": "age",
+                            "keyword": "Then",
+                            "title": "Verify age",
+                            "verification_kind": "input",
+                        },
+                        {"id": "go", "keyword": "When", "title": "Calculate"},
+                        {"id": "quote", "keyword": "Then", "title": "Verify quote"},
+                    ],
+                },
+                {"type": "navigate", "step": "open", "url": "https://example.com/form"},
+                {"type": "fill", "step": "enter", "selector": "#age", "value": "30"},
+                {
+                    "type": "read",
+                    "step": "age",
+                    "selector": "#age",
+                    "attribute": "value",
+                    "name": "age",
+                    "equals": "30",
+                },
+                {"type": "click", "step": "go", "selector": "#calculate"},
+            ]
+            if not leaves_page:
+                payloads.append(
+                    {
+                        "type": "read",
+                        "step": "age",
+                        "selector": "#age",
+                        "attribute": "value",
+                        "name": "age",
+                        "equals": "30",
+                    }
+                )
+            payloads.append(
+                {
+                    "type": "read",
+                    "step": "quote",
+                    "selector": "#quote",
+                    "name": "quote",
+                    "equals": "42",
+                }
+            )
+            for index, payload in enumerate(payloads):
+                ident = f"browser-{index}"
+                path = self.root / "requests" / f"{ident}.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "id": ident,
+                            "kind": "browser",
+                            "deadline_at": time.time() + 10,
+                            "payload": payload,
+                        }
+                    )
+                )
+                path.chmod(0o600)
+                while not (self.root / "responses" / f"{ident}.json").exists():
+                    await asyncio.sleep(0.01)
+            return {"terminal": "complete", "session_id": "ses_test"}
+
+    browser = MultiPageBrowser()
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=Journal(),
+        container_factory=lambda _config, root: MultiPageContainer(root),
+    )
+    result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert result.status == "passed"
+    assert [action["name"] for action in browser.actions if action["type"] == "read"] == (
+        ["age", "quote", "quote"] if leaves_page else ["age", "age", "quote", "age", "quote"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_final_finish_on_different_page_cannot_register_live_success():
+    from dataclasses import replace
+
+    class FinalPageDrift(LiveReceiptBrowser):
+        async def action(self, session, action, key, **kwargs):
+            receipt = await super().action(session, action, key, **kwargs)
+            if action["type"] == "finish":
+                receipt["observation"]["url"] = "https://example.com/other"
+            return receipt
+
+    browser = FinalPageDrift()
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=Journal(),
+        container_factory=lambda _config, root: LiveReadContainer(root),
+    )
+    with pytest.raises(ValueError, match="result evidence"):
+        await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert browser.registered == []
+
+
+@pytest.mark.asyncio
+async def test_live_business_evidence_survives_missing_script_without_reexecuting():
+    from dataclasses import replace
+
+    class NoScript(LiveReadContainer):
+        async def collect(self):
+            return {}
+
+    browser = LiveReceiptBrowser()
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=Journal(),
+        container_factory=lambda _config, root: NoScript(root),
+    )
+    result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert result.status == "passed"
+    assert result.terminal_evidence["result"]["outputs"] == [{"quote": "42"}]
+    assert result.terminal_evidence["script_status"] == "failed"
+    assert browser.limits == [] and browser.registered == []
+    assert [a["type"] for a in browser.actions] == ["read", "read", "finish"]
+
+
+@pytest.mark.asyncio
+async def test_failed_live_finish_never_becomes_business_success():
+    from dataclasses import replace
+
+    class FailedFinish(LiveReceiptBrowser):
+        async def action(self, session, action, key, **kwargs):
+            if action["type"] == "finish":
+                return {"status": "failed", "observation": {"error": "evidence unavailable"}}
+            return await super().action(session, action, key, **kwargs)
+
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=FailedFinish(),
+        store=Journal(),
+        container_factory=lambda _config, root: LiveReadContainer(root),
+    )
+    with pytest.raises(ValueError, match="result evidence"):
+        await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+
+
+@pytest.mark.asyncio
+async def test_crash_receipt_stops_model_loop_without_waiting_for_another_model_turn():
+    from dataclasses import replace
+
+    built = []
+
+    class CrashedBrowser(SessionBrowser):
+        async def action(self, *_args, **_kwargs):
+            return {
+                "status": "completed",
+                "observation": {"error": "locator.click: Target crashed", "bounded_snapshot": ""},
+            }
+
+    class CrashActionContainer(CompletedScriptContainer):
+        async def run_prompt(self):
+            await super().run_prompt()
+            path = self.root / "requests" / "crash-action.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "id": "crash-action",
+                        "kind": "browser",
+                        "deadline_at": time.time() + 10,
+                        "payload": {"type": "click", "step": "verify", "selector": "#go"},
+                    }
+                )
+            )
+            path.chmod(0o600)
+            await asyncio.Event().wait()
+
+    def factory(_config, root):
+        item = CrashActionContainer(root)
+        built.append(item)
+        return item
+
+    browser = CrashedBrowser()
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=Journal(),
+        container_factory=factory,
+    )
+    result = await asyncio.wait_for(
+        runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1), timeout=2
+    )
+    assert result.status == "unknown"
+    assert "unknown" in result.terminal_evidence["failure"]
+    assert result.usage["calls"] == 0
+    assert built[0].stopped and browser.canceled

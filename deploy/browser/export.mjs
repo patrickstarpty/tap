@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 export function exportFiles(root) {
   const files = [];
@@ -9,7 +10,7 @@ export function exportFiles(root) {
       if (entry.name !== 'test-results') throw new Error('unknown output directory');
       continue;
     }
-    if (!entry.isFile() || !/^(result\.json|(?:screenshot|trace)-\d+\.(?:png|zip))$/.test(entry.name)) {
+    if (!entry.isFile() || !/^(result\.json|(?:screenshot|trace|video)-\d+\.(?:png|zip|webm))$/.test(entry.name)) {
       throw new Error('unknown output file');
     }
     if (files.length >= 32) throw new Error('too many output files');
@@ -19,7 +20,7 @@ export function exportFiles(root) {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile()) throw new Error('nonregular output denied');
       total += stat.size;
-      if (total > 16_000_000) throw new Error('output too large');
+      if (total > 80_000_000) throw new Error('output too large');
       files.push({ name: entry.name, data: fs.readFileSync(fd).toString('base64') });
     } finally {
       fs.closeSync(fd);
@@ -28,6 +29,6 @@ export function exportFiles(root) {
   return files;
 }
 
-if (process.argv[1] === '/opt/browser/export.mjs') {
-  process.stdout.write(JSON.stringify(exportFiles('/opt/browser/output')));
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.stdout.write(JSON.stringify(exportFiles(process.env.TAP_BROWSER_OUTPUT_DIR || '/opt/browser/output')));
 }

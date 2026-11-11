@@ -74,7 +74,7 @@ class ModelToolCall:
 
 @dataclass(frozen=True, slots=True)
 class ModelMessage:
-    role: Literal["assistant", "tool"]
+    role: Literal["assistant", "tool", "user"]
     content: str = ""
     tool_calls: tuple[ModelToolCall, ...] = ()
     tool_call_id: str | None = None
@@ -104,6 +104,8 @@ class ModelRequest:
     # any prior assistant/tool transcript turns appended after the user message.
     tools: tuple[ModelToolSpec, ...] = ()
     messages: tuple[ModelMessage, ...] = ()
+    # Optional wire name; must be among the offered tools. None preserves auto.
+    tool_choice: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

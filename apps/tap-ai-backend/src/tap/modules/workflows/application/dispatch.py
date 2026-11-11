@@ -20,11 +20,11 @@ from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.ai.domain.skill_activation import SkillCatalogEntry, catalog_entry
 from tap.modules.chat.application.workflow_bridge import WorkflowChatPort
 from tap.modules.chat.domain.conversations import FrozenBrowserIntent
-from tap.modules.workflows.adapters.opencode_runtime import CodingRuntime
 from tap.modules.workflows.application.native_graph import NativeChatGateway, NativeWorkflowGraph
 from tap.modules.workflows.domain.browser_intent import effective_request
 from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked, WorkflowLimitExceeded
 from tap.modules.workflows.domain.delegation import DelegationRequest, child_result_summary
+from tap.modules.workflows.ports.coding import CodingRuntimePort
 from tap.modules.workflows.ports.runtime import (
     NativeStatePort,
     RecoveryEpisode,
@@ -55,6 +55,10 @@ SkillLoader = Callable[[ProjectScopeContext, str], Awaitable[str]]
 StandaloneAuthorize = Callable[[ProjectScopeContext, str], Awaitable[bool]]
 
 _CODING_FAILURE_SUMMARIES = {
+    "budget_cost": "Task stopped: budget_cost",
+    "budget_calls": "Task stopped: budget_calls",
+    "budget_deadline": "Task stopped: budget_deadline",
+    "durable_reservation": "Task stopped: durable_reservation",
     "assistant_error": "OpenCode assistant reported an error.",
     "missing_frozen_input": "Frozen browser inputs are unavailable in the coding container.",
     "permission_denied": "OpenCode tool was denied access.",
@@ -108,7 +112,7 @@ class NativeWorkflowRuntime:
         skill_loader: SkillLoader | None = None,
         wakeups: WorkflowWakeups | None = None,
         standalone_authorize: StandaloneAuthorize | None = None,
-        coding: CodingRuntime | None = None,
+        coding: CodingRuntimePort | None = None,
     ) -> None:
         if not 1 <= max_parallel_agents <= 20:
             raise ValueError("native parallel agent limit is outside the bound")
@@ -479,6 +483,19 @@ class NativeWorkflowRuntime:
             "usage": result.usage,
             "replay_model_calls": result.replay_model_calls,
         }
+        if receipt.get("script_status") == "failed":
+            payload["script_status"] = "failed"
+            payload["script_error"] = str(receipt.get("script_error", ""))[:1000]
+            await self._store.append_event(
+                scope,
+                task_id,
+                token,
+                hashlib.sha256(
+                    f"browser-script:{task_id}:{node_id}:{attempt}".encode()
+                ).hexdigest(),
+                "browser.script_failed",
+                {"node_id": node_id, "attempt": attempt, "error": payload["script_error"]},
+            )
         coding_failure = _safe_coding_failure(receipt) if status == "failed" else None
         if coding_failure is not None:
             payload["coding_failure"] = coding_failure
@@ -521,6 +538,7 @@ class NativeWorkflowRuntime:
                     else None
                 )
                 or receipt.get("failure_code")
+                or receipt.get("failure")
                 or "browser execution failed"
             )
             reason = str(failure)[:2000]
@@ -528,7 +546,16 @@ class NativeWorkflowRuntime:
             await self._state.fail_task(scope, task_id, token, reason)
             return "failed"
         answer = json.dumps(
-            {"status": "passed", "execution_ref": result.execution_ref, "outputs": outputs},
+            {
+                "status": "passed",
+                "execution_ref": result.execution_ref,
+                "outputs": outputs,
+                **(
+                    {"script_status": "failed", "script_error": receipt.get("script_error")}
+                    if receipt.get("script_status") == "failed"
+                    else {}
+                ),
+            },
             ensure_ascii=True,
         )
         await self._state.finish_node(scope, task_id, token, node_id, answer, "completed")

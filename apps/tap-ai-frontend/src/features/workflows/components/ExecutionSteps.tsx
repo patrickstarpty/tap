@@ -81,23 +81,26 @@ export function ExecutionSteps({
           const receipt = snapshot.browserRun?.steps.find(
             (item) => item.title === `${step.keyword} ${step.title}`,
           );
-          const status = receipt
-            ? receipt.status === "passed"
-              ? "Passed"
-              : receipt.status === "failed"
-                ? "Failed"
-                : receipt.status
-            : last?.kind === "browser.action_started"
-              ? terminal.includes(snapshot.status)
-                ? "Interrupted"
-                : "In progress"
-              : last?.payload.outcome === "failed"
-                ? "Needs attention"
-                : last
-                  ? "Observed · awaiting verification"
-                  : terminal.includes(snapshot.status)
-                    ? "Not run"
-                    : "Pending";
+          const status =
+            last?.payload.outcome === "unknown"
+              ? "Outcome unknown"
+              : receipt
+                ? receipt.status === "passed"
+                  ? "Passed"
+                  : receipt.status === "failed"
+                    ? "Failed"
+                    : receipt.status
+                : last?.kind === "browser.action_started"
+                  ? terminal.includes(snapshot.status)
+                    ? "Interrupted"
+                    : "In progress"
+                  : last?.payload.outcome === "failed"
+                    ? "Needs attention"
+                    : last
+                      ? "Observed · awaiting verification"
+                      : terminal.includes(snapshot.status)
+                        ? "Not run"
+                        : "Pending";
           const finished = new Set(
             actions
               .filter((event) => event.kind === "browser.action_finished")
@@ -110,6 +113,11 @@ export function ExecutionSteps({
           );
           return (
             <li key={step.id}>
+              {status === "Outcome unknown" ? (
+                <p role="status">
+                  Check what happened before repeating this action.
+                </p>
+              ) : null}
               <details>
                 <summary>
                   <span className="tap-step-keyword">{step.keyword}</span>

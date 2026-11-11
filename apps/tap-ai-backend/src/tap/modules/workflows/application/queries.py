@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 from tap.modules.access.domain.context import ProjectScopeContext
-from tap.modules.workflows.adapters.browser_client import BrowserApiError
 from tap.modules.workflows.application.browser_artifacts import BrowserArtifactAdapter
 from tap.modules.workflows.domain.models import WorkflowEvent
+from tap.modules.workflows.ports.browser import BrowserReadError
 
 
 class SnapshotRequired(ValueError):
@@ -59,6 +59,7 @@ _PUBLIC_FIELDS: dict[str, tuple[str, ...]] = {
     "node.skill_finished": ("node_id", "attempt", "skill_id", "outcome"),
     "command.received": ("command_id", "status"),
     "command.receipted": ("command_id",),
+    "browser.recording_saved": ("evidence_id",),
 }
 _TEXT_FIELDS: dict[str, str] = {
     "node.finished": "summary",
@@ -91,7 +92,12 @@ _BROWSER_TEXT = (
     "error",
     "reason",
 )
-for _kind in ("browser.plan_created", "browser.action_started", "browser.action_finished"):
+for _kind in (
+    "browser.plan_created",
+    "browser.action_started",
+    "browser.action_finished",
+    "browser.script_failed",
+):
     _PUBLIC_FIELDS[_kind] = _BROWSER_META
 
 
@@ -522,7 +528,7 @@ class WorkflowQueries:
                     browser_run = await self._browser_artifacts.project(
                         cast(ProjectScopeContext, scope), task_id, value
                     )
-                except (LookupError, BrowserApiError, TimeoutError, ValueError, OSError):
+                except (LookupError, BrowserReadError, TimeoutError, ValueError, OSError):
                     browser_unavailable = True
             elif any(event.kind == "browser.coding_result" for event in value["events"]):
                 browser_unavailable = True

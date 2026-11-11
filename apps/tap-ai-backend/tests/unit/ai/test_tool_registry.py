@@ -16,9 +16,10 @@ def test_registry_lists_built_in_tools() -> None:
             "insights.query",
             "skill.activate",
             "workflow.delegate",
+            "browser.step",
         }
     )
-    assert len(TOOL_REGISTRY) == 6
+    assert len(TOOL_REGISTRY) == 7
     required_tool_ids = {"knowledge.search", "knowledge.answer"}
     for tool_id, definition in TOOL_REGISTRY.items():
         assert definition.tool_id == tool_id
@@ -29,10 +30,11 @@ def test_registry_lists_built_in_tools() -> None:
         assert definition.required is (tool_id in required_tool_ids)
 
 
-def test_registry_has_six_tools_with_wire_names() -> None:
+def test_registry_has_seven_tools_with_wire_names() -> None:
     from tap.modules.ai.domain.tools import TOOL_REGISTRY, platform_tool_ids, required_tool_ids
 
     assert list(TOOL_REGISTRY) == [
+        "browser.step",
         "workflow.delegate",
         "knowledge.search",
         "knowledge.answer",
@@ -48,7 +50,7 @@ def test_registry_has_six_tools_with_wire_names() -> None:
     assert TOOL_REGISTRY["skill.activate"].wire_name == "skill_activate"
     assert TOOL_REGISTRY["knowledge.answer"].model_callable is False
     assert required_tool_ids("knowledge.answer") == {"knowledge.search", "knowledge.answer"}
-    assert platform_tool_ids() == frozenset({"skill.activate", "workflow.delegate"})
+    assert platform_tool_ids() == frozenset({"skill.activate", "workflow.delegate", "browser.step"})
 
 
 def test_skill_activate_definition() -> None:

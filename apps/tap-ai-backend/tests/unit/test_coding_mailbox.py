@@ -71,7 +71,7 @@ async def test_mailbox_rejects_path_escape_and_oversized_payload(tmp_path):
     with pytest.raises(MailboxViolation, match="path"):
         await box.serve_once(lambda _: asyncio.sleep(0))
     (box.root / "requests" / "bad.json").unlink()
-    (box.root / "requests" / "large.json").write_bytes(b"x" * 196609)
+    (box.root / "requests" / "large.json").write_bytes(b"x" * (12 * 1024 * 1024 + 1))
     (box.root / "requests" / "large.json").chmod(0o600)
     with pytest.raises(MailboxViolation, match="size"):
         await box.serve_once(lambda _: asyncio.sleep(0))
@@ -147,3 +147,17 @@ async def test_replaced_mailbox_parent_never_reads_or_deletes_owned_sentinel(tmp
     with pytest.raises(MailboxViolation, match="mailbox"):
         box.close()
     assert marker.read_text() == "one"
+
+
+@pytest.mark.asyncio
+async def test_mailbox_accepts_full_opencode_model_context_without_truncation(tmp_path):
+    box = CodingMailbox.create(tmp_path / "box")
+    encoded = base64.b64encode(b"x" * (8 * 1024 * 1024)).decode()
+    _request(box.root, "context", payload={"bodyBase64": encoded})
+
+    async def handle(item):
+        assert item.payload["bodyBase64"] == encoded
+        return {"ok": True}
+
+    assert await box.serve_once(handle)
+    box.close()

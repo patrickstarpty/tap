@@ -16,7 +16,7 @@ class Upstream(BaseHTTPRequestHandler):
 
     def do_POST(self):
         type(self).calls += 1
-        self.rfile.read(int(self.headers["Content-Length"]))
+        type(self).last_body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         body = b'{"usage":{"prompt_tokens":2,"completion_tokens":3},"choices":[]}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -28,9 +28,14 @@ class Upstream(BaseHTTPRequestHandler):
         pass
 
 
-def _send(gate):
+def _send(gate, payload=None):
     body = json.dumps(
-        {"model": "qwen-plus", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 8}
+        payload
+        or {
+            "model": "qwen-plus",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        }
     ).encode()
     request = Request(
         gate.url + "/v1/chat/completions",
@@ -146,3 +151,117 @@ def test_durable_settlement_releases_only_verified_unused_reservation(settlement
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_long_tool_history_is_not_rejected_before_native_context_compaction():
+    from tap.platform.coding.gateway import _allowed_payload
+
+    messages = [{"role": "user", "content": "Complete the task"}]
+    for index in range(120):
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": f"c{index}",
+                            "type": "function",
+                            "function": {"name": "tap_browser", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": f"c{index}", "content": "actual observation"},
+            ]
+        )
+    request = {"model": "qwen-plus", "max_tokens": 2048, "messages": messages}
+    assert _allowed_payload(request, 2048)["messages"] == messages
+
+
+def test_native_assistant_reasoning_survives_budgeted_tool_continuation():
+    messages = [
+        {"role": "user", "content": "Inspect the frozen input"},
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "Synthetic reasoning",
+            "tool_calls": [
+                {
+                    "id": "read-1",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "read-1", "content": "Frozen input"},
+    ]
+    Upstream.calls = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with BudgetGate(
+            f"http://127.0.0.1:{server.server_port}",
+            "secret",
+            max_calls=1,
+            max_seconds=5,
+            max_cost_usd=0.1,
+            input_price_per_million=1.0,
+            output_price_per_million=2.0,
+            max_input_tokens=1000,
+        ) as gate:
+            assert _send(gate, {"model": "qwen-plus", "messages": messages, "max_tokens": 8}) == 200
+            assert Upstream.last_body["messages"] == messages
+            assert gate.snapshot()["calls"] == 1
+            assert _send(gate) == 429
+        assert Upstream.calls == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize(
+    "role,value",
+    [
+        ("user", "text"),
+        ("tool", "text"),
+        ("system", "text"),
+        ("assistant", {}),
+        ("assistant", ["text"]),
+    ],
+)
+def test_reasoning_field_does_not_allow_other_roles_or_nontext_values(role, value):
+    from tap.platform.coding.gateway import _safe_message
+
+    assert not _safe_message({"role": role, "content": "text", "reasoning_content": value})
+
+
+def test_local_budget_denial_has_a_safe_nonretryable_reason():
+    with BudgetGate(
+        "http://127.0.0.1:9",
+        "secret",
+        max_calls=1,
+        max_seconds=5,
+        max_cost_usd=0.000001,
+        input_price_per_million=2,
+        output_price_per_million=6,
+        max_input_tokens=129024,
+    ) as gate:
+        request = Request(
+            gate.url + "/v1/chat/completions",
+            json.dumps(
+                {"model": "qwen-plus", "messages": [{"role": "user", "content": "hello"}]}
+            ).encode(),
+            {"Authorization": "Bearer " + gate.token},
+            method="POST",
+        )
+        with pytest.raises(HTTPError) as failure:
+            urlopen(request)
+        body = json.loads(failure.value.read())
+        assert body["error"] == {
+            "type": "tap_budget_exhausted",
+            "code": "budget_cost",
+            "message": "Task stopped: budget_cost",
+            "retryable": False,
+        }
+        assert gate.snapshot()["forwarded"] == 0

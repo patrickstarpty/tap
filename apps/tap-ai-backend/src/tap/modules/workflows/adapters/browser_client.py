@@ -13,6 +13,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from tap.modules.workflows.ports.browser import BrowserReadError
+
 _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 
 
@@ -20,15 +22,22 @@ def canonical_json_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
-class BrowserApiError(RuntimeError):
-    def __init__(self, status: int, detail: str) -> None:
-        super().__init__(f"browser API {status}: {detail[:300]}")
+class BrowserApiError(BrowserReadError):
+    def __init__(self, status: int, detail: object) -> None:
+        super().__init__(f"browser API {status}: {str(detail)[:300]}")
         self.status = status
+        self.detail = detail
 
 
 class BrowserApiClient:
     def __init__(
-        self, origin: str, project_id: str, token: str, *, timeout_seconds: float = 10.0
+        self,
+        origin: str,
+        project_id: str,
+        token: str,
+        *,
+        timeout_seconds: float = 10.0,
+        gateway_token: str | None = None,
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -47,6 +56,15 @@ class BrowserApiClient:
         self.project_id = project_id
         self._token = token
         self._timeout = timeout_seconds
+        self._gateway_token = gateway_token
+
+    @property
+    def gateway_available(self) -> bool:
+        return bool(
+            self._gateway_token
+            and len(self._gateway_token) >= 32
+            and self._gateway_token != self._token
+        )
 
     @staticmethod
     def _id(value: str) -> str:
@@ -55,12 +73,34 @@ class BrowserApiClient:
         return value
 
     def _sync_request(
-        self, method: str, path: str, body: object | None, key: str | None
+        self,
+        method: str,
+        path: str,
+        body: object | None,
+        key: str | None,
+        controller_id: str | None = None,
+        expires_at: float | None = None,
     ) -> dict[str, Any]:
         data = None if body is None else canonical_json_bytes(body)
         if data is not None and len(data) > 1_300_000:
             raise ValueError("browser request exceeds client cap")
         headers = {"Authorization": f"Bearer {self._token}"}
+        if controller_id is not None:
+            if (
+                not self._gateway_token
+                or len(self._gateway_token) < 32
+                or self._gateway_token == self._token
+            ):
+                raise ValueError("browser gateway credential unavailable")
+            if not re.fullmatch(r"[a-f0-9]{32}", controller_id):
+                raise ValueError("invalid browser controller")
+            if expires_at is None or not time.time() < expires_at <= time.time() + 301:
+                raise PermissionError("browser capability expired")
+            headers = {
+                "Authorization": f"Bearer {self._gateway_token}",
+                "X-Tap-Controller": controller_id,
+                "X-Tap-Controller-Expires": str(expires_at),
+            }
         if data is not None:
             headers["Content-Type"] = "application/json"
         if key is not None:
@@ -78,7 +118,7 @@ class BrowserApiClient:
         except HTTPError as error:
             raw = error.read(1024)
             try:
-                detail = str(json.loads(raw).get("detail", "request rejected"))
+                detail = json.loads(raw).get("detail", "request rejected")
             except (ValueError, AttributeError):
                 detail = "request rejected"
             raise BrowserApiError(error.code, detail) from None
@@ -96,8 +136,8 @@ class BrowserApiClient:
         )
         try:
             with urlopen(request, timeout=self._timeout) as response:
-                data = response.read(10_000_001)
-                if len(data) > 10_000_000:
+                data = response.read(80_000_001)
+                if len(data) > 80_000_000:
                     raise ValueError("browser evidence exceeds client cap")
                 return data, response.headers.get_content_type()
         except HTTPError as error:
@@ -152,9 +192,155 @@ class BrowserApiClient:
         except asyncio.CancelledError:
             return await task
 
-    async def session(
-        self, task_id: str, origins: list[str], deadline_seconds: int, key: str
+    async def _human_post(
+        self,
+        session_id: str,
+        controller_id: str,
+        action: dict[str, Any],
+        key: str,
+        *,
+        expires_at: float | None = None,
     ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._sync_request,
+            "POST",
+            f"/sessions/{self._id(session_id)}/human-actions",
+            action,
+            key,
+            controller_id,
+            expires_at,
+        )
+
+    async def human_action(
+        self,
+        session_id: str,
+        controller_id: str,
+        action: dict[str, Any],
+        expected_epoch: int,
+        key: str,
+        *,
+        expires_at: float | None = None,
+        before_dispatch: Callable[[], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        allowed = {
+            "type",
+            "selector",
+            "x",
+            "y",
+            "value",
+            "delta_x",
+            "delta_y",
+            "url",
+            "frame_sequence",
+            "viewport",
+        }
+        if set(action) - allowed or action.get("type") not in {
+            "click",
+            "fill",
+            "scroll",
+            "select",
+            "navigate",
+        }:
+            raise ValueError("unsupported human action")
+        body = {**action, "expected_epoch": expected_epoch}
+        deadline = time.monotonic() + 90
+        if action["type"] in {"fill", "select"}:
+            probe = {k: v for k, v in body.items() if k not in {"value", "type"}}
+            probe.update(type="preflight", operation=action["type"])
+            probe_key = (
+                "preflight-"
+                + hashlib.sha256((key + json.dumps(probe, sort_keys=True)).encode()).hexdigest()
+            )
+            if before_dispatch is not None:
+                await before_dispatch()
+            created = await self._human_post(
+                session_id, controller_id, probe, probe_key, expires_at=expires_at
+            )
+            proof = await self.poll(
+                f"/sessions/{self._id(session_id)}/actions/{self._id(str(created['action_id']))}",
+                frozenset({"completed", "failed", "unknown", "rejected"}),
+                deadline=deadline,
+            )
+            if (
+                proof.get("status") != "completed"
+                or proof.get("observation", {})
+                .get("extracted", {})
+                .get("preflight", {})
+                .get("safe")
+                is not True
+            ):
+                raise BrowserApiError(409, "browser input preflight refused")
+            body["preflight_action_id"] = self._id(str(proof["action_id"]))
+        if before_dispatch is not None:
+            await before_dispatch()
+        created = await self._human_post(
+            session_id, controller_id, body, key, expires_at=expires_at
+        )
+        return await self.poll(
+            f"/sessions/{self._id(session_id)}/actions/{self._id(str(created['action_id']))}",
+            frozenset({"completed", "failed", "unknown", "rejected"}),
+            deadline=deadline,
+        )
+
+    async def human_control(
+        self,
+        session_id: str,
+        controller_id: str,
+        operation: str,
+        expected_epoch: int,
+        key: str,
+        *,
+        expires_at: float | None = None,
+        before_dispatch: Callable[[], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        if operation not in {"takeover", "handback"}:
+            raise ValueError("invalid browser control operation")
+        if before_dispatch is not None:
+            await before_dispatch()
+        return await asyncio.to_thread(
+            self._sync_request,
+            "POST",
+            f"/sessions/{self._id(session_id)}/control",
+            {"operation": operation, "expected_epoch": expected_epoch},
+            key,
+            controller_id,
+            expires_at,
+        )
+
+    async def reserve_model(
+        self, session_id: str, expected_epoch: int, request_id: str
+    ) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/sessions/{self._id(session_id)}/model-reservations",
+            {"expected_epoch": expected_epoch, "request_id": self._id(request_id)},
+        )
+
+    async def settle_model(
+        self, session_id: str, request_id: str, *, outcome: str = "completed"
+    ) -> dict[str, Any]:
+        if outcome not in {"completed", "unknown"}:
+            raise ValueError("invalid model settlement")
+        return await self.request(
+            "POST",
+            f"/sessions/{self._id(session_id)}/model-reservations/{self._id(request_id)}/settle",
+            {"outcome": outcome},
+        )
+
+    async def get_control(self, session_id: str) -> dict[str, Any]:
+        return await self.request("GET", f"/sessions/{self._id(session_id)}/control")
+
+    async def session(
+        self,
+        task_id: str,
+        origins: list[str],
+        deadline_seconds: int,
+        key: str,
+        *,
+        control_version: str | None = None,
+    ) -> dict[str, Any]:
+        if control_version not in (None, "browser-control-v1"):
+            raise ValueError("unsupported browser control version")
         receipt, interrupted = await self._create(
             "/sessions",
             {
@@ -162,6 +348,7 @@ class BrowserApiClient:
                 "allowed_origins": origins,
                 "network_mode": "public_web",
                 "deadline_seconds": deadline_seconds,
+                **({"control_version": control_version} if control_version else {}),
             },
             key,
         )
@@ -187,14 +374,42 @@ class BrowserApiClient:
             }
 
     async def action(
-        self, session_id: str, action: dict[str, Any], key: str, *, deadline_seconds: int = 30
+        self, session_id: str, action: dict[str, Any], key: str, *, deadline_seconds: int = 105
     ) -> dict[str, Any]:
         session_id = self._id(session_id)
+        if (
+            "expected_epoch" in action
+            and action.get("type") in {"fill", "select", "press"}
+            and "preflight_action_id" not in action
+        ):
+            preflight = {
+                "type": "preflight",
+                "operation": action["type"],
+                "selector": action.get("selector"),
+                "expected_epoch": action["expected_epoch"],
+            }
+            preflight_key = (
+                "preflight-"
+                + hashlib.sha256((key + json.dumps(preflight, sort_keys=True)).encode()).hexdigest()
+            )
+            proof = await self.action(
+                session_id, preflight, preflight_key, deadline_seconds=deadline_seconds
+            )
+            if (
+                proof.get("status") != "completed"
+                or proof.get("observation", {})
+                .get("extracted", {})
+                .get("preflight", {})
+                .get("safe")
+                is not True
+            ):
+                raise BrowserApiError(409, "browser input preflight refused")
+            action = {**action, "preflight_action_id": self._id(str(proof["action_id"]))}
         receipt = await self.request("POST", f"/sessions/{session_id}/actions", action, key)
         action_id = self._id(str(receipt["action_id"]))
         return await self.poll(
             f"/sessions/{session_id}/actions/{action_id}",
-            frozenset({"completed", "failed", "unknown"}),
+            frozenset({"completed", "failed", "unknown", "rejected"}),
             deadline=time.monotonic() + deadline_seconds,
         )
 

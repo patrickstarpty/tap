@@ -493,6 +493,11 @@ class LiteLLMModelGateway:
             raise ModelGatewayRejected()
         if request.messages and not request.tools:
             raise ModelGatewayRejected()
+        if request.tool_choice is not None and (
+            not isinstance(request.tool_choice, str)
+            or request.tool_choice not in [tool.wire_name for tool in request.tools]
+        ):
+            raise ModelGatewayRejected()
         for tool_spec in request.tools:
             definition = TOOL_REGISTRY.get(tool_spec.tool_id)
             if (
@@ -504,7 +509,7 @@ class LiteLLMModelGateway:
                 raise ModelGatewayRejected()
         for message in request.messages:
             if (
-                message.role not in {"assistant", "tool"}
+                message.role not in {"assistant", "tool", "user"}
                 or not isinstance(message.content, str)
                 or (message.role == "tool" and not message.tool_call_id)
             ):
@@ -713,7 +718,11 @@ class LiteLLMModelGateway:
                     }
                     for spec in request.tools
                 ]
-                payload["tool_choice"] = "auto"
+                payload["tool_choice"] = (
+                    {"type": "function", "function": {"name": request.tool_choice}}
+                    if request.tool_choice is not None
+                    else "auto"
+                )
             for message in request.messages:
                 entry: dict[str, Any] = {"role": message.role, "content": message.content}
                 if message.tool_calls:
