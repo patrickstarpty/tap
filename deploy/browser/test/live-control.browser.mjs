@@ -450,3 +450,22 @@ for (const container of [false, true]) test(`scroll receipt identifies ${contain
     assert.equal(await page.evaluate(()=>scrollY),80);
   }
 });
+
+test('agent select receipts acknowledge canonical native values rather than labels',async t=>{
+  const {page,control}=await fixture(t);
+  await page.setContent('<select data-testid="product"><option value="prod-b">Product B</option><option value="prod-a">Product A</option></select>');
+  await control.dispatch({type:'control_sync',controller_kind:'agent',control_epoch:2});
+  const receipt=await control.dispatch({actor_kind:'agent',control_epoch:2,type:'select',selector:'[data-testid="product"]',value:'Product A'});
+  assert.equal(receipt.error,null);
+  assert.equal(receipt.extracted.control_receipt.args.value,'prod-a');
+  assert.equal(receipt.extracted.control_receipt.target.kind,'test_id');
+  assert.equal(await page.getByTestId('product').inputValue(),'prod-a');
+});
+
+for(const readonly of [false,true]) test(`agent custom combobox select cannot produce a completed control receipt (readonly=${readonly})`,async t=>{
+  const {page,control}=await fixture(t);
+  await page.setContent(`<input ${readonly?'readonly':''} role="combobox" data-testid="product" value="Product B">`);
+  await control.dispatch({type:'control_sync',controller_kind:'agent',control_epoch:2});
+  await assert.rejects(control.dispatch({actor_kind:'agent',control_epoch:2,type:'select',selector:'[data-testid="product"]',value:'Product A'}),readonly?/target not actionable/:/controlled select target unsupported/);
+  assert.equal(await page.getByTestId('product').inputValue(),'Product B');
+});

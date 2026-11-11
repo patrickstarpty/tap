@@ -288,3 +288,49 @@ def test_server_observation_mapping_preserves_final_identical_read_recheck():
     assert not project_agent_actions(
         rows, ["https://example.com"], PLAN, mapping, SOURCE
     )["complete"]
+
+
+def test_controlled_select_uses_canonical_acknowledgement_not_requested_label():
+    rows = example()
+    rows[1]["request"] = {
+        "type": "select",
+        "selector": "#product",
+        "value": "Product A",
+    }
+    rows[1]["observation"]["extracted"] = {
+        "control_receipt": {
+            "pre_observation_sequence": 1,
+            "target": {"kind": "test_id", "value": "product"},
+            "args": {"value": "prod-a"},
+        }
+    }
+    result = project(rows)
+    assert result["complete"]
+    assert result["definition"]["steps"][1]["arguments"] == {"value": "prod-a"}
+    # A custom combobox is refused by the native-only actuator. Its unsuccessful
+    # action cannot import even if a malformed row happens to contain old facts.
+    rows[1]["status"] = "unknown"
+    rows[1]["observation"]["fields"] = [
+        {"context": "action_target", "tag": "input", "readonly": True}
+    ]
+    assert project(rows)["issues"][0]["reason"] == "unconfirmed_action"
+
+
+def test_controlled_select_cannot_override_contradictory_custom_target_evidence():
+    rows = example()
+    rows[1]["request"] = {
+        "type": "select",
+        "selector": "#product",
+        "input_ref": "private",
+    }
+    rows[1]["observation"]["extracted"] = {
+        "control_receipt": {
+            "pre_observation_sequence": 1,
+            "target": {"kind": "test_id", "value": "product"},
+            "args": {"value": "prod-a"},
+        }
+    }
+    rows[1]["observation"]["fields"] = [{"context": "action_target", "tag": "input"}]
+    result = project(rows)
+    assert not result["complete"]
+    assert result["issues"][0]["reason"] == "custom_select_requires_review"

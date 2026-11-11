@@ -166,6 +166,20 @@ def project_agent_actions(
             arguments = {"url": request.get("url")}
         elif operation in {"fill", "select"}:
             arguments = {"value": request.get("value")}
+            if (
+                operation == "select"
+                and canonical_target is not None
+                and any(
+                    field.get("tag") not in (None, "select")
+                    for field in observed_targets
+                )
+            ):
+                reason = reason or "custom_select_requires_review"
+            # A successful production control receipt can only come from the
+            # native single-select actuator, which acknowledges the canonical
+            # option value after checking its effect. Custom comboboxes throw
+            # before producing a successful receipt. Unbound sources need DOM
+            # option evidence below; an input label alone is insufficient.
             if operation == "select" and canonical_target is None:
                 native = [
                     field for field in target_facts if field.get("tag") == "select"
