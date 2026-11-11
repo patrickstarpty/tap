@@ -159,9 +159,18 @@ for (const scenario of cases) {
     if (acceptanceContract) {
       if (!inlineBridge)
         await chat.getByText("Execution options", { exact: true }).click();
-      await chat
-        .getByLabel("Execution", { exact: true })
-        .selectOption("browser");
+      if (inlineBridge) {
+        await expect(chat.getByLabel("Execution", { exact: true })).toHaveValue(
+          "browser",
+        );
+        await expect(
+          chat.getByLabel("Execution", { exact: true }),
+        ).toBeDisabled();
+      } else {
+        await chat
+          .getByLabel("Execution", { exact: true })
+          .selectOption("browser");
+      }
       await chat
         .getByLabel("Start URL", { exact: true })
         .fill(scenario.startUrl);
