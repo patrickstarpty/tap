@@ -131,8 +131,22 @@ async function observe(action, actuate) {
     const count = await page.locator(action.selector).count();
     if (count === 0) throw new Error('no target matched before write; take a fresh snapshot and use its aria-ref, or wait explicitly for an observed stable selector');
     if (count > 1) throw new Error('strict mode violation: target is ambiguous before write');
-    if (action.type === 'fill' && count === 1 && await page.locator(action.selector).evaluate(element => element.readOnly === true)) {
-      throw new Error('target is readonly before write; use select for a combobox or inspect its available controls');
+    if (action.type === 'fill') {
+      // Inspect the exact target only. A combobox/container is not an input;
+      // never guess a child, follow a label, or rewrite the model's operation.
+      const target = await page.locator(action.selector).evaluate(element => ({
+        tag: element.tagName.toLowerCase(), type: String(element.type || '').toLowerCase(),
+        readonly: element.readOnly === true || element.getAttribute('aria-readonly') === 'true',
+        contenteditable: element.isContentEditable === true,
+      }));
+      if (target.readonly) throw new Error('target is readonly before write; use select for a combobox or inspect its available controls');
+      // Match the pinned Playwright fill API's native input types, including
+      // date/color/range controls. Visibility and action-time failures remain
+      // Playwright's responsibility once dispatch starts.
+      const fillTypes = ['email','number','password','search','tel','text','url','color','date','time','datetime-local','month','range','week'];
+      if (target.tag === 'input' ? !fillTypes.includes(target.type) : target.tag !== 'textarea' && !target.contenteditable) {
+        throw new Error('target is not a fill-editable control before write; take a fresh snapshot to choose the actual input or an observed select action, not a non-editable container; do not repeat fill on this target');
+      }
     }
   }
   if (write_started === false) write_started = true;

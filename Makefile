@@ -555,4 +555,5 @@ browser-contract-test: ## owned Chromium input-contract regressions (no models o
 		deploy/browser/test/document-provenance.browser.mjs \
 		deploy/browser/test/document-replay.browser.mjs \
 		deploy/browser/test/associated-state.browser.mjs \
+		deploy/browser/test/inspector-fill.browser.mjs \
 		deploy/browser/test/lca-document-replay.browser.mjs
