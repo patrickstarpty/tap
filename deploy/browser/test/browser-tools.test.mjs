@@ -373,3 +373,57 @@ for (const [name,selector,admitted] of [
   assert.equal(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')).fields[0].selector,selector,'full evidence retains the exact unshortened selector');
   assert.ok(JSON.stringify(result).length<8000);
 });
+
+test('model receipt prioritizes deduplicated safe scope identities and a requested scope snapshot',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const scopes=[{selector:'#calendar',tag:'div',role:null,relation:'ancestor_scope'},{selector:'#calendar-table',tag:'table',role:null,relation:'descendant_table_scope'}];
+  const snapshot='Current month\n'+'day detail '.repeat(300)+'\n- button "11" [ref=e31]';
+  const observation={error:null,bounded_snapshot:snapshot,fields:[
+    {context:'action_target',selector:'#calendar-table',tag:'table',label:'',scope_candidates:scopes},
+    ...Array.from({length:6},(_,i)=>({context:'visible_control',selector:`#select-${i}`,tag:'select',label:'Choices',scope_candidates:scopes,
+      options:Array.from({length:200},(_,j)=>({label:`Very long option label ${j}`,value:String(j)})),options_total:200,options_truncated:false})),
+  ]};
+  const result=JSON.parse(modelReceipt(observation,{type:'snapshot',selector:'#calendar-table'},root));
+  assert.equal(result.bounded_snapshot,snapshot,'requested scope evidence precedes unrelated option details');
+  assert.equal(result.related_fields[0].selector,'#calendar-table');
+  assert.deepEqual(result.scope_candidates,[scopes[1],scopes[0]]);
+  assert.ok(JSON.stringify(result).length<8000);
+  assert.match(result.observation_detail,/observation.*not.*binding/i);
+});
+
+test('advertising-frame document metadata cannot crowd out the requested observation',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const documents=Array.from({length:40},(_,i)=>({frame_id:`frame-${i}`,document_id:`document-${i}`,url:`https://owned.test/${String(i).padStart(2,'0')}${'advertisement/'.repeat(20)}`}));
+  const observation={error:null,bounded_snapshot:'- button "11" [ref=e31]',documents,fields:[{context:'action_target',selector:'#calendar',tag:'table',scope_candidates:[
+    {selector:'#'+'x'.repeat(999),tag:'div',role:null,relation:'ancestor_scope'},
+    {selector:'#day-table',tag:'table',role:null,relation:'descendant_table_scope'},
+  ]}]};
+  const result=JSON.parse(modelReceipt(observation,{type:'snapshot',selector:'#calendar'},root));
+  assert.equal(result.bounded_snapshot,observation.bounded_snapshot);
+  assert.ok(result.documents_omitted>0);assert.ok(JSON.stringify(result).length<8000);
+  assert.equal(result.scope_candidates.length,2,'display-only documents cannot crowd out the returned observation scopes');
+  assert.deepEqual(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')).documents,documents,'document proof/evidence must remain complete');
+});
+
+for(const length of [1000,1001]) test(`scope selector admission matches the ${length}-character action boundary`,async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const scope={selector:'#'+'x'.repeat(length-1),tag:'div',role:null,relation:'ancestor_scope'};
+  const observation={error:null,bounded_snapshot:'Choices',fields:[{context:'action_target',selector:'#month',tag:'select',scope_candidates:[scope]}]};
+  const result=JSON.parse(modelReceipt(observation,{type:'click',selector:'#month'},root));
+  assert.equal(result.scope_candidates?.length || 0,length===1000?1:0);
+  if(length===1000)assert.equal(result.scope_candidates[0].selector,scope.selector);
+  else assert.ok(result.scope_candidates_omitted>0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')).fields[0].scope_candidates,[scope]);
+});
+
+test('an unusable generated target selector cannot reserve away an aria-ref scoped snapshot',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const observation={error:null,bounded_snapshot:'- button "Current day 11" [ref=e31]',documents:[{frame_id:'frame-1',document_id:'document-1',url:'https://owned.test/'}],
+    fields:[{context:'action_target',selector:Array(450).fill('div:nth-of-type(1)').join(' > '),tag:'div',label:'Current days'}]};
+  assert.ok(observation.fields[0].selector.length>8000);
+  const result=JSON.parse(modelReceipt(observation,{type:'snapshot',selector:'aria-ref=e1'},root));
+  assert.equal(result.bounded_snapshot,observation.bounded_snapshot);
+  assert.deepEqual(result.documents,observation.documents);
+  assert.equal(result.related_fields_omitted,1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')),observation);
+});

@@ -162,6 +162,33 @@ function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect
     return visible(node) && rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
   };
   for (const node of [...document.querySelectorAll('select,input,textarea')].filter(inViewport).slice(0, 8)) add(node, 'visible_control');
+  // Scope candidates are read-only observation boundaries, never a widget or
+  // business binding. Keep only small, safe owner-document ancestors and do
+  // not collect their aggregate text or hidden values.
+  const scopesFor = node => {
+    const hiddenPath = '[hidden],[inert],[aria-hidden="true"]';
+    const protectedNode = 'input[type="hidden"],input[type="password"],[autocomplete*="password" i],[autocomplete*="one-time-code" i],[autocomplete*="cc-" i],[data-secret],[data-sensitive],[data-private],iframe,object,embed';
+    const interactive = 'button,input,select,textarea,a[href],[role="button"],[role="option"],[role="gridcell"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="combobox"],[contenteditable="true"],[tabindex]';
+    let fallback = null;
+    for (let ancestor = node.parentElement, depth = 0; ancestor && depth < 4; ancestor = ancestor.parentElement, depth++) {
+      if (['HTML','BODY','MAIN','FORM'].includes(ancestor.tagName)) break;
+      if (!inViewport(ancestor) || ancestor.closest(hiddenPath) || ancestor.closest(protectedNode)) continue;
+      const walker = document.createTreeWalker(ancestor,NodeFilter.SHOW_ELEMENT);
+      const grids = []; let count = 0, controls = Number(ancestor.matches(interactive)), safe = true;
+      for (let child = walker.nextNode(); child; child = walker.nextNode()) {
+        if (++count > 256 || child.matches(protectedNode) || (child.matches(interactive) && ++controls > 64)) { safe = false; break; }
+        if (child.matches('table,[role="grid"]') && inViewport(child) && !child.closest(hiddenPath)) grids.push(child);
+      }
+      if (!safe) continue;
+      const identity = (element,relation) => ({selector:selectorFor(element),tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),relation});
+      const scopes = [identity(ancestor,'ancestor_scope')];
+      if (grids.length === 1) scopes.push(identity(grids[0],'descendant_table_scope'));
+      fallback ||= scopes;
+      if (grids.length === 1 || ancestor.matches('table,[role="grid"]')) return scopes;
+    }
+    return fallback || [];
+  };
+
   const order = context => ['action_target', 'pointer_blocker', 'associated_popup', 'containing_popup', 'visible_popup', 'focused', 'active_option', 'popup_item', 'visible_control', 'expanded'].indexOf(context);
   const ordered = [...related.keys()].sort((a, b) => order(related.get(a)) - order(related.get(b)));
   ordered.push(...nodes.filter(node => !related.has(node) && visible(node))
@@ -172,6 +199,7 @@ function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect
     tag: node.tagName.toLowerCase(), name: node.getAttribute('name'), id: node.id,
     type: node.getAttribute('type'), role: node.getAttribute('role'), selector: selectorFor(node),
     ...(related.has(node) ? {context: related.get(node)} : {}),
+    ...((node === target || (node.tagName === 'SELECT' && related.has(node) && inViewport(node))) ? {scope_candidates:scopesFor(node)} : {}),
     ...(popupText !== null ? {popup_text: popupText.slice(0, 1000), popup_text_truncated: popupText.length > 1000} : {}),
     label: (node.getAttribute('aria-label') || (node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim() || [...(node.labels || [])].map(label => label.textContent).join(' ') || node.textContent || '').trim().slice(0, 200),
     value: node.type === 'password' ? '[hidden]' : String(node.value ?? '').slice(0, 200),
@@ -216,6 +244,7 @@ export async function observeFields(page, action = {}) {
         const ordered = [...fields.filter(field=>field.context === 'action_target'), ...states, ...fields.filter(field=>field.context !== 'action_target')];
         results.push(...ordered.map(field => ({...field, selector:prefix + field.selector,
           ...(field.association ? {association:{...field.association,group_selector:prefix + field.association.group_selector}} : {}),
+          ...(field.scope_candidates ? {scope_candidates:field.scope_candidates.map(scope=>({...scope,selector:prefix + scope.selector})).filter(scope=>scope.selector.length <= 1000)} : {}),
         })));
       } catch { /* A detached frame has no current observable controls. */ }
     }

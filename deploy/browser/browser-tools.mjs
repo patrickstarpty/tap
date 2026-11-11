@@ -124,9 +124,10 @@ export function modelReceipt(receipt, action, directory) {
   }
   const {fields, bounded_snapshot, ...facts} = receipt;
   const reading = action.type === 'read' && !receipt.error;
-  const view = {...facts, bounded_snapshot:'', related_fields:[], related_fields_omitted:0, evidence_file:file,
+  const scopedSnapshot = action.type === 'snapshot' && Boolean(action.selector) && !receipt.error;
+  const view = {...facts, bounded_snapshot:scopedSnapshot ? String(bounded_snapshot || '').slice(0,6000) : '', related_fields:[], related_fields_omitted:0, scope_candidates:[], scope_candidates_omitted:0, evidence_file:file,
     observation_detail:reading ? 'The current read and source-redacted observation are stored in evidence_file.'
-      : 'Fresh action receipts already contain current observations. Full source-redacted controls are in evidence_file. URLs omit credentials, query and fragment. Use exact returned selectors or current refs. associated_selection_state is a proven local name/enum binding; selected_label is null until one unique visible choice is selected. Read selected_label with exact equals. state_attributes are observed allowlisted state; empty differs from absent. visible_control means in the viewport, not associated. For readonly date widgets open the observed widget, then choose current year, month and day controls instead of fill. When details_omitted, options_truncated, popup_text_truncated or related_fields_omitted is present, inspect evidence_file or snapshot the existing select/popup selector. options_total counts observed native options; omitted options are not absent. A textbox-scoped snapshot cannot show a sibling popup.',
+      : 'Fresh action receipts already contain current observations. Full source-redacted controls are in evidence_file. URLs omit credentials, query and fragment. Use exact returned selectors or current refs. associated_selection_state is a proven local name/enum binding; selected_label is null until one unique visible choice is selected. Read selected_label with exact equals. state_attributes are observed allowlisted state; empty differs from absent. visible_control means in the viewport, not associated. For readonly date widgets open the observed widget, then choose current year, month and day controls instead of fill. When details_omitted, options_truncated, popup_text_truncated, related_fields_omitted, scope_candidates_omitted or documents_omitted is present, inspect evidence_file or snapshot the existing select/popup selector. options_total counts observed native options; omitted options are not absent. A textbox-scoped snapshot cannot show a sibling popup. scope_candidates are observation ranges, not a business binding; snapshot an exact returned scope to observe its current controls.',
     snapshot_truncated:Boolean(bounded_snapshot),
   };
   const fits = () => JSON.stringify(view).length < 7900;
@@ -136,21 +137,65 @@ export function modelReceipt(receipt, action, directory) {
     : ['pointer_blocker','associated_popup','containing_popup','visible_popup','popup_item','active_option'].includes(field.context) ? 2 : 3;
   const candidates = reading ? [] : (fields || []).filter(field=>field.context).sort((a,b)=>priority(a)-priority(b));
   const retained = [];
+  const usableSelector = value=>typeof value === 'string' && value.length > 0 && value.length <= 1000;
+  // Preserve requested scope content and its target before optional details.
+  // If frame metadata alone prevents this, omit whole model-display records,
+  // retaining complete trusted document evidence in the saved receipt.
+  const identity = field => {
+    const {context,selector,tag,id,role,label,value,readonly,disabled} = field;
+    return {...compact({context,selector,tag,id,role,label,value,readonly,disabled}),details_omitted:true,
+      ...(field.options?.length || field.options_total !== undefined ? {options_total:field.options_total ?? field.options.length,options_truncated:Boolean(field.options_truncated || field.options?.length)} : {}),
+    };
+  };
+  const targetField = candidates.find(field=>field.context === 'action_target' || field.selector === action.selector);
+  const reservedFields = (scopedSnapshot ? (targetField ? [targetField] : []) : candidates.slice(0,3))
+    .filter(field=>usableSelector(field.selector));
+  const identityReserve = JSON.stringify(reservedFields.map(identity)).length - 2;
+  const reservedScopes = [...new Map(reservedFields.flatMap(field=>field.scope_candidates || [])
+    .filter(scope=>usableSelector(scope.selector))
+    .map(scope=>[scope.selector,scope])).values()].slice(0,2);
+  const scopeReserve = JSON.stringify(reservedScopes).length - 2;
+  const withoutDocuments = JSON.stringify({...view,documents:[]}).length;
+  // Reserve whole scope identities only when they fit without reducing the
+  // requested snapshot. Document display is lower priority than usable scopes.
+  const targetReserve = identityReserve + (withoutDocuments + identityReserve + scopeReserve < 7900 ? scopeReserve : 0);
+  if (Array.isArray(view.documents)) {
+    while (view.documents.length && JSON.stringify(view).length + targetReserve >= 7900) {
+      view.documents = view.documents.slice(0,-1);
+      view.documents_omitted = (view.documents_omitted || 0) + 1;
+    }
+  }
+  while (scopedSnapshot && view.bounded_snapshot.length && JSON.stringify(view).length + targetReserve >= 7900) {
+    view.bounded_snapshot = view.bounded_snapshot.slice(0,Math.max(0,view.bounded_snapshot.length - (JSON.stringify(view).length + targetReserve - 7899)));
+  }
+  const seenScopes = new Set();
+  const offerScopes = field => {
+    const scopes = [...(field.scope_candidates || [])]
+      .sort((a,b)=>Number(b.tag === 'table' || b.role === 'grid')-Number(a.tag === 'table' || a.role === 'grid'));
+    for (const scope of scopes) {
+      if (seenScopes.has(scope.selector)) continue;
+      seenScopes.add(scope.selector);
+      if (!usableSelector(scope.selector) || view.scope_candidates.length >= 2) {
+        view.scope_candidates_omitted++; continue;
+      }
+      const {selector,tag,role,relation} = scope;
+      view.scope_candidates.push({selector,tag,role,relation});
+      if (!fits()) { view.scope_candidates.pop(); view.scope_candidates_omitted++; }
+    }
+  };
   // Pass 1 reserves exact, usable identities for every admitted control before
   // any option list, association or popup text can consume the shared budget.
   for (const field of candidates) {
     // Match the action schema/browserctl limit. Never shorten a selector into
     // a different target or advertise one that no subsequent tool call accepts.
-    if (typeof field.selector !== 'string' || !field.selector || field.selector.length > 1000 || retained.length >= 12) {
+    if (!usableSelector(field.selector) || retained.length >= 12) {
       view.related_fields_omitted++; continue;
     }
-    const {context,selector,tag,id,role,label,value,readonly,disabled} = field;
-    const fact = {...compact({context,selector,tag,id,role,label,value,readonly,disabled}),details_omitted:true,
-      ...(field.options?.length || field.options_total !== undefined ? {options_total:field.options_total ?? field.options.length,options_truncated:Boolean(field.options_truncated || field.options?.length)} : {}),
-    };
+    const fact = identity(field);
     view.related_fields.push(fact);
     if (!fits()) { view.related_fields.pop(); view.related_fields_omitted++; continue; }
     retained.push({field,fact,omitted:false});
+    offerScopes(field);
   }
   const add = (item, detail) => {
     const previous = {...item.fact};
@@ -205,9 +250,11 @@ export function modelReceipt(receipt, action, directory) {
     }
     if (!item.omitted) delete item.fact.details_omitted;
   }
+  if (!view.scope_candidates.length) delete view.scope_candidates;
+  if (!view.scope_candidates_omitted) delete view.scope_candidates_omitted;
   if (!view.related_fields.length) delete view.related_fields;
   if (!view.related_fields_omitted) delete view.related_fields_omitted;
-  view.bounded_snapshot = reading ? '' : String(bounded_snapshot || '').slice(0,6000);
+  if (!scopedSnapshot) view.bounded_snapshot = reading ? '' : String(bounded_snapshot || '').slice(0,6000);
   view.snapshot_truncated = view.bounded_snapshot.length < String(bounded_snapshot || '').length;
   // JSON escaping, document metadata and omission markers share the same cap.
   while (JSON.stringify(view).length >= 8000 && view.bounded_snapshot.length) {
@@ -223,7 +270,7 @@ export default async function BrowserTools() {
   if (!root) throw new Error('coding mailbox unavailable');
   return {tool:{tap_browser:{
     description:'Operate the task-owned live browser. Save a business BDD plan, then use its step IDs for actions. '
-      + 'Source-redacted bounded observations are saved in evidence_file; related_fields show current controls and visible popups. Use read/grep for relevant details or a scoped snapshot. '
+      + 'Source-redacted bounded observations are saved in evidence_file; related_fields show current controls and visible popups. scope_candidates are bounded observation ranges, not business bindings: use their exact selector for a current scoped snapshot. Use read/grep for relevant details or a scoped snapshot. '
       + 'Fresh action receipts already contain current observations. Use observed selectors/aria-ref or the documented exact live role[ref] aliases; snapshot may be scoped to an existing element, not used as text search. For readonly date widgets open the observed widget, then use current year, month and day controls. A textbox scope cannot show a sibling popup. Native options_total/options_truncated describe incomplete option lists; scope the observed select to inspect more. Read validates equals/contains/nonempty/positive/pattern '
       + 'against the actual DOM and records named business values. Give each required input or result condition its own Then step and unique read name. Mark form-input Then steps verification_kind=input and use exact equals readbacks after filling the form, before leaving it. At least one final result Then is required; verify result steps after the last write. '
       + 'Use fill only for editable text. Use select for native selects, radio/checkbox controls and custom dropdowns; provide an observed exact option value or label, then read back the actual control state. read defaults to text: explicitly use attribute=value for input/select, checked for radio/checkbox, or an observed aria-valuenow for a slider. For an observed associated_selection_state, selected_label reads the current unique visible choice from its proven hidden enum binding with exact equals; null is not selected. Label text alone does not prove selection. '
