@@ -183,7 +183,9 @@ def test_zero_action_stop_is_empty_completed_projection():
 
 def test_page_scroll_receipt_is_preserved_as_replayable_action():
     scroll = receipt(operation="scroll")
-    scroll.update(target=None, args={"delta_x": 0, "delta_y": 400})
+    scroll.update(
+        target=None, args={"delta_x": 0, "delta_y": 400, "scroll_scope": "page"}
+    )
     projected = project_recording([scroll], ["https://fixture.example"], 1)
     assert projected.excluded == ()
     assert projected.definition.steps[0].operation == "scroll"
@@ -193,7 +195,7 @@ def test_page_scroll_receipt_is_preserved_as_replayable_action():
 
 def test_container_scroll_receipt_preserves_target_and_provenance():
     scroll = receipt(operation="scroll")
-    scroll["args"] = {"delta_x": 20, "delta_y": -400}
+    scroll["args"] = {"delta_x": 20, "delta_y": -400, "scroll_scope": "container"}
     projected = project_recording([scroll], ["https://fixture.example"], 1)
     assert projected.definition.steps[0].target_id == projected.definition.targets[0].id
     assert projected.definition.targets[0].value == "name"
@@ -205,3 +207,12 @@ def test_scroll_without_valid_provenance_is_rejected():
     scroll.pop("pre_observation_sequence")
     with pytest.raises(ValueError, match="provenance"):
         project_recording([scroll], ["https://fixture.example"], 1)
+
+
+def test_legacy_scroll_receipt_without_scope_is_not_misreplayed_as_container():
+    scroll = receipt(operation="scroll")
+    scroll["target"] = {"kind": "css", "value": "html > body", "fallback": True}
+    scroll["args"] = {"delta_x": 0, "delta_y": 100}
+    projected = project_recording([scroll], ["https://fixture.example"], 1)
+    assert projected.definition is None
+    assert projected.excluded[0].reason == "legacy_scroll_scope_unknown"

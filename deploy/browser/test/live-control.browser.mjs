@@ -441,7 +441,7 @@ for (const container of [false, true]) test(`scroll receipt identifies ${contain
   const frame=await control.dispatch({type:'live_frame'});
   const action={...request,frame_sequence:frame.frame_sequence,type:'scroll',delta_x:0,delta_y:80,...(container?{selector:'[data-testid="scrollbox"]'}:{})};
   const receipt=await control.dispatch(action);
-  assert.deepEqual(receipt.extracted.control_receipt.args,{delta_x:0,delta_y:80});
+  assert.deepEqual(receipt.extracted.control_receipt.args,{delta_x:0,delta_y:80,scroll_scope:container?'container':'page'});
   if(container){
     assert.equal(receipt.extracted.control_receipt.target.value,'scrollbox');
     assert.equal(await page.getByTestId('scrollbox').evaluate(n=>n.scrollTop),80);

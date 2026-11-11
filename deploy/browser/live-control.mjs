@@ -311,6 +311,7 @@ export function createLiveControl({page,observe,onControl=async()=>{},now=Date.n
       const args={};
       for(const key of ['value','key','delta_x','delta_y']) if(Object.hasOwn(action,key)) args[key]=action[key];
       if(acknowledgedArgs) Object.assign(args,acknowledgedArgs);
+      if(action.type==='scroll') args.scroll_scope=binding.pageScroll?'page':'container';
       return {...result,extracted:{...result.extracted,control_receipt:{target:binding.target,pre_observation_sequence:preSequence,args}}};
     }
     return result;
