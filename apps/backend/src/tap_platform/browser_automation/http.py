@@ -382,6 +382,16 @@ def create_browser_router(
         assert service is not None
         return invoke(lambda: service.get_execution(actor, execution_id))
 
+    @router.post("/executions/{execution_id}/lca-draft")
+    def project_lca_draft(
+        project_id: str, execution_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
+        from tap_platform.lca.agent_export import export_agent_draft
+
+        actor = authorize(request, project_id)
+        assert service is not None
+        return invoke(lambda: export_agent_draft(service, actor, execution_id, body))
+
     @router.post("/executions/{execution_id}/cancel", status_code=202)
     def cancel_execution(
         project_id: str, execution_id: str, request: Request

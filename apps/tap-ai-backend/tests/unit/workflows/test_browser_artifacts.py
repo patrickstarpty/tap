@@ -112,3 +112,68 @@ def test_browser_transport_error_preserves_application_read_contract() -> None:
     assert error.status == 503
     assert error.detail == "unavailable"
     assert str(error) == "browser API 503: unavailable"
+
+
+@pytest.mark.asyncio
+async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping():
+    events = [
+        WorkflowEvent(
+            "plan",
+            "task",
+            1,
+            "node",
+            1,
+            "browser.plan_created",
+            {"steps": [{"id": "open", "keyword": "Given", "title": "Open"}]},
+            datetime.now(UTC),
+        ),
+        WorkflowEvent(
+            "action",
+            "task",
+            2,
+            "node",
+            1,
+            "browser.action_started",
+            {"action_id": "a1", "step_id": "open"},
+            datetime.now(UTC),
+        ),
+    ]
+    snapshot = {"events": events}
+
+    class Store:
+        async def snapshot(self, scope, task):
+            assert scope == VALIDATION_SCOPE and task == "task"
+            return snapshot
+
+    class Client:
+        project_id = VALIDATION_SCOPE.project_id
+
+        async def request(self, method, path, body):
+            assert method == "POST" and path == "/executions/run/lca-draft"
+            assert body["action_steps"] == {"a1": "open"}
+            assert body["plan"] == events[0].payload["steps"]
+            return {
+                "source": {
+                    "task_id": "task",
+                    "execution_id": "run",
+                    "bundle_id": "bundle",
+                    "input_sha256": "a" * 64,
+                },
+                "complete": False,
+                "issues": [],
+            }
+
+    adapter = BrowserArtifactAdapter(Store(), Client())
+
+    async def project(scope, task, saved):
+        assert saved is snapshot
+        return {
+            "status": "passed",
+            "executionId": "run",
+            "bundleId": "bundle",
+            "inputSha256": "a" * 64,
+        }
+
+    adapter.project = project
+    result = await adapter.lca_draft(VALIDATION_SCOPE, "task")
+    assert result["source"]["task_id"] == "task"

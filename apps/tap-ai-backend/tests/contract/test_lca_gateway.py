@@ -419,3 +419,37 @@ def test_lca_actions_reuse_current_project_principal_policy(action):
     assert not allowed(replace(principal, actions=frozenset({"knowledge.answer"})))
     assert not allowed(replace(principal, audience="other"))
     assert not allowed(principal, replace(resource, project_id="other"))
+
+
+def test_aa_preview_is_scoped_read_only_and_uses_server_workflow_source(monkeypatch):
+    from tap.modules.workflows.adapters.browser_client import BrowserApiClient
+    from tap.modules.workflows.application.browser_artifacts import BrowserArtifactAdapter
+
+    calls = []
+
+    async def preview(self, scope, task_id):
+        calls.append((scope, task_id))
+        return {"complete": False, "definition": None, "issues": [{"reason": "unsupported"}]}
+
+    monkeypatch.setattr(BrowserArtifactAdapter, "lca_draft", preview)
+    authority = Authority()
+    app = create_app(
+        HttpServices(
+            scope=VALIDATION_SCOPE,
+            scope_provider=authority,
+            authorization_policy=authority,
+            workflow_store=object(),
+            browser_client=BrowserApiClient(
+                "http://127.0.0.1:39999", VALIDATION_SCOPE.project_id, "test-browser-token"
+            ),
+        ),
+        lca_gateway=LcaGateway("http://127.0.0.1:8001", "test-server-token"),
+    )
+    client = TestClient(app)
+    path = "/api/projects/tapper-demo/lca/agent-tasks/task1/preview"
+    response = client.get(path)
+    assert response.status_code == 200
+    assert calls == [(VALIDATION_SCOPE, "task1")]
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(path.replace("tapper-demo", "other")).status_code == 403
+    assert len(calls) == 1

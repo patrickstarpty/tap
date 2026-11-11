@@ -149,3 +149,44 @@ class BrowserArtifactAdapter:
         if view is None or not any(item["evidenceId"] == evidence_id for item in view["evidence"]):
             raise LookupError("browser evidence unavailable")
         return await self.client.read_evidence(evidence_id)
+
+    async def lca_draft(self, scope: ProjectScopeContext, task_id: str) -> dict[str, Any]:
+        """Read original authorized AA provenance; never accepts a caller's steps."""
+        snapshot = await self.store.snapshot(scope, task_id)
+        view = await self.project(scope, task_id, snapshot)
+        if view is None or view["status"] != "passed":
+            raise LookupError("Completed AA execution unavailable")
+        plan = next(
+            (
+                event.payload.get("steps")
+                for event in reversed(snapshot["events"])
+                if event.kind == "browser.plan_created"
+            ),
+            None,
+        )
+        if not isinstance(plan, list):
+            raise LookupError("AA business plan unavailable")
+        action_steps = {
+            event.payload["action_id"]: event.payload["step_id"]
+            for event in snapshot["events"]
+            if event.kind == "browser.action_started"
+            and isinstance(event.payload.get("action_id"), str)
+            and isinstance(event.payload.get("step_id"), str)
+        }
+        source = {
+            "task_id": task_id,
+            "bundle_id": view["bundleId"],
+            "input_sha256": view["inputSha256"],
+        }
+        result = await self.client.request(
+            "POST",
+            f"/executions/{view['executionId']}/lca-draft",
+            {
+                **source,
+                "plan": plan,
+                "action_steps": action_steps,
+            },
+        )
+        if result.get("source") != {**source, "execution_id": view["executionId"]}:
+            raise LookupError("AA draft provenance mismatch")
+        return result
