@@ -812,8 +812,48 @@ def finish_owned_compose(
     helpers.run(compose + command, env, timeout=180)
 
 
+def model_execution_settings(mode: str, values: dict[str, str]) -> dict[str, str]:
+    """Keep real planning/execution selection and conservative billing explicit."""
+    alias = values.get("TAP_BROWSER_CODING_MODEL_ALIAS", "qwen-plus")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,128}", alias):
+        raise ValueError("invalid model alias")
+    defaults = {
+        "TAP_BROWSER_CODING_MAX_INPUT_TOKENS": "129024",
+        "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": "0.4",
+        "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": "1.2",
+    }
+    if (
+        mode == "real"
+        and alias != "qwen-plus"
+        and any(not values.get(key) for key in defaults)
+    ):
+        raise ValueError(
+            "nondefault real model requires explicit token limit and prices"
+        )
+    settings = {key: values.get(key, default) for key, default in defaults.items()}
+    if (
+        not settings["TAP_BROWSER_CODING_MAX_INPUT_TOKENS"].isdigit()
+        or not 1 <= int(settings["TAP_BROWSER_CODING_MAX_INPUT_TOKENS"]) <= 2_000_000
+    ):
+        raise ValueError("invalid model input token limit")
+    for key in defaults:
+        if "PRICE" in key:
+            try:
+                price = Decimal(settings[key])
+            except Exception as error:
+                raise ValueError("invalid model price") from error
+            if not price.is_finite() or price <= 0:
+                raise ValueError("model price must be finite and positive")
+    return {
+        **settings,
+        "TAP_BROWSER_CODING_MODEL_ALIAS": alias,
+        "TAPPER_DEFAULT_CHAT_MODEL": alias,
+    }
+
+
 def main() -> int:
     args = parse_args()
+    model_settings = model_execution_settings(args.mode, dict(os.environ))
     nonce = uuid.uuid4().hex[:12]
     project = f"tap-browser-core-{nonce}"
     state = Path(tempfile.mkdtemp(prefix=f"{project}-state-"))
@@ -843,22 +883,11 @@ def main() -> int:
             "TAP_BROWSER_CODING_ENABLED": "true",
             "TAP_BROWSER_CODING_IMAGE": CODING_IMAGE,
             "TAP_BROWSER_SERVICE_MODE": "external",
-            "TAP_BROWSER_CODING_MODEL_ALIAS": os.environ.get(
-                "TAP_BROWSER_CODING_MODEL_ALIAS", "qwen-plus"
-            ),
+            **model_settings,
             "TAPPER_MODEL_TIMEOUT_SECONDS": "60" if args.mode == "real" else "15",
-            "TAP_BROWSER_CODING_MAX_INPUT_TOKENS": os.environ.get(
-                "TAP_BROWSER_CODING_MAX_INPUT_TOKENS", "129024"
-            ),
             "TAP_BROWSER_CODING_MAX_OUTPUT_TOKENS": "4096"
             if args.mode == "real"
             else "2048",
-            "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION": os.environ.get(
-                "TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION", "0.4"
-            ),
-            "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION": os.environ.get(
-                "TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION", "1.2"
-            ),
             "TAP_WORKFLOW_MAX_MODEL_CALLS": str(
                 args.max_model_calls if args.mode == "real" else 12
             ),
@@ -932,6 +961,7 @@ def main() -> int:
             {
                 "mode": args.mode,
                 "execution_mode": args.execution_mode,
+                "model_settings": model_settings,
                 "site": args.site,
                 "project": project,
                 "max_model_calls": args.max_model_calls if args.mode == "real" else 12,

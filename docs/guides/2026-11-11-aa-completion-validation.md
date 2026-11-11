@@ -147,3 +147,25 @@ planning, and reading any positive premium does not prove the right profile.
 The next evaluation should compare exact requested-input compliance, current-page
 readback, final-result provenance and frozen replay, rather than headline model
 names or a screenshot of a quote.
+
+## Requested next model selection
+
+The user subsequently requested Qwen Max for implementation. A metadata-only
+lookup of the existing gateway confirmed alias `qwen-max` resolves to
+`dashscope/qwen-max`, with catalog input limit 30,720 and listed rates USD 1.60/M
+input, USD 6.40/M output. No pinned snapshot/version was returned, so this is not
+identified as Qwen3.8 Max. No model completion was issued by this lookup.
+
+The acceptance runner now binds planning and coding to the same explicitly chosen
+alias and refuses a nondefault real model without declared input limit and both
+positive finite cost rates. Its experiment manifest records those non-secret
+settings. This prevents selecting Max while accidentally retaining Plus pricing
+or planning. A future separately bounded approved run can specify:
+
+- `TAP_BROWSER_CODING_MODEL_ALIAS=qwen-max`
+- `TAP_BROWSER_CODING_MAX_INPUT_TOKENS=30720`
+- `TAP_BROWSER_CODING_INPUT_PRICE_PER_MILLION=1.6`
+- `TAP_BROWSER_CODING_OUTPUT_PRICE_PER_MILLION=6.4`
+
+The current implementation/fixture work remains provider-free. Model preference
+does not enlarge the approved spending limit or guarantee successful acceptance.
