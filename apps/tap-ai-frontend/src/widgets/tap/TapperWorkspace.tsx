@@ -57,7 +57,13 @@ import {
 import { useConversationRuntime } from "../../features/conversations/model/useConversationRuntime";
 import { useWorkflowTask } from "../../features/workflows/api/queries";
 import { WorkflowSidebar } from "../../features/workflows/components/WorkflowSidebar";
-import { browserSendInput } from "../../features/workflows/model/browserInput";
+import {
+  acceptanceContractFromDraft,
+  acceptanceDraftFromContract,
+  browserAcceptanceReady,
+  type BrowserAcceptanceDraft,
+  browserSendInput,
+} from "../../features/workflows/model/browserInput";
 import { RunStatusLink } from "../../features/workflows/components/RunStatusLink";
 import {
   agentSelectionFields,
@@ -1526,6 +1532,8 @@ export function TapperWorkspace() {
     () => window.matchMedia("(max-width: 1100px)").matches,
   );
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
+  const [browserAcceptanceDraft, setBrowserAcceptanceDraft] =
+    useState<BrowserAcceptanceDraft>({ reviewed: false, fields: [] });
   const [browserMode, setBrowserMode] = useState(false);
   const [browserStartUrl, setBrowserStartUrl] = useState("");
   const [browserNotes, setBrowserNotes] = useState("");
@@ -2750,8 +2758,21 @@ export function TapperWorkspace() {
       context?.sourceIds ?? activeConversation.selectedSourceIds;
     const selectedAgentIds =
       context?.agentIds ?? activeConversation.selectedAgentIds;
+    if (
+      context === undefined &&
+      browserMode &&
+      !browserAcceptanceReady(browserAcceptanceDraft)
+    )
+      return false;
     const browserRequest = context?.browser
       ? {
+          ...(context.browser.acceptanceContract
+            ? {
+                acceptanceContract: acceptanceContractFromDraft(
+                  context.browser.acceptanceContract,
+                ),
+              }
+            : {}),
           startUrl: context.browser.startUrl,
           ...(context.browser.expectedResult
             ? { expectedResult: context.browser.expectedResult }
@@ -2770,6 +2791,9 @@ export function TapperWorkspace() {
             notes: browserNotes,
             expectedResult: browserExpectedResult,
             sourceTaskId: browserSourceTaskId,
+            acceptanceContract: acceptanceContractFromDraft(
+              browserAcceptanceDraft,
+            ),
           })
         : null;
     if (
@@ -2914,6 +2938,7 @@ export function TapperWorkspace() {
       if (accepted === null) return false;
       setWorkflowTaskId(null);
       setBrowserSourceTaskId(null);
+      setBrowserAcceptanceDraft({ reviewed: false, fields: [] });
       setWorkflowNodeId(null);
       const optimistic = appendTurn(
         { ...activeConversation, id: accepted.conversationId },
@@ -2924,6 +2949,7 @@ export function TapperWorkspace() {
           modelId: activeConversation.modelId,
           prompt,
           sourceReferences: currentSourceReferences,
+          browserIntent: browserRequest,
           contextLabels: [
             ...currentSourceReferences.map((item) => item.name),
             ...agents
@@ -3090,6 +3116,8 @@ export function TapperWorkspace() {
               }
               onPickSuggestion={pickSuggestion}
               onSend={(prompt) => sendMessage(prompt)}
+              browserAcceptanceDraft={browserAcceptanceDraft}
+              onBrowserAcceptanceChange={setBrowserAcceptanceDraft}
               browserMode={browserMode}
               browserAvailable={runtime.data?.browserEnabled === true}
               browserStartUrl={browserStartUrl}
@@ -3112,6 +3140,11 @@ export function TapperWorkspace() {
               onEditTurn={(turn) => {
                 const context = resendContextOf(turn);
                 setMessageDraft(turn.prompt);
+                setBrowserAcceptanceDraft(
+                  acceptanceDraftFromContract(
+                    turn.browserIntent?.acceptanceContract,
+                  ),
+                );
                 setBrowserMode(turn.browserIntent != null);
                 setBrowserStartUrl(turn.browserIntent?.startUrl ?? "");
                 setBrowserNotes(turn.browserIntent?.inputNotes ?? "");
@@ -3309,6 +3342,9 @@ export function TapperWorkspace() {
                     onProvideInput={() => {
                       const intent = workflow.snapshot?.browserIntent;
                       if (!intent) return;
+                      setBrowserAcceptanceDraft(
+                        acceptanceDraftFromContract(intent.acceptanceContract),
+                      );
                       setBrowserMode(true);
                       setBrowserStartUrl(intent.startUrl);
                       setBrowserNotes(intent.inputNotes ?? "");

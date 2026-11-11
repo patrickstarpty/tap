@@ -42,7 +42,12 @@ import {
   PromptSuggestions,
   type PromptSuggestionsState,
 } from "./PromptSuggestions";
-import { startUrlFromGoal } from "../../../features/workflows/model/browserInput";
+import { BrowserAcceptanceEditor } from "./BrowserAcceptanceEditor";
+import {
+  browserAcceptanceReady,
+  type BrowserAcceptanceDraft,
+  startUrlFromGoal,
+} from "../../../features/workflows/model/browserInput";
 
 type PickerKind = "library" | "agents" | "skills";
 
@@ -100,6 +105,8 @@ interface TapperChatProps {
    * dismissed or replaced. */
   composerNotice?: { text: string; onDismiss: () => void };
   agentSelectionIssue?: { text: string; onClear: () => void };
+  browserAcceptanceDraft?: BrowserAcceptanceDraft;
+  onBrowserAcceptanceChange?: (draft: BrowserAcceptanceDraft) => void;
   browserMode?: boolean;
   browserAvailable?: boolean;
   browserStartUrl?: string;
@@ -189,6 +196,8 @@ export function TapperChat({
   skillBudget,
   composerNotice,
   agentSelectionIssue,
+  browserAcceptanceDraft = { reviewed: false, fields: [] },
+  onBrowserAcceptanceChange,
   browserMode = false,
   browserAvailable = false,
   browserStartUrl = "",
@@ -522,6 +531,10 @@ export function TapperChat({
     )
       return;
     if (browserMode) {
+      if (!browserAcceptanceReady(browserAcceptanceDraft)) {
+        setBrowserInputError("Review every required input before sending.");
+        return;
+      }
       if (!browserAvailable) {
         setBrowserInputError(
           "Browser automation is unavailable. Configure the local browser runtime first.",
@@ -760,6 +773,11 @@ export function TapperChat({
               }
               placeholder="https://example.org/page"
               autoComplete="url"
+            />
+            <BrowserAcceptanceEditor
+              draft={browserAcceptanceDraft}
+              onChange={(draft) => onBrowserAcceptanceChange?.(draft)}
+              disabled={sending}
             />
             <label htmlFor="tap-browser-notes">Input details (optional)</label>
             <textarea
@@ -1080,6 +1098,8 @@ export function TapperChat({
               !modelAvailable ||
               sending ||
               overSkillBudget ||
+              (browserMode &&
+                !browserAcceptanceReady(browserAcceptanceDraft)) ||
               agentSelectionIssue !== undefined
             }
           >

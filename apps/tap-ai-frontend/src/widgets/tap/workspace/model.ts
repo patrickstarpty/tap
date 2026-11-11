@@ -1,3 +1,4 @@
+import type { BrowserAcceptanceContract } from "../../../features/workflows/model/browserInput";
 import type { RetrievalAnswerResponse } from "../../../features/knowledge/api/types";
 import type { InsightsExplanationResult } from "../../../features/conversations/api/client";
 import type {
@@ -93,6 +94,7 @@ export interface AssistantTurn {
   skillNotices?: readonly string[];
   catalogReferences?: readonly Pick<CatalogItem, "id" | "kind" | "name">[];
   browserIntent?: {
+    acceptanceContract?: BrowserAcceptanceContract | null;
     startUrl: string;
     expectedResult?: string | null;
     inputNotes?: string | null;

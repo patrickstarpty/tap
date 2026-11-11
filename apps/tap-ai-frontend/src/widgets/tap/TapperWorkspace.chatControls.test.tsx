@@ -8,6 +8,7 @@ import {
 } from "../../features/knowledge/testing/fakeKnowledgeClient";
 import { renderKnowledgeApp } from "../../features/knowledge/testing/renderKnowledgeApp";
 import { TapperWorkspace } from "./TapperWorkspace";
+import type { AssistantTurn } from "./workspace/model";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -57,12 +58,14 @@ const ANSWER = {
 };
 
 interface Scenario {
+  browser?: AssistantTurn["browserIntent"];
   state: "completed" | "failed" | "canceled" | "running";
   appendResponse?: () => Promise<Response>;
   modelAlias?: string;
 }
 
 function durableConversation({
+  browser,
   state,
   appendResponse,
   modelAlias = "qwen-plus",
@@ -134,6 +137,7 @@ function durableConversation({
             inputSnapshotDigest: `sha256:${"a".repeat(64)}`,
             answerEvidenceSnapshotDigest: null,
             input: {
+              browser,
               message: "What is the rule?",
               modelAlias,
               sourceRevisionIds: ["rev_policy"],
@@ -988,3 +992,37 @@ it("shows a running tool step live, through the real SSE client and reducer (rev
     await screen.findByText("Round 1 · Knowledge search · Running · 0 ms"),
   ).toBeVisible();
 });
+
+it.each(["failed", "completed"] as const)(
+  "preserves the original reviewed contract when resending a %s browser turn",
+  async (state) => {
+    const browser: NonNullable<AssistantTurn["browserIntent"]> = {
+      startUrl: "https://example.test",
+      inputNotes: "Customer Ada",
+      expectedResult: "Booking confirmed",
+      sourceTaskId: "original-blocked-task",
+      acceptanceContract: {
+        version: 1,
+        reviewed: true,
+        fields: [
+          {
+            id: "start_date",
+            value: "2026-11-11",
+            readbackValue: "11/11/2026",
+            attribute: "value",
+            targetTexts: ["Start date"],
+            scopeText: "Booking",
+          },
+        ],
+      },
+    };
+    const { appended } = durableConversation({ state, browser });
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: state === "failed" ? "Retry" : "Regenerate",
+      }),
+    );
+    await waitFor(() => expect(appended).toHaveLength(1));
+    expect(await appended[0]!.json()).toMatchObject({ browser });
+  },
+);
