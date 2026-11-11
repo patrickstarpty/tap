@@ -189,3 +189,34 @@ The combined tree passed `make check` (including 702 backend tests, 90 environme
 A new eight-case real HTTP/Chromium integration matrix caught a genuine merge-boundary error: dialog arguments containing `type=confirm` could override the internal proof invalidation action type. The generator now preserves the internal action type while leaving dialog parameters unchanged. All eight cases pass, including actual second-page value 31 versus main-page value 30, seven new page/file/dialog operations invalidating old input proofs, and captured download bytes. After this fix, 91 related unit tests, the 19-case LCA document matrix, and Ruff/MyPy checks passed. Earlier page/file/read/guard browser tests passed 41/41.
 
 These gates use owned synthetic fixtures without provider charges. They do not constitute successful autonomous FWD/AIA Qwen Max validation or a completed product recording. Those require a fixed combined revision and new retained evidence.
+
+## Completed product edit-and-replay checkpoint
+
+The fixed `e645962b` normal-stack, zero-provider-cost acceptance completed through the real TAP UI: review requirements, execute AA, preview and import the source-derived LCA draft, add an exact-result assertion under the Then step, save the edited definition, and replay it. Run `641a173004e24350ad50d9c114afd6de` has 11/11 canonical actions passed, eight BDD groups, and current account/amount contract requirements both passed. The added assertion was persisted and executed; the original contract was not rewritten to obtain success. A continuous 25.04-second H.264/yuv420p/faststart MP4 was retained and fully decoded for validation. This checkpoint is a synthetic product workflow, not public FWD/AIA autonomy or a demonstration of manual browser recording.
+
+## Real Qwen Max outcomes and lessons
+
+Three bounded Max attempts did not pass real-site acceptance. The first FWD attempt tried to fill a combobox wrapper rather than its actual input. The generic preflight now rejects unsupported fill targets before dispatch while preserving unknown outcomes after real writes. The next FWD attempt repeatedly guessed a nonexistent component-library CSS class. AIA repeatedly supplied invalid locator syntaxes, reached its date picker, and exhausted its call allowance without a quote. Neither site has a successful complete-profile autonomous acceptance result.
+
+The failures exposed tool-contract defects that a larger model alone does not solve:
+
+- Semantic wrapper labels do not make a node editable. Validate the actual supported fill target before dispatch; never silently redirect to a child input.
+- A missing target with business guards previously entered `guardTarget` before the zero-match check and waited 30 seconds per attempt. Direct-write existence and uniqueness now precede the unchanged business and sensitive-field guards.
+- Greedy model-receipt packing spent its related-field allowance on optional metadata and omitted the date picker's month/year selectors. Identity-first packing now prioritizes usable control identities, then optional detail, under the same bounded output ceiling. Omission and truncation remain explicit; this does not promise every reference fits.
+- Native select options formerly stopped at 30 without completeness metadata. Total/truncated fields and scoped select observation now distinguish incomplete observation from an unavailable year. Owned Chromium tests select a year beyond option 30 and verify the final date after reference redraw.
+- Returned selectors must satisfy the same 1000-character contract as calls. Longer selectors are explicitly omitted, never shortened or rewritten, while complete evidence is retained.
+- Repeating an unchanged missing target under a different action type is not progress. A trusted known-no-write missing-target receipt now blocks that selector across click/fill/select/press. A newer successful exact scoped observation can restore it; unrelated timeouts and readonly-fill recovery do not trigger this lock. A second repeated rejection stops model forwarding and the execution loop as a clear failure, without repair or bundle creation. Cleanup uncertainty still retains the unknown fence.
+
+These changes were implemented with synthetic regressions and independently reviewed. They are not evidence that the public workflows now succeed; a new real-model gate is still required.
+
+## Metered API usage through the completed real experiments
+
+All 110 provider calls are settled, all owned browser sessions stopped, and no API reservation remains active. Rates and usage below are the gateway's recorded API accounting, not a tax-inclusive provider invoice. Coding receipts retain verified token usage and configured aliases, but not each response's provider model identifier. Planner responses confirmed the corresponding `dashscope/qwen-plus` and `dashscope/qwen-max` mappings; no dated Qwen snapshot is claimed.
+
+| Configured model | Calls | Input tokens | Output tokens | Gateway USD |
+| --- | ---: | ---: | ---: | ---: |
+| Qwen Plus | 57 | 846,956 | 8,313 | 0.34875800 |
+| Qwen Max | 53 | 871,846 | 10,192 | 1.46018240 |
+| Total | 110 | 1,718,802 | 18,505 | 1.80894040 |
+
+The task budget ledger conservatively rounds each call upward to whole microdollars, totaling USD 1.808987. AIA reached its original 60-call site cap; FWD has only USD 0.053810 and ten calls left. No further complete-site paid attempt is planned under an infeasible remainder, and no budget is automatically enlarged. Development/review conversation token and dollar telemetry is unavailable and is not included or estimated here. Zero-provider-cost regression tests are separate from these billed API calls.
