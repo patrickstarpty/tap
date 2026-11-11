@@ -299,7 +299,7 @@ it("adds an exact result assertion using its actual argument field label", async
   }
   render(<ResultEditor />);
   await user.click(
-    screen.getByRole("button", { name: "Add assertion", exact: true }),
+    screen.getByRole("button", { name: "Add assertion" }),
   );
   await user.selectOptions(
     screen.getByRole("combobox", { name: /^Step .+ operation$/u }),
