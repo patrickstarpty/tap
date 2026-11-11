@@ -281,3 +281,237 @@
   min-width: 0;
   max-width: 560px;
 }
+
+/* Business intent stays separate from executable action properties. */
+.lca-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.lca-layout > nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.lca-layout > nav h2 {
+  flex: 0 0 auto;
+  font-size: 13px;
+  margin: 0 8px 0 0;
+}
+.lca-layout > nav button {
+  width: auto;
+  min-width: 130px;
+  max-width: 240px;
+  flex: 0 0 auto;
+  margin: 0;
+}
+.lca-editor-caption {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  color: var(--lca-muted);
+  font-size: 12px;
+}
+.lca-editor-caption p {
+  margin: 0 0 14px;
+}
+.lca-editor-caption span {
+  white-space: nowrap;
+}
+.lca-bdd-editor {
+  display: grid;
+  grid-template-columns: minmax(165px, 0.8fr) minmax(260px, 1.5fr) minmax(
+      225px,
+      1fr
+    );
+  border: 1px solid var(--lca-border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 460px;
+}
+.lca-bdd-editor > * {
+  min-width: 0;
+  padding: 14px;
+}
+.lca-bdd-tree {
+  background: var(--tap-soft, #f3f2ee);
+  border-right: 1px solid var(--lca-border);
+}
+.lca-action-properties {
+  border-left: 1px solid var(--lca-border);
+  background: #fdfdfb;
+}
+.lca-pane-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+.lca-pane-heading > span {
+  color: var(--lca-muted);
+  font-size: 11px;
+}
+.lca-bdd-tree ol,
+.lca-action-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lca-bdd-tree li {
+  margin-bottom: 8px;
+}
+.lca-bdd-tree li button {
+  display: flex;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 9px;
+  background: transparent;
+  border-color: transparent;
+}
+.lca-bdd-tree li button[aria-pressed="true"],
+.lca-action-card[aria-pressed="true"] {
+  border-color: var(--tap-accent-line, #efc7a7);
+  background: var(--tap-accent-soft, #fff1e5);
+  box-shadow: inset 3px 0 var(--tap-focus, #a9470b);
+}
+.lca-step-number {
+  display: inline-flex;
+  flex: 0 0 20px;
+  justify-content: center;
+  color: var(--lca-muted);
+  font-variant-numeric: tabular-nums;
+}
+.lca-bdd-tree small,
+.lca-action-card small {
+  display: block;
+  margin-top: 4px;
+  color: var(--lca-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.lca-bdd-tree button span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.lca-bdd-tree > button {
+  width: 100%;
+  margin-top: 12px;
+}
+.lca-bdd-title {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+}
+.lca-sequence-tools {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+  margin: 0 0 20px;
+}
+.lca-sequence-tools button,
+.lca-action-reorder button {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.lca-action-list li {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+}
+.lca-action-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  text-align: left;
+  gap: 9px;
+  align-items: baseline;
+  padding: 13px 10px !important;
+}
+.lca-action-card > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.lca-action-card strong {
+  font-size: 13px;
+}
+.lca-action-reorder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+.lca-sequence-empty {
+  padding: 30px 14px;
+  margin: 14px 0;
+  text-align: center;
+  border: 1px dashed var(--lca-border);
+  color: var(--lca-muted);
+  border-radius: 6px;
+}
+.lca-sequence-empty p {
+  font-size: 12px;
+}
+.lca-action-properties label {
+  font-size: 12px;
+  margin: 12px 0;
+}
+.lca-action-properties .lca-target-properties {
+  border-top: 1px solid var(--lca-border);
+  border-bottom: 1px solid var(--lca-border);
+  margin: 12px 0;
+}
+.lca-action-id {
+  display: block;
+  font-size: 10px;
+  color: var(--lca-muted);
+  margin-top: 16px;
+  overflow-wrap: anywhere;
+}
+.lca-flow-settings {
+  background: var(--tap-soft, #f3f2ee);
+}
+.lca-recording-disclosure > summary {
+  font-size: 13px;
+}
+.lca-bdd-result summary {
+  font-size: 13px;
+}
+.lca-result-failed {
+  border-left: 3px solid #a23f35 !important;
+}
+.lca-result-passed {
+  border-left: 3px solid #42704e !important;
+}
+@media (max-width: 1100px) {
+  .lca-bdd-editor {
+    grid-template-columns: minmax(150px, 0.75fr) minmax(230px, 1.25fr);
+  }
+  .lca-action-properties {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--lca-border);
+  }
+}
+@media (max-width: 640px) {
+  .lca-bdd-editor {
+    grid-template-columns: 1fr;
+  }
+  .lca-bdd-tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--lca-border);
+  }
+  .lca-editor-caption {
+    flex-direction: column;
+    gap: 0;
+    margin-bottom: 12px;
+  }
+  .lca-layout main {
+    padding: 12px;
+  }
+}

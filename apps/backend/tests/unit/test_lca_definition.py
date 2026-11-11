@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 import pytest
@@ -170,5 +171,96 @@ def test_port_zero_is_not_equivalent_to_absent_port() -> None:
 def test_origin_limit_matches_browser_execution_boundary() -> None:
     raw = definition()
     raw["allowed_origins"] += [f"https://fixture{i}.example" for i in range(8)]
+    with pytest.raises(ValueError):
+        validate_definition(raw)
+
+
+def grouped_definition() -> dict:
+    raw = definition()
+    raw["bdd_steps"] = [
+        {
+            "id": "given_page",
+            "keyword": "Given",
+            "description": "The form is open",
+            "action_ids": ["open"],
+        },
+        {
+            "id": "when_submit",
+            "keyword": "When",
+            "description": "Submit the form",
+            "action_ids": ["fill", "select", "click"],
+        },
+        {
+            "id": "then_done",
+            "keyword": "Then",
+            "description": "Completion is visible",
+            "action_ids": ["text", "url"],
+        },
+        {
+            "id": "and_more",
+            "keyword": "And",
+            "description": "Next authoring container",
+            "action_ids": [],
+        },
+        {
+            "id": "but_not",
+            "keyword": "But",
+            "description": "An exception",
+            "action_ids": [],
+        },
+    ]
+    return raw
+
+
+def test_legacy_canonical_bytes_remain_exactly_unchanged() -> None:
+    raw = definition()
+    expected = json.dumps(
+        raw, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    assert canonical_bytes(validate_definition(raw)) == expected
+    assert "bdd_steps" not in json.loads(expected)
+
+
+def test_bdd_groups_round_trip_with_empty_authoring_containers() -> None:
+    raw = grouped_definition()
+    parsed = validate_definition(raw)
+    assert json.loads(canonical_bytes(parsed)) == raw
+    assert [action for group in parsed.bdd_steps for action in group.action_ids] == [
+        step.id for step in parsed.steps
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda d: d.update(bdd_steps=[]),
+        lambda d: d.update(bdd_steps=None),
+        lambda d: d["bdd_steps"][1].update(id="given_page"),
+        lambda d: d["bdd_steps"][0].update(keyword="given"),
+        lambda d: d["bdd_steps"][0].update(description=""),
+        lambda d: d["bdd_steps"][0].update(description="  \n"),
+        lambda d: d["bdd_steps"][0].update(description="x" * 1025),
+        lambda d: d["bdd_steps"][0].update(action_ids=[]),
+        lambda d: d["bdd_steps"][0].update(action_ids=["missing"]),
+        lambda d: d["bdd_steps"][1].update(
+            action_ids=["fill", "fill", "select", "click"]
+        ),
+        lambda d: d["bdd_steps"][1].update(action_ids=["select", "fill", "click"]),
+        lambda d: d["bdd_steps"].reverse(),
+        lambda d: d["bdd_steps"][0].update(operation="navigate"),
+        lambda d: d["bdd_steps"].extend(
+            {
+                "id": f"group_{i}",
+                "keyword": "And",
+                "description": "More",
+                "action_ids": [],
+            }
+            for i in range(100)
+        ),
+    ],
+)
+def test_invalid_bdd_grouping_is_rejected(mutation) -> None:
+    raw = grouped_definition()
+    mutation(raw)
     with pytest.raises(ValueError):
         validate_definition(raw)

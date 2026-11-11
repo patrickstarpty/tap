@@ -146,6 +146,9 @@ it("shows unavailable gateway without inventing flows or recording", async () =>
     <LcaWorkspace projectId="p" client={api} recorderClient={recorderClient} />,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("unavailable");
+  await userEvent.click(
+    screen.getByText("Browser recording · append actions to a BDD step"),
+  );
   expect(screen.getByText(/Save or open a debug flow/)).toBeVisible();
   expect(api.createRun).not.toHaveBeenCalled();
 });
@@ -380,4 +383,33 @@ it("shows bounded plain-text diagnostics without ANSI or control sequences", asy
   const diagnostic = await screen.findByTestId("lca-diagnostic");
   expect(diagnostic.textContent).toBe("Expected " + "x".repeat(991));
   expect(diagnostic).toHaveClass("lca-diagnostic");
+});
+it("keeps an empty BDD business step editable but blocks incomplete replay", async () => {
+  const api = client();
+  api.getFlow = vi.fn().mockResolvedValue({
+    ...flow,
+    definition: {
+      ...flow.definition,
+      bdd_steps: [
+        {
+          id: "given",
+          keyword: "Given",
+          description: "Open",
+          action_ids: ["open"],
+        },
+        {
+          id: "then",
+          keyword: "Then",
+          description: "Verify quotation",
+          action_ids: [],
+        },
+      ],
+    },
+  });
+  await open(api);
+  expect(screen.getByRole("button", { name: "Debug replay" })).toBeDisabled();
+  expect(
+    screen.getByText("Add actions to empty BDD steps before replay."),
+  ).toBeVisible();
+  expect(api.createRun).not.toHaveBeenCalled();
 });

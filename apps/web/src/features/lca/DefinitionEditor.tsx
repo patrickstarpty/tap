@@ -1,527 +1,318 @@
 import { useState } from "react";
-import type {
-  LcaDefinition,
-  LcaParameter,
-  LcaStep,
-  Operation,
-  Scalar,
-} from "./client";
-
-const operations: Operation[] = [
-  "navigate",
-  "click",
-  "fill",
-  "select",
-  "assert_text",
-  "assert_url",
-];
-const argumentKey = (operation: Operation) =>
-  operation === "click"
-    ? null
-    : operation === "fill" || operation === "select"
-      ? "value"
-      : operation === "assert_text"
-        ? "text"
-        : "url";
-const needsTarget = (operation: Operation) =>
-  operation !== "navigate" && operation !== "assert_url";
-const identifier = (prefix: string) =>
-  `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-
-export function parseParameterValue(
-  type: LcaParameter["type"],
-  value: string,
-): Scalar {
-  if (type === "string") return value;
-  if (type === "boolean") {
-    if (value === "true" || value === "false") return value === "true";
-    throw new Error("Boolean values must be true or false.");
-  }
-  const number = Number(value);
-  if (
-    !value.trim() ||
-    !Number.isFinite(number) ||
-    (type === "integer" && !Number.isInteger(number))
-  )
-    throw new Error(`Enter a valid ${type} value.`);
-  return number;
-}
+import type { BddStep, LcaDefinition, LcaStep, Operation } from "./client";
+import { DefinitionSettings } from "./DefinitionSettings";
+import {
+  actionSummary,
+  argumentKey,
+  groupsFor,
+  identifier,
+  moveAction,
+  needsTarget,
+  newAction,
+  operationLabels,
+  withGroups,
+} from "./bdd";
+export { parseParameterValue } from "./DefinitionSettings";
 
 export function DefinitionEditor({
   value,
-  onChange,
+  onChange: emitChange,
   disabled = false,
+  selectedGroupId,
+  onSelectGroup,
 }: {
   value: LcaDefinition;
   onChange(value: LcaDefinition): void;
   disabled?: boolean;
+  selectedGroupId?: string;
+  onSelectGroup?(id: string): void;
 }) {
-  const changeStep = (index: number, next: LcaStep) =>
-    onChange({
-      ...value,
-      steps: value.steps.map((step, i) => (i === index ? next : step)),
-    });
-  const move = (index: number, delta: number) => {
-    const steps = [...value.steps];
-    [steps[index], steps[index + delta]] = [steps[index + delta], steps[index]];
-    onChange({ ...value, steps });
+  const groups = groupsFor(value);
+  const onChange = (next: LcaDefinition) =>
+    emitChange(withGroups(next, groupsFor(next)));
+  const [localGroup, setLocalGroup] = useState(groups[0].id);
+  const [actionId, setActionId] = useState<string | null>(
+    value.steps[0]?.id ?? null,
+  );
+  const group =
+    groups.find((g) => g.id === (selectedGroupId ?? localGroup)) ?? groups[0];
+  const actions = value.steps.filter((s) => group.action_ids.includes(s.id));
+  const selected = actions.find((s) => s.id === actionId) ?? actions[0];
+  const selectGroup = (id: string) => {
+    setLocalGroup(id);
+    onSelectGroup?.(id);
+    setActionId(null);
   };
-  const add = (operation: Operation) =>
-    onChange({
-      ...value,
-      steps: [
-        ...value.steps,
+  const updateGroups = (next: BddStep[], definition = value) =>
+    onChange(withGroups(definition, next));
+  const changeGroup = (patch: Partial<BddStep>) =>
+    updateGroups(
+      groups.map((g) => (g.id === group.id ? { ...g, ...patch } : g)),
+    );
+  const changeAction = (next: LcaStep) =>
+    onChange(
+      withGroups(
         {
-          id: identifier("step"),
-          operation,
-          arguments: { url: value.allowed_origins[0] || "" },
-          timeout_ms: 10000,
-          provenance: { source: "manual" },
+          ...value,
+          steps: value.steps.map((s) => (s.id === next.id ? next : s)),
         },
-      ],
-    });
+        groups,
+      ),
+    );
+  const add = (operation: Operation) => {
+    const action = newAction(operation, value);
+    updateGroups(
+      groups.map((g) =>
+        g.id === group.id
+          ? { ...g, action_ids: [...g.action_ids, action.id] }
+          : g,
+      ),
+      { ...value, steps: [...value.steps, action] },
+    );
+    setActionId(action.id);
+  };
+  const moveGroup = (delta: number) => {
+    const next = [...groups],
+      i = groups.indexOf(group);
+    [next[i], next[i + delta]] = [next[i + delta], next[i]];
+    updateGroups(next);
+  };
+  const move = (id: string, delta: number) => {
+    const ids = [...group.action_ids],
+      i = ids.indexOf(id);
+    [ids[i], ids[i + delta]] = [ids[i + delta], ids[i]];
+    changeGroup({ action_ids: ids });
+  };
   return (
     <fieldset className="lca-definition" disabled={disabled}>
-      <legend>Canonical automated test steps</legend>
-      <label>
-        Allowed origins (one per line)
-        <textarea
-          value={value.allowed_origins.join("\n")}
-          onChange={(e) =>
-            onChange({ ...value, allowed_origins: e.target.value.split("\n") })
-          }
-        />
-      </label>
-      <p className="lca-muted">
-        Only owned, non-secret test data. Credentials, uploads, downloads,
-        popups and iframe recording are not supported.
-      </p>
-      <details>
-        <summary>Targets ({value.targets.length})</summary>
-        {value.targets.map((target, index) => (
-          <fieldset key={target.id}>
-            <legend>Target {target.id}</legend>
+      <legend>Business steps & actions</legend>
+      <div className="lca-editor-caption">
+        <p>
+          Describe the business intent, then arrange the actions that implement
+          it.
+        </p>
+        <span>
+          {groups.length} BDD steps · {value.steps.length}/100 actions
+        </span>
+      </div>
+      <div className="lca-bdd-editor">
+        <nav className="lca-bdd-tree" aria-label="BDD steps">
+          <div className="lca-pane-heading">
+            <strong>Business steps</strong>
+            <span>BDD</span>
+          </div>
+          <ol>
+            {groups.map((g, index) => (
+              <li key={g.id}>
+                <button
+                  type="button"
+                  aria-pressed={g.id === group.id}
+                  onClick={() => selectGroup(g.id)}
+                >
+                  <span className="lca-step-number">{index + 1}</span>
+                  <span>
+                    <b>{g.keyword}</b> {g.description}
+                    <small>{g.action_ids.length} actions</small>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+          <button
+            type="button"
+            disabled={groups.length >= 100}
+            onClick={() => {
+              const next: BddStep = {
+                id: identifier("bdd"),
+                keyword: "When",
+                description: "Describe the business step",
+                action_ids: [],
+              };
+              updateGroups([...groups, next]);
+              selectGroup(next.id);
+            }}
+          >
+            Add BDD step
+          </button>
+        </nav>
+        <section className="lca-action-canvas" aria-label="BDD action sequence">
+          <div className="lca-pane-heading">
+            <strong>Action sequence</strong>
+            <span>
+              {groups.indexOf(group) + 1} of {groups.length}
+            </span>
+          </div>
+          <div className="lca-bdd-title">
             <label>
-              Locator strategy
+              BDD keyword
               <select
-                value={target.kind}
-                onChange={(e) => {
-                  const kind = e.target.value as typeof target.kind;
-                  onChange({
-                    ...value,
-                    targets: value.targets.map((t, i) =>
-                      i === index
-                        ? {
-                            id: t.id,
-                            kind,
-                            value: "",
-                            ...(kind === "role" ? { name: "" } : {}),
-                            review_required: kind === "css",
-                          }
-                        : t,
-                    ),
-                  });
-                }}
-              >
-                <option value="test_id">Test ID</option>
-                <option value="role">Role and accessible name</option>
-                <option value="css">CSS fallback (review required)</option>
-              </select>
-            </label>
-            <label>
-              Locator value
-              <input
-                value={target.value}
+                aria-label="BDD keyword"
+                value={group.keyword}
                 onChange={(e) =>
-                  onChange({
-                    ...value,
-                    targets: value.targets.map((t, i) =>
-                      i === index ? { ...t, value: e.target.value } : t,
-                    ),
-                  })
-                }
-              />
-            </label>
-            {target.kind === "role" && (
-              <label>
-                Accessible name
-                <input
-                  value={target.name || ""}
-                  onChange={(e) =>
-                    onChange({
-                      ...value,
-                      targets: value.targets.map((t, i) =>
-                        i === index ? { ...t, name: e.target.value } : t,
-                      ),
-                    })
-                  }
-                />
-              </label>
-            )}
-            {target.kind === "css" && (
-              <p>
-                CSS fallback requires review. Replay never silently repairs it.
-              </p>
-            )}
-            <button
-              type="button"
-              disabled={value.steps.some((s) => s.target_id === target.id)}
-              onClick={() =>
-                onChange({
-                  ...value,
-                  targets: value.targets.filter((_, i) => i !== index),
-                })
-              }
-            >
-              Remove target {target.id}
-            </button>
-          </fieldset>
-        ))}
-        <button
-          type="button"
-          disabled={value.targets.length >= 100}
-          onClick={() =>
-            onChange({
-              ...value,
-              targets: [
-                ...value.targets,
-                { id: identifier("target"), kind: "test_id", value: "" },
-              ],
-            })
-          }
-        >
-          Add target
-        </button>
-      </details>
-      <details>
-        <summary>Parameters ({value.parameters.length})</summary>
-        {value.parameters.map((parameter, index) => (
-          <fieldset key={index}>
-            <legend>Parameter {index + 1}</legend>
-            <label>
-              Parameter name
-              <input
-                value={parameter.name}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    parameters: value.parameters.map((p, i) =>
-                      i === index ? { ...p, name: e.target.value } : p,
-                    ),
-                  })
-                }
-              />
-            </label>
-            <label>
-              Parameter type
-              <select
-                value={parameter.type}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    parameters: value.parameters.map((p, i) =>
-                      i === index
-                        ? {
-                            name: p.name,
-                            type: e.target.value as LcaParameter["type"],
-                            required: p.required,
-                          }
-                        : p,
-                    ),
-                  })
+                  changeGroup({ keyword: e.target.value as BddStep["keyword"] })
                 }
               >
-                {["string", "integer", "number", "boolean"].map((kind) => (
-                  <option key={kind}>{kind}</option>
+                {["Given", "When", "Then", "And", "But"].map((k) => (
+                  <option key={k}>{k}</option>
                 ))}
               </select>
             </label>
             <label>
+              BDD description
               <input
-                type="checkbox"
-                checked={parameter.required}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    parameters: value.parameters.map((p, i) =>
-                      i === index ? { ...p, required: e.target.checked } : p,
-                    ),
-                  })
-                }
+                maxLength={1024}
+                value={group.description}
+                onChange={(e) => changeGroup({ description: e.target.value })}
               />
-              Required
             </label>
-            <ParameterDefault
-              key={`${parameter.name}:${parameter.type}:${JSON.stringify(parameter.default)}`}
-              parameter={parameter}
-              onApply={(next) =>
-                onChange({
-                  ...value,
-                  parameters: value.parameters.map((p, i) =>
-                    i === index ? { ...p, default: next } : p,
-                  ),
-                })
-              }
-            />
-            {parameter.default !== undefined && (
-              <p>
-                Saved default: {String(parameter.default)}{" "}
-                <button
-                  type="button"
-                  onClick={() =>
-                    onChange({
-                      ...value,
-                      parameters: value.parameters.map((p, i) =>
-                        i === index
-                          ? { name: p.name, type: p.type, required: p.required }
-                          : p,
-                      ),
-                    })
-                  }
-                >
-                  Remove default
-                </button>
-              </p>
-            )}
+          </div>
+          <div className="lca-sequence-tools">
             <button
               type="button"
-              disabled={value.steps.some((s) =>
-                Object.values(s.arguments).some(
-                  (a) =>
-                    typeof a === "object" && a.parameter === parameter.name,
-                ),
-              )}
-              onClick={() =>
-                onChange({
-                  ...value,
-                  parameters: value.parameters.filter((_, i) => i !== index),
-                })
-              }
+              aria-label="Move BDD step up"
+              disabled={groups.indexOf(group) === 0}
+              onClick={() => moveGroup(-1)}
             >
-              Remove parameter {index + 1}
+              ↑
             </button>
-          </fieldset>
-        ))}
-        <button
-          type="button"
-          disabled={value.parameters.length >= 100}
-          onClick={() =>
-            onChange({
-              ...value,
-              parameters: [
-                ...value.parameters,
-                { name: identifier("input"), type: "string", required: true },
-              ],
-            })
-          }
-        >
-          Add parameter
-        </button>
-        <p className="lca-muted">
-          Operation arguments accept string parameters. Numeric and boolean
-          inputs retain their types at replay.
-        </p>
-      </details>
-      <ol className="lca-steps">
-        {value.steps.map((step, index) => {
-          const key = argumentKey(step.operation);
-          const argument = key ? step.arguments[key] : undefined;
-          return (
-            <li key={step.id}>
-              <fieldset>
-                <legend>
-                  {index + 1}. {step.id}
-                </legend>
-                <div className="lca-fields">
-                  <label>
-                    Operation
-                    <select
-                      aria-label={`Step ${step.id} operation`}
-                      value={step.operation}
-                      onChange={(e) => {
-                        const operation = e.target.value as Operation;
-                        const arg = argumentKey(operation);
-                        changeStep(index, {
-                          ...step,
-                          operation,
-                          arguments: arg ? { [arg]: "" } : {},
-                          target_id: needsTarget(operation)
-                            ? (value.targets[0]?.id ?? null)
-                            : null,
-                        });
-                      }}
-                    >
-                      {operations.map((operation) => (
-                        <option key={operation} value={operation}>
-                          {operation.replaceAll("_", " ")}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {needsTarget(step.operation) && (
-                    <label>
-                      Target
-                      <select
-                        aria-label={`Step ${step.id} target`}
-                        value={step.target_id || ""}
-                        onChange={(e) =>
-                          changeStep(index, {
-                            ...step,
-                            target_id: e.target.value || null,
-                          })
-                        }
-                      >
-                        <option value="">Choose a target</option>
-                        {value.targets.map((target) => (
-                          <option key={target.id} value={target.id}>
-                            {target.id}: {target.value}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  {key && (
-                    <>
-                      <label>
-                        Value source
-                        <select
-                          aria-label={`Step ${step.id} value source`}
-                          value={
-                            typeof argument === "object"
-                              ? "parameter"
-                              : "literal"
-                          }
-                          onChange={(e) =>
-                            changeStep(index, {
-                              ...step,
-                              arguments: {
-                                [key]:
-                                  e.target.value === "parameter"
-                                    ? {
-                                        parameter:
-                                          value.parameters.find(
-                                            (p) => p.type === "string",
-                                          )?.name || "",
-                                      }
-                                    : "",
-                              },
-                            })
-                          }
-                        >
-                          <option value="literal">Literal</option>
-                          <option value="parameter">String parameter</option>
-                        </select>
-                      </label>
-                      <label>
-                        {key}
-                        {typeof argument === "object" ? (
-                          <select
-                            aria-label={`Step ${step.id} parameter`}
-                            value={argument.parameter}
-                            onChange={(e) =>
-                              changeStep(index, {
-                                ...step,
-                                arguments: {
-                                  [key]: { parameter: e.target.value },
-                                },
-                              })
-                            }
-                          >
-                            <option value="">Choose a parameter</option>
-                            {value.parameters
-                              .filter((p) => p.type === "string")
-                              .map((p) => (
-                                <option key={p.name}>{p.name}</option>
-                              ))}
-                          </select>
-                        ) : (
-                          <input
-                            aria-label={`Step ${step.id} value`}
-                            value={argument || ""}
-                            onChange={(e) =>
-                              changeStep(index, {
-                                ...step,
-                                arguments: { [key]: e.target.value },
-                              })
-                            }
-                          />
-                        )}
-                      </label>
-                    </>
-                  )}
-                  <label>
-                    Timeout (ms)
-                    <input
-                      aria-label={`Step ${step.id} timeout`}
-                      type="number"
-                      min={1}
-                      max={30000}
-                      step={1}
-                      value={step.timeout_ms}
-                      onChange={(e) =>
-                        changeStep(index, {
-                          ...step,
-                          timeout_ms: Number(e.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="lca-actions">
+            <button
+              type="button"
+              aria-label="Move BDD step down"
+              disabled={groups.indexOf(group) === groups.length - 1}
+              onClick={() => moveGroup(1)}
+            >
+              ↓
+            </button>
+            <button
+              type="button"
+              disabled={groups.length === 1 || group.action_ids.length > 0}
+              title={
+                group.action_ids.length
+                  ? "Move or remove this step's actions first"
+                  : "Remove empty step"
+              }
+              onClick={() => {
+                updateGroups(groups.filter((g) => g.id !== group.id));
+                selectGroup(groups.find((g) => g.id !== group.id)!.id);
+              }}
+            >
+              Remove empty step
+            </button>
+          </div>
+          {!actions.length && (
+            <div className="lca-sequence-empty">
+              <strong>Add the first action</strong>
+              <p>
+                Use actions below, or import a recording into this business
+                step.
+              </p>
+            </div>
+          )}
+          <ol className="lca-action-list">
+            {actions.map((action, index) => (
+              <li key={action.id}>
+                <button
+                  type="button"
+                  className="lca-action-card"
+                  aria-pressed={selected?.id === action.id}
+                  onClick={() => setActionId(action.id)}
+                  aria-label={`Edit action ${index + 1}: ${operationLabels[action.operation]}`}
+                >
+                  <span className="lca-step-number">{index + 1}</span>
+                  <span>
+                    <strong>{operationLabels[action.operation]}</strong>
+                    <small>{actionSummary(action, value)}</small>
+                  </span>
+                  <span aria-hidden="true">›</span>
+                </button>
+                <div className="lca-action-reorder">
                   <button
                     type="button"
-                    aria-label={`Move ${step.id} up`}
+                    aria-label={`Move ${action.id} up`}
                     disabled={index === 0}
-                    onClick={() => move(index, -1)}
+                    onClick={() => move(action.id, -1)}
                   >
-                    Move up
+                    ↑
                   </button>
                   <button
                     type="button"
-                    aria-label={`Move ${step.id} down`}
-                    disabled={index === value.steps.length - 1}
-                    onClick={() => move(index, 1)}
+                    aria-label={`Move ${action.id} down`}
+                    disabled={index === actions.length - 1}
+                    onClick={() => move(action.id, 1)}
                   >
-                    Move down
-                  </button>
-                  <button
-                    type="button"
-                    disabled={value.steps.length === 1}
-                    onClick={() =>
-                      onChange({
-                        ...value,
-                        steps: value.steps.filter((_, i) => i !== index),
-                      })
-                    }
-                  >
-                    Remove {step.id}
+                    ↓
                   </button>
                 </div>
-              </fieldset>
-            </li>
-          );
-        })}
-      </ol>
-      <div className="lca-actions">
-        <button
-          type="button"
-          disabled={value.steps.length >= 100}
-          onClick={() => add("navigate")}
-        >
-          Add step
-        </button>
-        <button
-          type="button"
-          disabled={value.steps.length >= 100}
-          onClick={() => add("assert_url")}
-        >
-          Add assertion
-        </button>
+              </li>
+            ))}
+          </ol>
+          <div className="lca-actions">
+            <button
+              type="button"
+              disabled={value.steps.length >= 100}
+              onClick={() => add("click")}
+            >
+              Add action
+            </button>
+            <button
+              type="button"
+              disabled={value.steps.length >= 100}
+              onClick={() => add("assert_url")}
+            >
+              Add assertion
+            </button>
+          </div>
+          <p className="lca-muted">
+            Actions execute in this order. Assertions verify the business
+            outcome.
+          </p>
+        </section>
+        <aside className="lca-action-properties" aria-label="Action properties">
+          <div className="lca-pane-heading">
+            <strong>Properties</strong>
+            <span>
+              {selected ? operationLabels[selected.operation] : "No action"}
+            </span>
+          </div>
+          {selected ? (
+            <ActionProperties
+              key={selected.id}
+              step={selected}
+              value={value}
+              groups={groups}
+              groupId={group.id}
+              onChange={changeAction}
+              onDefinitionChange={onChange}
+              onMove={(id) => {
+                onChange(moveAction(value, selected.id, id));
+                selectGroup(id);
+                setActionId(selected.id);
+              }}
+              onRemove={() => {
+                updateGroups(
+                  groups.map((g) => ({
+                    ...g,
+                    action_ids: g.action_ids.filter((id) => id !== selected.id),
+                  })),
+                  {
+                    ...value,
+                    steps: value.steps.filter((s) => s.id !== selected.id),
+                  },
+                );
+                setActionId(null);
+              }}
+            />
+          ) : (
+            <p className="lca-muted">
+              Select or add an action to configure its target and value.
+            </p>
+          )}
+        </aside>
       </div>
-      <p className="lca-muted">
-        Assertions are explicit checks. Successful interactions alone do not
-        prove a business result.
-      </p>
+      <details className="lca-flow-settings">
+        <summary>Flow settings · origins, targets & parameters</summary>
+        <DefinitionSettings value={value} onChange={onChange} />
+      </details>
       <details>
         <summary>Canonical definition (read-only)</summary>
         <pre>{JSON.stringify(value, null, 2)}</pre>
@@ -529,51 +320,253 @@ export function DefinitionEditor({
     </fieldset>
   );
 }
-
-function ParameterDefault({
-  parameter,
-  onApply,
+function ActionProperties({
+  step,
+  value,
+  groups,
+  groupId,
+  onChange,
+  onDefinitionChange,
+  onMove,
+  onRemove,
 }: {
-  parameter: LcaParameter;
-  onApply(value: Scalar): void;
+  step: LcaStep;
+  value: LcaDefinition;
+  groups: BddStep[];
+  groupId: string;
+  onChange(step: LcaStep): void;
+  onDefinitionChange(value: LcaDefinition): void;
+  onMove(id: string): void;
+  onRemove(): void;
 }) {
-  const [draft, setDraft] = useState(
-    parameter.default === undefined ? "" : String(parameter.default),
-  );
-  const [error, setError] = useState("");
+  const key = argumentKey(step.operation),
+    argument = key ? step.arguments[key] : undefined;
+  const target = value.targets.find((t) => t.id === step.target_id);
+  const changeTarget = (patch: Partial<NonNullable<typeof target>>) =>
+    onDefinitionChange({
+      ...value,
+      targets: value.targets.map((t) =>
+        t.id === target?.id ? { ...t, ...patch } : t,
+      ),
+    });
   return (
-    <div>
+    <>
       <label>
-        Default for {parameter.name}
-        <input
-          value={draft}
+        Operation
+        <select
+          aria-label={`Step ${step.id} operation`}
+          value={step.operation}
           onChange={(e) => {
-            setDraft(e.target.value);
-            setError("");
+            const operation = e.target.value as Operation,
+              arg = argumentKey(operation);
+            onChange({
+              ...step,
+              operation,
+              arguments: arg ? { [arg]: "" } : {},
+              target_id: needsTarget(operation)
+                ? (value.targets[0]?.id ?? null)
+                : null,
+            });
           }}
+        >
+          {(Object.keys(operationLabels) as Operation[]).map((op) => (
+            <option key={op} value={op}>
+              {operationLabels[op]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {needsTarget(step.operation) && (
+        <>
+          <label>
+            Target
+            <select
+              aria-label={`Step ${step.id} target`}
+              value={step.target_id || ""}
+              onChange={(e) =>
+                onChange({ ...step, target_id: e.target.value || null })
+              }
+            >
+              <option value="">Choose a target</option>
+              {value.targets.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name || t.value || t.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={value.targets.length >= 100}
+            onClick={() => {
+              const id = identifier("target");
+              onDefinitionChange(
+                withGroups(
+                  {
+                    ...value,
+                    targets: [
+                      ...value.targets,
+                      { id, kind: "test_id", value: "" },
+                    ],
+                    steps: value.steps.map((s) =>
+                      s.id === step.id ? { ...s, target_id: id } : s,
+                    ),
+                  },
+                  groups,
+                ),
+              );
+            }}
+          >
+            New target
+          </button>
+        </>
+      )}
+      {target && (
+        <div className="lca-target-properties">
+          <label>
+            Locator strategy
+            <select
+              aria-label="Locator strategy"
+              value={target.kind}
+              onChange={(e) => {
+                const kind = e.target.value as typeof target.kind;
+                onDefinitionChange({
+                  ...value,
+                  targets: value.targets.map((t) =>
+                    t.id === target.id
+                      ? {
+                          id: t.id,
+                          kind,
+                          value: "",
+                          ...(kind === "role" ? { name: "" } : {}),
+                          review_required: kind === "css",
+                        }
+                      : t,
+                  ),
+                });
+              }}
+            >
+              <option value="test_id">Test ID</option>
+              <option value="role">Role and name</option>
+              <option value="css">CSS (review required)</option>
+            </select>
+          </label>
+          <label>
+            Locator value
+            <input
+              value={target.value}
+              onChange={(e) => changeTarget({ value: e.target.value })}
+            />
+          </label>
+          {target.kind === "role" && (
+            <label>
+              Accessible name
+              <input
+                value={target.name || ""}
+                onChange={(e) => changeTarget({ name: e.target.value })}
+              />
+            </label>
+          )}
+          <p className="lca-muted">
+            Shared by{" "}
+            {value.steps.filter((s) => s.target_id === target.id).length}{" "}
+            action(s). Editing changes every reference.
+            {target.kind === "css"
+              ? " Review this CSS locator before replay."
+              : ""}
+          </p>
+        </div>
+      )}
+      {key && (
+        <>
+          <label>
+            Value source
+            <select
+              aria-label={`Step ${step.id} value source`}
+              value={typeof argument === "object" ? "parameter" : "literal"}
+              onChange={(e) =>
+                onChange({
+                  ...step,
+                  arguments: {
+                    [key]:
+                      e.target.value === "parameter"
+                        ? {
+                            parameter:
+                              value.parameters.find((p) => p.type === "string")
+                                ?.name || "",
+                          }
+                        : "",
+                  },
+                })
+              }
+            >
+              <option value="literal">Literal</option>
+              <option value="parameter">String parameter</option>
+            </select>
+          </label>
+          <label>
+            {key}
+            {typeof argument === "object" ? (
+              <select
+                aria-label={`Step ${step.id} parameter`}
+                value={argument.parameter}
+                onChange={(e) =>
+                  onChange({
+                    ...step,
+                    arguments: { [key]: { parameter: e.target.value } },
+                  })
+                }
+              >
+                <option value="">Choose a parameter</option>
+                {value.parameters
+                  .filter((p) => p.type === "string")
+                  .map((p) => (
+                    <option key={p.name}>{p.name}</option>
+                  ))}
+              </select>
+            ) : (
+              <input
+                aria-label={`Step ${step.id} value`}
+                value={argument || ""}
+                onChange={(e) =>
+                  onChange({ ...step, arguments: { [key]: e.target.value } })
+                }
+              />
+            )}
+          </label>
+        </>
+      )}
+      <label>
+        Timeout (ms)
+        <input
+          aria-label={`Step ${step.id} timeout`}
+          type="number"
+          min={1}
+          max={30000}
+          value={step.timeout_ms}
+          onChange={(e) =>
+            onChange({ ...step, timeout_ms: Number(e.target.value) })
+          }
         />
+      </label>
+      <label>
+        Move to BDD step
+        <select value={groupId} onChange={(e) => onMove(e.target.value)}>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.keyword} {g.description}
+            </option>
+          ))}
+        </select>
       </label>
       <button
         type="button"
-        onClick={() => {
-          try {
-            const value = parseParameterValue(parameter.type, draft);
-            setError("");
-            onApply(value);
-          } catch (cause) {
-            setError(
-              cause instanceof Error ? cause.message : "Invalid default.",
-            );
-          }
-        }}
+        disabled={value.steps.length === 1}
+        onClick={onRemove}
       >
-        Apply default for {parameter.name}
+        Remove {step.id}
       </button>
-      <p className="lca-muted">
-        Apply to include this value in the draft. Blank text is an explicit
-        empty string for string parameters.
-      </p>
-      {error && <p role="alert">{error}</p>}
-    </div>
+      <small className="lca-action-id">Action ID: {step.id}</small>
+    </>
   );
 }

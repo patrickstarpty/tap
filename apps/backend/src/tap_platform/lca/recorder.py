@@ -259,7 +259,12 @@ class LcaRecorder:
             outcome_unknown=any(r["status"] == "unknown" for r in settled),
             projection={
                 "ready": projection.ready,
-                "definition": projection.definition.model_dump(exclude_none=True)
+                "definition": projection.definition.model_dump(
+                    exclude_none=True,
+                    exclude={"bdd_steps"}
+                    if "bdd_steps" not in projection.definition.model_fields_set
+                    else set(),
+                )
                 if projection.definition
                 else None,
                 "missing_sequences": list(projection.missing_sequences),

@@ -9,6 +9,8 @@ import {
   type RunInput,
   type Scalar,
 } from "./client";
+import { BddResults } from "./BddResults";
+import { groupsFor } from "./bdd";
 import { DefinitionEditor, parseParameterValue } from "./DefinitionEditor";
 import "./lca.css";
 import { PublishedVersions } from "./PublishedVersions";
@@ -84,6 +86,7 @@ function ProjectWorkspace({
   client: LcaClient;
   recorderClient?: RecorderClient;
 }) {
+  const [selectedBddId, setSelectedBddId] = useState<string>();
   const [recordingActive, setRecordingActive] = useState(false);
   const [publicationActive, setPublicationActive] = useState(false);
   const [flows, setFlows] = useState<LcaFlow[]>([]);
@@ -396,33 +399,40 @@ function ProjectWorkspace({
           New debug flow
         </button>
       </header>
-      {flow && definition ? (
-        <RecorderPanel
-          projectId={projectId}
-          flowId={flow.id}
-          version={flow.version}
-          definition={definition}
-          dirty={dirty}
-          client={recorderClient}
-          onActiveChange={setRecordingActive}
-          onImport={(next) => {
-            setDefinition(next);
-            setNotice(
-              "Recorded draft imported. Review targets, add assertions, then save explicitly. Nothing was replayed.",
-            );
-          }}
-        />
-      ) : (
-        <aside className="lca-recording">
-          <strong>
-            Save or open a debug flow to connect shared browser recording.
-          </strong>
-          <p>
-            Recording performs real actions. This editor does not simulate
-            recording or execute changes as you type.
-          </p>
-        </aside>
-      )}
+      <details className="lca-recording-disclosure">
+        <summary>Browser recording · append actions to a BDD step</summary>
+        {flow && definition ? (
+          <RecorderPanel
+            projectId={projectId}
+            flowId={flow.id}
+            version={flow.version}
+            definition={definition}
+            dirty={dirty}
+            importGroupId={
+              groupsFor(definition).find((g) => g.id === selectedBddId)?.id ??
+              groupsFor(definition)[0].id
+            }
+            client={recorderClient}
+            onActiveChange={setRecordingActive}
+            onImport={(next) => {
+              setDefinition(next);
+              setNotice(
+                "Recorded actions appended to the selected BDD step. Review targets and save explicitly. Nothing was replayed.",
+              );
+            }}
+          />
+        ) : (
+          <aside className="lca-recording">
+            <strong>
+              Save or open a debug flow to connect shared browser recording.
+            </strong>
+            <p>
+              Recording performs real actions. This editor does not simulate
+              recording or execute changes as you type.
+            </p>
+          </aside>
+        )}
+      </details>
       {error && (
         <div role="alert" className="lca-error">
           {error}
@@ -484,14 +494,6 @@ function ProjectWorkspace({
                   {dirty ? "Unsaved edits" : "Saved"}
                 </span>
               </div>
-              <DefinitionEditor
-                value={definition}
-                disabled={locked}
-                onChange={(next) => {
-                  setDefinition(next);
-                  setNotice("");
-                }}
-              />
               <div className="lca-actions">
                 <button
                   type="button"
@@ -510,6 +512,16 @@ function ProjectWorkspace({
                   </button>
                 )}
               </div>
+              <DefinitionEditor
+                value={definition}
+                selectedGroupId={selectedBddId}
+                onSelectGroup={setSelectedBddId}
+                disabled={locked}
+                onChange={(next) => {
+                  setDefinition(next);
+                  setNotice("");
+                }}
+              />
               {discard && (
                 <div role="group" aria-label="Discard draft changes">
                   <p>Discard unsaved edits and reload the server version?</p>
@@ -574,6 +586,9 @@ function ProjectWorkspace({
                   type="button"
                   disabled={
                     !flow ||
+                    definition.bdd_steps?.some(
+                      (group) => group.action_ids.length === 0,
+                    ) ||
                     dirty ||
                     locked ||
                     conflict ||
@@ -585,6 +600,9 @@ function ProjectWorkspace({
                 >
                   Debug replay
                 </button>
+                {definition.bdd_steps?.some(
+                  (group) => group.action_ids.length === 0,
+                ) && <p>Add actions to empty BDD steps before replay.</p>}
                 {dirty && <p>Save the draft before replay.</p>}
                 {unresolved && (
                   <p>
@@ -776,6 +794,7 @@ function RunDetails({
       {run.execution?.failure_code && (
         <p>Failure: {run.execution.failure_code}</p>
       )}
+      <BddResults run={run} />
       <h4>Canonical step results</h4>
       {run.canonical_results ? (
         <ol>

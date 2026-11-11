@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { groupsFor, mergeRecording } from "./bdd";
 import type { LcaDefinition } from "./client";
 import {
   createRecorderClient,
@@ -21,6 +22,7 @@ export function RecorderPanel(props: {
   version: number;
   definition: LcaDefinition;
   dirty?: boolean;
+  importGroupId?: string;
   client?: RecorderClient;
   onImport: (definition: LcaDefinition) => void;
   onActiveChange?: (active: boolean) => void;
@@ -33,6 +35,7 @@ function Panel({
   version,
   definition,
   dirty = false,
+  importGroupId,
   client = defaultClient,
   onImport,
   onActiveChange,
@@ -807,7 +810,9 @@ function Panel({
               <>
                 <p>
                   Recorded draft: {projection.definition.steps.length} steps.
-                  Import replaces the editor draft, without saving or replaying.
+                  {importGroupId
+                    ? ` Append to ${groupsFor(definition).find((g) => g.id === importGroupId)?.description ?? "selected BDD step"}; other actions are preserved. Nothing is saved or replayed.`
+                    : " Import replaces the editor draft, without saving or replaying."}
                 </p>
                 {changed && (
                   <p>
@@ -823,7 +828,19 @@ function Panel({
                       baseline.current !== JSON.stringify(definitionRef.current)
                     )
                       return;
-                    onImport(structuredClone(projection.definition!));
+                    try {
+                      onImport(
+                        importGroupId
+                          ? mergeRecording(
+                              definitionRef.current,
+                              projection.definition!,
+                              importGroupId,
+                            )
+                          : structuredClone(projection.definition!),
+                      );
+                    } catch (cause) {
+                      setError(copy(cause));
+                    }
                   }}
                 >
                   Import recorded draft

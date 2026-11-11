@@ -6,7 +6,7 @@ import pytest
 
 from tap_platform.lca.definition import validate_definition
 from tap_platform.lca.generator import generate_playwright
-from test_lca_definition import definition
+from test_lca_definition import definition, grouped_definition
 
 
 def test_generation_is_deterministic_and_mapping_is_structural() -> None:
@@ -65,11 +65,15 @@ test.info = () => ({attach: async () => {}});
     }
 
 
+@pytest.mark.parametrize("grouped", [False, True])
 @pytest.mark.parametrize("fail", [False, True])
 def test_canonical_result_attachment_preserves_failed_assertion(
-    tmp_path, fail: bool
+    tmp_path, fail: bool, grouped: bool
 ) -> None:
-    result = generate_playwright(validate_definition(definition()), {"name": "Ada"})
+    raw = grouped_definition() if grouped else definition()
+    if grouped:
+        raw["bdd_steps"] = raw["bdd_steps"][:3]
+    result = generate_playwright(validate_definition(raw), {"name": "Ada"})
     assert all(
         m.file == "flow.spec.ts" and m.title == "lca:" + m.step_id
         for m in result.step_mapping
@@ -104,3 +108,19 @@ test.info = () => ({attach: async (name, data) => {if (name !== 'tapper-result' 
             for s in ["open", "fill", "select", "click", "text", "url"]
         ],
     }
+
+
+@pytest.mark.parametrize("keyword", ["Given", "When", "Then", "And", "But"])
+def test_generation_rejects_unimplemented_bdd_authoring_groups(keyword) -> None:
+    raw = grouped_definition()
+    raw["bdd_steps"] = raw["bdd_steps"][:3] + [
+        {
+            "id": "unfinished",
+            "keyword": keyword,
+            "description": "Not implemented yet",
+            "action_ids": [],
+        }
+    ]
+    parsed = validate_definition(raw)
+    with pytest.raises(ValueError, match="BDD group 'unfinished' has no actions"):
+        generate_playwright(parsed, {"name": "Ada"})

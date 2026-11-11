@@ -1,4 +1,4 @@
-/** Debug-only contracts mirror the TAP LCA API. No service credential enters the UI. */
+/** Contracts mirror the TAP LCA API. No service credential enters the UI. */
 export type Scalar = string | number | boolean;
 export type Operation =
   "navigate" | "click" | "fill" | "select" | "assert_text" | "assert_url";
@@ -23,12 +23,19 @@ export interface LcaStep {
   timeout_ms: number;
   provenance?: Record<string, string>;
 }
+export interface BddStep {
+  id: string;
+  keyword: "Given" | "When" | "Then" | "And" | "But";
+  description: string;
+  action_ids: string[];
+}
 export interface LcaDefinition {
   schema_version: "lca-debug-v1";
   allowed_origins: string[];
   targets: LcaTarget[];
   parameters: LcaParameter[];
   steps: LcaStep[];
+  bdd_steps?: BddStep[];
 }
 export interface LcaFlow {
   id: string;

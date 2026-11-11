@@ -1,5 +1,6 @@
 """Real SQLite/browser-object integration of the explicit LCA run boundary."""
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -371,12 +372,23 @@ def test_reconcile_by_durable_run_id_survives_reload_without_original_client_key
         new_service.reconcile_run(actor(principal_id="bob"), intent["id"])
 
 
-def test_publish_requires_verified_pass_and_release_is_immutable(services):
+@pytest.mark.parametrize("grouped", [False, True])
+def test_publish_requires_verified_pass_and_release_is_immutable(services, grouped):
     service, browser = services
     publisher = actor(
         actions=actor().actions | {"lca.releases.publish", "lca.releases.read"}
     )
-    flow = create(service)
+    raw = definition()
+    if grouped:
+        raw["bdd_steps"] = [
+            {
+                "id": "given_page",
+                "keyword": "Given",
+                "description": "Open the page",
+                "action_ids": ["open"],
+            }
+        ]
+    flow = service.create_flow(publisher, "create-key", "Fixture", raw)
     run = service.debug_run(
         publisher, flow["id"], 1, {"url": "https://example.com"}, "release-proof"
     )
@@ -433,6 +445,11 @@ def test_publish_requires_verified_pass_and_release_is_immutable(services):
         service.get_run(publisher, replay["id"])["definition_snapshot"]["version"] == 1
     )
     assert replay["classification"] == "published"
+    assert service.get_release(publisher, release["id"])["definition"] == raw
+    assert (
+        service.get_run(publisher, replay["id"])["definition_snapshot"]["definition"]
+        == raw
+    )
     assert (
         service.run_release(
             publisher, release["id"], {"url": "https://example.com"}, "release-replay"
@@ -511,3 +528,69 @@ def test_release_cannot_publish_unverified_or_changed_draft(services, corruption
         service.publish_release(publisher, flow["id"], 1, run["id"], "must-not-publish")
     assert service.list_releases(publisher, flow["id"]) == []
     assert count(browser, "executions") == 1
+
+
+def test_bdd_metadata_save_and_frozen_history(services):
+    service, browser = services
+    flow = create(service)
+    raw = definition()
+    raw["bdd_steps"] = [
+        {
+            "id": "given_page",
+            "keyword": "Given",
+            "description": "Open the page",
+            "action_ids": ["open"],
+        }
+    ]
+    saved = service.save_draft(actor(), flow["id"], 1, raw)
+    assert json.loads(saved["canonical_bytes"]) == raw
+    assert json.loads(service.get_flow(actor(), flow["id"])["canonical_bytes"]) == raw
+    run = service.debug_run(
+        actor(), flow["id"], 2, {"url": "https://example.com"}, "bdd-run"
+    )
+    changed = definition()
+    changed["bdd_steps"] = [
+        {
+            "id": "changed",
+            "keyword": "When",
+            "description": "Changed description",
+            "action_ids": ["open"],
+        }
+    ]
+    service.save_draft(actor(), flow["id"], 2, changed)
+    frozen = service.get_run(actor(), run["id"])["definition_snapshot"]
+    assert frozen["definition"] == raw
+    assert (
+        json.loads(service.get_flow(actor(), flow["id"])["canonical_bytes"]) == changed
+    )
+
+
+def test_empty_bdd_group_can_save_but_cannot_generate_or_execute(services):
+    service, browser = services
+    flow = create(service)
+    raw = definition()
+    raw["bdd_steps"] = [
+        {
+            "id": "given_page",
+            "keyword": "Given",
+            "description": "Open the page",
+            "action_ids": ["open"],
+        },
+        {
+            "id": "then_unfinished",
+            "keyword": "Then",
+            "description": "Verify business outcome",
+            "action_ids": [],
+        },
+    ]
+    saved = service.save_draft(actor(), flow["id"], 1, raw)
+    assert json.loads(saved["canonical_bytes"]) == raw
+    with pytest.raises(ValueError, match="BDD group 'then_unfinished' has no actions"):
+        service.generate_draft(actor(), flow["id"], {"url": "https://example.com"})
+    with pytest.raises(ValueError, match="BDD group 'then_unfinished' has no actions"):
+        service.debug_run(
+            actor(), flow["id"], 2, {"url": "https://example.com"}, "incomplete"
+        )
+    assert count(browser, "bundles") == 0
+    assert count(browser, "executions") == 0
+    assert service.list_runs(actor(), flow["id"]) == []

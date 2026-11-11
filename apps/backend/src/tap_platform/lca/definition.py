@@ -71,12 +71,31 @@ class Step(StrictModel):
     )
 
 
+class BddStep(StrictModel):
+    """Authoring metadata; the flat steps remain the execution source of truth."""
+
+    id: Identifier
+    keyword: Literal["Given", "When", "Then", "And", "But"]
+    description: Annotated[str, Field(min_length=1, max_length=1024)]
+    action_ids: Annotated[list[Identifier], Field(max_length=MAX_STEPS)]
+
+    @model_validator(mode="after")
+    def meaningful_description(self) -> "BddStep":
+        if not self.description.strip():
+            raise ValueError("BDD description must contain non-whitespace text")
+        return self
+
+
 class DebugDefinition(StrictModel):
     schema_version: Literal["lca-debug-v1"]
     allowed_origins: Annotated[list[str], Field(min_length=1, max_length=8)]
     targets: Annotated[list[Target], Field(max_length=100)]
     parameters: Annotated[list[Parameter], Field(max_length=100)]
     steps: Annotated[list[Step], Field(min_length=1, max_length=MAX_STEPS)]
+    # Omission preserves legacy canonical bytes; explicit null/empty is invalid.
+    bdd_steps: Annotated[list[BddStep], Field(min_length=1, max_length=MAX_STEPS)] = (
+        Field(default_factory=list)
+    )
 
     @model_validator(mode="after")
     def references(self) -> "DebugDefinition":
@@ -88,6 +107,15 @@ class DebugDefinition(StrictModel):
         ):
             if len(ids) != len(set(ids)):
                 raise ValueError("Duplicate canonical identifier or origin")
+        if "bdd_steps" in self.model_fields_set:
+            group_ids = [group.id for group in self.bdd_steps]
+            if len(group_ids) != len(set(group_ids)):
+                raise ValueError("Duplicate BDD group identifier")
+            action_ids = [
+                action_id for group in self.bdd_steps for action_id in group.action_ids
+            ]
+            if action_ids != [step.id for step in self.steps]:
+                raise ValueError("BDD action IDs must partition all steps in order")
         for origin in self.allowed_origins:
             if normalized_origin(origin) != origin:
                 raise ValueError(

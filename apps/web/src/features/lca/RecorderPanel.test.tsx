@@ -872,3 +872,54 @@ it("does not let an older pending read erase a manually refreshed frame", async 
     vi.useRealTimers();
   }
 });
+
+it("appends recorded actions only to the chosen BDD step without losing existing actions", async () => {
+  const client = api(),
+    onImport = vi.fn(),
+    user = userEvent.setup();
+  const grouped: LcaDefinition = {
+    ...definition,
+    bdd_steps: [
+      {
+        id: "start",
+        keyword: "Given",
+        description: "Open website",
+        action_ids: ["entry"],
+      },
+      {
+        id: "product",
+        keyword: "When",
+        description: "Choose product",
+        action_ids: [],
+      },
+    ],
+  };
+  render(
+    <RecorderPanel
+      projectId="p"
+      flowId="f1"
+      version={1}
+      definition={grouped}
+      importGroupId="product"
+      client={client}
+      onImport={onImport}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Start recording" }),
+  );
+  await screen.findByAltText("Live recording browser");
+  await user.click(
+    screen.getByRole("button", { name: "Stop and drain recording" }),
+  );
+  expect(await screen.findByText(/Append to Choose product/)).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "Import recorded draft" }),
+  );
+  const next = onImport.mock.calls[0][0] as LcaDefinition;
+  expect(next.steps).toHaveLength(2);
+  expect(next.steps[0]).toEqual(definition.steps[0]);
+  expect(next.bdd_steps?.[0].action_ids).toEqual(["entry"]);
+  expect(next.bdd_steps?.[1].action_ids).toEqual([next.steps[1].id]);
+  expect(client.action).not.toHaveBeenCalled();
+});

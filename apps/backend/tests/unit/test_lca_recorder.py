@@ -147,3 +147,35 @@ def test_new_recording_waits_for_confirmed_cleanup(services):  # noqa: F811
         )
     second = recorder.start(user, flow["id"], 1, "second")
     assert second["session_id"] != first["session_id"]
+
+
+def test_recording_projection_omits_absent_bdd_metadata(services, monkeypatch):  # noqa: F811
+    from tap_platform.lca.definition import validate_definition
+    from tap_platform.lca.recording import RecordingProjection
+
+    svc, browser = services
+    user = recording_actor()
+    raw = definition()
+    projected = validate_definition(raw)
+    monkeypatch.setattr(
+        "tap_platform.lca.recorder.project_recording",
+        lambda *args, **kwargs: RecordingProjection(projected, (), ()),
+    )
+    flow = svc.create_flow(user, "flow", "Recorded flow", raw)
+    recorder = LcaRecorder(svc)
+    recorded = recorder.start(user, flow["id"], 1, "record")
+    with browser.store.engine.begin() as connection:
+        connection.execute(
+            update(sessions)
+            .where(sessions.c.id == recorded["session_id"])
+            .values(
+                recording_stopped=True,
+                recording_watermark=0,
+                recording_start_sequence=1,
+                recording_epoch=1,
+            )
+        )
+    state = recorder.get(user, flow["id"], recorded["session_id"])
+    payload = state["projection"]["definition"]
+    assert "bdd_steps" not in payload
+    validate_definition(payload)

@@ -45,6 +45,11 @@ def generate_playwright(
     definition: DebugDefinition, parameters: Mapping[str, object] | None = None
 ) -> GeneratedPlaywright:
     definition = validate_definition(definition)
+    for group in definition.bdd_steps:
+        if not group.action_ids:
+            raise ValueError(
+                f"BDD group '{group.id}' has no actions; implement or remove it before generation or execution"
+            )
     inputs = resolve_parameters(definition, parameters)
     frozen = canonical_bytes(definition)
     targets = {t.id: t for t in definition.targets}
