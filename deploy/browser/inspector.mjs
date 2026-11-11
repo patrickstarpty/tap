@@ -127,6 +127,9 @@ async function observe(action, actuate) {
     // cannot have applied a browser write; do not turn it into unknown outcome.
     const count = await page.locator(action.selector).count();
     if (count > 1) throw new Error('strict mode violation: target is ambiguous before write');
+    if (action.type === 'fill' && count === 1 && await page.locator(action.selector).evaluate(element => element.readOnly === true)) {
+      throw new Error('target is readonly before write; use select for a combobox or inspect its available controls');
+    }
   }
   if (write_started === false) write_started = true;
   if (!actuate && action.type === 'click') await page.locator(action.selector).click({ timeout: 30_000 });

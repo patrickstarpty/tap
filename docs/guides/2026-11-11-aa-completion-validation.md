@@ -66,3 +66,30 @@ conservative. This does not declare all timeouts safe to retry.
 Verification: new Python and Chromium regressions failed before the fix; 145
 browser/authority/progress Python tests and 53 inspector Chromium/Node tests then
 passed. Full normal-stack acceptance is rerun separately after this fix.
+
+The corrected normal-stack synthetic acceptance subsequently passed through TAP
+Chat, pinned OpenCode 1.19.5, real Chromium, recoverable locator correction,
+verified result publication, and a separate frozen-script replay with zero model
+calls. Task `51eaef68e7f74e8f83bfddae8333abd0` completed; replay task
+`910564f826644d90afda47a1ab5bb6f3` preserved script SHA-256
+`aa5a3c06a8a28cf9f16feea364f239a7b5829b11780e2490e1ca93261c94a195`.
+Synthetic model accounting is fixture data, not billed provider usage. Independent
+review of the recovery change found no blockers; 48 persistence/progress tests
+also passed independently. Public autonomous quotation and AA-to-LCA UI acceptance
+remain distinct checks.
+
+## Bounded real FWD attempt and readonly action correction
+
+The first actual `qwen-plus` / `dashscope/qwen-plus` run selected `fill` for the
+readonly age combobox. Playwright never found an editable target and timed out;
+the unknown-write fence correctly halted the run instead of duplicating it or
+claiming a quote. Recorded usage was 10 calls / USD 0.040543. Because the audit
+remained recovering rather than fully settled, the full attempt reservation
+(30 calls / USD 0.50) is retained against the approved cap, not recycled.
+
+Direct fill now checks the resolved element's actual `readOnly` property before
+invocation and returns a known pre-write error suggesting `select`/inspection.
+It never converts a timeout or post-dispatch outcome to safe failure, and it does
+not force a site's control into an editable state. The real Chromium regression
+failed before the change (30-second timeout, `write_started=true`) and passed
+afterward with `write_started=false` and no click/open/write on the control.
