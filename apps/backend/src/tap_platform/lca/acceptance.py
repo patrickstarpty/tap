@@ -139,6 +139,57 @@ def _matches(field: dict[str, Any], row: dict[str, Any]) -> bool:
     )
 
 
+def final_bound_reads(
+    field: dict[str, Any], rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Bind the last field read to the already authenticated completion output."""
+    if not rows or rows[-1]["request"].get("type") != "finish":
+        return []
+    result = (rows[-1].get("observation") or {}).get("result")
+    outputs = result.get("outputs") if isinstance(result, dict) else None
+    if (
+        not isinstance(outputs, list)
+        or len(outputs) != 1
+        or not isinstance(outputs[0], dict)
+    ):
+        return []
+    output = outputs[0]
+    provenance = output.get("provenance")
+    proof = provenance.get(field["id"]) if isinstance(provenance, dict) else None
+    if (
+        not isinstance(proof, dict)
+        or output.get(field["id"]) != field["readback_value"]
+        or type(proof.get("observation_sequence")) is not int
+    ):
+        return []
+    reads = [
+        row
+        for row in rows
+        if row["request"].get("type") == "read"
+        and row["request"].get("name") == field["id"]
+    ]
+    matching = []
+    for row in reads:
+        if not _matches(field, row):
+            continue
+        extracted = (row.get("observation") or {}).get("extracted") or {}
+        if all(
+            proof.get(key) == extracted.get(key)
+            for key in (
+                "observation_sequence",
+                "source_frame_id",
+                "source_document_id",
+                "source_url",
+            )
+        ):
+            matching.append(row)
+    # Never fall back to an earlier successful read after a later failed,
+    # wrong-target or otherwise unproven read of this same field name.
+    return (
+        matching if len(matching) == 1 and reads[-1]["id"] == matching[0]["id"] else []
+    )
+
+
 def _target_signature(target: dict[str, Any] | None) -> dict[str, Any] | None:
     # A user's explicit locator-review checkbox is not an executable change.
     return (
@@ -218,8 +269,7 @@ def evaluate_contract(
     results = {step["step_id"]: step for step in canonical_results or []}
     fields = []
     required_rows = {
-        field["id"]: [row for row in rows if _matches(field, row)]
-        for field in contract["fields"]
+        field["id"]: final_bound_reads(field, rows) for field in contract["fields"]
     }
     source_projection = project_agent_actions(
         rows,

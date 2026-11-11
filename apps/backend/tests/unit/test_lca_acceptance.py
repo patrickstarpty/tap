@@ -102,6 +102,29 @@ def reviewed(tmp_path):
             },
         },
     )
+    source_result = {
+        "outputs": [
+            {
+                "Age-Years": "30",
+                "provenance": {
+                    "Age-Years": {
+                        "observation_sequence": 1,
+                        "source_frame_id": "main",
+                        "source_document_id": "doc1",
+                        "source_url": "https://example.com",
+                    }
+                },
+            }
+        ]
+    }
+    finish = browser.store.get("action", "project", "a2")
+    browser.store.update(
+        "action",
+        "project",
+        "a2",
+        observation={**finish["observation"], "result": source_result},
+    )
+    browser.store.update("execution", "project", "run", result=source_result)
     exported = export_agent_draft(browser, principal, "run", body)
     assert exported["complete"]
     definition = exported["definition"]
@@ -344,3 +367,87 @@ def test_current_document_evidence_is_required_not_old_source_proof(tmp_path, ch
         evaluate_contract(browser, "project", definition, execution, current)["status"]
         == "not_proven"
     )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing_proof",
+        "wrong_value",
+        "sequence",
+        "boolean_sequence",
+        "frame",
+        "document",
+        "url",
+        "duplicate_output",
+    ],
+)
+def test_finish_provenance_must_match_the_authoritative_field_read(tmp_path, change):
+    browser, principal, definition, current = reviewed(tmp_path)
+    finish = browser.store.get("action", "project", "a2")
+    observation = deepcopy(finish["observation"])
+    output = observation["result"]["outputs"][0]
+    proof = output["provenance"]["Age-Years"]
+    if change == "missing_proof":
+        output["provenance"].pop("Age-Years")
+    elif change == "wrong_value":
+        output["Age-Years"] = "31"
+    elif change == "duplicate_output":
+        observation["result"]["outputs"].append(deepcopy(output))
+    else:
+        key = {
+            "sequence": "observation_sequence",
+            "boolean_sequence": "observation_sequence",
+            "frame": "source_frame_id",
+            "document": "source_document_id",
+            "url": "source_url",
+        }[change]
+        proof[key] = (
+            True
+            if change == "boolean_sequence"
+            else 2
+            if change == "sequence"
+            else "different"
+        )
+    browser.store.update("action", "project", "a2", observation=observation)
+    browser.store.update("execution", "project", "run", result=observation["result"])
+    assert (
+        evaluate_contract(
+            browser, "project", definition, passed_execution(definition), current
+        )["status"]
+        == "not_proven"
+    )
+
+
+def test_finish_binding_never_falls_back_or_accepts_duplicate_read_evidence(tmp_path):
+    from tap_platform.lca.acceptance import final_bound_reads, source_evidence
+
+    browser, principal, definition, current = reviewed(tmp_path)
+    _, rows, _ = source_evidence(
+        browser, "project", definition["source_acceptance"]["source"]
+    )
+    field = CONTRACT["fields"][0]
+    assert len(final_bound_reads(field, rows)) == 1
+    later = deepcopy(rows[0])
+    later["id"] = "later"
+    assert final_bound_reads(field, [rows[0], later, rows[-1]]) == []
+    later["status"] = "failed"
+    assert final_bound_reads(field, [rows[0], later, rows[-1]]) == []
+
+
+def test_finish_binding_compares_original_url_bytes_not_redacted_presentation(tmp_path):
+    from tap_platform.lca.acceptance import final_bound_reads, source_evidence
+
+    browser, principal, definition, current = reviewed(tmp_path)
+    _, rows, _ = source_evidence(
+        browser, "project", definition["source_acceptance"]["source"]
+    )
+    field = CONTRACT["fields"][0]
+    raw = "https://example.com/form?fixture=one#step"
+    rows[0]["observation"]["documents"][0]["url"] = raw
+    rows[0]["observation"]["extracted"]["source_url"] = raw
+    proof = rows[-1]["observation"]["result"]["outputs"][0]["provenance"]["Age-Years"]
+    proof["source_url"] = raw
+    assert len(final_bound_reads(field, rows)) == 1
+    proof["source_url"] = "https://example.com/form"
+    assert final_bound_reads(field, rows) == []
