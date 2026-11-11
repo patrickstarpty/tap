@@ -139,7 +139,11 @@ export function modelReceipt(receipt, action, directory) {
   // Pass 1 reserves exact, usable identities for every admitted control before
   // any option list, association or popup text can consume the shared budget.
   for (const field of candidates) {
-    if (retained.length >= 12) { view.related_fields_omitted++; continue; }
+    // Match the action schema/browserctl limit. Never shorten a selector into
+    // a different target or advertise one that no subsequent tool call accepts.
+    if (typeof field.selector !== 'string' || !field.selector || field.selector.length > 1000 || retained.length >= 12) {
+      view.related_fields_omitted++; continue;
+    }
     const {context,selector,tag,id,role,label,value,readonly,disabled} = field;
     const fact = {...compact({context,selector,tag,id,role,label,value,readonly,disabled}),details_omitted:true,
       ...(field.options?.length || field.options_total !== undefined ? {options_total:field.options_total ?? field.options.length,options_truncated:Boolean(field.options_truncated || field.options?.length)} : {}),

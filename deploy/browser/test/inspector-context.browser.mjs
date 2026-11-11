@@ -254,18 +254,20 @@ test('long popup selector survives the shared model budget without shortening id
   assert.ok(JSON.stringify(result).length<8000);
 });
 
-test('an unaffordable context reports omission and points to full evidence', async t=>{
+test('a 140-layer selector above the action limit is omitted with full evidence', async t=>{
   const {page,frame,execute}=await fixture(t,false);
   await frame.locator('body').evaluate(body=>{
     let parent=body;
-    for(let i=0;i<500;i++){const child=document.createElement('div');parent.append(child);parent=child;}
+    for(let i=0;i<140;i++){const child=document.createElement('div');parent.append(child);parent=child;}
     const dialog=document.createElement('div'); dialog.setAttribute('role','dialog');
     dialog.textContent='Deep notice'; parent.append(dialog);
   });
   const popup=(await observeFields(page,{})).find(field=>field.role==='dialog');
-  assert.ok(popup.selector.length>8000,'fixture needs a selector that cannot fit the shared budget');
+  assert.ok(popup.selector.length>1000 && popup.selector.length<8000,'fixture exceeds the action schema limit but fits the model budget');
   const result=await execute({type:'snapshot',step:'inspect_deep'});
   assert.ok(result.related_fields_omitted>0);
+  assert.equal(result.related_fields?.some(field=>field.selector===popup.selector) || false,false);
+  assert.equal(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')).fields.find(field=>field.role==='dialog').selector,popup.selector);
   assert.match(result.observation_detail,/evidence_file|scoped snapshot/);
   assert.ok(fs.existsSync(result.evidence_file));
   assert.ok(JSON.stringify(result).length<8000);

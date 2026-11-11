@@ -349,3 +349,27 @@ test('an observed empty native select does not claim that options were truncated
   assert.equal(result.related_fields[0].options_total,0);
   assert.equal(result.related_fields[0].options_truncated,false);
 });
+
+for (const [name,selector,admitted] of [
+  ['1000-character boundary','#'+'x'.repeat(999),true],
+  ['1001-character boundary','#'+'x'.repeat(1000),false],
+  ['140-layer observed hierarchy',Array(140).fill('div:nth-of-type(1)').join(' > '),false],
+]) test(`model receipt admits only schema-usable selectors: ${name}`,async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const {validateAction}=await import('../browserctl.mjs');
+  const receipt={error:null,bounded_snapshot:'Deep notice',fields:[
+    {context:'visible_popup',selector,tag:'div',role:'dialog',label:'Deep notice',popup_text:'Deep notice'},
+  ]};
+  const result=JSON.parse(modelReceipt(receipt,{type:'snapshot',step:'inspect'},root));
+  if(admitted) {
+    assert.equal(result.related_fields[0].selector,selector);
+    assert.doesNotThrow(()=>validateAction({type:'snapshot',step:'inspect',selector:result.related_fields[0].selector}));
+    assert.equal(result.related_fields_omitted,undefined);
+  } else {
+    assert.equal(result.related_fields?.length || 0,0,'never advertise a selector that the next browser call cannot accept');
+    assert.equal(result.related_fields_omitted,1);
+    assert.match(result.observation_detail,/evidence_file/);
+  }
+  assert.equal(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')).fields[0].selector,selector,'full evidence retains the exact unshortened selector');
+  assert.ok(JSON.stringify(result).length<8000);
+});
