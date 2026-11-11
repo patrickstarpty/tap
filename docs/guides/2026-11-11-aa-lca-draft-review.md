@@ -94,5 +94,9 @@ browser execution. This recovery is not unsaved-LCA autosave.
 The updated `--lca-bridge` harness starts at this formal LCA page, submits within
 the iframe and checks top-level URL stability, hide/show persistence, strict frame
 policy, one AA admission and zero additional model calls for import/replay. Its
-new inline full-stack result must be recorded separately; the historical
-standalone-link acceptance above does not prove this route.
+formal inline full-stack journey passed on `bc956669` with the synthetic provider:
+one admission, 11/11 canonical actions, both current required fields passed, and
+model count 11 → 11 through import/edited replay. See the [inline acceptance](2026-11-11-lca-inline-tapper-validation.md)
+for exact source/run IDs, recording and failure fixes. The historical standalone
+link acceptance above remains separate evidence; neither proves autonomous
+FWD/AIA Qwen completion.

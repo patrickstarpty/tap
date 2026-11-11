@@ -1,0 +1,74 @@
+{
+  "schema_version": "lca-inline-acceptance-v1",
+  "accepted_code_commit": "bc95666906f0f0344d0404b0bf7f542eb3ca6346",
+  "supervisor_owner": "tap-browser-core-a63e3945389b",
+  "provider": "synthetic",
+  "site": "owned",
+  "execution_mode": "local",
+  "paid_provider_calls": 0,
+  "journey": {
+    "provider": "synthetic",
+    "topLevelUrlUnchanged": true,
+    "conversationAdmissions": 1,
+    "taskId": "a58aa4299c274baca78935c6f83a98d4",
+    "runId": "0ec721569e59498991d7a513a7098bfa",
+    "modelCallsBeforeImport": 11,
+    "modelCallsAfterReplay": 11
+  },
+  "aa_source": {
+    "executionId": "8bf4698c5b8945bfa0ae4dc6547b0a9c",
+    "bundleId": "6771bda6dede4cfaaa1a1db6715cd1ca",
+    "inputSha256": "4b78e0d4eaa606bce32796a6708a1c4632d64b7b88ffd1b37b43ad24dc294e5e",
+    "status": "passed"
+  },
+  "lca_replay": {
+    "run_id": "0ec721569e59498991d7a513a7098bfa",
+    "flow_id": "291d9a9003dc4bee81ac3e9a417aa474",
+    "snapshot_id": "67d49128ec594dcb8a25f58e0e80021c",
+    "definition_digest": "81495cf68b97f05a99272bd3bf4d798c71347d0727aa755eb8156ca2208b10de",
+    "status": "passed",
+    "canonical_actions": 11,
+    "canonical_passed": 11,
+    "bdd_groups": 8,
+    "contract_acceptance": {
+      "status": "passed",
+      "fields": [
+        {
+          "id": "account",
+          "status": "passed",
+          "reason": ""
+        },
+        {
+          "id": "amount",
+          "status": "passed",
+          "reason": ""
+        }
+      ],
+      "reason": ""
+    },
+    "result_values": [
+      "AC-42 / 120 / MATCH",
+      "AC-42 / 120 / MATCH"
+    ]
+  },
+  "ui_assertions": {
+    "formal_lca_entry": true,
+    "reviewed_inputs_submitted_inside_iframe": true,
+    "hide_open_preserves_conversation": true,
+    "reconnect_restores_embed_path_and_conversation": true,
+    "screenshot_popup_opens": true,
+    "explicit_preview_and_unsaved_import": true,
+    "edited_exact_then_assertion_saved": true,
+    "top_level_url_unchanged": true
+  },
+  "recording": {
+    "file": "tap-inline-lca-full-acceptance-bc956669.mp4",
+    "sha256": "7a08c98c18789b024394e508cf129bb08db9a9002c122eb6701534f8604163a6"
+  },
+  "limits": [
+    "Synthetic provider only; not autonomous Qwen completion on FWD/AIA.",
+    "Loopback validation identity, not production SSO or deployment.",
+    "This run verifies import/save/current-contract replay, not release publication.",
+    "Unknown POST receipts cannot be automatically rebound across a changed gateway incarnation."
+  ]
+}

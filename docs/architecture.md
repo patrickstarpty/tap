@@ -190,3 +190,8 @@ separate explicit unsaved-draft import; saving, current-contract debug replay an
 publication retain their existing locks. See the [inline design](superpowers/specs/2026-11-11-lca-inline-tapper-design.md)
 and [review guide](guides/2026-11-11-aa-lca-draft-review.md). This remains a loopback
 validation slice, not an enterprise SSO or production-deployment claim.
+
+The formal inline journey passed on `bc956669` using an owned site and synthetic
+provider: one AA admission, explicit edited-draft save/replay, 11/11 canonical
+actions and both current required fields passed. The [acceptance record](guides/2026-11-11-lca-inline-tapper-validation.md)
+keeps this separate from real-model public-site outcomes.

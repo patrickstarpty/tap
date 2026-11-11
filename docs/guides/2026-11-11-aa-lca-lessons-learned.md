@@ -148,3 +148,31 @@ FWD 最终定义将后一过程写成编辑器中的两个 click，而非 fill�
 本轮产品集成中，FWD 在 TAP 导航内录制→编辑→保存→跨模块返回→刷新重开→独立回放 5/5。另将通过的 v2 发布后修改草稿为 v3，发布 v2 的新回放仍使用原快照并 5/5；保存、发布、查看版本没有触发执行，仅显式确认时产生一次新执行。编辑超时 31 秒被后端 30 秒上限拒绝，改为合法的 29 秒后保存成功，这也是保留参数边界的验证，不应扩大运行时限制来让演示通过。详细最终门禁与标准入口证据见后续产品集成验收记录。
 
 日常启动还必须单独验收：补齐 supervisor 对 TAP Web、标准浏览器 API/worker 的启动与生命周期管理、明确 LCA 开关和环境 allowlist、数据库迁移前置检查后，使用真实 `run-tapper-dev.sh` 隔离实例重跑 FWD 全链路及 AIA 既有资产12步回放，均通过；不能以临时应用 harness 代替用户实际启动方式。
+
+
+## 7. LCA 内嵌 Tapper：必须验收真实 iframe 边界
+
+正式内嵌闭环于源码 `bc956669` 通过自有站完整产品验收：用户在 LCA 页内
+输入自然语言及审核值，Tapper 自动生成 BDD 并执行 AA；Hide/Open、Reconnect
+保留原会话，实际打开截图，再显式预览/导入、编辑 Then 精确断言、保存和
+当前合同回放。11/11 canonical actions 通过，account/amount 两个当前要求
+均通过，唯一 admission，模型计数在导入/回放前后为 11 → 11。
+这是 synthetic provider 的真实后台/浏览器闭环，不是 FWD/AIA 的 Qwen 自主
+报价验收。准确 task/run、脱敏摘要与录像信息见[内嵌验收](2026-11-11-lca-inline-tapper-validation.md)。
+
+两类失败只有真实 iframe 暴露，不能被组件绿灯掩盖：
+
+1. **load 不等于子应用监听就绪。** API、项目、actor 和 gateway binding
+   全部匹配仍会丢初始化消息。父侧在十秒内重发同一 nonce/context，子侧仅
+   对合法同 nonce 重试补发 ready；成功后停止，不转成持续广播。不放宽
+   origin/source/schema/context 校验，也不把重连变成新任务。
+2. **sandbox 权限会在 React 之外阻断表单。** 已填值、已审核、Send 可点且无
+   应用 alert，浏览器仍因缺 `allow-forms` 阻断 submit，因而根本没有 POST。
+   按 console 确证只补必要 token，保留禁止 top-navigation 和 popup escape；
+   同时实际点击证据 popup，不能只检查链接可见。
+
+回归要保存失败证据、先让对应测试变红，再修最小机制，并用同一最终组合
+源码串行重跑正式入口。原统一 make check/test 与受影响补丁门禁分别记录，
+不因 docs-only 跟进重复大套，也不把早先失败的录像作为最终通过录像。
+临时恢复状态会复制用户目标、notes 和审核值，不含传输层凭据；它不是秘密
+识别功能，不能宣称可以自动过滤用户在文字中输入的密码。
