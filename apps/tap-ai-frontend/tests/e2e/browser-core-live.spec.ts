@@ -176,11 +176,20 @@ for (const scenario of cases) {
     if (acceptanceContract) {
       const submitted = accepted.request().postDataJSON();
       expect(submitted.browser.acceptanceContract.reviewed).toBe(true);
+      const normalizedFields = (
+        fields: NonNullable<CoreCase["acceptanceContract"]>["fields"],
+      ) =>
+        fields.map((field) => ({
+          id: field.id,
+          value: field.value,
+          readbackValue: field.readbackValue,
+          attribute: field.attribute,
+          targetTexts: field.targetTexts,
+          scopeText: field.scopeText ?? null,
+        }));
       expect(
-        submitted.browser.acceptanceContract.fields.map(
-          (field: { id: string }) => field.id,
-        ),
-      ).toEqual(acceptanceContract.fields.map((field) => field.id));
+        normalizedFields(submitted.browser.acceptanceContract.fields),
+      ).toEqual(normalizedFields(acceptanceContract.fields));
       writeFileSync(
         `${evidenceDir}/${scenario.name}-reviewed-input-request.json`,
         JSON.stringify(submitted.browser, null, 2),
