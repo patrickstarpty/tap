@@ -262,8 +262,10 @@ class BrowserWorker:
         if reserved is None:
             return
         row = reserved
+        phase = "resolve_handle"
         try:
             handle = self._handles[row["session_id"]]
+            phase = "prepare_request"
             request = dict(row["request"])
             session = self.service.store.get(
                 "session", self.project_id, row["session_id"]
@@ -290,6 +292,7 @@ class BrowserWorker:
                     if key in request
                 }
                 probe.update(type="preflight", operation=request["type"])
+                phase = "controlled_preflight"
                 checked = await self.runtime.observe(handle, probe)
                 safe = (checked.extracted or {}).get("preflight") or {}
                 if checked.error or safe.get("safe") is not True:
@@ -298,6 +301,7 @@ class BrowserWorker:
                         self.project_id, row, self.owner, status="failed"
                     )
                     return
+                phase = "controlled_input_fetch"
                 if self.input_fetcher is None:
                     payload = self.service.consume_input_for_dispatch(
                         self.project_id, row["session_id"], row["id"]
@@ -313,11 +317,14 @@ class BrowserWorker:
                     raise ValueError("invalid ephemeral input payload")
                 request.pop("input_ref")
                 request.update(payload)
+            phase = "confirm_dispatch"
             if not self.service.store.confirm_dispatch(
                 self.project_id, row["session_id"], row["id"], self.owner
             ):
                 return
+            phase = "runtime_observe"
             observation = await self.runtime.observe(handle, request)
+            phase = "validate_observation"
             if request.get("type") != "preflight":
                 self._frame_capture_at.pop(row["session_id"], None)
                 self.service.frames.delete(row["session_id"])
@@ -354,6 +361,7 @@ class BrowserWorker:
                     row["session_id"],
                     item["object_ref"],
                 )
+            phase = "publish_observation"
             self.service.store.publish_action(
                 self.project_id,
                 row,
@@ -375,7 +383,12 @@ class BrowserWorker:
                 else "completed",
                 observation=asdict(observation),
             )
-        except BaseException:
+        except BaseException as error:
+            # Exception text/traceback may include protected inputs or credentials.
+            # Fixed phases and type names diagnose version/transport failures safely.
+            logging.getLogger(__name__).warning(
+                "browser action unknown phase=%s type=%s", phase, type(error).__name__
+            )
             self.service.store.publish_action(
                 self.project_id, row, self.owner, status="unknown"
             )

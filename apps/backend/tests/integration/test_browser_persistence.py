@@ -1066,11 +1066,13 @@ def test_late_inspector_evidence_keeps_originating_session(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "write_started,expected", [(False, "failed"), (True, "unknown"), (None, "unknown")]
+    "write_started,expected",
+    [(False, "failed"), (True, "unknown"), (None, "unknown"), ("exception", "unknown")],
 )
 async def test_legacy_write_failure_requires_explicit_no_write_proof(
-    tmp_path, write_started, expected
+    tmp_path, write_started, expected, caplog
 ):
+    caplog.set_level("WARNING")
     store, objects, service, principal, _ = setup(tmp_path)
 
     class InspectorRuntime(Runtime):
@@ -1082,6 +1084,8 @@ async def test_legacy_write_failure_requires_explicit_no_write_proof(
             )
 
         async def observe(self, handle, action):
+            if write_started == "exception":
+                raise TypeError("secret-test-password must never enter logs")
             return BrowserObservation(
                 handle.session_id,
                 1,
@@ -1127,3 +1131,6 @@ async def test_legacy_write_failure_requires_explicit_no_write_proof(
     assert receipt["status"] == expected
     if write_started is False:
         assert receipt["observation"]["bounded_snapshot"] == "current snapshot"
+    if write_started == "exception":
+        assert "phase=runtime_observe type=TypeError" in caplog.text
+        assert "secret-test-password" not in caplog.text
