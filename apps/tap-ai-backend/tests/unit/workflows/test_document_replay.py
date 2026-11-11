@@ -22,6 +22,14 @@ assert.throws(()=>assertAcceptance(contract,proofs,[doc]),/missing or stale/);
 const next={...doc,document_id:'next'};
 assert.throws(()=>assertAcceptance(contract,proofs,[next]),/missing or stale/);
 recordAcceptance(contract,proofs,{type:'snapshot'},[doc],[next],null);
+assert.throws(()=>assertAcceptance(contract,proofs,[next]),/missing or stale/);
+// A fresh same-document read verifies the clicked state and preserves association.
+recordAcceptance(contract,proofs,action,[doc],[doc],read);
+recordAcceptance(contract,proofs,{type:'click'},[doc],[doc],null);
+recordAcceptance(contract,proofs,action,[doc],[doc],read);
+assert.equal(proofs.get('age').state,'checked_pending');
+assertAcceptance(contract,proofs,[doc]);
+recordAcceptance(contract,proofs,{type:'snapshot'},[doc],[next],null);
 assertAcceptance(contract,proofs,[next]);
 recordAcceptance(contract,proofs,{type:'snapshot'},[next],[],null);
 assert.throws(()=>assertAcceptance(contract,proofs,[]),/missing or stale/);

@@ -86,7 +86,7 @@ function recordAcceptance(contract, proofs, action, before, after, read) {
     const frame = proof.source_frame_id;
     if (write) {
       proofs.delete(name);
-      if (proof.state !== 'active' || previous.get(frame) !== source || !current.has(frame)) continue;
+      if (!['active','checked_pending'].includes(proof.state) || previous.get(frame) !== source || !current.has(frame)) continue;
       if (['navigate','click'].includes(action.type) && current.get(frame) !== source) {
         proofs.set(name,{...proof,state:'archived',destination:current.get(frame)});
       } else if (action.type === 'click' && current.get(frame) === source) {
@@ -95,6 +95,8 @@ function recordAcceptance(contract, proofs, action, before, after, read) {
     } else if (!current.has(frame)) {
       proofs.delete(name);
     } else if (proof.state === 'pending') {
+      if (current.get(frame) !== source) proofs.delete(name);
+    } else if (proof.state === 'checked_pending') {
       if (current.get(frame) !== source) proofs.set(name,{...proof,state:'archived',destination:current.get(frame)});
     } else if (current.get(frame) !== (proof.state === 'archived' ? proof.destination : source)) {
       proofs.delete(name);
@@ -103,6 +105,7 @@ function recordAcceptance(contract, proofs, action, before, after, read) {
   if (action.type !== 'read') return;
   const field = contract.fields.find(field=>field.id===action.name);
   if (!field) return;
+  const previousProof = proofs.get(field.id);
   proofs.delete(field.id);
   if (action.equals!==field.readback_value || read?.value!==field.readback_value ||
       (action.attribute||'text')!==field.attribute ||
@@ -114,7 +117,30 @@ function recordAcceptance(contract, proofs, action, before, after, read) {
       !after.some(doc=>doc.frame_id===read.source_frame_id && doc.url===read.source_url)) {
     throw new Error('reviewed input readback mismatch: '+field.id);
   }
-  proofs.set(field.id,{...read,state:'active'});
+  const read_action = Object.freeze({...action,target_texts:Object.freeze([...action.target_texts])});
+  const sameClick = ['pending','checked_pending'].includes(previousProof?.state) && previousProof.source_frame_id===read.source_frame_id && previousProof.source_document_id===read.source_document_id;
+  proofs.set(field.id,{...read,read_action,state:sameClick ? 'checked_pending' : 'active'});
+}
+async function recheckPendingAcceptance(page, contract, proofs, tracker) {
+  if (!contract) return;
+  for (const [name, proof] of [...proofs]) {
+    if (proof.state !== 'pending') continue;
+    // Remove old evidence first. A mismatch or navigation during the recheck
+    // must never resurrect the pre-click value on a later document transition.
+    proofs.delete(name);
+    const action = proof.read_action;
+    if (!action) continue;
+    try {
+      const current = await tracker.snapshot();
+      if (!current.some(doc=>doc.frame_id===proof.source_frame_id && doc.document_id===proof.source_document_id)) continue;
+      const read = await tracker.read(action, async () => {
+        await guardTarget(page, action);
+        return readValue(page, {...action,timeout_ms:100});
+      });
+      if (read.source_frame_id!==proof.source_frame_id || read.source_document_id!==proof.source_document_id || read.value!==action.equals) continue;
+      proofs.set(name,{...read,read_action:action,state:'checked_pending'});
+    } catch { /* Unknown/raced/mismatched reads cannot preserve pending proof. */ }
+  }
 }
 function assertAcceptance(contract, proofs, documents) {
   const current = new Map(documents.map(doc=>[doc.frame_id,doc.document_id]));

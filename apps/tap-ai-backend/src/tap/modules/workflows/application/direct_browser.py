@@ -454,6 +454,11 @@ def compile_replay(result: DirectBrowserResult) -> str:
             f"recordAcceptance(acceptanceContract, acceptanceProofs, {quote(action)}, "
             "beforeDocuments, await documentTracker.snapshot(), readProof);"
         )
+        if kind == "click":
+            lines.append(
+                "await recheckPendingAcceptance(page, acceptanceContract, "
+                "acceptanceProofs, documentTracker);"
+            )
         lines.append("});")
     lines.extend(
         [

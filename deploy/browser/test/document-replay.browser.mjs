@@ -19,7 +19,7 @@ print(compile_replay(DirectBrowserResult('passed',{},a,steps,acceptance_contract
   assert.equal(result.status,0,result.stderr);
   return result.stdout.replace("import { test, expect } from '@playwright/test';",'').replace(': Record<string, string | null>','');
 }
-for (const iframe of [false,true]) for (const variant of ['immediate','delayed','same-document','pending-no-navigation','detached','intervening-write','passive-navigation','return-form','second-passive-navigation']) {
+for (const iframe of [false,true]) for (const variant of ['immediate','delayed','delayed-reread','mutated-delayed','same-document','same-document-ajax','detached','intervening-write','passive-navigation','return-form','second-passive-navigation']) {
   if (!iframe && variant==='detached') continue;
   test(`document-bound compiled replay ${iframe?'iframe':'main'}: ${variant}`, async () => {
     const prefix = iframe ? '#application >> internal:control=enter-frame >> ' : '';
@@ -31,6 +31,7 @@ for (const iframe of [false,true]) for (const variant of ['immediate','delayed',
       {type:'snapshot'},
       {type:'read',selector:prefix+'#quote',attribute:'text',equals:'42',name:'quote',step:'result'},
     ];
+    if (variant==='delayed-reread') actions.splice(3,0,{...actions[1],step:'recheck'});
     if (variant==='passive-navigation') actions.splice(2,1);
     if (variant==='intervening-write') actions.splice(3,0,{type:'press',selector:prefix+'body',key:'Tab',step:'intervene'});
     if (variant==='return-form') actions.splice(4,0,{type:'navigate',url:'https://fixture.test/',step:'return'});
@@ -39,9 +40,9 @@ for (const iframe of [false,true]) for (const variant of ['immediate','delayed',
     const browser = await chromium.launch({headless:true});
     try {
       const page = await browser.newPage();
-      const script = variant==='same-document' ? "history.pushState({},'', '/same'); document.querySelector('#age').value='31'; document.querySelector('#quote').hidden=false" :
-        variant==='pending-no-navigation' ? "document.querySelector('#quote').hidden=false" :
-        ['delayed','intervening-write'].includes(variant) ? "setTimeout(()=>location.href='/result',120)" : "location.href='/result'";
+      const script = variant==='mutated-delayed' ? "document.querySelector('#age').value='31';setTimeout(()=>location.href='/result',450)" : variant==='same-document' ? "history.pushState({},'', '/same'); document.querySelector('#age').value='31'; document.querySelector('#quote').hidden=false" :
+        variant==='same-document-ajax' ? "document.querySelector('#quote').hidden=false" :
+        ['delayed','delayed-reread','intervening-write'].includes(variant) ? "setTimeout(()=>location.href='/result',450)" : "location.href='/result'";
       const form = `<label>Age<input id="age" value="30"></label><button id="next" onclick="${script}">Next</button><output id="quote" hidden>42</output>`;
       await page.route('https://fixture.test/**', route=>{
         const path = new URL(route.request().url()).pathname;
@@ -64,12 +65,12 @@ for (const iframe of [false,true]) for (const variant of ['immediate','delayed',
         return body();
       };
       new Function('test','expect',source)(run,expect.configure({timeout:500}));
-      if (['immediate','delayed'].includes(variant)) {
+      if (['immediate','delayed','delayed-reread','same-document-ajax'].includes(variant)) {
         await completed;
         assert.deepEqual(attached,{age:'30',quote:'42'});
         if (iframe) assert.equal(page.url(),'https://fixture.test/');
       } else {
-        await assert.rejects(completed);
+        await assert.rejects(completed, /reviewed input proof missing or stale/);
         assert.equal(attached,undefined);
       }
     } finally { await browser.close(); }
