@@ -8,12 +8,12 @@ const require=createRequire(new URL('../../../apps/tap-ai-frontend/package.json'
 const {chromium,expect}=require('@playwright/test');
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 
-for (const variant of ['closed', 'already-open', 'hidden-duplicate']) {
+for (const variant of ['closed', 'already-open', 'hidden-duplicate', 'associated-popup', 'iframe']) {
 test(`confirmed BDD actions replay ${variant} readonly selection and dynamic results`,async()=>{
   const browser=await chromium.launch({headless:true});
   const open=variant==='already-open';
   const optionRole=variant==='hidden-duplicate'?'':'role="option"';
-  const html=`<label>Age<input id="age" role="combobox" readonly value="25" aria-expanded="${open}"
+  let html=`<label>Age<input id="age" role="combobox" readonly value="25" aria-controls="options" aria-expanded="${open}"
       onclick="this.setAttribute('aria-expanded',this.getAttribute('aria-expanded')==='true'?'false':'true');document.querySelector('#options').hidden=this.getAttribute('aria-expanded')!=='true'"></label>
     ${variant==='hidden-duplicate'?'<span hidden>30</span>':''}
     <div id="options" ${open?'':'hidden'}>
@@ -22,6 +22,8 @@ test(`confirmed BDD actions replay ${variant} readonly selection and dynamic res
     </div>
     <button id="quote" onclick="setTimeout(()=>document.querySelector('#premium').textContent='HK$'+(Number(document.querySelector('#age').value)*2).toFixed(2)+'/month',100)">Get quote</button>
     <output id="premium">HK$0.00/month</output>`;
+  if (variant==='associated-popup') html+='<div role="option" onclick="document.body.dataset.wrong=\'yes\'">30</div>';
+  if (variant==='iframe') html='<div role="option" onclick="document.body.dataset.wrong=\'yes\'">30</div><iframe id="quote-frame" srcdoc="'+html.replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'"></iframe>';
   const actions=[
     {type:'navigate',url:'https://example.test/quote',step:'open'},
     {type:'select',selector:'#age',value:'30',target_texts:['Age'],step:'age'},
@@ -29,6 +31,7 @@ test(`confirmed BDD actions replay ${variant} readonly selection and dynamic res
     {type:'click',selector:'#quote',target_texts:['Get quote'],step:'quote'},
     {type:'read',selector:'#premium',attribute:'text',positive:true,name:'premium',target_texts:['Premium'],step:'check-premium'},
   ];
+  if (variant==='iframe') for (const action of actions) if(action.selector) action.selector='#quote-frame >> internal:control=enter-frame >> '+action.selector;
   try {
     const original=await browser.newPage();
     await original.route('https://example.test/quote',route=>route.fulfill({contentType:'text/html',body:html}));
@@ -62,7 +65,8 @@ print(compile_replay(DirectBrowserResult('passed',{'premium':'DO NOT EMBED'},a,s
     await completed;
     assert.deepEqual(attached,facts);
     assert.deepEqual(sequence,['Given open','When age','Then check-age','When quote','Then check-premium']);
-    assert.equal(await replay.locator('#age').inputValue(),'30');
+    assert.equal(await replay.locator(actions[1].selector).inputValue(),'30');
+    assert.equal(await replay.locator('body').getAttribute('data-wrong'),null);
   } finally {await browser.close();}
 });
 }

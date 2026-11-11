@@ -197,7 +197,23 @@ export async function selectValue(page, action) {
   }
   if (facts.text===action.value) {await locator.click({timeout:30000}); return;}
   if (await locator.getAttribute('aria-expanded') !== 'true') await locator.click({timeout:30000});
-  let option=page.getByRole('option',{name:action.value,exact:true}).filter({visible:true});
-  if (await option.count()===0) option=page.getByText(action.value,{exact:true}).filter({visible:true});
+  // Observe the opened control's actual frame and associations. Searching the
+  // top-level page can click an unrelated option, especially inside iframes.
+  const handle=await locator.elementHandle({timeout:30000});
+  if (!handle) throw new Error('selection target is no longer available');
+  let frame;
+  let popupIds;
+  try {
+    frame=await handle.ownerFrame();
+    popupIds=await handle.evaluate(node=>[...new Set(
+      ['aria-controls','aria-owns'].flatMap(name=>(node.getAttribute(name)||'').split(/\s+/).filter(Boolean))
+    )]);
+  } finally { await handle.dispose(); }
+  if (!frame) throw new Error('selection target frame is no longer available');
+  const scope=popupIds.length
+    ? frame.locator(popupIds.map(id=>`[id=${JSON.stringify(id)}]`).join(','))
+    : frame;
+  let option=scope.getByRole('option',{name:action.value,exact:true}).filter({visible:true});
+  if (await option.count()===0) option=scope.getByText(action.value,{exact:true}).filter({visible:true});
   await option.click({timeout:30000}); // Playwright strictness rejects ambiguous options.
 }

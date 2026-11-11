@@ -133,3 +133,30 @@ test('select rejects two visible exact text matches without choosing either', as
     assert.equal(await readValue(page,{selector:'#age',attribute:'value'}),'25');
   } finally { await browser.close(); }
 });
+
+test('custom selection stays inside its associated popup instead of another open dropdown', async t => {
+  const {selectValue} = await import('../page-actions.mjs');
+  const browser = await chromium.launch({headless:true});
+  t.after(()=>browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`<input id="age" readonly role="combobox" aria-expanded="true" aria-controls="ages" value="25">
+    <div id="ages" role="listbox"><div role="option" onclick="document.querySelector('#age').value='30'">30</div></div>
+    <div role="listbox"><div role="option" onclick="document.body.dataset.wrong='yes'">30</div></div>`);
+  await selectValue(page,{selector:'#age',value:'30'});
+  assert.equal(await page.locator('#age').inputValue(),'30');
+  assert.equal(await page.locator('body').getAttribute('data-wrong'),null);
+});
+
+test('custom selection uses the target iframe and never the same-named parent option', async t => {
+  const {selectValue} = await import('../page-actions.mjs');
+  const browser = await chromium.launch({headless:true});
+  t.after(()=>browser.close());
+  const page = await browser.newPage();
+  await page.setContent('<div role="option" onclick="document.body.dataset.wrong=\'yes\'">30</div><iframe id="quote"></iframe>');
+  const frame = page.frames().find(frame=>frame!==page.mainFrame());
+  await frame.setContent(`<input id="age" readonly role="combobox" aria-expanded="true" value="25">
+    <div role="option" onclick="document.querySelector('#age').value='30'">30</div>`);
+  await selectValue(page,{selector:'#quote >> internal:control=enter-frame >> #age',value:'30'});
+  assert.equal(await frame.locator('#age').inputValue(),'30');
+  assert.equal(await page.locator('body').getAttribute('data-wrong'),null);
+});
