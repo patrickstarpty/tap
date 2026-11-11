@@ -196,11 +196,15 @@ class BrowserProgress:
             receipt = await execute(action)
             observation = receipt.get("observation")
             self.unknown_action = receipt.get("status") == "unknown"
-            if receipt.get("status") != "completed" or not isinstance(observation, dict):
+            if receipt.get("status") not in {"completed", "failed"} or not isinstance(
+                observation, dict
+            ):
                 observation = {
                     "error": "browser action did not complete",
                     "status": receipt.get("status"),
                 }
+            elif receipt.get("status") == "failed" and not observation.get("error"):
+                observation = {**observation, "error": "browser action did not complete"}
         except Exception as error:
             if action.get("type") in writes:
                 self.input_proofs.clear()

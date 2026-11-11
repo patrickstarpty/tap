@@ -804,3 +804,35 @@ async def test_uncertain_action_is_preserved_in_timeline(status, error):
     await progress.handle({"type": "click", "step": "go", "selector": "#submit"}, "go", execute)
     assert events[-1][0] == "browser.action_finished"
     assert events[-1][1]["outcome"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_known_failed_action_keeps_original_error_and_current_observation():
+    async def emit(*args):
+        pass
+
+    progress = BrowserProgress(emit)
+
+    async def execute(action):
+        return {
+            "status": "failed",
+            "observation": {
+                "error": "invalid selector before write",
+                "write_started": False,
+                "url": "https://example.com",
+                "bounded_snapshot": "Choose age",
+                "fields": [{"selector": "#age"}],
+            },
+        }
+
+    await progress.handle(
+        {"type": "plan", "steps": [{"id": "choose", "keyword": "When", "title": "Choose"}]},
+        "plan",
+        execute,
+    )
+    result = await progress.handle(
+        {"type": "fill", "step": "choose", "selector": "[", "value": "30"}, "bad", execute
+    )
+    assert result["error"] == "invalid selector before write"
+    assert result["bounded_snapshot"] == "Choose age"
+    assert not progress.unknown_action

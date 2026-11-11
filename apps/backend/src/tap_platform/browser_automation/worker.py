@@ -362,6 +362,13 @@ class BrowserWorker:
                     "unknown"
                     if row["request"].get("type")
                     not in {"snapshot", "read", "screenshot", "wait", "preflight"}
+                    and not (
+                        observation.write_started is False
+                        and not (
+                            session
+                            and session.get("control_version") == "browser-control-v1"
+                        )
+                    )
                     else "failed"
                 )
                 if observation.error
