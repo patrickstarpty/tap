@@ -346,6 +346,7 @@ def compile_replay(result: DirectBrowserResult) -> str:
         + json.dumps(contract.model_dump(mode="json") if contract else None)
         + ";",
         "const acceptanceProofs = new Map();",
+        "const documentTracker = createDocumentProvenance(page);",
     ]
     quote = json.dumps
     for action in result.actions:
@@ -353,6 +354,14 @@ def compile_replay(result: DirectBrowserResult) -> str:
         if kind not in {"snapshot", "navigate", "click", "fill", "select", "press", "wait", "read"}:
             raise ValueError("Unsupported replay action: " + str(kind))
         if kind == "snapshot":
+            lines.append("{")
+            lines.append("const documents = await documentTracker.snapshot();")
+            lines.append(
+                "recordAcceptance(acceptanceContract, acceptanceProofs, "
+                + quote(action)
+                + ", documents, documents, null);"
+            )
+            lines.append("}")
             continue
         step = result.steps[action["step"]]
         lines.append(
@@ -364,7 +373,8 @@ def compile_replay(result: DirectBrowserResult) -> str:
         lines.append(
             f"await test.step({quote(step['keyword'] + ' ' + step['title'])}, async () => {{"
         )
-        lines.append("const beforeUrl = page.url();")
+        lines.append("const beforeDocuments = await documentTracker.snapshot();")
+        lines.append("let readProof = null;")
         locator = f"page.locator({quote(action.get('selector', ''))})"
         if action.get("target_texts"):
             lines.append(f"await guardTarget(page, {quote(action)});")
@@ -389,7 +399,16 @@ def compile_replay(result: DirectBrowserResult) -> str:
                 "aria-valuenow": "getAttribute('aria-valuenow')",
                 "aria-pressed": "getAttribute('aria-pressed')",
                 "data-active": "getAttribute('data-active')",
+                "selected_label": "",
             }[attribute]
+            reader = (
+                f"readSelectedLabel(page, {quote(action)})"
+                if attribute == "selected_label"
+                else f"readValue(page, {quote(action)})"
+                if attribute == "value"
+                else f"{locator}.{reader}"
+            )
+            lines.append(f"readProof = await documentTracker.read({quote(action)}, async () => {{")
             if "equals" in action:
                 method = (
                     "toHaveValue"
@@ -402,8 +421,7 @@ def compile_replay(result: DirectBrowserResult) -> str:
                     lines.append(f"await expect({locator}).{method}({quote(action['equals'])});")
                 else:
                     lines.append(
-                        f"await expect.poll(() => {locator}.{reader})"
-                        f".toBe({quote(action['equals'])});"
+                        f"await expect.poll(() => {reader}).toBe({quote(action['equals'])});"
                     )
             if "contains" in action:
                 if attribute == "text":
@@ -412,35 +430,35 @@ def compile_replay(result: DirectBrowserResult) -> str:
                     )
                 else:
                     lines.append(
-                        f"await expect.poll(() => {locator}.{reader})"
-                        f".toContain({quote(action['contains'])});"
+                        f"await expect.poll(() => {reader}).toContain({quote(action['contains'])});"
                     )
             if "pattern" in action:
                 lines.append(
-                    f"await expect.poll(() => {locator}.{reader})"
+                    f"await expect.poll(() => {reader})"
                     f".toMatch(new RegExp({quote(action['pattern'])}, 'u'));"
                 )
             if action.get("positive"):
                 lines.append(
-                    f"await expect.poll(async () => positiveNumber(await {locator}.{reader}), "
+                    f"await expect.poll(async () => positiveNumber(await {reader}), "
                     "{timeout:30000}).toBe(true);"
                 )
             if action.get("nonempty"):
                 lines.append(
-                    f"await expect.poll(async () => String(await {locator}.{reader}).trim(), "
+                    f"await expect.poll(async () => String(await {reader}).trim(), "
                     "{timeout:30000}).not.toBe('');"
                 )
-            lines.append(f"outputs[{quote(action['name'])}] = await {locator}.{reader};")
+            lines.append(f"return await {reader};")
+            lines.append("});")
+            lines.append(f"outputs[{quote(action['name'])}] = readProof.value;")
         lines.append(
             f"recordAcceptance(acceptanceContract, acceptanceProofs, {quote(action)}, "
-            f"beforeUrl, page.url(), outputs[{quote(action.get('name', ''))}]);"
+            "beforeDocuments, await documentTracker.snapshot(), readProof);"
         )
         lines.append("});")
     lines.extend(
         [
-            "if (acceptanceContract && "
-            "acceptanceContract.fields.some(f => !acceptanceProofs.has(f.id))) "
-            "throw new Error('reviewed input proof missing or stale');",
+            "assertAcceptance(acceptanceContract, acceptanceProofs, "
+            "await documentTracker.snapshot());",
             "await testInfo.attach('tapper-result', {body: Buffer.from(JSON.stringify(outputs)), "
             "contentType:'application/json'});",
             "});",
