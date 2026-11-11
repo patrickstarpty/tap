@@ -8,6 +8,6 @@
 - [x] Add release-version UI and use the published parameter schema independently of edited drafts.
 - [x] Validate recording/edit/save/reopen/real FWD replay inside the TAP shell.
 - [x] Finish published-version browser acceptance, final regression gates, and evidence review.
-- [ ] Commit and verify authorized development-branch publication.
+- [x] Commit and verify authorized development-branch publication (`41ac9a4d`, remote develop verified).
 
 See [design](../specs/2026-11-11-lca-product-integration-design.md). No production or whole-platform completion is implied.
