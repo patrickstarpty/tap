@@ -72,6 +72,7 @@ def project_recording(
             "click",
             "fill",
             "select",
+            "scroll",
         }:
             before, after = (
                 receipt.get("pre_observation_sequence"),
@@ -103,7 +104,7 @@ def project_recording(
         reason = None
         if receipt["status"] != "completed":
             reason = receipt["status"]
-        elif operation not in {"navigate", "click", "fill", "select"}:
+        elif operation not in {"navigate", "click", "fill", "select", "scroll"}:
             reason = "unsupported_operation"
         if reason:
             excluded.append(ExcludedAction(receipt["action_id"], sequence, reason))
@@ -126,7 +127,9 @@ def project_recording(
                 ),
             },
         }
-        if operation != "navigate":
+        if operation != "navigate" and not (
+            operation == "scroll" and receipt.get("target") is None
+        ):
             target = receipt.get("target")
             if not isinstance(target, dict):
                 raise ValueError("missing acknowledged semantic target")

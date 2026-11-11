@@ -113,3 +113,164 @@ it("materializes BDD metadata only after a legacy settings edit", async () => {
   });
   expect(change.mock.calls[0][0].bdd_steps[0].action_ids).toEqual(["open"]);
 });
+
+it("configures typed scroll, wait, checked and drag arguments", () => {
+  render(<StatefulEditor />);
+  const operation = screen.getByLabelText("Step open operation");
+  const current = () =>
+    JSON.parse(screen.getByTestId("value").textContent!).steps[0];
+  fireEvent.change(operation, { target: { value: "scroll" } });
+  expect(current().arguments).toEqual({ delta_x: 0, delta_y: 600 });
+  expect(
+    screen.getByRole("option", { name: "Page (no target)" }),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Step open delta_y value"), {
+    target: { value: "-200" },
+  });
+  expect(current().arguments).toEqual({ delta_x: 0, delta_y: -200 });
+  fireEvent.change(screen.getByLabelText("Step open delta_y value"), {
+    target: { value: "10001" },
+  });
+  expect(current().arguments.delta_y).toBe("10001");
+  fireEvent.change(screen.getByLabelText("Step open delta_x value"), {
+    target: { value: "20" },
+  });
+  expect(current().arguments.delta_y).toBe("10001");
+  expect(screen.getByRole("alert")).toHaveTextContent("10000");
+  fireEvent.change(operation, { target: { value: "wait_for" } });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Step open value"), {
+    target: { value: "hidden" },
+  });
+  expect(current().arguments).toEqual({ state: "hidden" });
+  fireEvent.change(operation, { target: { value: "assert_checked" } });
+  fireEvent.change(screen.getByLabelText("Step open value"), {
+    target: { value: "false" },
+  });
+  expect(current().arguments).toEqual({ checked: false });
+  fireEvent.change(operation, { target: { value: "drag_drop" } });
+  expect(
+    screen.getByLabelText("Step open destination target"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByLabelText("Step open value source"),
+  ).not.toBeInTheDocument();
+});
+
+it("filters numeric and boolean parameters and protects referenced targets", () => {
+  const change = vi.fn();
+  const value: LcaDefinition = {
+    ...definition,
+    targets: [
+      { id: "frame", kind: "test_id", value: "frame" },
+      { id: "item", kind: "test_id", value: "item", frame_target_id: "frame" },
+      { id: "drop", kind: "test_id", value: "drop" },
+    ],
+    parameters: [
+      ...definition.parameters,
+      { name: "flag", type: "boolean", required: true },
+      { name: "text", type: "string", required: true },
+    ],
+    steps: [
+      {
+        id: "scroll",
+        operation: "scroll",
+        arguments: { delta_x: 0, delta_y: { parameter: "count" } },
+        timeout_ms: 10000,
+      },
+      {
+        id: "drag",
+        operation: "drag_drop",
+        target_id: "item",
+        arguments: { destination_target_id: "drop" },
+        timeout_ms: 10000,
+      },
+    ],
+  };
+  render(<DefinitionEditor value={value} onChange={change} />);
+  const select = screen.getByLabelText("Step scroll delta_y parameter");
+  expect(select).toHaveTextContent("count");
+  expect(select).not.toHaveTextContent("flag");
+  expect(select).not.toHaveTextContent("text");
+  expect(
+    screen.getByRole("button", { name: "Remove target frame", hidden: true }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Remove target drop", hidden: true }),
+  ).toBeDisabled();
+});
+
+it("allows typing a negative scroll distance while preserving invalid intermediate values for schema rejection", async () => {
+  const user = userEvent.setup();
+  render(<StatefulEditor />);
+  fireEvent.change(screen.getByLabelText("Step open operation"), {
+    target: { value: "scroll" },
+  });
+  const distance = screen.getByLabelText("Step open delta_y value");
+  await user.clear(distance);
+  await user.type(distance, "-250");
+  expect(
+    JSON.parse(screen.getByTestId("value").textContent!).steps[0].arguments
+      .delta_y,
+  ).toBe(-250);
+});
+
+it("offers only drag destinations in the source frame", () => {
+  render(
+    <DefinitionEditor
+      value={{
+        ...definition,
+        targets: [
+          { id: "frame", kind: "test_id", value: "frame" },
+          {
+            id: "source",
+            kind: "test_id",
+            value: "source",
+            frame_target_id: "frame",
+          },
+          {
+            id: "inside",
+            kind: "test_id",
+            value: "inside",
+            frame_target_id: "frame",
+          },
+          { id: "outside", kind: "test_id", value: "outside" },
+        ],
+        steps: [
+          {
+            id: "drag",
+            operation: "drag_drop",
+            target_id: "source",
+            arguments: { destination_target_id: "inside" },
+            timeout_ms: 10000,
+          },
+        ],
+      }}
+      onChange={vi.fn()}
+    />,
+  );
+  const destination = screen.getByLabelText("Step drag destination target");
+  expect(destination).toHaveTextContent("inside");
+  expect(destination).not.toHaveTextContent("outside");
+});
+
+it("exposes exact rendered text separately without normalizing the value", () => {
+  render(<StatefulEditor />);
+  const operation = screen.getByLabelText("Step open operation");
+  expect(
+    screen.getByRole("option", { name: "Exact rendered text assertion" }),
+  ).toHaveValue("assert_text_exact");
+  expect(screen.getByRole("option", { name: "Assert text" })).toHaveValue(
+    "assert_text",
+  );
+  fireEvent.change(operation, { target: { value: "assert_text_exact" } });
+  fireEvent.change(screen.getByLabelText("Step open value"), {
+    target: { value: "  exact\n text  " },
+  });
+  expect(
+    JSON.parse(screen.getByTestId("value").textContent!).steps[0],
+  ).toMatchObject({
+    operation: "assert_text_exact",
+    arguments: { text: "  exact\n text  " },
+  });
+});

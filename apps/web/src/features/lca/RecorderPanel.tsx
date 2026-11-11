@@ -59,6 +59,9 @@ function Panel({
     [selector, setSelector] = useState(""),
     [value, setValue] = useState(""),
     [url, setUrl] = useState("");
+  const [scrollSelector, setScrollSelector] = useState("");
+  const [deltaX, setDeltaX] = useState("0"), [deltaY, setDeltaY] = useState("400");
+  const validScroll = [deltaX, deltaY].every(v => v.trim() !== "" && Number.isFinite(Number(v)) && Math.abs(Number(v)) <= 2000);
   const [point, setPoint] = useState<{ x: number; y: number } | null>(null),
     [log, setLog] = useState<string[]>([]),
     [now, setNow] = useState(Date.now());
@@ -429,8 +432,9 @@ function Panel({
       };
       if (operation === "navigate") action.url = url;
       else if (operation === "scroll") {
-        action.delta_x = 0;
-        action.delta_y = 400;
+        action.delta_x = Number(deltaX);
+        action.delta_y = Number(deltaY);
+        if (scrollSelector.trim()) action.selector = scrollSelector.trim();
       } else {
         if (point) {
           action.x = point.x;
@@ -730,7 +734,7 @@ function Panel({
                     <option value="click">Click</option>
                     <option value="fill">Fill</option>
                     <option value="select">Native select</option>
-                    <option value="scroll">Scroll down (not replayed)</option>
+                    <option value="scroll">Scroll page or container</option>
                   </select>
                 </label>
                 {operation === "navigate" ? (
@@ -755,6 +759,12 @@ function Panel({
                     </label>
                   )
                 )}
+                {operation === "scroll" && <>
+                  <label>Scroll container CSS selector (optional)<input value={scrollSelector} onChange={e => setScrollSelector(e.target.value)} placeholder="Leave empty for page" /></label>
+                  <label>Horizontal scroll (px)<input type="number" min={-2000} max={2000} value={deltaX} onChange={e => setDeltaX(e.target.value)} /></label>
+                  <label>Vertical scroll (px)<input type="number" min={-2000} max={2000} value={deltaY} onChange={e => setDeltaY(e.target.value)} /></label>
+                  <small>Positive values scroll right/down. This action is saved for replay.</small>
+                </>}
                 {(operation === "fill" || operation === "select") && (
                   <label>
                     Synthetic input value
@@ -772,7 +782,7 @@ function Panel({
                     (operation === "navigate"
                       ? !url
                       : operation === "scroll"
-                        ? false
+                        ? !validScroll
                         : !point && !selector)
                   }
                   onClick={() => void perform()}

@@ -63,6 +63,7 @@ export function DefinitionSettings({
                             value: "",
                             ...(kind === "role" ? { name: "" } : {}),
                             review_required: kind === "css",
+                            frame_target_id: t.frame_target_id,
                           }
                         : t,
                     ),
@@ -111,7 +112,13 @@ export function DefinitionSettings({
             )}
             <button
               type="button"
-              disabled={value.steps.some((s) => s.target_id === target.id)}
+              disabled={
+                value.steps.some(
+                  (s) =>
+                    s.target_id === target.id ||
+                    s.arguments.destination_target_id === target.id,
+                ) || value.targets.some((t) => t.frame_target_id === target.id)
+              }
               onClick={() =>
                 onChange({
                   ...value,
@@ -264,8 +271,9 @@ export function DefinitionSettings({
           Add parameter
         </button>
         <p className="lca-muted">
-          Operation arguments accept string parameters. Numeric and boolean
-          inputs retain their types at replay.
+          Operation arguments accept matching string, numeric or boolean
+          parameters. Inputs retain their types at replay. Drag destinations are
+          fixed targets.
         </p>
       </details>
     </div>

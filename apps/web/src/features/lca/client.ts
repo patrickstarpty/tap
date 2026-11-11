@@ -1,13 +1,33 @@
 /** Contracts mirror the TAP LCA API. No service credential enters the UI. */
 export type Scalar = string | number | boolean;
 export type Operation =
-  "navigate" | "click" | "fill" | "select" | "assert_text" | "assert_url";
+  | "navigate"
+  | "click"
+  | "fill"
+  | "select"
+  | "assert_text_exact"
+  | "assert_text"
+  | "assert_url"
+  | "scroll"
+  | "scroll_into_view"
+  | "press"
+  | "hover"
+  | "double_click"
+  | "right_click"
+  | "check"
+  | "uncheck"
+  | "drag_drop"
+  | "wait_for"
+  | "assert_visible"
+  | "assert_value"
+  | "assert_checked";
 export interface LcaTarget {
   id: string;
   kind: "test_id" | "role" | "css";
   value: string;
   name?: string | null;
   review_required?: boolean;
+  frame_target_id?: string | null;
 }
 export interface LcaParameter {
   name: string;
@@ -18,7 +38,7 @@ export interface LcaParameter {
 export interface LcaStep {
   id: string;
   operation: Operation;
-  arguments: Record<string, string | { parameter: string }>;
+  arguments: Record<string, Scalar | { parameter: string }>;
   target_id?: string | null;
   timeout_ms: number;
   provenance?: Record<string, string>;

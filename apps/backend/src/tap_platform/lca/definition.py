@@ -32,6 +32,7 @@ class Target(StrictModel):
     value: Annotated[str, Field(min_length=1, max_length=1024)]
     name: Text | None = None
     review_required: bool = False
+    frame_target_id: Identifier | None = None
 
     @model_validator(mode="after")
     def locator_shape(self) -> "Target":
@@ -61,9 +62,28 @@ class Parameter(StrictModel):
 class Step(StrictModel):
     id: Identifier
     operation: Literal[
-        "navigate", "click", "fill", "select", "assert_text", "assert_url"
+        "navigate",
+        "click",
+        "fill",
+        "select",
+        "assert_text",
+        "assert_text_exact",
+        "assert_url",
+        "scroll",
+        "scroll_into_view",
+        "press",
+        "hover",
+        "double_click",
+        "right_click",
+        "check",
+        "uncheck",
+        "drag_drop",
+        "wait_for",
+        "assert_visible",
+        "assert_value",
+        "assert_checked",
     ]
-    arguments: dict[str, Text | ParameterReference]
+    arguments: dict[str, Text | int | float | bool | ParameterReference]
     target_id: Identifier | None = None
     timeout_ms: Annotated[int, Field(gt=0, le=30000)]
     provenance: dict[str, Annotated[str, Field(max_length=1024)]] = Field(
@@ -123,34 +143,110 @@ class DebugDefinition(StrictModel):
                 )
         targets = {t.id for t in self.targets}
         parameters = {p.name: p for p in self.parameters}
-        expected = {
-            "navigate": "url",
-            "fill": "value",
-            "select": "value",
-            "assert_text": "text",
-            "assert_url": "url",
-        }
+        target_map = {t.id: t for t in self.targets}
+        for target in self.targets:
+            if target.frame_target_id is not None:
+                frame = target_map.get(target.frame_target_id)
+                if (
+                    frame is None
+                    or frame.id == target.id
+                    or frame.frame_target_id is not None
+                ):
+                    raise ValueError(
+                        "Frame context requires an existing top-level target"
+                    )
         for step in self.steps:
-            key = expected.get(step.operation)
-            if set(step.arguments) != ({key} if key else set()):
+            schema = argument_schema(step.operation)
+            if set(step.arguments) != set(schema):
                 raise ValueError("Operation arguments do not match its schema")
-            needs_target = step.operation not in {"navigate", "assert_url"}
-            if needs_target and step.target_id not in targets:
-                raise ValueError("Operation requires an existing target")
-            if not needs_target and step.target_id is not None:
-                raise ValueError("Page operation cannot have a target")
+            if step.operation in {"navigate", "assert_url"}:
+                if step.target_id is not None:
+                    raise ValueError("Page operation cannot have a target")
+            elif step.operation != "scroll" or step.target_id is not None:
+                if step.target_id not in targets:
+                    raise ValueError("Operation requires an existing target")
             if len(step.provenance) > 16:
                 raise ValueError("Too many provenance fields")
-            for argument in step.arguments.values():
+            for key, argument in step.arguments.items():
                 if isinstance(argument, ParameterReference):
                     parameter = parameters.get(argument.parameter)
-                    if parameter is None or parameter.type != "string":
+                    kinds = {schema[key]}
+                    if schema[key] == "number":
+                        kinds.add("integer")
+                    if (
+                        key == "destination_target_id"
+                        or parameter is None
+                        or parameter.type not in kinds
+                    ):
                         raise ValueError(
-                            "Operation requires a declared string parameter"
+                            "Operation requires a declared parameter of the matching type"
                         )
-                elif key == "url":
-                    check_url(argument, self.allowed_origins)
+                    if "default" in parameter.model_fields_set:
+                        check_argument(
+                            key,
+                            parameter.default,
+                            schema[key],
+                            self.allowed_origins,
+                            targets,
+                        )
+                else:
+                    check_argument(
+                        key, argument, schema[key], self.allowed_origins, targets
+                    )
+            if step.operation == "drag_drop":
+                destination = step.arguments["destination_target_id"]
+                assert isinstance(destination, str)
+                assert step.target_id is not None
+                if (
+                    target_map[step.target_id].frame_target_id
+                    != target_map[destination].frame_target_id
+                ):
+                    raise ValueError(
+                        "Drag source and destination must use the same frame"
+                    )
         return self
+
+
+def argument_schema(operation: str) -> dict[str, str]:
+    return {
+        "navigate": {"url": "string"},
+        "assert_url": {"url": "string"},
+        "fill": {"value": "string"},
+        "select": {"value": "string"},
+        "assert_text": {"text": "string"},
+        "assert_text_exact": {"text": "string"},
+        "assert_value": {"value": "string"},
+        "scroll": {"delta_x": "number", "delta_y": "number"},
+        "press": {"key": "string"},
+        "wait_for": {"state": "string"},
+        "drag_drop": {"destination_target_id": "string"},
+        "assert_checked": {"checked": "boolean"},
+    }.get(operation, {})
+
+
+def check_argument(
+    key: str, value: object, kind: str, origins: list[str], targets: set[str]
+) -> None:
+    check_scalar(kind, value)
+    if key in {"delta_x", "delta_y"}:
+        assert isinstance(value, (int, float))
+        if abs(value) > 10000:
+            raise ValueError("Scroll delta must be between -10000 and 10000")
+    elif key == "key":
+        assert isinstance(value, str)
+        if (
+            not value
+            or len(value) > 128
+            or any(ord(c) < 32 or ord(c) == 127 for c in value)
+        ):
+            raise ValueError("Key must contain 1 to 128 printable characters")
+    elif key == "state" and value not in ("visible", "hidden", "attached", "detached"):
+        raise ValueError("Unsupported wait state")
+    elif key == "destination_target_id" and value not in targets:
+        raise ValueError("Drag destination requires an existing target")
+    elif key == "url":
+        assert isinstance(value, str)
+        check_url(value, origins)
 
 
 def normalized_origin(value: str) -> str:
@@ -247,7 +343,11 @@ def resolve_parameters(
                 value = result[argument.parameter]
             else:
                 value = argument
-            if key == "url":
-                assert isinstance(value, str)
-                check_url(value, definition.allowed_origins)
+            check_argument(
+                key,
+                value,
+                argument_schema(step.operation)[key],
+                definition.allowed_origins,
+                {t.id for t in definition.targets},
+            )
     return result
