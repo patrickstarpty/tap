@@ -265,6 +265,7 @@ READ_ATTRIBUTES = frozenset(
         "aria-invalid",
         "data-testid",
         "data-active",
+        "selected_label",
     }
 )
 
@@ -313,6 +314,10 @@ def check_read_arguments(arguments: Mapping[str, object]) -> None:
         arguments.keys() & {"equals", "contains", "nonempty", "positive", "pattern"}
     ):
         raise ValueError("Read assertion requires a condition")
+    if arguments.get("attribute") == "selected_label" and not isinstance(
+        arguments.get("equals"), str
+    ):
+        raise ValueError("Associated selection requires exact equals")
     for key, value in arguments.items():
         check_scalar(schema[key], value)
         if key in {"nonempty", "positive"} and value is not True:

@@ -46,12 +46,21 @@ def reviewed(tmp_path):
         observation={
             "sequence": 1,
             "url": "https://example.com",
+            "documents": [
+                {
+                    "frame_id": "main",
+                    "document_id": "doc1",
+                    "url": "https://example.com",
+                }
+            ],
             "error": None,
             "fields": [],
             "extracted": {
                 "name": "Age-Years",
                 "value": "30",
                 "source_url": "https://example.com",
+                "source_frame_id": "main",
+                "source_document_id": "doc1",
                 "observation_sequence": 1,
             },
         },
@@ -214,4 +223,43 @@ def test_boolean_observation_sequence_cannot_prove_reviewed_field(tmp_path):
             browser, "project", definition, {"status": "passed"}, current
         )["status"]
         == "not_proven"
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["missing_document", "wrong_document", "different_frame", "different_url"]
+)
+def test_source_readback_requires_its_actual_document_proof(tmp_path, change):
+    browser, principal, definition, current = reviewed(tmp_path)
+    row = browser.store.get("action", "project", "a1")
+    observation = deepcopy(row["observation"])
+    if change == "missing_document":
+        observation.pop("documents")
+    else:
+        key = {
+            "wrong_document": "document_id",
+            "different_frame": "frame_id",
+            "different_url": "url",
+        }[change]
+        observation["documents"][0][key] = "different"
+    browser.store.update("action", "project", "a1", observation=observation)
+    assert (
+        evaluate_contract(
+            browser, "project", definition, {"status": "passed"}, current
+        )["status"]
+        == "not_proven"
+    )
+
+
+def test_source_readback_uses_owning_frame_url_not_outer_page(tmp_path):
+    browser, principal, definition, current = reviewed(tmp_path)
+    row = browser.store.get("action", "project", "a1")
+    observation = deepcopy(row["observation"])
+    observation["url"] = "https://outer.example"
+    browser.store.update("action", "project", "a1", observation=observation)
+    assert (
+        evaluate_contract(
+            browser, "project", definition, {"status": "passed"}, current
+        )["status"]
+        == "passed"
     )

@@ -101,6 +101,19 @@ def _matches(field: dict[str, Any], row: dict[str, Any]) -> bool:
     request, observation = row["request"], row.get("observation") or {}
     extracted = observation.get("extracted") or {}
     labels = request.get("target_texts")
+    documents = observation.get("documents")
+    document_matches = (
+        [
+            entry
+            for entry in documents or []
+            if isinstance(entry, dict)
+            and entry.get("frame_id") == extracted.get("source_frame_id")
+            and entry.get("document_id") == extracted.get("source_document_id")
+            and entry.get("url") == extracted.get("source_url")
+        ]
+        if isinstance(documents, list)
+        else []
+    )
     return bool(
         row["status"] == "completed"
         and not observation.get("error")
@@ -117,9 +130,11 @@ def _matches(field: dict[str, Any], row: dict[str, Any]) -> bool:
         and type(observation.get("sequence")) is int
         and type(extracted.get("observation_sequence")) is int
         and extracted.get("observation_sequence") == observation["sequence"]
-        and isinstance(observation.get("url"), str)
-        and observation["url"]
-        and extracted.get("source_url") == observation["url"]
+        and all(
+            isinstance(extracted.get(key), str) and extracted[key]
+            for key in ("source_frame_id", "source_document_id", "source_url")
+        )
+        and len(document_matches) == 1
     )
 
 

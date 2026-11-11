@@ -92,6 +92,7 @@ export const argumentFields = (operation: Operation): ArgumentField[] => {
             "aria-invalid",
             "data-testid",
             "data-active",
+            "selected_label",
           ],
         },
         { key: "nonempty", type: "boolean", default: true },

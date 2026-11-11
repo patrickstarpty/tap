@@ -91,6 +91,36 @@ from tap_platform.lca.generator import generate_playwright
             '<input data-testid="field" autocomplete="cc-number" title="secret">',
             None,
         ),
+        (
+            "selected_label",
+            {"equals": "Female"},
+            '<div data-name="gender"><p>Gender</p><button data-value="1">Male</button><button data-value="2">Female</button><input data-testid="field" type="hidden" name="gender" value="2"></div>',
+            "Female",
+        ),
+        (
+            "selected_label",
+            {"equals": "Male"},
+            '<div data-name="gender"><p>Gender</p><button data-value="1">Male</button><button data-value="2">Female</button><input data-testid="field" type="hidden" name="gender" value="2"></div>',
+            None,
+        ),
+        (
+            "value",
+            {"equals": "2"},
+            '<div data-name="gender"><p>Gender</p><button data-value="1">Male</button><button data-value="2">Female</button><input data-testid="field" type="hidden" name="gender" value="2"></div>',
+            "2",
+        ),
+        (
+            "value",
+            {"equals": "2"},
+            '<input data-testid="field" type="hidden" name="gender" value="2">',
+            None,
+        ),
+        (
+            "selected_label",
+            {"equals": "Female"},
+            '<div data-name="token"><p>Gender</p><button data-value="1">Male</button><button data-value="2">Female</button><input data-testid="field" type="hidden" name="token" value="2"></div>',
+            None,
+        ),
         ("title", {"nonempty": True}, '<div data-testid="field"></div>', None),
     ],
 )
@@ -110,6 +140,16 @@ def test_read_in_chromium(tmp_path, attribute, condition, html, expected):
                     target_id="field",
                     arguments=dict(attribute=attribute, name="quote", **condition),
                     timeout_ms=300,
+                    **(
+                        {
+                            "target_contract": {
+                                "target_texts": ["Gender"],
+                                "scope_text": "Gender",
+                            }
+                        }
+                        if attribute == "selected_label"
+                        else {}
+                    ),
                 )
             ],
         )

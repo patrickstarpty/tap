@@ -21,7 +21,13 @@ class AcceptanceField(SourceModel):
     value: Annotated[str, Field(max_length=4000)]
     readback_value: Annotated[str, Field(max_length=4000)]
     attribute: Literal[
-        "text", "value", "checked", "aria-pressed", "aria-valuenow", "data-active"
+        "text",
+        "value",
+        "checked",
+        "aria-pressed",
+        "aria-valuenow",
+        "data-active",
+        "selected_label",
     ]
     target_texts: Annotated[
         list[Annotated[str, Field(min_length=1, max_length=200)]],
@@ -35,6 +41,8 @@ class AcceptanceField(SourceModel):
             "final_url",
             "provenance",
             "source_url",
+            "source_frame_id",
+            "source_document_id",
             "observed_at",
             "observation_sequence",
         }:
