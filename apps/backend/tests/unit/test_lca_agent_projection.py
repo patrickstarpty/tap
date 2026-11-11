@@ -82,7 +82,7 @@ def test_complete_projection_keeps_order_bdd_provenance_and_requires_review():
             "protected_input",
         ),
         (
-            {"request": {"type": "press", "selector": "#name", "key": "Enter"}},
+            {"request": {"type": "evaluate", "selector": "#name"}},
             "unsupported_operation",
         ),
     ],
@@ -346,3 +346,76 @@ def test_reviewed_projection_preserves_document_observation_after_actions():
         == "action-4"
     )
     assert len(result["definition"]["bdd_steps"][-1]["action_ids"]) == 2
+
+
+@pytest.mark.parametrize(
+    "kind,args,operation,expected",
+    [
+        ("wait", {}, "wait_for", {"state": "visible"}),
+        ("press", {"key": "ControlOrMeta+A"}, "press", {"key": "ControlOrMeta+A"}),
+    ],
+)
+def test_wait_and_press_preserve_exact_existing_lca_semantics(
+    kind, args, operation, expected
+):
+    row = action(
+        2,
+        kind,
+        selector="#product",
+        target_texts=["Product"],
+        scope_text="Applicant",
+        **args,
+    )
+    result = project([row])
+    assert result["complete"], result["issues"]
+    step = result["definition"]["steps"][0]
+    assert step["operation"] == operation
+    assert step["arguments"] == expected
+    assert step["target_contract"] == {
+        "target_texts": ["Product"],
+        "scope_text": "Applicant",
+    }
+    assert step["provenance"]["source_action_id"] == "action-2"
+    assert result["definition"]["targets"][0]["value"] == "#product"
+
+
+@pytest.mark.parametrize(
+    "kind,args,change",
+    [
+        ("wait", {}, "unknown"),
+        ("press", {"key": "Enter"}, "unknown"),
+        ("wait", {}, "unstable"),
+        ("press", {"key": "Enter"}, "unstable"),
+        ("press", {}, "missing_key"),
+        ("wait", {"state": "hidden"}, "unsupported"),
+        ("press", {"key": "x", "input_ref": "protected"}, "protected"),
+        ("press", {"key": "x"}, "sensitive"),
+    ],
+)
+def test_wait_and_press_do_not_guess_or_ignore_incomplete_evidence(kind, args, change):
+    row = action(2, kind, selector="#product", **args)
+    if change == "unknown":
+        row["status"] = "unknown"
+    if change == "unstable":
+        row["request"]["selector"] = "aria-ref=e999"
+    if change == "sensitive":
+        row["observation"]["fields"] = [
+            {"context": "action_target", "autocomplete": "one-time-code"}
+        ]
+    result = project([row])
+    assert not result["complete"] and result["definition"] is None
+    assert result["issues"]
+
+
+def test_controlled_press_does_not_replace_missing_or_mismatched_key():
+    for actual in ({}, {"key": "Escape"}):
+        row = action(2, "press", selector="#product", key="Enter")
+        row["observation"]["extracted"] = {
+            "control_receipt": {
+                "pre_observation_sequence": 1,
+                "target": {"kind": "test_id", "value": "product"},
+                "args": actual,
+            }
+        }
+        result = project([row])
+        assert not result["complete"] and result["definition"] is None

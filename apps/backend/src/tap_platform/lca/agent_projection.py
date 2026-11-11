@@ -54,7 +54,12 @@ def project_agent_actions(
         reason = None
         bound = (observation.get("extracted") or {}).get("control_receipt")
         canonical_target = None
-        if isinstance(bound, dict) and operation in {"click", "fill", "select"}:
+        if isinstance(bound, dict) and operation in {
+            "click",
+            "fill",
+            "select",
+            "press",
+        }:
             before, after = (
                 bound.get("pre_observation_sequence"),
                 observation.get("sequence"),
@@ -108,6 +113,8 @@ def project_agent_actions(
             "fill",
             "select",
             "read",
+            "wait",
+            "press",
             "observe",
         }:
             reason = "unsupported_operation"
@@ -147,7 +154,13 @@ def project_agent_actions(
             or field.get("selector") == selector
         ]
         if any(
-            field.get("type") == "password" or field.get("value") == "[hidden]"
+            str(field.get("type", "")).lower() == "password"
+            or field.get("value") == "[hidden]"
+            or re.search(
+                r"password|one-time-code|cc-number|cc-csc",
+                str(field.get("autocomplete", "")),
+                re.I,
+            )
             for field in target_facts
         ):
             reason = "protected_input"
@@ -177,6 +190,17 @@ def project_agent_actions(
         arguments: dict[str, Any] = {}
         if operation == "navigate":
             arguments = {"url": request.get("url")}
+        elif operation == "wait":
+            operation = "wait_for"
+            arguments = {"state": "visible"}
+            if "state" in request and request["state"] != "visible":
+                reason = reason or "unsupported_wait_constraint"
+        elif operation == "press":
+            arguments = {"key": request.get("key")}
+            if canonical_target is not None and bound.get("args", {}).get(
+                "key"
+            ) != request.get("key"):
+                reason = reason or "press_key_evidence_mismatch"
         elif operation in {"fill", "select"}:
             arguments = {"value": request.get("value")}
             if (
