@@ -83,3 +83,30 @@ it("reports a disconnected API without mounting the composer", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(/unavailable/i);
   expect(screen.queryByText("Real composer enabled")).toBeNull();
 });
+
+it("reacknowledges only a validated same-nonce init when the parent's first ready listener was late", async () => {
+  vi.stubEnv("VITE_TAP_WEB_URL", "http://127.0.0.1:5174");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(context), { status: 200 }),
+  );
+  const post = vi
+    .spyOn(window.parent, "postMessage")
+    .mockImplementation(() => undefined);
+  render(<LcaEmbedPage />);
+  message(init);
+  expect(await screen.findByText("Real composer enabled")).toBeVisible();
+  expect(
+    post.mock.calls.filter(([value]) => value.type === "lca:ready"),
+  ).toHaveLength(1);
+  message({ ...init, nonce: "other-12345678901234567890" });
+  message(init, "https://forged.test");
+  message(init);
+  expect(
+    post.mock.calls.filter(([value]) => value.type === "lca:ready"),
+  ).toHaveLength(2);
+  expect(screen.getAllByText("Real composer enabled")).toHaveLength(1);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(
+    post.mock.calls.filter(([value]) => value.type === "lca:ready"),
+  ).toHaveLength(2);
+});

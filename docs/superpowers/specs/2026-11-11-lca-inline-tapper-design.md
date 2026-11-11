@@ -35,7 +35,9 @@ standalone AA recovery without depending on LCA permissions or configuration.
 
 Messages use `lca-assistant-v1`, the exact configured sender origin, exact
 `event.source`, a fresh per-mount nonce, strict shapes and bounded identifiers.
-The parent sends `lca:init`; only a matching child sends one `lca:ready`. Neither
+The parent retries the same `lca:init` nonce/context within a ten-second bound.
+Only a matching child returns `lca:ready`; a repeated validated init can recover a
+lost acknowledgement without remounting the workspace or broadcasting forever. Neither
 query parameters nor messages authorize identity. The iframe is restricted to the
 configured parent by `frame-ancestors`; sandbox permits scripts, same-origin,
 restricted popups and evidence downloads, never top navigation or popup escape.

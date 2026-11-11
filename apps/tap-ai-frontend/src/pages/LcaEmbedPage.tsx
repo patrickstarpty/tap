@@ -43,9 +43,15 @@ export function LcaEmbedPage() {
     let gateway: LcaGatewayContext | null = null;
     let failed = false;
     let readySent = false;
-    const acknowledge = () => {
+    const acknowledge = (respondToInit = false) => {
       const mode = runtimeRef.current;
-      if (readySent || failed || !pending || !gateway || !mode.isSuccess)
+      if (
+        (readySent && !respondToInit) ||
+        failed ||
+        !pending ||
+        !gateway ||
+        !mode.isSuccess
+      )
         return;
       if (
         !sameLcaContext(pending.context, gateway) ||
@@ -107,7 +113,9 @@ export function LcaEmbedPage() {
           nonce: value.nonce,
           context: parseLcaContext(value.context, false),
         };
-        acknowledge();
+        // A repeated validated init can recover a lost ready acknowledgement.
+        // This is event-driven only, not a permanent readiness broadcast.
+        acknowledge(true);
       } catch {
         setError("LCA context could not be verified.");
       }
@@ -127,7 +135,7 @@ export function LcaEmbedPage() {
         }
       });
     // Runtime may settle after init and the independently resolved gateway.
-    const timer = window.setInterval(acknowledge, 100);
+    const timer = window.setInterval(() => acknowledge(), 100);
     return () => {
       controller.abort();
       window.clearInterval(timer);
