@@ -274,3 +274,50 @@ it("exposes exact rendered text separately without normalizing the value", () =>
     arguments: { text: "  exact\n text  " },
   });
 });
+
+it("adds an exact result assertion using its actual argument field label", async () => {
+  const user = userEvent.setup();
+  function ResultEditor() {
+    const [value, setValue] = useState<LcaDefinition>({
+      ...definition,
+      targets: [{ id: "result", kind: "test_id", value: "result" }],
+      bdd_steps: [
+        {
+          id: "then",
+          keyword: "Then",
+          description: "Verify result",
+          action_ids: ["open"],
+        },
+      ],
+    });
+    return (
+      <>
+        <DefinitionEditor value={value} onChange={setValue} />
+        <output data-testid="edited-result">{JSON.stringify(value)}</output>
+      </>
+    );
+  }
+  render(<ResultEditor />);
+  await user.click(
+    screen.getByRole("button", { name: "Add assertion", exact: true }),
+  );
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: /^Step .+ operation$/u }),
+    "assert_text_exact",
+  );
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: /^Step .+ target$/u }),
+    "result",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: /^Step .+ value$/u }),
+    "AC-42 / 120 / MATCH",
+  );
+  const edited = JSON.parse(screen.getByTestId("edited-result").textContent!);
+  expect(edited.steps[1]).toMatchObject({
+    operation: "assert_text_exact",
+    target_id: "result",
+    arguments: { text: "AC-42 / 120 / MATCH" },
+  });
+  expect(edited.bdd_steps[0].action_ids).toContain(edited.steps[1].id);
+});
