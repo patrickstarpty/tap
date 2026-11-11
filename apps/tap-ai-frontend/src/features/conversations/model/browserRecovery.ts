@@ -22,7 +22,7 @@ const failure = () =>
   new Error(
     "Browser recovery is unavailable. Resolve the saved request before starting another run.",
   );
-/** Session-only frozen intent, never HTTP headers, tokens, or executable scripts. */
+/** Session-only user-request copy; excludes transport credentials, not a secret detector. */
 export class BrowserRecovery {
   constructor(
     private readonly storage: Pick<

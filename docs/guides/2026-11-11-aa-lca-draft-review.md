@@ -81,7 +81,9 @@ parent context while retaining the LCA editor. A changed project/actor must be
 resolved before continuing with its draft.
 
 If a POST receipt was lost, **Recover original browser request** retries only the
-session's exact frozen body and original key. Do not recreate it with a new goal
+session's exact frozen body and original key. That temporary session copy includes
+the goal, notes and reviewed values, not transport credentials. Do not enter
+passwords in task text or required inputs; recovery is not secret detection. Do not recreate it with a new goal
 or key. A first explicit pre-admission rejection releases the failed intent; an
 unknown outcome remains blocked, including when a later retry is denied. Accepted
 receipts can be verified read-only after an API restart. Unknown receipts cannot

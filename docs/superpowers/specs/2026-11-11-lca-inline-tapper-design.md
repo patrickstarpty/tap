@@ -49,8 +49,10 @@ actor blocks the workspace rather than silently switching an unsaved draft.
 
 Before browser admission, session recovery stores the bounded exact request,
 selected conversation and idempotency key under the independently verified
-context. It never stores HTTP headers, credentials or executable scripts. An
-unknown receipt survives reload. Recovery resubmits that exact body/key only after
+context. It stores the user-supplied goal, notes and reviewed values temporarily; it does
+not copy transport headers, browser cookies, gateway tokens or executable scripts.
+This is not secret detection: passwords must not be entered in task text or
+required-input values. An unknown receipt survives reload. Recovery resubmits that exact body/key only after
 an explicit recovery action; mount, hide/show and source review never execute.
 New browser work is blocked while an outcome is uncertain.
 
