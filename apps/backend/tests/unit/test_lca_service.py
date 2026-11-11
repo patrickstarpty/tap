@@ -594,3 +594,65 @@ def test_empty_bdd_group_can_save_but_cannot_generate_or_execute(services):
     assert count(browser, "bundles") == 0
     assert count(browser, "executions") == 0
     assert service.list_runs(actor(), flow["id"]) == []
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        None,
+        "name",
+        "missing",
+        "large",
+        "nonstring",
+        "extra",
+        "wrong_operation",
+        "failed",
+    ],
+)
+def test_canonical_named_read_outputs_match_frozen_contract(corruption):
+    frozen = {
+        "steps": [
+            {
+                "id": "quote",
+                "operation": "assert_read",
+                "arguments": {"attribute": "text", "name": "quote", "nonempty": True},
+            }
+        ]
+    }
+    step = {
+        "step_id": "quote",
+        "status": "passed",
+        "output": {"name": "quote", "value": "120"},
+    }
+    if corruption == "name":
+        step["output"]["name"] = "other"
+    if corruption == "missing":
+        step.pop("output")
+    if corruption == "large":
+        step["output"]["value"] = "x" * 16001
+    if corruption == "nonstring":
+        step["output"]["value"] = 120
+    if corruption == "extra":
+        step["output"]["extra"] = "not allowed"
+    if corruption == "wrong_operation":
+        frozen["steps"][0]["operation"] = "click"
+    if corruption == "failed":
+        step["status"] = "failed"
+    result, error = LcaService._canonical_results(
+        {"canonical_bytes": json.dumps(frozen), "definition_digest": "digest"},
+        {
+            "result": {
+                "outputs": [
+                    {
+                        "schema_version": "lca-debug-result-v1",
+                        "definition_digest": "digest",
+                        "steps": [step],
+                    }
+                ]
+            }
+        },
+    )
+    if corruption is None:
+        assert result == [step] and error is None
+    else:
+        assert result is None and error

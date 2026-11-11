@@ -822,6 +822,11 @@ function RunDetails({
           {run.canonical_results.map((step) => (
             <li key={step.step_id}>
               {step.step_id} · {step.status}
+              {step.output ? (
+                <p>
+                  Output {step.output.name}: {diagnosticText(step.output.value)}
+                </p>
+              ) : null}
             </li>
           ))}
         </ol>

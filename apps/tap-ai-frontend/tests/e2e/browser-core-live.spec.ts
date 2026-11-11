@@ -279,8 +279,14 @@ for (const scenario of cases) {
         const replayResponse = await accepted;
         expect(replayResponse.ok(), await replayResponse.text()).toBe(true);
         const started = await replayResponse.json();
-        let completed: { execution?: { status: string; result?: unknown } } =
-          {};
+        let completed: {
+          execution?: { status: string; result?: unknown };
+          canonical_results?: {
+            status: string;
+            output?: { name: string; value: string };
+          }[];
+          canonical_results_error?: string | null;
+        } = {};
         await expect
           .poll(
             async () => {
@@ -297,6 +303,18 @@ for (const scenario of cases) {
             { timeout: 90_000 },
           )
           .toBe("passed");
+        expect(completed.canonical_results_error).toBeNull();
+        expect(completed.canonical_results).toHaveLength(6);
+        expect(
+          completed.canonical_results?.every(
+            (step) => step.status === "passed",
+          ),
+        ).toBe(true);
+        expect(
+          completed.canonical_results
+            ?.filter((step) => step.output?.name === "result")
+            .map((step) => step.output?.value),
+        ).toEqual(["AC-42 / 120 / MATCH", "AC-42 / 120 / MATCH"]);
         expect(JSON.stringify(completed.execution?.result)).toContain(
           "AC-42 / 120 / MATCH",
         );

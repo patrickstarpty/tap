@@ -97,6 +97,7 @@ export interface LcaRun {
   canonical_results?: Array<{
     step_id: string;
     status: "passed" | "failed" | "not_run";
+    output?: { name: string; value: string };
   }> | null;
   canonical_results_error?: string | null;
   definition_snapshot?: {

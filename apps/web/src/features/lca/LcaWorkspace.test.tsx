@@ -413,3 +413,24 @@ it("keeps an empty BDD business step editable but blocks incomplete replay", asy
   ).toBeVisible();
   expect(api.createRun).not.toHaveBeenCalled();
 });
+
+it("shows validated named read outputs beside canonical action results", async () => {
+  const api = client();
+  api.getRun = vi.fn().mockResolvedValue({
+    ...run,
+    canonical_results: [
+      {
+        step_id: "read",
+        status: "passed",
+        output: { name: "quote", value: "AC-42 / 120 / MATCH" },
+      },
+    ],
+    canonical_results_error: null,
+    execution: { status: "passed", steps: [], evidence: [] },
+  });
+  const user = await open(api);
+  await user.click(screen.getByRole("button", { name: "Debug replay" }));
+  expect(
+    await screen.findByText("Output quote: AC-42 / 120 / MATCH"),
+  ).toBeVisible();
+});

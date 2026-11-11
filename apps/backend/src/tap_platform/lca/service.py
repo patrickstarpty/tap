@@ -399,7 +399,7 @@ class LcaService:
     @staticmethod
     def _canonical_results(
         snapshot: dict[str, Any], execution: dict[str, Any] | None
-    ) -> tuple[list[dict[str, str]] | None, str | None]:
+    ) -> tuple[list[dict[str, Any]] | None, str | None]:
         if execution is None:
             return None, "Execution not linked"
         result = execution.get("result")
@@ -425,14 +425,42 @@ class LcaService:
         ):
             return None, "Canonical result does not match frozen definition"
         validated = []
-        for step_id, step in zip(expected, steps, strict=True):
+        for frozen, step in zip(definition["steps"], steps, strict=True):
+            step_id = frozen["id"]
+            named_read = frozen["operation"] == "assert_read" and isinstance(
+                frozen["arguments"].get("name"), str
+            )
+            expects_output = (
+                named_read and isinstance(step, dict) and step.get("status") == "passed"
+            )
+            allowed_keys = (
+                {"step_id", "status", "output"}
+                if expects_output
+                else {"step_id", "status"}
+            )
             if (
                 not isinstance(step, dict)
-                or set(step) != {"step_id", "status"}
+                or set(step) != allowed_keys
                 or step.get("step_id") != step_id
                 or not isinstance(step.get("status"), str)
                 or step.get("status") not in {"passed", "failed", "not_run"}
             ):
                 return None, "Canonical step results are invalid"
-            validated.append({"step_id": step_id, "status": step["status"]})
+            validated_step: dict[str, Any] = {
+                "step_id": step_id,
+                "status": step["status"],
+            }
+            if expects_output:
+                output = step.get("output")
+                if (
+                    not isinstance(output, dict)
+                    or set(output) != {"name", "value"}
+                    or output.get("name") != frozen["arguments"]["name"]
+                    or not isinstance(output.get("value"), str)
+                    or len(output["value"].encode("utf-16-le", errors="surrogatepass"))
+                    > 32000
+                ):
+                    return None, "Canonical read output is invalid"
+                validated_step["output"] = dict(output)
+            validated.append(validated_step)
         return validated, None
