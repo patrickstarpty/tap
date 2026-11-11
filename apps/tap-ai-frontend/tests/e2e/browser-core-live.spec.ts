@@ -112,6 +112,7 @@ for (const scenario of cases) {
       const sandbox = await iframe.getAttribute("sandbox");
       expect(sandbox?.split(/\s+/u).sort()).toEqual([
         "allow-downloads",
+        "allow-forms",
         "allow-popups",
         "allow-same-origin",
         "allow-scripts",

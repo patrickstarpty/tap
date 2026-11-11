@@ -232,7 +232,7 @@ export function LcaAssistantPanel({
             title="Tapper LCA assistant"
             inert={reconnecting || Boolean(reconnectError)}
             referrerPolicy="no-referrer"
-            sandbox="allow-scripts allow-same-origin allow-popups allow-downloads"
+            sandbox="allow-scripts allow-same-origin allow-popups allow-downloads allow-forms"
             onLoad={() => {
               loaded.current = true;
               initialize();

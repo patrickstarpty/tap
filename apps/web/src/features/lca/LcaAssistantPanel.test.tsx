@@ -52,7 +52,7 @@ it("pins the real iframe origin and keeps the frame alive while hidden", () => {
   expect(frame.src).toBe("http://127.0.0.1:5173/embed/lca");
   expect(frame).toHaveAttribute(
     "sandbox",
-    "allow-scripts allow-same-origin allow-popups allow-downloads",
+    "allow-scripts allow-same-origin allow-popups allow-downloads allow-forms",
   );
   expect(post).toHaveBeenCalledWith(
     {
