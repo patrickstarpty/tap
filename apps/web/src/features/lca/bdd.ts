@@ -9,6 +9,7 @@ export const identifier = (prefix: string) =>
   `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 export const operationLabels: Record<Operation, string> = {
   navigate: "Open page",
+  observe: "Observe document state",
   click: "Click",
   fill: "Input text",
   select: "Select option",
@@ -113,7 +114,7 @@ export const argumentFields = (operation: Operation): ArgumentField[] => {
 export const argumentKey = (operation: Operation) =>
   argumentFields(operation)[0]?.key ?? null;
 export const needsTarget = (operation: Operation) =>
-  !["navigate", "assert_url", "scroll"].includes(operation);
+  !["navigate", "assert_url", "scroll", "observe"].includes(operation);
 export function groupsFor(definition: LcaDefinition): BddStep[] {
   return (
     definition.bdd_steps ?? [

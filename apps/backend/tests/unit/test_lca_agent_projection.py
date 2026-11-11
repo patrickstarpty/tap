@@ -334,3 +334,15 @@ def test_controlled_select_cannot_override_contradictory_custom_target_evidence(
     result = project(rows)
     assert not result["complete"]
     assert result["issues"][0]["reason"] == "custom_select_requires_review"
+
+
+def test_reviewed_projection_preserves_document_observation_after_actions():
+    rows = example() + [action(4, "snapshot")]
+    result = project(rows, preserve_observations=True)
+    assert result["complete"]
+    assert result["definition"]["steps"][-1]["operation"] == "observe"
+    assert (
+        result["definition"]["steps"][-1]["provenance"]["source_action_id"]
+        == "action-4"
+    )
+    assert len(result["definition"]["bdd_steps"][-1]["action_ids"]) == 2

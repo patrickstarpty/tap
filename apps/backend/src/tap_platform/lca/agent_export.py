@@ -91,9 +91,6 @@ def export_agent_draft(
         raise Invalid("AA action history is incomplete")
     source = {key: execution[key] for key in ("task_id", "bundle_id", "input_sha256")}
     source["execution_id"] = execution_id
-    result = project_agent_actions(
-        rows, bundle["allowed_origins"], plan, action_steps, source
-    )
     # Read only the content-addressed original bundle inputs. Never infer a
     # contract from the model's plan, current form or edited LCA definition.
     try:
@@ -107,6 +104,14 @@ def export_agent_draft(
     if not isinstance(input_data, dict):
         raise Invalid("Frozen AA inputs unavailable or invalid")
     raw_contract = input_data.get("acceptance_contract")
+    result = project_agent_actions(
+        rows,
+        bundle["allowed_origins"],
+        plan,
+        action_steps,
+        source,
+        preserve_observations=raw_contract is not None,
+    )
     result["acceptance_contract"] = raw_contract
     result["contract_review_status"] = "legacy_unreviewed"
     try:

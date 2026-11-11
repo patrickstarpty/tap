@@ -66,6 +66,7 @@ class Step(StrictModel):
     id: Identifier
     operation: Literal[
         "navigate",
+        "observe",
         "click",
         "fill",
         "select",
@@ -171,7 +172,7 @@ class DebugDefinition(StrictModel):
                 check_read_arguments(step.arguments)
             elif set(step.arguments) != set(schema):
                 raise ValueError("Operation arguments do not match its schema")
-            if step.operation in {"navigate", "assert_url"}:
+            if step.operation in {"navigate", "assert_url", "observe"}:
                 if step.target_id is not None:
                     raise ValueError("Page operation cannot have a target")
             elif step.operation != "scroll" or step.target_id is not None:

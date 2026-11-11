@@ -5,6 +5,8 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from tap_platform.lca.document_acceptance import DOCUMENT_ACCEPTANCE_HELPER
+
 from tap_platform.lca.definition import (
     DebugDefinition,
     ParameterReference,
@@ -218,6 +220,11 @@ def generate_playwright(
     inputs = resolve_parameters(definition, parameters)
     frozen = canonical_bytes(definition)
     targets = {t.id: t for t in definition.targets}
+    contract = (
+        definition.source_acceptance.acceptance_contract
+        if definition.source_acceptance
+        else None
+    )
     lines = [
         "import { test, expect } from '@playwright/test';",
         "test('LCA debug flow', async ({ page }) => {",
@@ -229,8 +236,36 @@ def generate_playwright(
         lines.extend(ASSOCIATED_CONTROL_HELPER.strip("\n").split("\n"))
     if any(s.operation == "assert_read" for s in definition.steps):
         lines.extend(READ_ASSERTION_HELPER.strip("\n").split("\n"))
-    if any(step.target_contract is not None for step in definition.steps):
+    if contract is not None or any(
+        step.target_contract is not None for step in definition.steps
+    ):
         lines.extend(TARGET_CONTRACT_HELPER.strip("\n").split("\n"))
+    contract = (
+        definition.source_acceptance.acceptance_contract
+        if definition.source_acceptance
+        else None
+    )
+    if contract is not None:
+        lines.extend(DOCUMENT_ACCEPTANCE_HELPER.strip("\n").split("\n"))
+        lines.extend(
+            [
+                f"  const acceptanceContract = {literal(contract.model_dump(exclude_unset=True))};",
+                "  const acceptanceProofs = new Map();",
+                "  let acceptanceError = false;",
+                "  const proofTargets = {"
+                + ",".join(
+                    literal(key) + ":" + target_locator(key, targets) for key in targets
+                )
+                + "};",
+                "  const proofPage = {frames:()=>page.frames(),locator:key=>proofTargets[key]};",
+                "  const documentTracker = createDocumentProvenance(proofPage);",
+                "  const guardTarget = async (scope,action) => assertTargetContract(scope.locator(action.selector),action,100);",
+                "  const readValue = async (scope,action) => readAssertion(scope.locator(action.selector),action,100);",
+            ]
+        )
+    elif any(step.operation == "observe" for step in definition.steps):
+        lines.extend(DOCUMENT_ACCEPTANCE_HELPER.strip("\n").split("\n"))
+        lines.append("  const documentTracker = createDocumentProvenance(page);")
     digest = hashlib.sha256(frozen).hexdigest()
     result = {
         "schema_version": "lca-debug-result-v1",
@@ -256,7 +291,28 @@ def generate_playwright(
         locator = ""
         if step.target_id is not None:
             locator = target_locator(step.target_id, targets)
-        if step.operation == "navigate":
+        current_action = {
+            "type": "read"
+            if step.operation == "assert_read"
+            else "snapshot"
+            if step.operation in {"observe", "wait_for"}
+            or step.operation.startswith("assert_")
+            else step.operation
+            if step.operation
+            in {"navigate", "click", "fill", "select", "press", "scroll"}
+            else "fill",
+            "selector": step.target_id,
+            "lca_step_id": step.id,
+            **args,
+            **(
+                step.target_contract.model_dump(exclude_unset=True)
+                if step.target_contract
+                else {}
+            ),
+        }
+        if step.operation == "observe":
+            command = "documentTracker.snapshot()"
+        elif step.operation == "navigate":
             command = f"page.goto({literal(args['url'])}, {options})"
         elif step.operation == "click":
             command = f"{locator}.click({options})"
@@ -265,6 +321,8 @@ def generate_playwright(
             command = f"{locator}.{method}({literal(args['value'])}, {options})"
         elif step.operation == "assert_read":
             command = f"readAssertion({locator}, {literal(args)}, {step.timeout_ms})"
+            if contract is not None:
+                command = f"documentTracker.read(currentAction, async () => {command}).then(proof => {{ readProof = {{...proof, step_id: {literal(step.id)}}}; return proof.value; }})"
             # Named values stay in the bounded result evidence, never source/logs.
             if "name" in args:
                 command += f".then(value => {{ result.steps[{index}].output = {{ name: {literal(args['name'])}, value }}; }})"
@@ -325,10 +383,31 @@ def generate_playwright(
         lines.extend(
             [
                 "      try {",
+                *(
+                    [
+                        f"        const currentAction = {literal(current_action)};",
+                        "        const beforeDocuments = await documentTracker.snapshot();",
+                        "        let readProof = null;",
+                    ]
+                    if contract is not None
+                    else []
+                ),
                 *guard,
                 f"        await {command};",
+                *(
+                    [
+                        "        try { await recordAcceptance(acceptanceContract, acceptanceProofs, currentAction, beforeDocuments, await documentTracker.snapshot(), readProof); if (currentAction.type === 'click') await recheckPendingAcceptance(proofPage, acceptanceContract, acceptanceProofs, documentTracker); } catch { acceptanceError = true; acceptanceProofs.clear(); }",
+                    ]
+                    if contract is not None
+                    else []
+                ),
                 f"        result.steps[{index}].status = 'passed';",
                 "      } catch (error) {",
+                *(
+                    ["        acceptanceError = true; acceptanceProofs.clear();"]
+                    if contract is not None
+                    else []
+                ),
                 f"        result.steps[{index}].status = 'failed';",
                 "        throw error;",
                 "      }",
@@ -338,6 +417,13 @@ def generate_playwright(
     lines.extend(
         [
             "  } finally {",
+            *(
+                [
+                    "    result.requirements_evidence = {version:1, error:acceptanceError, documents:await documentTracker.snapshot(), fields:Object.fromEntries(acceptanceContract.fields.map(field=>{const proof=acceptanceProofs.get(field.id);return [field.id,proof ? {...Object.fromEntries(['value','source_frame_id','source_document_id','source_url','state','destination'].filter(key=>proof[key] !== undefined).map(key=>[key,proof[key]])),step_id:proof.step_id || proof.read_action?.lca_step_id} : null];}))};",
+                ]
+                if contract is not None
+                else []
+            ),
             "    await test.info().attach('tapper-result', { contentType: 'application/json', body: Buffer.from(JSON.stringify(result)) });",
             "  }",
             "});",

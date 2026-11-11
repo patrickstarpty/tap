@@ -22,6 +22,7 @@ def project_agent_actions(
     plan: list[dict[str, Any]],
     action_steps: dict[str, str],
     source: dict[str, str],
+    preserve_observations: bool = False,
 ) -> dict[str, Any]:
     """Caller must first bind source execution, task, session and project.
 
@@ -34,7 +35,8 @@ def project_agent_actions(
     if len(plans) != len(plan):
         raise ValueError("Duplicate BDD identity")
     identities, sequences = set(), set()
-    steps, targets, groups, issues, observations = [], [], [], [], []
+    steps: list[dict[str, Any]] = []
+    targets, groups, issues, observations = [], [], [], []
     last_group = None
     observed_sequences: set[int] = set()
     read_business_steps: dict[str, str] = {}
@@ -85,6 +87,8 @@ def project_agent_actions(
                     ):
                         request.pop("input_ref", None)
                         request["value"] = args["value"]
+        if preserve_observations and operation == "snapshot" and steps:
+            operation = "observe"
         if (
             operation in _OBSERVATIONS
             and row["status"] == "completed"
@@ -98,7 +102,14 @@ def project_agent_actions(
             reason = "unconfirmed_action"
         elif "input_ref" in request:
             reason = "protected_input"
-        elif operation not in {"navigate", "click", "fill", "select", "read"}:
+        elif operation not in {
+            "navigate",
+            "click",
+            "fill",
+            "select",
+            "read",
+            "observe",
+        }:
             reason = "unsupported_operation"
         observation_sequence = observation.get("sequence")
         if type(observation_sequence) is int:
@@ -108,6 +119,8 @@ def project_agent_actions(
         bdd_id = action_steps.get(identity) or action_steps.get(
             f"observation:{observation_sequence}"
         )
+        if operation == "observe" and bdd_id is None:
+            bdd_id = last_group
         # Finalization rechecks the same read contract. Preserve this actual extra
         # read and inherit only an earlier identical contract's business step.
         read_contract = None
@@ -146,7 +159,11 @@ def project_agent_actions(
         ):
             if len(observed_targets) == 1:
                 selector = observed_targets[0].get("selector", selector)
-        if reason is None and operation != "navigate" and canonical_target is None:
+        if (
+            reason is None
+            and operation not in {"navigate", "observe"}
+            and canonical_target is None
+        ):
             if (
                 not isinstance(selector, str)
                 or not selector
@@ -260,7 +277,7 @@ def project_agent_actions(
                 **{f"source_{key}": value for key, value in source.items()},
             },
         }
-        if operation != "navigate":
+        if operation not in {"navigate", "observe"}:
             target_id = _identity("target_", identity)
             targets.append(
                 {

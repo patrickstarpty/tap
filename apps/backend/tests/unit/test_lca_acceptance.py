@@ -28,6 +28,43 @@ CONTRACT = {
 }
 
 
+def passed_execution(definition):
+    step = next(
+        step for step in definition["steps"] if step["operation"] == "assert_read"
+    )
+    return {
+        "status": "passed",
+        "result": {
+            "outputs": [
+                {
+                    "schema_version": "lca-debug-result-v1",
+                    "requirements_evidence": {
+                        "version": 1,
+                        "error": False,
+                        "documents": [
+                            {
+                                "frame_id": "live",
+                                "document_id": "doc2",
+                                "url": "https://example.com",
+                            }
+                        ],
+                        "fields": {
+                            "Age-Years": {
+                                "step_id": step["id"],
+                                "value": "30",
+                                "source_frame_id": "live",
+                                "source_document_id": "doc2",
+                                "source_url": "https://example.com",
+                                "state": "active",
+                            }
+                        },
+                    },
+                }
+            ]
+        },
+    }
+
+
 def reviewed(tmp_path):
     browser, principal, body = fixture(tmp_path, {"acceptance_contract": CONTRACT})
     browser.store.update(
@@ -85,7 +122,7 @@ def test_reviewed_contract_is_copied_from_frozen_inputs_without_changing_it(tmp_
     assert source["source"]["execution_id"] == "run"
     assert source["input_sha256"] == source["source"]["input_sha256"]
     result = evaluate_contract(
-        browser, "project", definition, {"status": "passed"}, current
+        browser, "project", definition, passed_execution(definition), current
     )
     assert result["status"] == "passed"
     assert result["fields"] == [{"id": "Age-Years", "status": "passed", "reason": ""}]
@@ -108,7 +145,7 @@ def test_reviewed_contract_is_copied_from_frozen_inputs_without_changing_it(tmp_
 )
 def test_technical_pass_cannot_upgrade_unproven_requirements(tmp_path, change):
     browser, _, definition, current = reviewed(tmp_path)
-    execution = {"status": "passed"}
+    execution = passed_execution(definition)
     if change == "delete_read":
         definition["steps"] = []
     if change == "equals":
@@ -144,7 +181,11 @@ def test_legacy_is_unreviewed_not_contract_passed(tmp_path):
     assert projected["acceptance_contract"] is None
     assert (
         evaluate_contract(
-            browser, "project", projected["definition"], {"status": "passed"}, []
+            browser,
+            "project",
+            projected["definition"],
+            {"status": "passed"},
+            [],
         )["status"]
         == "legacy_unreviewed"
     )
@@ -206,7 +247,7 @@ def test_added_or_reordered_writes_cannot_reuse_obsolete_readback(tmp_path, posi
         },
     )
     result = evaluate_contract(
-        browser, "project", definition, {"status": "passed"}, current
+        browser, "project", definition, passed_execution(definition), current
     )
     assert result["status"] == "not_proven"
     assert "order changed" in result["fields"][0]["reason"]
@@ -220,7 +261,7 @@ def test_boolean_observation_sequence_cannot_prove_reviewed_field(tmp_path):
     browser.store.update("action", "project", "a1", observation=observation)
     assert (
         evaluate_contract(
-            browser, "project", definition, {"status": "passed"}, current
+            browser, "project", definition, passed_execution(definition), current
         )["status"]
         == "not_proven"
     )
@@ -245,7 +286,7 @@ def test_source_readback_requires_its_actual_document_proof(tmp_path, change):
     browser.store.update("action", "project", "a1", observation=observation)
     assert (
         evaluate_contract(
-            browser, "project", definition, {"status": "passed"}, current
+            browser, "project", definition, passed_execution(definition), current
         )["status"]
         == "not_proven"
     )
@@ -259,7 +300,47 @@ def test_source_readback_uses_owning_frame_url_not_outer_page(tmp_path):
     browser.store.update("action", "project", "a1", observation=observation)
     assert (
         evaluate_contract(
-            browser, "project", definition, {"status": "passed"}, current
+            browser, "project", definition, passed_execution(definition), current
         )["status"]
         == "passed"
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing",
+        "pending",
+        "wrong_document",
+        "missing_frame",
+        "wrong_step",
+        "wrong_value",
+        "error",
+        "duplicate_frame",
+    ],
+)
+def test_current_document_evidence_is_required_not_old_source_proof(tmp_path, change):
+    browser, principal, definition, current = reviewed(tmp_path)
+    execution = passed_execution(definition)
+    result = execution["result"]["outputs"][0]
+    evidence = result["requirements_evidence"]
+    if change == "missing":
+        result.pop("requirements_evidence")
+    elif change == "pending":
+        evidence["fields"]["Age-Years"]["state"] = "pending"
+    elif change == "wrong_document":
+        evidence["documents"][0]["document_id"] = "other"
+    elif change == "missing_frame":
+        evidence["documents"] = []
+    elif change == "duplicate_frame":
+        evidence["documents"].append(deepcopy(evidence["documents"][0]))
+    elif change == "wrong_step":
+        evidence["fields"]["Age-Years"]["step_id"] = "unrelated"
+    elif change == "wrong_value":
+        evidence["fields"]["Age-Years"]["value"] = "31"
+    else:
+        evidence["error"] = True
+    assert (
+        evaluate_contract(browser, "project", definition, execution, current)["status"]
+        == "not_proven"
     )

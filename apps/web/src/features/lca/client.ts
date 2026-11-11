@@ -1,6 +1,7 @@
 /** Contracts mirror the TAP LCA API. No service credential enters the UI. */
 export type Scalar = string | number | boolean;
 export type Operation =
+  | "observe"
   | "navigate"
   | "click"
   | "fill"

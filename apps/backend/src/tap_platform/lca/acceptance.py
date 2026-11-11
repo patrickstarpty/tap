@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from .agent_projection import project_agent_actions
+from .document_acceptance import current_field_proven
 from .source_acceptance import SourceAcceptance, ReviewedAcceptanceContract
 
 
@@ -226,6 +227,7 @@ def evaluate_contract(
         [{"id": "verify", "keyword": "Then", "title": "Original verified actions"}],
         {row["id"]: "verify" for row in rows},
         metadata["source"],
+        preserve_observations=True,
     )
     source_definition = source_projection["definition"]
     required_source_ids = {
@@ -289,6 +291,8 @@ def evaluate_contract(
                 "value": field["readback_value"],
             }:
                 reason = "Current observed value does not prove the requirement"
+            elif not current_field_proven(execution, field, original["id"]):
+                reason = "Current document proof missing, pending, or stale"
             else:
                 reason = ""
         fields.append(
