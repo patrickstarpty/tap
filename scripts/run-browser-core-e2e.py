@@ -357,9 +357,7 @@ class SyntheticModel(BaseHTTPRequestHandler):
                     )
                 else:
                     command = (
-                        "cat > flow.spec.ts <<'EOF'\n"
-                        + synthetic_script(name)
-                        + "EOF"
+                        "cat > flow.spec.ts <<'EOF'\n" + synthetic_script(name) + "EOF"
                     )
             if command is not None:
                 tool = {
@@ -413,6 +411,7 @@ def parse_args() -> argparse.Namespace:
         "--execution-mode", choices=("docker", "local"), default="docker"
     )
     parser.add_argument("--opencode-binary", type=Path)
+    parser.add_argument("--lca-bridge", action="store_true")
 
     parser.add_argument(
         "--case",
@@ -436,6 +435,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deadline-seconds", type=int)
     parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
+    if args.lca_bridge and (args.mode != "synthetic" or args.execution_mode != "local"):
+        parser.error("LCA bridge acceptance requires zero-cost synthetic local mode")
     if args.execution_mode == "local" and (
         args.opencode_binary is None
         or not args.opencode_binary.is_absolute()
@@ -491,6 +492,11 @@ def selected_browser_env(env: dict[str, str]) -> dict[str, str]:
         "TAP_BROWSER_OBJECT_ROOT",
         "TAP_BROWSER_PROJECT_ID",
         "TAP_BROWSER_ACCESS_TOKEN",
+        "TAP_LCA_GATEWAY_TOKEN",
+        "TAP_BROWSER_GATEWAY_TOKEN",
+        "TAP_BROWSER_WORKER_TOKEN",
+        "TAP_BROWSER_CONTROL_ENABLED",
+        "TAP_BROWSER_API_ORIGIN",
         "TAP_BROWSER_TOKEN_EXPIRES_AT",
         "TAP_BROWSER_IMAGE",
         "TAP_BROWSER_EXECUTION_MODE",
@@ -872,6 +878,19 @@ def main() -> int:
             else "0",
         }
     )
+    if args.lca_bridge:
+        env.update(
+            {
+                "TAP_LCA_ENABLED": "true",
+                "TAP_BROWSER_CONTROL_ENABLED": "true",
+                "TAP_BROWSER_GATEWAY_TOKEN": uuid.uuid4().hex + uuid.uuid4().hex,
+                "TAP_BROWSER_WORKER_TOKEN": uuid.uuid4().hex + uuid.uuid4().hex,
+                "TAP_LCA_GATEWAY_TOKEN": uuid.uuid4().hex + uuid.uuid4().hex,
+                "TAP_LCA_BACKEND_URL": env["TAP_BROWSER_API_ORIGIN"],
+                "TAP_WEB_PORT": str(helpers.free_ports(1)[0]),
+                "TAPPER_BROWSER_CORE_LCA_BRIDGE": "1",
+            }
+        )
     upstream_proxy = os.environ.get("TAP_BROWSER_LOCAL_UPSTREAM_PROXY")
     if upstream_proxy and args.execution_mode == "local":
         env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] = upstream_proxy
@@ -1188,7 +1207,9 @@ def main() -> int:
         browser_api = subprocess.Popen(
             [
                 ".venv/bin/uvicorn",
-                "tap_platform.browser_automation.http:app",
+                "tap_platform.app:app"
+                if args.lca_bridge
+                else "tap_platform.browser_automation.http:app",
                 "--host",
                 "127.0.0.1",
                 "--port",

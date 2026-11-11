@@ -133,8 +133,8 @@ async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping()
             2,
             "node",
             1,
-            "browser.action_started",
-            {"action_id": "a1", "step_id": "open"},
+            "browser.action_finished",
+            {"action_id": "logical-a1", "step_id": "open", "observation_sequence": 3},
             datetime.now(UTC),
         ),
     ]
@@ -150,7 +150,7 @@ async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping()
 
         async def request(self, method, path, body):
             assert method == "POST" and path == "/executions/run/lca-draft"
-            assert body["action_steps"] == {"a1": "open"}
+            assert body["action_steps"] == {"observation:3": "open"}
             assert body["plan"] == events[0].payload["steps"]
             return {
                 "source": {

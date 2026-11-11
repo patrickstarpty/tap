@@ -16,3 +16,15 @@ The gateway obtains the project-scoped task and its original execution, bundle, 
 ## Acceptance boundary
 
 Unit and UI-component tests establish source authorization, loss-aware projection and explicit import behavior. A passed original AA task does not certify a newly edited LCA flow. Product acceptance requires loading a real completed task, reviewing the imported BDD/action tree, saving it, running its generated script, checking assertions and named outputs, and reviewing the run evidence. A missing real successful source task must not be replaced by a claim of end-to-end acceptance.
+
+## Full-product acceptance harness
+
+Run `scripts/run-browser-core-e2e.py --mode synthetic --execution-mode local --opencode-binary <absolute-pinned-1.19.5-binary> --case form --lca-bridge`. This opt-in mode launches the real TAP API and TAP Web with independent LCA/control/worker test credentials, an owned synthetic site and a zero-provider-cost model fixture. It exercises the completed task's product link, preview, unsaved draft, explicit save and deterministic debug replay. It cannot be enabled for paid/real mode or the Docker-specific test worker.
+
+The workflow event action ID is a logical call ID, not the browser action database ID. The bridge joins finished events through the unique server observation sequence in the verified session. Finalization's repeated read remains an extra executable assertion and may inherit only the earlier identical read contract's BDD group. A different selector, output name or assertion cannot inherit that mapping.
+
+### Acceptance status (2026-11-11)
+
+The real product controlled-AA synthetic form task completed successfully and its **Review as LCA draft** link opened the TAP editor. The initial preview correctly refused import because logical call IDs did not match browser-row IDs. After fixing that join, offline projection of that exact stored successful task and receipt ledger produced all six actions, including both read checks, with no issues. The regression suite covers the corrected mapping and refuses a changed read contract.
+
+A fresh full-product save/replay rerun was blocked before application startup by Docker VM disk exhaustion (`ENOSPC`, VM filesystem 95 GB used of 95 GB). **The imported-flow save and replay path is not yet accepted end to end.** The harness and deterministic unit/browser tests are not substitutes for that remaining product acceptance. Only stopped containers owned by this task were removed; host database/evidence directories, volumes, shared images and active projects were preserved.

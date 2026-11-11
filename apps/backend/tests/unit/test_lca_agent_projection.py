@@ -264,3 +264,27 @@ def test_unsafe_read_regex_is_reported_without_weakening():
     assert not result["complete"]
     assert result["definition"] is None
     assert result["issues"][0]["reason"] == "definition_requires_manual_review"
+
+
+def test_server_observation_mapping_preserves_final_identical_read_recheck():
+    rows = example()
+    rows[0]["observation"]["sequence"] = 10
+    rows[1]["observation"]["sequence"] = 20
+    rows[2]["observation"]["sequence"] = 30
+    repeated = deepcopy(rows[2])
+    repeated.update(id="final-read", sequence=4)
+    repeated["observation"]["sequence"] = 31
+    rows.append(repeated)
+    mapping = {
+        "observation:10": "open",
+        "observation:20": "choose",
+        "observation:30": "check",
+    }
+    result = project_agent_actions(rows, ["https://example.com"], PLAN, mapping, SOURCE)
+    assert result["complete"]
+    assert len(result["definition"]["steps"]) == 4
+    assert result["definition"]["steps"][-1]["provenance"]["source_bdd_id"] == "check"
+    repeated["request"]["equals"] = "Other"
+    assert not project_agent_actions(
+        rows, ["https://example.com"], PLAN, mapping, SOURCE
+    )["complete"]

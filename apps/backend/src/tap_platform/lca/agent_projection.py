@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from typing import Any
 
@@ -35,6 +36,8 @@ def project_agent_actions(
     identities, sequences = set(), set()
     steps, targets, groups, issues, observations = [], [], [], [], []
     last_group = None
+    observed_sequences: set[int] = set()
+    read_business_steps: dict[str, str] = {}
     for row in sorted(rows, key=lambda item: item["sequence"]):
         identity, sequence = row["id"], row["sequence"]
         if not isinstance(identity, str) or type(sequence) is not int or sequence < 1:
@@ -97,7 +100,24 @@ def project_agent_actions(
             reason = "protected_input"
         elif operation not in {"navigate", "click", "fill", "select", "read"}:
             reason = "unsupported_operation"
-        bdd_id = action_steps.get(identity)
+        observation_sequence = observation.get("sequence")
+        if type(observation_sequence) is int:
+            if observation_sequence in observed_sequences:
+                raise ValueError("Ambiguous source observation sequence")
+            observed_sequences.add(observation_sequence)
+        bdd_id = action_steps.get(identity) or action_steps.get(
+            f"observation:{observation_sequence}"
+        )
+        # Finalization rechecks the same read contract. Preserve this actual extra
+        # read and inherit only an earlier identical contract's business step.
+        read_contract = None
+        if operation == "read":
+            read_contract = json.dumps(
+                {k: v for k, v in request.items() if k != "expected_epoch"},
+                sort_keys=True,
+            )
+            if bdd_id is None:
+                bdd_id = read_business_steps.get(read_contract)
         bdd = plans.get(bdd_id)
         if reason is None and (
             not bdd
@@ -192,6 +212,8 @@ def project_agent_actions(
             )
             continue
         assert bdd is not None
+        if read_contract is not None and bdd_id is not None:
+            read_business_steps[read_contract] = bdd_id
         step_id = _identity("aa_", identity)
         step: dict[str, Any] = {
             "id": step_id,

@@ -166,13 +166,22 @@ class BrowserArtifactAdapter:
         )
         if not isinstance(plan, list):
             raise LookupError("AA business plan unavailable")
-        action_steps = {
-            event.payload["action_id"]: event.payload["step_id"]
-            for event in snapshot["events"]
-            if event.kind == "browser.action_started"
-            and isinstance(event.payload.get("action_id"), str)
-            and isinstance(event.payload.get("step_id"), str)
-        }
+        # Workflow action_id identifies a logical model call, not the browser DB
+        # row. The finished event records the actual session observation sequence.
+        action_steps = {}
+        for event in snapshot["events"]:
+            sequence = event.payload.get("observation_sequence")
+            step_id = event.payload.get("step_id")
+            if (
+                event.kind == "browser.action_finished"
+                and type(sequence) is int
+                and sequence > 0
+                and isinstance(step_id, str)
+            ):
+                key = f"observation:{sequence}"
+                if key in action_steps:
+                    raise LookupError("Ambiguous AA observation mapping")
+                action_steps[key] = step_id
         source = {
             "task_id": task_id,
             "bundle_id": view["bundleId"],

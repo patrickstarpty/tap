@@ -200,7 +200,8 @@ for (const scenario of cases) {
     }
     expect(evidence.screenshot).toBeDefined();
     expect(evidence.trace).toBeDefined();
-    expect(evidence.video).toBeDefined();
+    if (process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE !== "1")
+      expect(evidence.video).toBeDefined();
     await page.getByRole("button", { name: "View progress" }).click();
     await expect(page.getByText(/^Browser result ·/u)).toBeVisible();
     await expect(
@@ -231,6 +232,97 @@ for (const scenario of cases) {
         )
       ).status(),
     ).toBeGreaterThanOrEqual(400);
+    if (
+      process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" &&
+      scenario.name === "form"
+    ) {
+      const link = page.getByRole("link", { name: "Review as LCA draft" });
+      await expect(link).toBeVisible();
+      const href = await link.getAttribute("href");
+      expect(href).toContain(`aa-task=${taskId}`);
+      const lca = await page.context().newPage();
+      try {
+        await lca.goto(href!);
+        await expect(lca.getByLabel("AA task ID")).toHaveValue(taskId);
+        await lca.getByRole("button", { name: "Preview AA task" }).click();
+        await expect(
+          lca.getByRole("button", { name: "Use as unsaved draft" }),
+        ).toBeVisible();
+        await lca.getByRole("button", { name: "Use as unsaved draft" }).click();
+        await expect(lca.getByLabel("Flow title")).toHaveValue(
+          `AA task ${taskId}`,
+        );
+        const saved = lca.waitForResponse(
+          (r) =>
+            r.request().method() === "POST" &&
+            new URL(r.url()).pathname.endsWith("/lca/flows"),
+        );
+        await lca
+          .getByRole("button", { name: "Save draft", exact: true })
+          .click();
+        const save = await saved;
+        expect(save.ok(), await save.text()).toBe(true);
+        const flow = await save.json();
+        expect(
+          flow.definition.steps.some(
+            (s: { operation: string }) => s.operation === "assert_read",
+          ),
+        ).toBe(true);
+        const accepted = lca.waitForResponse(
+          (r) =>
+            r.request().method() === "POST" &&
+            new URL(r.url()).pathname.endsWith("/runs"),
+        );
+        await lca
+          .getByRole("button", { name: "Debug replay", exact: true })
+          .click();
+        const replayResponse = await accepted;
+        expect(replayResponse.ok(), await replayResponse.text()).toBe(true);
+        const started = await replayResponse.json();
+        let completed: { execution?: { status: string; result?: unknown } } =
+          {};
+        await expect
+          .poll(
+            async () => {
+              const response = await lca.request.get(
+                new URL(
+                  `/api/projects/${encodeURIComponent(runtime.projectId)}/lca/runs/${started.id}`,
+                  href!,
+                ).href,
+              );
+              expect(response.ok()).toBe(true);
+              completed = await response.json();
+              return completed.execution?.status;
+            },
+            { timeout: 90_000 },
+          )
+          .toBe("passed");
+        expect(JSON.stringify(completed.execution?.result)).toContain(
+          "AC-42 / 120 / MATCH",
+        );
+        const sourceAfterImport = await page.request.get(taskPath);
+        expect((await sourceAfterImport.json()).budgetUsed?.model_calls).toBe(
+          snapshot.budgetUsed?.model_calls,
+        );
+        writeFileSync(
+          `${evidenceDir}/form-lca-bridge-run.json`,
+          JSON.stringify(completed, null, 2),
+        );
+        await lca.getByRole("button", { name: "Refresh run receipt" }).click();
+        await expect(
+          lca
+            .getByRole("article", { name: `Run ${started.id}` })
+            .getByText("passed", { exact: true })
+            .first(),
+        ).toBeVisible();
+        await lca.screenshot({
+          path: `${evidenceDir}/form-lca-bridge-ui.png`,
+          fullPage: true,
+        });
+      } finally {
+        await lca.close();
+      }
+    }
     if (!scenario.replay) return;
     const modelCallsBeforeReplay = snapshot.budgetUsed?.model_calls;
     const replayResponse = page.waitForResponse(
