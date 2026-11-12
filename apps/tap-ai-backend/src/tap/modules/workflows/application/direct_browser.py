@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -369,6 +370,21 @@ def compile_replay(result: DirectBrowserResult) -> str:
         kind = action["type"]
         if kind not in {"snapshot", "navigate", "click", "fill", "select", "press", "wait", "read"}:
             raise ValueError("Unsupported replay action: " + str(kind))
+        selector = action.get("selector")
+        if isinstance(selector, str) and re.search(
+            r"aria-ref\s*=|\[ref\s*=\s*['\"]?(?:f[1-9]\d*)?e[1-9]\d*", selector
+        ):
+            raise ValueError("Replay cannot freeze a session-local browser locator")
+        if kind == "select":
+            targets = action.get("target_texts")
+            if (
+                not isinstance(targets, list)
+                or not targets
+                or any(not isinstance(target, str) or not target.strip() for target in targets)
+            ):
+                # Recorded actions do not carry a trusted native-select receipt.
+                # Never reinterpret a custom/label selection as selectOption.
+                raise ValueError("Replay select requires recorded semantic target guards")
         if kind == "snapshot":
             lines.append("{")
             lines.append("const documents = await documentTracker.snapshot();")
@@ -399,10 +415,10 @@ def compile_replay(result: DirectBrowserResult) -> str:
                 f"await page.goto({quote(action['url'])}, "
                 "{waitUntil:'domcontentloaded', timeout:45000});"
             )
-        elif kind == "select" and action.get("target_texts"):
+        elif kind == "select":
             lines.append(f"await selectValue(page, {quote(action)});")
-        elif kind in {"click", "fill", "select", "press", "wait"}:
-            method = {"select": "selectOption", "wait": "waitFor"}.get(kind, kind)
+        elif kind in {"click", "fill", "press", "wait"}:
+            method = {"wait": "waitFor"}.get(kind, kind)
             value = action.get("key") if kind == "press" else action.get("value")
             argument = quote(value) if value is not None else ""
             lines.append(f"await {locator}.{method}({argument});")

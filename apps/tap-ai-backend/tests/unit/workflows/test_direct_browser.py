@@ -263,3 +263,54 @@ async def test_opening_a_combobox_does_not_complete_the_fill_step():
     await loop._step({"type": "navigate", "url": "https://example.com", "step": "open"}, "n")
     await loop._step({"type": "click", "target": "1:0", "step": "age"}, "c")
     assert "age" not in loop.completed
+
+
+def replay_result(action):
+    from tap.modules.workflows.application.direct_browser import DirectBrowserResult
+
+    return DirectBrowserResult(
+        "passed",
+        actions=[action],
+        steps={"choose": {"keyword": "When", "title": "Choose option"}},
+    )
+
+
+@pytest.mark.parametrize(
+    "selector", ["aria-ref=e1", "aria-ref=f2e3", "button[ref='e1']", 'combobox[ref="f1e2"]']
+)
+def test_replay_rejects_session_local_locators(selector):
+    result = replay_result({"type": "click", "step": "choose", "selector": selector})
+    with pytest.raises(ValueError, match="session-local"):
+        compile_replay(result)
+
+
+@pytest.mark.parametrize("guard", [None, [], "Product", [""], [123]])
+def test_replay_never_guesses_native_select_semantics_without_target_guard(guard):
+    action = {"type": "select", "step": "choose", "selector": "#product", "value": "Standard"}
+    if guard is not None:
+        action["target_texts"] = guard
+    with pytest.raises(ValueError, match="select requires"):
+        compile_replay(replay_result(action))
+
+
+def test_replay_guarded_select_preserves_semantics_and_observation_transition():
+    result = replay_result(
+        {
+            "type": "select",
+            "step": "choose",
+            "selector": "#product",
+            "value": "Standard",
+            "target_texts": ["Product"],
+            "scope_text": "Quote",
+        }
+    )
+    result.actions.insert(0, {"type": "snapshot"})
+    result.actions.insert(
+        0, {"type": "navigate", "step": "choose", "url": "https://example.test/requested"}
+    )
+    script = compile_replay(result)
+    assert 'await selectValue(page, {"type": "select"' in script
+    assert 'await page.locator("#product").selectOption(' not in script
+    assert 'await page.goto("https://example.test/requested"' in script
+    assert '"scope_text": "Quote"' in script
+    assert "documents, documents, null" in script
