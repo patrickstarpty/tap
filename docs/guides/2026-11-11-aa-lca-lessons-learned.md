@@ -319,3 +319,18 @@ are insufficient if the persisted result projection drops them. Preserve that
 uncertainty; do not invent a selector/entrypoint explanation or spend another
 round to investigate it. The next narrow check should exercise sanitized terminal
 diagnostics through the real persistence boundary with a local synthetic provider.
+
+### Close the diagnostic loop at the persistence boundary
+
+The zero-fee negative formal-LCA test now proves bounded diagnostic records survive
+runtime/process shutdown and a fresh SQL-store read, then remain in the exported
+archive after owner cleanup. It deliberately ends `failed/no_progress`, with zero
+business writes. A native tool can be `completed` while its fixed category is
+`server_rejected`; retain both rather than collapsing RPC completion into success.
+
+Use one availability contract end to end. An unavailable collection must not turn
+into an available empty list, and generic redaction must not reattach arbitrary
+fields after sanitization. Read diagnostics independently of generated scripts,
+cap its time/bytes/records, and let stop and UNKNOWN remain authoritative when
+collection or persistence fails. The prior AIA diagnostic gap remains a historical
+limitation, not evidence we can recreate by inference.

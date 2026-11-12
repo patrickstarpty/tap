@@ -1072,6 +1072,11 @@ def verify_diagnostics_evidence(directory: Path) -> None:
     assert any(event["kind"] == "browser.no_progress" for event in audit["events"])
     assert len(rows) == 1 and rows[0]["diagnostics_available"] is True
     diagnostics = rows[0]["diagnostics"]
+    terminal = audit["terminal_result"]
+    assert terminal["diagnostics_available"] is True
+    assert terminal["diagnostics"] == diagnostics
+    assert terminal["node_id"] == rows[0]["node_id"]
+    assert terminal["attempt"] == rows[0]["attempt"]
     assert diagnostics and len(diagnostics) <= 32
     assert all(
         set(item) == {"sequence", "tool", "status", "category"} for item in diagnostics

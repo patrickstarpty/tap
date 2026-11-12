@@ -604,3 +604,70 @@ The uncut real LCA video is labelled **failed/no progress**, H.264/yuv420p with
 faststart, 78.92 seconds, full-decode zero errors. Actual LCA and Tapper task frames
 were inspected. Its digest and Library identity are in the screened evidence;
 this is not a successful quotation demonstration.
+
+## Durable terminal diagnostics: full negative-chain acceptance
+
+The diagnostic persistence fix passed a formal LCA negative acceptance on
+`e0a4929e` with real OpenCode 1.19.5, CodingRuntime/BudgetGate and an owned local
+synthetic provider. **The test passed because the business task correctly failed
+with `no_progress`, not because it produced a quotation.** No real provider or
+external site was used. [Screened evidence](assets/2026-11-12-durable-diagnostics-negative-acceptance.json)
+records the task and exact fixed classifications.
+
+The root defect had two layers: runtime exit paths did not consistently preserve
+available diagnostics, and the workflow dispatch projection omitted terminal
+diagnostics from durable events. The fix now caches only allowlisted records,
+uses an independent bounded diagnostics-only reader that does not require script
+artifacts, and writes a lease-fenced, attempt-bound `browser.tool_diagnostics`
+event. Returned coding results also retain the consistent availability state.
+Public projection re-sanitizes and bypasses generic free-form browser redaction.
+No raw model text, tool arguments, selector, free-form error or credential is added
+to the diagnostic schema. At most 32 sequence/tool/status/category records survive.
+Unavailability and persistence failure are not reported as successful collection;
+optional diagnostics cannot change stop, UNKNOWN or budget outcomes.
+
+The real chain submitted one intent from the formal LCA iframe, navigated only
+the frozen owned URL, accepted its plan, observed, performed a real native file
+read, then received two pure pre-dispatch selector rejections. The unchanged
+four-turn no-progress protection stopped the task. All seven synthetic provider
+reservations settled; the original 12-call cap remained unchanged. There were
+zero business writes, no import/replay, and confirmed browser stop.
+
+After runtime and owned app/worker processes stopped, the harness created a new
+SQL store and exported the durable event. It contained three completed browser
+tool records, one completed native read and two `server_rejected` records. Here
+`status=completed` describes the native tool RPC, while the category accurately
+reports the business rejection; neither rejected operation was a successful write.
+The coding-result availability and records matched the independent event and
+node/attempt identity. Public projection exposed only fixed diagnostic fields;
+the synthetic canary and selector were absent. The UI reloaded the same failed
+task without creating another admission. Final owner-state cleanup completed;
+the screened exported records remain readable.
+
+Independent review caught and fixed three issues before acceptance: a failed
+collection incorrectly becoming available-empty, a missing Docker command-stage
+allowlist entry, and generic redaction reintroducing malicious top-level fields.
+Regression coverage includes actual runtime→dispatch unavailability, cancellation
+and UNKNOWN preservation, collector timeout/artifact independence, persistence
+failure, Docker command wiring, and hostile identity-redactor payloads. The full
+chain used local execution; Docker wiring is not claimed as a Docker full-stack
+acceptance. Historical AIA missing diagnostics cannot be recovered retroactively.
+
+Reproduce with the same independent dependencies/image prerequisites above:
+
+```sh
+PYTHONPATH=apps/tap-ai-backend/src:apps/backend/src .venv/bin/python \
+  scripts/run-browser-core-e2e.py --mode synthetic --execution-mode local \
+  --site owned --case form --lca-bridge --lca-diagnostics \
+  --opencode-binary /path/to/pinned/opencode-1.19.5/opencode
+```
+
+The diagnostic flag is mutually exclusive with catalog acceptance and rejects
+real/public/other-case configurations before startup. Neither unused real AIA
+allowance was consumed or treated as authorization for another paid run.
+
+Final affected gates: 140 Python runtime/dispatch/local/harness regressions,
+24 native-client Node tests, six changed-source MyPy checks, Ruff/format and
+frontend TypeScript all passed. The final verifier also rechecked the archived
+full-chain result/event availability and node/attempt agreement after cleanup.
+No unrelated full repository test suite or additional paid trial was run.

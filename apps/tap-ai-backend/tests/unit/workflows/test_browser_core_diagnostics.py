@@ -80,6 +80,7 @@ def durable_fixture(tmp_path):
     audit = {
         "status": "failed",
         "budget_used": {"model_calls": 1},
+        "terminal_result": dict(event),
         "events": [
             {"kind": "browser.tool_diagnostics", "payload": event},
             {"kind": "browser.no_progress", "payload": {}},
@@ -107,7 +108,17 @@ def test_durable_verifier_reads_export_and_writes_only_safe_summary(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "failure", ["missing", "unavailable", "empty", "canary", "write", "unsettled", "wrong_status"]
+    "failure",
+    [
+        "missing",
+        "unavailable",
+        "empty",
+        "canary",
+        "write",
+        "unsettled",
+        "wrong_status",
+        "availability_conflict",
+    ],
 )
 def test_durable_verifier_rejects_incomplete_or_unsafe_evidence(tmp_path, failure):
     import json
@@ -128,6 +139,8 @@ def test_durable_verifier_rejects_incomplete_or_unsafe_evidence(tmp_path, failur
         audit["events"].pop()
     elif failure == "wrong_status":
         audit["status"] = "succeeded"
+    elif failure == "availability_conflict":
+        audit["terminal_result"]["diagnostics_available"] = False
     (tmp_path / "task-audit.json").write_text(json.dumps(audit))
     (tmp_path / "browser-session-ledger.json").write_text(json.dumps(ledger))
     with pytest.raises(AssertionError):

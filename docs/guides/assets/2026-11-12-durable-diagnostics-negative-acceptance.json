@@ -1,0 +1,89 @@
+{
+  "task_id": "04a8bfde5e3740eaa9ab7a9527fe76f4",
+  "task_status": "failed",
+  "reason": "no_progress",
+  "provider": "synthetic",
+  "paid_calls": 0,
+  "fresh_store_export_after_runtime_and_process_stop": true,
+  "diagnostic_events": [
+    {
+      "attempt": 1,
+      "node_id": "a7e312881e94a4b7a6d53ee6a1aa26dd97603ba438b568f53401214bf8509ecd",
+      "diagnostics": [
+        {
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none",
+          "sequence": 1
+        },
+        {
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none",
+          "sequence": 2
+        },
+        {
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none",
+          "sequence": 3
+        },
+        {
+          "tool": "read",
+          "status": "completed",
+          "category": "none",
+          "sequence": 4
+        },
+        {
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "server_rejected",
+          "sequence": 5
+        },
+        {
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "server_rejected",
+          "sequence": 6
+        }
+      ],
+      "schema_version": 1,
+      "diagnostics_available": true
+    }
+  ],
+  "business_writes": 0,
+  "model_reservations": 7,
+  "model_settlements": 7,
+  "configured_call_cap": 12,
+  "owned_session_stopped": true,
+  "source_commit": "e0a4929e3271ee5dfdfb2d622d6ab7969c5f52a0",
+  "journey": {
+    "provider": "synthetic",
+    "taskId": "04a8bfde5e3740eaa9ab7a9527fe76f4",
+    "taskStatus": "failed",
+    "reason": "no_progress",
+    "topLevelUrlUnchanged": true,
+    "conversationAdmissions": 1,
+    "reloadedSameTask": true,
+    "imported": false,
+    "replayed": false
+  },
+  "coding_result_agrees_with_diagnostic_event": true,
+  "public_projection_fixed_only": true,
+  "canary_absent": true,
+  "owner_state_directory_removed": true,
+  "model": "Real OpenCode 1.19.5 with owned local synthetic provider",
+  "source_evidence_sha256": {
+    "diagnostics-durable-safe-summary.json": "f37c15558162138c53360b6605eed858526bfb68ab0c1d29067c306749bc7220",
+    "diagnostics-inline-journey.json": "d25aaeb786dff18a91c490b26d5832b7f0c9be6719da4f17ddca2101ba493274",
+    "usage-manifest.json": "60b061a6a1cb51b01dc187087ccaa6b3026e1f45775e3211972a02b5d7d246e4",
+    "form-snapshot.json": "3f1cbdaba46d106ce8b850bbdb5de2f3bc4fa29f3659660b425b6cf6bd499179"
+  },
+  "limits": [
+    "negative acceptance passed; business task intentionally failed/no_progress",
+    "no real provider or external site",
+    "no retroactive recovery of historical missing diagnostics",
+    "best-effort diagnostic collection and persistence do not override stop/unknown/budget",
+    "Docker diagnostics command wiring covered by unit process test, full acceptance used local execution"
+  ]
+}
