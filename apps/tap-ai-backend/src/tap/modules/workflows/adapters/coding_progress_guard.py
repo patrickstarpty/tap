@@ -39,7 +39,15 @@ def sanitize_diagnostics(value: object) -> list[dict[str, object]]:
         "webfetch",
     }
     statuses = {"completed", "error", "pending"}
-    categories = {"none", "validation_error", "permission_denied", "tool_timeout", "tool_error"}
+    categories = {
+        "none",
+        "validation_error",
+        "permission_denied",
+        "tool_timeout",
+        "tool_error",
+        "server_rejected",
+        "unknown_outcome",
+    }
     result: list[dict[str, object]] = []
     if not isinstance(value, list):
         return result

@@ -220,3 +220,18 @@ test('persisted diagnostic input is reprojected to the fixed field allowlist', (
     [{sequence:1,tool:'other',status:'pending',category:'none'}]);
   assert.deepEqual(sanitizeToolDiagnostics({secret:'secret'}),[]);
 });
+
+test('completed browser tool can carry a rejected server result without leaking it', () => {
+  const user = {info:{id:'u',role:'user'},parts:[]};
+  const diagnostics = output => toolDiagnostics([user,{info:{role:'assistant',parentID:'u'},parts:[
+    {type:'tool',tool:'tap_browser',state:{status:'completed',output:JSON.stringify(output)}},
+  ]}], 'u')[0];
+  assert.equal(diagnostics({error:'SECRET invalid contract'}).category,'server_rejected');
+  assert.equal(diagnostics({status:'rejected',error:'SECRET'}).category,'server_rejected');
+  assert.equal(diagnostics({status:'unknown',observation:{error:'SECRET'}}).category,'unknown_outcome');
+  assert.equal(diagnostics({status:'completed',observation:{error:'SECRET'}}).category,'server_rejected');
+  assert.equal(diagnostics({status:'completed',result:{outputs:[{error:'business field'}]}}).category,'none');
+  assert.equal(diagnostics({status:'completed'}).category,'none');
+  assert.equal(diagnostics({error:'SECRET'}).status,'completed');
+  assert.ok(!JSON.stringify(diagnostics({error:'SECRET'})).includes('SECRET'));
+});

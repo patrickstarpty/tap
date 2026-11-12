@@ -71,7 +71,7 @@ function taskAssistants(messages, expectedUserId) {
 }
 
 const DIAGNOSTIC_TOOLS = new Set(['tap_browser', 'read', 'write', 'edit', 'bash', 'glob', 'grep', 'task', 'todowrite', 'webfetch']);
-const DIAGNOSTIC_CATEGORIES = new Set(['none', 'validation_error', 'permission_denied', 'tool_timeout', 'tool_error']);
+const DIAGNOSTIC_CATEGORIES = new Set(['none', 'validation_error', 'permission_denied', 'tool_timeout', 'tool_error', 'server_rejected', 'unknown_outcome']);
 
 export function sanitizeToolDiagnostics(value) {
   if (!Array.isArray(value)) return [];
@@ -97,6 +97,18 @@ export function toolDiagnostics(messages, expectedUserId) {
         category = /invalid (?:arguments|input)|validation|schema|ZodError/i.test(error) ? 'validation_error'
           : /EACCES|permission denied/i.test(error) ? 'permission_denied'
           : /timed? out|timeout/i.test(error) ? 'tool_timeout' : 'tool_error';
+      }
+      // OpenCode completion means the tool returned, not that TAP accepted it.
+      // Inspect only the bounded native tool envelope, never business output keys.
+      if (status === 'completed' && part.tool === 'tap_browser' &&
+          typeof part.state?.output === 'string' && part.state.output.length <= 65536) {
+        let receipt;
+        try { receipt = JSON.parse(part.state.output); } catch {}
+        if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)) {
+          if (receipt.status === 'unknown') category = 'unknown_outcome';
+          else if (['rejected','failed'].includes(receipt.status) || receipt.error || receipt.observation?.error)
+            category = 'server_rejected';
+        }
       }
       result.push({tool: part.tool, status, category});
       if (result.length === 32) return sanitizeToolDiagnostics(result);

@@ -40,3 +40,14 @@ def test_diagnostics_drop_arbitrary_strings_extra_keys_and_bound_entries():
     assert len(cleaned) == 32
     assert cleaned[0] == {"sequence": 1, "tool": "other", "status": "pending", "category": "none"}
     assert "SECRET" not in str(cleaned)
+
+
+def test_completed_transport_rejection_categories_survive_persistence_sanitizer():
+    from tap.modules.workflows.adapters.coding_progress_guard import sanitize_diagnostics
+
+    for category in ("server_rejected", "unknown_outcome"):
+        result = sanitize_diagnostics(
+            [{"tool": "tap_browser", "status": "completed", "category": category}]
+        )
+        assert result[0]["category"] == category
+        assert result[0]["status"] == "completed"

@@ -1839,3 +1839,13 @@ async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
     assert "SECRET" not in str(result.terminal_evidence)
     assert any(kind == "browser.no_progress" for kind, *_ in journal.events)
     assert browser.canceled
+
+
+def test_generation_prompt_uses_reviewed_contract_attributes_without_value_coercion():
+    prompt = CodingRuntime._generation_prompt(
+        "Inspect", "https://example.com/", "Read outputs", ["https://example.com"], {}
+    )
+    assert "attribute=value and exact equals" not in prompt
+    assert "acceptance_contract.fields" in prompt
+    assert "checked, selected_label, text" in prompt
+    assert "readback_value" in prompt
