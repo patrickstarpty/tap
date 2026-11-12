@@ -11,6 +11,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import shutil
 import socket
 import tempfile
@@ -70,6 +71,28 @@ SCENARIOS = {
     "server_rejected": [REJECTED_PLAN],
     "corrected": [REJECTED_PLAN, *ACTIONS],
     "preplan_write": [{"type": "click", "step": "click", "selector": "#go"}],
+    "unsupported_selector": [
+        {
+            "type": "plan",
+            "steps": [
+                {"id": "open", "keyword": "Given", "title": "Observe owned controls"},
+                {"id": "click", "keyword": "When", "title": "Continue owned flow"},
+                {"id": "result", "keyword": "Then", "title": "Verify changed state"},
+            ],
+        },
+        {"type": "navigate", "step": "open", "url": "http://example.test/"},
+        {"type": "snapshot", "step": "open"},
+        {"type": "click", "step": "click", "selector": "aria/Get in touch"},
+        {"type": "snapshot", "step": "open"},
+        {"type": "click", "step": "click", "selector": "CURRENT_OBSERVED_REF"},
+        {
+            "type": "read",
+            "step": "result",
+            "selector": "#result",
+            "name": "result",
+            "equals": "CLICKED",
+        },
+    ],
     "controlled_preflight": [
         {
             "type": "plan",
@@ -133,6 +156,7 @@ async def scenario(name, root, browser, worker, binary):
         "discovery_observations": 0,
     }
     script = SCENARIOS[name]
+    observed_target = {}
 
     class Model(QuietHandler):
         def do_POST(self):
@@ -150,13 +174,17 @@ async def scenario(name, root, browser, worker, binary):
             if request.get("tools") and index < len(script):
                 state["tool_responses"] += 1
                 state["json_arguments"] += 1
+                action = dict(script[index])
+                if action.get("selector") == "CURRENT_OBSERVED_REF":
+                    action["selector"] = observed_target["selector"]
+                    state["current_observed_ref_used"] = True
                 tool = {
                     "index": 0,
                     "id": f"call_{index}",
                     "type": "function",
                     "function": {
                         "name": "tap_browser",
-                        "arguments": json.dumps({"action": script[index]}),
+                        "arguments": json.dumps({"action": action}),
                     },
                 }
             else:
@@ -256,6 +284,16 @@ async def scenario(name, root, browser, worker, binary):
             state["corrected_value_verified"] = (
                 result.get("observation", {}).get("extracted", {}).get("value") == "Ada"
             )
+        if name == "unsupported_selector" and action["type"] == "snapshot":
+            observation = result.get("observation", {})
+            match = re.search(
+                r'button "Continue" \[ref=((?:f[1-9]\d*)?e[1-9]\d*)\]',
+                observation.get("bounded_snapshot", ""),
+            )
+            assert match, "owned button current ref missing"
+            observed_target.update(
+                selector="aria-ref=" + match.group(1), sequence=observation["sequence"]
+            )
         if result.get("status") == "completed":
             state["completed_actions"] += 1
             if action["type"] == "read":
@@ -289,6 +327,25 @@ async def scenario(name, root, browser, worker, binary):
         )
         if result.get("error"):
             state["server_rejections"] += 1
+        if (
+            name == "unsupported_selector"
+            and result.get("code") == "unsupported_selector_syntax"
+        ):
+            with worker.service.store.engine.connect() as connection:
+                rows = connection.execute(
+                    select(actions.c.request).where(
+                        actions.c.session_id == session["session_id"]
+                    )
+                ).all()
+            state["selector_feedback"] = {
+                "code": result["code"],
+                "status": result.get("status"),
+                "business_action_admitted": result.get("business_action_admitted"),
+                "actual_clicks_at_rejection": sum(
+                    row.request.get("type") == "click" for row in rows
+                ),
+                "observation_sequence_at_rejection": observed_target["sequence"],
+            }
         return result
 
     request = {
@@ -358,6 +415,28 @@ async def scenario(name, root, browser, worker, binary):
             assert any(
                 d["category"] == "server_rejected" for d in state["diagnostics"]
             ), state
+        if name == "unsupported_selector":
+            with worker.service.store.engine.connect() as connection:
+                rows = connection.execute(
+                    select(actions.c.request, actions.c.status)
+                    .where(actions.c.session_id == session["session_id"])
+                    .order_by(actions.c.sequence)
+                ).all()
+            clicks = [row for row in rows if row.request["type"] == "click"]
+            state["actual_action_receipts"] = [
+                {"operation": row.request["type"], "status": row.status} for row in rows
+            ]
+            feedback = state.get("selector_feedback", {})
+            assert feedback.get("business_action_admitted") is False, state
+            assert feedback.get("actual_clicks_at_rejection") == 0, state
+            assert (
+                observed_target["sequence"]
+                > feedback["observation_sequence_at_rejection"]
+            ), state
+            assert len(clicks) == 1 and clicks[0].status == "completed", state
+            assert clicks[0].request["selector"] == observed_target["selector"], state
+            assert state["dom_clicked"] and state["current_observed_ref_used"], state
+            assert state["server_rejections"] == 1 and not state["unknown"], state
         if controlled:
             with worker.service.store.engine.connect() as connection:
                 rows = connection.execute(
