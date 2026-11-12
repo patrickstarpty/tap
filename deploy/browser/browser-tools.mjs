@@ -27,8 +27,8 @@ const actionSchema = {oneOf:[
     properties:{id:step, keyword:{enum:['Given','When','Then','And']}, title:text(200), expected_result:text(400), verification_kind:{enum:['input','result'], description:'Then only. input: exact readback of supplied form data, with source evidence retained after leaving the form. result (default): current final outcome checked after the last write.'}},
     required:['id','keyword','title'],
   }}, reason:text(400)}, ['steps']),
-  shape('navigate', {step, url:text(4096)}, ['step','url']),
-  shape('snapshot', {step, selector:{...selector,description:selector.description+' snapshot.selector scopes an existing element and its descendants, not a text search. A textbox scope cannot show a sibling popup; use its observed popup/select selector.'}}, ['step']),
+  shape('navigate', {step, url:text(4096)}, ['url']),
+  shape('snapshot', {step, selector:{...selector,description:selector.description+' snapshot.selector scopes an existing element and its descendants, not a text search. A textbox scope cannot show a sibling popup; use its observed popup/select selector.'}}, []),
   ...['click','wait'].map(type => shape(type, {step, selector, ...target}, ['step','selector'])),
   shape('fill', {step, selector, value:{type:'string', maxLength:4000, description:
     'Text value for an editable input, textarea or contenteditable control. Never fill a readonly control; use an observed supported selection interaction. Read back the input with attribute=value and exact equals.'}, ...target}, ['step','selector','value']),
@@ -269,7 +269,7 @@ export default async function BrowserTools() {
   const root = process.env.TAP_CODING_MAILBOX;
   if (!root) throw new Error('coding mailbox unavailable');
   return {tool:{tap_browser:{
-    description:'Operate the task-owned live browser. Save a business BDD plan, then use its step IDs for actions. '
+    description:'Operate the task-owned live browser. Before a plan, omit step only for snapshot or one navigation to the exact frozen starting URL. Save a business BDD plan before writes or business reads, then use its step IDs. System discovery is retained separately; do not repeat navigation to populate a step. '
       + 'Source-redacted bounded observations are saved in evidence_file; related_fields show current controls and visible popups. scope_candidates are bounded observation ranges, not business bindings: use their exact selector for a current scoped snapshot. Use read/grep for relevant details or a scoped snapshot. '
       + 'Fresh action receipts already contain current observations. Use observed selectors/aria-ref or the documented exact live role[ref] aliases; snapshot may be scoped to an existing element, not used as text search. For readonly date widgets open the observed widget, then use current year, month and day controls. A textbox scope cannot show a sibling popup. Native options_total/options_truncated describe incomplete option lists; scope the observed select to inspect more. Read validates equals/contains/nonempty/positive/pattern '
       + 'against the actual DOM and records named business values. Give each required input or result condition its own Then step and unique read name. Mark form-input Then steps verification_kind=input and use exact equals readbacks after filling the form, before leaving it. At least one final result Then is required; verify result steps after the last write. '
@@ -281,7 +281,7 @@ export default async function BrowserTools() {
     async execute({action}, context) {
       context.abort.throwIfAborted();
       validateAction(action);
-      if (action.type !== 'plan' && !action.step) throw new Error('browser step required');
+      if (!['plan','snapshot','navigate'].includes(action.type) && !action.step) throw new Error('browser step required');
       await context.ask({permission:'tap_browser', patterns:[action.type], always:[], metadata:{operation:action.type}});
       context.abort.throwIfAborted();
       const liveAction = canonicalLiveAction(action);

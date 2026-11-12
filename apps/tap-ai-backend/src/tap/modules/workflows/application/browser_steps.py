@@ -1,4 +1,4 @@
-"""Persist a business plan before inspection and correlate actual browser actions."""
+"""Bound discovery, then correlate reviewed business steps with actual actions."""
 
 from __future__ import annotations
 
@@ -15,6 +15,13 @@ from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceCo
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 Execute = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 _ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
+_DISCOVERY_ID = "tap_discovery"
+_DISCOVERY_STEP = {
+    "id": _DISCOVERY_ID,
+    "keyword": "Given",
+    "title": "Observe the authorized starting page (system discovery)",
+    "expected_result": "",
+}
 _TARGET_WRITES = {"click", "fill", "select", "press"}
 _MISSING_TARGET_ERROR = (
     "no target matched before write; take a fresh snapshot and use its aria-ref, "
@@ -40,8 +47,21 @@ def diagnostic_url(value: object) -> str:
 
 
 class BrowserProgress:
-    def __init__(self, emit: Emit, acceptance: BrowserAcceptanceContract | None = None) -> None:
+    def __init__(
+        self,
+        emit: Emit,
+        acceptance: BrowserAcceptanceContract | None = None,
+        *,
+        frozen_start_url: str | None = None,
+        discovery_session_id: str | None = None,
+    ) -> None:
         self.emit = emit
+        self.frozen_start_url = frozen_start_url
+        self.discovery_session_id = discovery_session_id
+        self._discovery_navigation_used = False
+        self.observation_progress = False
+        self._discovery_recorded = False
+        self._discovery_receipts: set[str] = set()
         self.acceptance = acceptance
         self.required_fields = {f.id: f for f in acceptance.fields} if acceptance else {}
         self.required_reads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
@@ -243,6 +263,11 @@ class BrowserProgress:
     async def handle(
         self, payload: dict[str, Any], action_id: str, execute: Execute
     ) -> dict[str, Any]:
+        if self.unknown_action:
+            return {
+                "error": "Previous browser action outcome is unknown; do not retry",
+                "status": "unknown",
+            }
         if payload.get("type") == "plan":
             raw = payload.get("steps")
             if not isinstance(raw, list) or not 1 <= len(raw) <= 24:
@@ -263,6 +288,7 @@ class BrowserProgress:
                     not isinstance(ident, str)
                     or not _ID.fullmatch(ident)
                     or ident in steps
+                    or ident == _DISCOVERY_ID
                     or not isinstance(keyword, str)
                     or keyword not in {"Given", "When", "Then", "And"}
                     or not isinstance(title, str)
@@ -293,6 +319,10 @@ class BrowserProgress:
                         else {}
                     ),
                 }
+            if self._discovery_recorded:
+                if len(steps) >= 24:
+                    return {"error": "BDD plan must leave one of 24 steps for system discovery"}
+                steps = {_DISCOVERY_ID: dict(_DISCOVERY_STEP), **steps}
             if any(steps.get(ident) != self.steps[ident] for ident in self.used):
                 return {"error": "BDD plan cannot rewrite or remove executed steps"}
             reason = payload.get("reason", "")
@@ -314,18 +344,39 @@ class BrowserProgress:
                 },
             )
             self.steps = steps
+            if self._discovery_recorded:
+                self.used.add(_DISCOVERY_ID)
             self.revision += 1
             return {"status": "planned", "revision": self.revision, "step_ids": list(steps)}
-        if not self.steps:
-            return {"error": "Create the BDD plan before browser actions"}
-        step_id = payload.get("step")
-        if not isinstance(step_id, str) or step_id not in self.steps:
-            return {"error": "Browser action must reference a planned BDD step id"}
-        if self.unknown_action:
-            return {
-                "error": "Previous browser action outcome is unknown; do not retry",
-                "status": "unknown",
-            }
+        discovery = not self.steps
+        if discovery:
+            if not self.frozen_start_url or not self.discovery_session_id:
+                return {"error": "Create the BDD plan before browser actions"}
+            if payload.get("step") is not None:
+                return {"error": "Discovery has no business step; omit step until a plan exists"}
+            if payload.get("type") not in {"snapshot", "navigate"}:
+                return {"error": "Create the BDD plan before business browser actions"}
+            if payload.get("type") == "navigate":
+                if self._discovery_navigation_used or payload.get("url") != self.frozen_start_url:
+                    return {
+                        "error": "Discovery navigation permits only the frozen starting URL once"
+                    }
+                # Consume before dispatch, including failure/unknown. Plan changes never reset it.
+                self._discovery_navigation_used = True
+            step_id = _DISCOVERY_ID
+        else:
+            requested_step = payload.get("step")
+            if not isinstance(requested_step, str) or requested_step not in self.steps:
+                return {"error": "Browser action must reference a planned BDD step id"}
+            step_id = requested_step
+            if step_id == _DISCOVERY_ID:
+                return {"error": "System discovery steps cannot dispatch new actions"}
+            if (
+                self._discovery_navigation_used
+                and payload.get("type") == "navigate"
+                and payload.get("url") == self.frozen_start_url
+            ):
+                return {"error": "Do not repeat discovery navigation to populate a business step"}
         action = {key: value for key, value in payload.items() if key != "step"}
         selector = action.get("selector")
         if (
@@ -367,7 +418,8 @@ class BrowserProgress:
                 for ident, check in list(self.live_checks.items()):
                     if check.get("name") == read_name:
                         self.live_checks.pop(ident)
-        step = self.steps[step_id]
+        step = _DISCOVERY_STEP if discovery else self.steps[step_id]
+        event_prefix = "browser.discovery" if discovery else "browser.action"
         details: dict[str, Any] = {
             "action_id": action_id,
             "operation": action.get("type"),
@@ -380,8 +432,9 @@ class BrowserProgress:
             "selector": str(action.get("selector", ""))[:1000],
             "input": "[hidden]" if "value" in action else str(action.get("key", ""))[:100],
         }
-        await self.emit("browser.action_started", details)
-        self.used.add(step_id)
+        await self.emit(event_prefix + "_started", details)
+        if not discovery:
+            self.used.add(step_id)
         started = time.monotonic()
         try:
             receipt = await execute(action)
@@ -402,7 +455,7 @@ class BrowserProgress:
                 self.pending_proofs.clear()
                 self.input_checks.clear()
             await self.emit(
-                "browser.action_finished",
+                event_prefix + "_finished",
                 {
                     **details,
                     "duration_ms": round((time.monotonic() - started) * 1000),
@@ -411,9 +464,10 @@ class BrowserProgress:
                 },
             )
             raise
-        if self.session_id is not None and (
-            receipt.get("session_id") != self.session_id
-            or observation.get("session_id") != self.session_id
+        expected_session = self.discovery_session_id if discovery else self.session_id
+        if expected_session is not None and (
+            receipt.get("session_id") != expected_session
+            or observation.get("session_id") != expected_session
         ):
             self.unknown_action = True
         # A renderer/session loss cannot establish whether a write took effect.
@@ -442,6 +496,28 @@ class BrowserProgress:
         )
         sequence = observation.get("sequence")
         fresh_sequence = type(sequence) is int and sequence > self.last_sequence
+        if discovery:
+            receipt_id = receipt.get("action_id")
+            fresh_identity = (
+                isinstance(receipt_id, str)
+                and bool(receipt_id)
+                and receipt_id not in self._discovery_receipts
+            )
+            completed = completed and fresh_sequence and fresh_identity
+            if not fresh_identity and not observation.get("error"):
+                observation = {
+                    **observation,
+                    "error": "Discovery receipt identity is missing or repeated",
+                }
+            if not fresh_sequence and not observation.get("error"):
+                observation = {
+                    **observation,
+                    "error": "Discovery observation sequence is not fresh",
+                }
+            if completed:
+                self.observation_progress = self.observation_progress or bool(
+                    observation.get("bounded_snapshot") or observation.get("fields")
+                )
         if (
             isinstance(selector, str)
             and selector
@@ -522,7 +598,7 @@ class BrowserProgress:
         if observed_url and observation.get("bounded_snapshot"):
             self.has_page_observation = True
         await self.emit(
-            "browser.action_finished",
+            event_prefix + "_finished",
             {
                 **details,
                 "duration_ms": round((time.monotonic() - started) * 1000),
@@ -629,12 +705,17 @@ class BrowserProgress:
             ):
                 self.live_checks[step_id] = action
         if completed:
+            if discovery:
+                self._discovery_recorded = True
+                self._discovery_receipts.add(str(receipt["action_id"]))
             self.recorded_actions.append(
                 {
                     **action,
                     "step": step_id,
                     "action_id": receipt.get("action_id", action_id),
-                    "url": observation.get("url"),
+                    "url": action.get("url")
+                    if action.get("type") == "navigate"
+                    else observation.get("url"),
                 }
             )
         if completed and action.get("type") == "click" and self.acceptance is not None:

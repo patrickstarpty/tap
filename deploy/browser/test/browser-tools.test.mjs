@@ -427,3 +427,24 @@ test('an unusable generated target selector cannot reserve away an aria-ref scop
   assert.equal(result.related_fields_omitted,1);
   assert.deepEqual(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')),observation);
 });
+
+test('only discovery navigation and snapshot may omit a planned step', async t => {
+  const {root, tool} = await setup(t);
+  for (const type of ['navigate','snapshot']) {
+    const schema = tool.args.action.oneOf.find(item => item.properties.type.const === type);
+    assert.ok(!schema.required.includes('step'));
+  }
+  await assert.rejects(tool.execute({action:{type:'click',selector:'#go'}}, {
+    directory:root,abort:new AbortController().signal,ask:async()=>{},
+  }), /step required/);
+  const action={type:'snapshot'};
+  const pending=tool.execute({action},{directory:root,abort:new AbortController().signal,ask:async()=>{}});
+  let file;
+  for(let i=0;i<100&&!file;i++) {
+    file=fs.readdirSync(path.join(root,'requests')).find(name=>name.endsWith('.json'));
+    if(!file) await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.ok(file);
+  fs.writeFileSync(path.join(root,'responses',file),JSON.stringify({error:'server policy decides discovery'}),{mode:0o600});
+  assert.equal(JSON.parse(await pending).error,'server policy decides discovery');
+});
