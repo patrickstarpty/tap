@@ -1070,7 +1070,9 @@ async def test_controlled_pre_actuation_failure_allows_correction_not_success(ca
             "observation": {
                 "sequence": len(calls),
                 "url": "https://example.com",
-                "error": "controlled target ambiguous before actuation" if failed else None,
+                "error": f"controlled target {category.removeprefix('target_')} before actuation"
+                if failed
+                else None,
                 "write_started": False if failed else True,
                 "extracted": {
                     "pre_actuation_failure": {
