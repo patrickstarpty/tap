@@ -1,3 +1,5 @@
+import pytest
+
 from tap.modules.workflows.adapters.coding_progress_guard import CodingProgressGuard
 
 
@@ -86,3 +88,71 @@ def test_preflight_rejection_and_fresh_snapshots_do_not_extend_four_turn_window(
     assert not guard.allow(True, browser_progress_units(recorded), observed=True)
     # A late claimed completion cannot revive the already stopped session.
     assert not guard.allow(True, 1, observed=True)
+
+
+@pytest.mark.asyncio
+async def test_real_progress_preflight_rejections_and_correction_observations_stop():
+    from tap.modules.workflows.adapters.coding_progress_guard import browser_progress_units
+    from tap.modules.workflows.application.browser_steps import BrowserProgress
+
+    async def emit(*_args):
+        pass
+
+    progress = BrowserProgress(emit, discovery_session_id="session-a")
+    guard = CodingProgressGuard()
+    sequence = 0
+    writes = 0
+
+    async def execute(action):
+        nonlocal sequence, writes
+        sequence += 1
+        if action["type"] == "fill":
+            writes += 1
+            return {
+                "status": "preflight_rejected",
+                "business_action_admitted": False,
+                "operation": "fill",
+                "session_id": "session-a",
+                "control_epoch": 0,
+                "preflight_action_id": f"probe-{sequence}",
+                "observation_sequence": sequence,
+                "category": "target_missing",
+            }
+        return {
+            "status": "completed",
+            "session_id": "session-a",
+            "control_epoch": 0,
+            "action_id": f"snapshot-{sequence}",
+            "observation": {
+                "session_id": "session-a",
+                "sequence": sequence,
+                "url": "https://example.com",
+                "bounded_snapshot": "Input amount",
+                "error": None,
+            },
+        }
+
+    await progress.handle(
+        {
+            "type": "plan",
+            "steps": [
+                {"id": "input", "keyword": "When", "title": "Enter amount"},
+            ],
+        },
+        "plan",
+        execute,
+    )
+    for attempt in range(25):
+        if not guard.allow(True, browser_progress_units(progress.recorded_actions), observed=True):
+            break
+        rejected = await progress.handle(
+            {"type": "fill", "step": "input", "selector": "#missing", "value": "3"},
+            f"fill-{attempt}",
+            execute,
+        )
+        assert rejected["code"] == "preflight_rejected"
+        await progress.handle({"type": "snapshot", "step": "input"}, f"observe-{attempt}", execute)
+    assert writes == 4
+    assert guard.stopped
+    assert not progress.unknown_action
+    assert browser_progress_units(progress.recorded_actions) == 0
