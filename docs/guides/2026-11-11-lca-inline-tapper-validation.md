@@ -291,3 +291,46 @@ regressions and Ruff/MyPy passed. One older expectation that absent handwritten
 script must fail was updated to verified deterministic compilation; both success
 and compiler-failure/no-repeat paths passed. No paid provider or external website
 was used. This is not FWD/AIA autonomous quotation acceptance.
+
+## 2026-11-12 AIA bounded real runs: not accepted
+
+Both runs used the formal embedded LCA composer, actual Qwen Max through the
+existing DashScope mapping, the same reviewed synthetic profile, and the explicit
+existing upstream proxy. No application, payment or contact submission occurred.
+Neither run produced a verified quotation. The original 30-call/$1 AIA grant was
+not enlarged and FWD's exhausted allowance was not reused.
+
+| Task | Result | Calls | Input / output tokens | Actual provider USD | Conservative budget micros |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `9cea36c637844c86a0de602a53e03aea` | Entry click unknown; stopped | 6 | 73,357 / 1,751 | 0.1285776 | 128,581 |
+| `92b38980526b47ee9eb1d0af6a56148b` | Input preflight failed; stopped | 6 | 65,326 / 1,502 | 0.1141344 | 114,137 |
+
+All 12 reservations have verified settlements. AIA actual total is $0.2427120;
+remaining authorization is 18 calls and $0.757282 after conservative deductions.
+No automatic third attempt was made. Across the recorded TAP API experiments,
+the updated cumulative total is 152 calls, 2,247,175 tokens and $2.67166360;
+this is not a total of assistant credits.
+
+The first run's generic entry-link selector failed cardinality resolution before
+the controlled actuator was constructed, but the inspector lost that structural
+fact. Its historical receipt remains unknown, never rewritten. Patch `9b08a03f`
+now brands only actual zero/multiple target-count exceptions in a private WeakMap.
+The inspector emits bounded fixed-category pre-actuation evidence; the worker
+requires exact proof, matching error, strict false and matching original session
+identity. It may classify the new receipt failed, never completed. Forged error
+text/properties or post-actuator exceptions cannot acquire this proof.
+
+In the second run the model navigated to the product introduction page and
+attempted to fill a date-of-birth control that did not exist there. The only
+following ledger action was preflight, failed with `target_missing` and
+`write_started:false`. The actual fill was not admitted or dispatched. The API
+returned 409, the workflow blocked, and the harness stopped the owned session.
+This proves the narrow failure-evidence correction worked, not autonomous
+navigation to the quotation form or successful recovery from that API error.
+
+Affected validation: 80 controlled-browser tests, 85 durable-ledger tests and
+71 AI browser-step/no-progress tests passed; Ruff/MyPy and independent review
+passed. The new Chromium matrix executes production inspector dispatch/catch,
+but uses in-memory socket transport, not a standalone Unix-socket integration.
+No full repository gate was rerun for this narrow patch. Each real run has an
+uncut H.264/yuv420p/faststart failure recording, fully decoded and honestly labeled.
