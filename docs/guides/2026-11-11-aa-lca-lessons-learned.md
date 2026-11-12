@@ -202,3 +202,12 @@ upstream 配置，首个 navigate 返回 unknown 后停止，消耗 5 次调用�
 只统计可核验 TAP API 的累计数为 140 次、2,105,239 tokens、$2.42895160，
 不能说这是全部助手 credits。逐轮 token、费用、任务身份和回归范围见
 [内嵌验收记录](2026-11-11-lca-inline-tapper-validation.md#2026-11-12-bounded-real-fwd-attempts-not-accepted)。
+
+随后的零费实验不再只 mock Python：真实 OpenCode 1.19.5 经原生 tap_browser、
+mailbox、HTTP 服务和 owned Chromium 跑通五类协议场景。JSON-looking 文字没有
+产生任何 tool/admission；工具 completed 也可能只是返回了服务端 error。
+纠正被拒计划后，真实点击和 DOM 读回可以成功，原拒绝诊断仍保留。实际缺
+selector 的原生错误还暴露了过粗分类，已用固定 validation 类别修复。提示
+同样必须遵守冻结合同的 checked/selected_label/text 属性，不能统一要求 value。
+此实验的模型是合成服务，模型转发没有走财务 BudgetGate；它证明协议和诊断
+机制，不证明 Qwen 自主性，也不重复声称四次无进展保护已获真实模型验证。

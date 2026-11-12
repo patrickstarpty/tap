@@ -158,3 +158,48 @@ mailbox fixture forwarded only four times. These changes have **not** been
 validated with another real-model FWD or AIA run. No further provider expenditure
 was made for this fix; synthetic formal-LCA acceptance above remains a separate
 claim.
+
+### Zero-fee native OpenCode protocol matrix
+
+A follow-up used the actual pinned **OpenCode 1.19.5 executable**, native
+`tap_browser`, mailbox, BrowserProgress, real HTTP/SQLite BrowserService,
+BrowserWorker and owned Chromium page. The model was an owned loopback scripted
+SSE provider. It did not visit public sites or call a paid provider.
+
+| Scripted response case | Synthetic requests | Tool calls | Accepted plans | Completed browser actions | Observed result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Normal plan | 6 | 4 | 1 | 3 | Clicked DOM read back `CLICKED` |
+| JSON-looking plain text | 2 | 0 | 0 | 0 | Text is not tool admission |
+| Invalid tool schema | 3 | 1 | 0 | 0 | `validation_error` |
+| Completed tool with server rejection | 3 | 1 | 0 | 0 | `server_rejected`, not success |
+| Rejected plan, then correction | 7 | 5 | 1 | 3 | Rejection retained; corrected DOM read `CLICKED` |
+
+Actual transport completion can coexist with business rejection. The matrix
+found the native missing-selector validation was initially classified too
+broadly; a failure-first regression now assigns its fixed validation category.
+Completed native-tool JSON errors are separately categorized without storing
+raw output or error text. Generation guidance now uses the frozen contract's
+attribute and expected readback instead of coercing checked/selected_label/text
+to value. These fixes do not modify the frozen contract or target verification.
+
+[Machine-readable safe evidence](assets/2026-11-12-opencode-protocol-matrix.json)
+contains protocol counts and fixed diagnostics only. Normal/plain-text evidence
+was collected before the final validation-classifier-only change; the other
+three cases were rerun after it. All five passed. The runner deliberately uses a
+test model-forward handler, **not CodingRuntime/BudgetGate**; it does not replace
+the separate four-call guard runtime regression or validate paid autonomy.
+
+Reproduce with the repository's installed dependencies and pinned binary:
+
+```sh
+PYTHONPATH=apps/tap-ai-backend/src:apps/backend/src .venv/bin/python \
+  scripts/verify-opencode-protocol.py \
+  --opencode-binary "$TAP_OPENCODE_BINARY" \
+  --evidence /tmp/tap-opencode-protocol.json
+```
+
+Each owned scenario permits at most ten synthetic requests, with a 75-second
+prompt-phase deadline and separately bounded container startup. No
+Docker stack or external model key is needed. The final diagnostic unit suite
+passed 19 Node tests; affected Python prompt/guard/unknown regressions and
+Ruff/MyPy checks passed. FWD/AIA autonomous quote acceptance remains unproven.

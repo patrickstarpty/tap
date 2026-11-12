@@ -1,0 +1,151 @@
+{
+  "opencode_version": "1.19.5",
+  "provider": "owned_synthetic",
+  "paid_calls": 0,
+  "browser_chain": "HTTP/SQLite/BrowserWorker/LocalBrowserRuntime/Chromium",
+  "model_forwarding": "test handler to owned HTTP synthetic provider; not CodingRuntime/BudgetGate",
+  "financial_guard_tested": false,
+  "cases": {
+    "normal": {
+      "provider_requests": 6,
+      "text_responses": 2,
+      "tool_responses": 4,
+      "json_arguments": 4,
+      "json_text_responses": 0,
+      "accepted_plans": 1,
+      "completed_actions": 3,
+      "server_rejections": 0,
+      "dom_clicked": true,
+      "terminal": "complete",
+      "diagnostics": [
+        {
+          "sequence": 1,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        },
+        {
+          "sequence": 2,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        },
+        {
+          "sequence": 3,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        },
+        {
+          "sequence": 4,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        }
+      ],
+      "unknown": false
+    },
+    "plain_text": {
+      "provider_requests": 2,
+      "text_responses": 2,
+      "tool_responses": 0,
+      "json_arguments": 0,
+      "json_text_responses": 2,
+      "accepted_plans": 0,
+      "completed_actions": 0,
+      "server_rejections": 0,
+      "dom_clicked": false,
+      "terminal": "complete",
+      "diagnostics": [],
+      "unknown": false
+    },
+    "schema_error": {
+      "provider_requests": 3,
+      "text_responses": 2,
+      "tool_responses": 1,
+      "json_arguments": 1,
+      "json_text_responses": 0,
+      "accepted_plans": 0,
+      "completed_actions": 0,
+      "server_rejections": 0,
+      "dom_clicked": false,
+      "terminal": "complete",
+      "diagnostics": [
+        {
+          "sequence": 1,
+          "tool": "tap_browser",
+          "status": "error",
+          "category": "validation_error"
+        }
+      ],
+      "unknown": false
+    },
+    "server_rejected": {
+      "provider_requests": 3,
+      "text_responses": 2,
+      "tool_responses": 1,
+      "json_arguments": 1,
+      "json_text_responses": 0,
+      "accepted_plans": 0,
+      "completed_actions": 0,
+      "server_rejections": 1,
+      "dom_clicked": false,
+      "terminal": "complete",
+      "diagnostics": [
+        {
+          "sequence": 1,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "server_rejected"
+        }
+      ],
+      "unknown": false
+    },
+    "corrected": {
+      "provider_requests": 7,
+      "text_responses": 2,
+      "tool_responses": 5,
+      "json_arguments": 5,
+      "json_text_responses": 0,
+      "accepted_plans": 1,
+      "completed_actions": 3,
+      "server_rejections": 1,
+      "dom_clicked": true,
+      "terminal": "complete",
+      "diagnostics": [
+        {
+          "sequence": 1,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "server_rejected"
+        },
+        {
+          "sequence": 2,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        },
+        {
+          "sequence": 3,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        },
+        {
+          "sequence": 4,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        },
+        {
+          "sequence": 5,
+          "tool": "tap_browser",
+          "status": "completed",
+          "category": "none"
+        }
+      ],
+      "unknown": false
+    }
+  },
+  "evidence_scope": "normal/plain_text from preceding same application source; remaining after fixed validation classifier regression"
+}
