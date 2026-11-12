@@ -71,3 +71,18 @@ def test_snapshots_waits_and_repeated_read_do_not_create_progress_units():
     assert browser_progress_units(actions) == 1
     actions += [{"type": "read", "step": "verify2", "name": "age"}, {"type": "click"}]
     assert browser_progress_units(actions) == 3
+
+
+def test_preflight_rejection_and_fresh_snapshots_do_not_extend_four_turn_window():
+    # The client never emits a business receipt for rejected input preflight;
+    # BrowserProgress records only the successful read-only snapshots afterward.
+    from tap.modules.workflows.adapters.coding_progress_guard import browser_progress_units
+
+    guard = CodingProgressGuard()
+    recorded = []
+    for _ in range(4):
+        assert guard.allow(True, browser_progress_units(recorded), observed=True)
+        recorded.append({"type": "snapshot"})
+    assert not guard.allow(True, browser_progress_units(recorded), observed=True)
+    # A late claimed completion cannot revive the already stopped session.
+    assert not guard.allow(True, 1, observed=True)
