@@ -393,3 +393,26 @@ proof behavior is not given this fallback, and no unknown result is downgraded.
 Eight failure-first geometry cases plus the existing controlled/human safety
 matrix passed, 88/88 total, including full-overlay and target-mutation refusals.
 No provider calls occurred in these diagnostics or fixtures.
+
+### Bounded real AIA run after geometry fix: not accepted
+
+Independent review found no blocker in fixed `f692e363`. With the original
+remaining cap of 13 calls/$0.659251, formal embedded-LCA task
+`0d5c8edcd4704a70a07d2256eaaf7f5f` navigated, completed two snapshots, then stopped
+on an unknown click with the model-proposed selector `aria/Get in touch`.
+The server reported only `controlled browser request rejected`; this was not
+the Buy Now target and did not exercise the geometry recovery. No quotation,
+input, contact submission, application or payment occurred.
+
+A separate owned static-HTML diagnostic reproduced invalid selector syntax at
+`locator.count` for the same string, before any click. The production error's
+original unknown classification remains unchanged. This identifies another
+model/tool-boundary problem, not successful autonomous task understanding; no
+further paid run or unapproved selector workaround was performed.
+
+All six provider reservations settled: 72,268 input / 712 output tokens, actual
+$0.1201856, conservative deduction 120,189 micros. AIA cumulative usage is 23
+calls/$0.4609264, leaving 7 calls/$0.539062 of the original grant and no in-flight
+reservation. The recorded TAP API experiment total is 163 calls, 2,378,789 tokens
+and $2.88987800, not all assistant credits. The owned session confirmed stopped.
+The uncut failure recording is `aia-real-lca-selector-unknown-20261112.mp4`.
