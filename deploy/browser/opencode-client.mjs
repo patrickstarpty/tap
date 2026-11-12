@@ -379,6 +379,27 @@ async function run() {
   }
 }
 
+function collectDiagnostics() {
+  let descriptor;
+  try {
+    // Keep task/process ownership checks, but never inspect generated artifacts.
+    verifiedIdentity();
+    descriptor = fs.openSync(workspaceFile('tool-diagnostics.json'), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > 12000) throw new Error('invalid diagnostics');
+    const bytes = Buffer.alloc(12001);
+    const count = fs.readSync(descriptor, bytes, 0, bytes.length, 0);
+    if (count > 12000) throw new Error('invalid diagnostics');
+    const value = JSON.parse(bytes.subarray(0,count).toString('utf8'));
+    if (!Array.isArray(value)) throw new Error('invalid diagnostics');
+    return {diagnostics:sanitizeToolDiagnostics(value)};
+  } catch {
+    return {diagnostics:[],diagnostics_unavailable:true};
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 function collect() {
   verifiedIdentity();
   const result = {};
@@ -410,6 +431,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     if (process.argv[2] === 'daemon') await daemon();
     else if (process.argv[2] === 'run') process.stdout.write(JSON.stringify(await run()) + '\n');
+    else if (process.argv[2] === 'collect-diagnostics') process.stdout.write(JSON.stringify(collectDiagnostics()) + '\n');
     else if (process.argv[2] === 'collect') process.stdout.write(JSON.stringify(collect()) + '\n');
     else if (process.argv[2] === 'inspect') {
       const identity = verifiedIdentity();

@@ -74,6 +74,20 @@ http.createServer((req,res) => {
         with pytest.raises(RuntimeError, match="invalid generated script") as diagnostic:
             await adapter.collect()
         assert "synthetic-shim-token" not in str(diagnostic.value)
+        (workspace / "tool-diagnostics.json").write_text(
+            '[{"tool":"tap_browser","status":"error","category":"validation_error","input":"private"}]'
+        )
+        adapter._deadline = time.monotonic() - 1
+        assert await adapter.collect_diagnostics() == {
+            "diagnostics": [
+                {
+                    "sequence": 1,
+                    "tool": "tap_browser",
+                    "status": "error",
+                    "category": "validation_error",
+                }
+            ]
+        }
         env = adapter.environment
         assert "OPENAI_API_KEY" not in env and "OPENCODE_CONFIG" not in env
         assert Path(env["HOME"]).is_relative_to(workspace.parent)

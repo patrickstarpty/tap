@@ -278,6 +278,11 @@ class LocalCodingContainer:
     async def collect(self) -> dict[str, Any]:
         return await self._client("collect")
 
+    async def collect_diagnostics(self) -> dict[str, Any]:
+        # Terminal evidence has its own short bound, independent of the expired
+        # model deadline. The live daemon/task identity checks remain in force.
+        return await self._client("collect-diagnostics", timeout=1, max_stdout=12000)
+
     @staticmethod
     def _diagnostic(raw: bytes) -> str:
         # Client stderr may include filesystem paths or external error text. Only

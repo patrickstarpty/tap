@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sanitizeToolDiagnostics, toolDiagnostics, terminalMessages, terminalFailure, linkedChildren, validateFrozenInput, waitForDaemon, waitForServeReadiness } from '../opencode-client.mjs';
 
@@ -241,4 +245,28 @@ test('native browserctl selector validation is classified without retaining its 
     {info:{role:'assistant',parentID:'u'},parts:[{type:'tool',tool:'tap_browser',
       state:{status:'error',error:'invalid browser selector'}}]}];
   assert.equal(toolDiagnostics(history,'u')[0].category,'validation_error');
+});
+
+
+for (const scenario of ['valid','missing','oversized','symlink','wrong-identity']) test(`diagnostics-only CLI is bounded and artifact-independent: ${scenario}`, t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'tap-diagnostics-only-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const nonce='a'.repeat(32);
+  fs.writeFileSync(path.join(root,'serve.json'),JSON.stringify({pid:process.pid,nonce,version:'1.19.5'}));
+  fs.writeFileSync(path.join(root,'flow.spec.ts'),'x'.repeat(300000));
+  fs.writeFileSync(path.join(root,'tapper-input-request.json'),'invalid private artifact');
+  const file=path.join(root,'tool-diagnostics.json');
+  const row={sequence:99,tool:'tap_browser',status:'error',category:'validation_error',input:'PRIVATE_SECRET'};
+  if(scenario==='valid'||scenario==='wrong-identity') fs.writeFileSync(file,JSON.stringify([row]));
+  if(scenario==='oversized') fs.writeFileSync(file,'x'.repeat(12001));
+  if(scenario==='symlink') fs.symlinkSync(path.join(root,'flow.spec.ts'),file);
+  const result=spawnSync(process.execPath,[fileURLToPath(new URL('../opencode-client.mjs',import.meta.url)),'collect-diagnostics'],{
+    encoding:'utf8',timeout:3000,env:{...process.env,TAP_CODING_LOCAL:'1',TAP_CODING_WORKSPACE:root,TAP_CODING_MAILBOX:root,
+      TAP_OPENCODE_BINARY:'/unused/opencode',TAP_CODING_PORT:'39002',TAP_MODEL_SHIM_PORT:'39001',TAP_CODING_SERVE_NONCE:scenario==='wrong-identity'?'b'.repeat(32):nonce},
+  });
+  assert.equal(result.status,0,result.stderr);
+  assert.ok(Buffer.byteLength(result.stdout)<=12000);assert.ok(!result.stdout.includes('PRIVATE'));
+  const value=JSON.parse(result.stdout);
+  if(scenario==='valid') assert.deepEqual(value,{diagnostics:[{sequence:1,tool:'tap_browser',status:'error',category:'validation_error'}]});
+  else assert.deepEqual(value,{diagnostics:[],diagnostics_unavailable:true});
 });
