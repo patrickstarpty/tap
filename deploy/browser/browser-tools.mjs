@@ -109,9 +109,9 @@ function modelSourceView(receipt) {
 
 const jsonBytes = value => Buffer.byteLength(JSON.stringify(value) ?? 'null', 'utf8');
 const DISCOVERY_LIMIT = 100;
-const discoveryNote = 'Bounded source-order observed candidates, not clickability or business proof. '
-  + 'Read control_catalog.file with offset and limit=4 (one JSON object per line, no header). '
-  + 'This catalog belongs to this static observation sequence; re-observe after DOM changes.';
+const discoveryNote = 'Observed candidates, not clickability/business proof. Static observation sequence; re-observe after DOM changes. '
+  + 'Read/grep needed records, not every page turn by turn; native read uses limit=4. '
+  + 'File reads are not browser progress; the no-progress model-call limit still applies.';
 
 function discoveryCatalog(fields, folder, available, sequence) {
   const observed = Array.isArray(fields) ? fields : [];

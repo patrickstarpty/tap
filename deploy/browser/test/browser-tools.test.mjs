@@ -551,3 +551,14 @@ test('untrusted oversized metadata cannot escape final UTF8 cap',async t=>{
   const encoded=modelReceipt(receipt,{type:'read'},root);
   assert.ok(Buffer.byteLength(encoded)<=8000);assert.equal(JSON.parse(encoded).status,'unknown');
 });
+
+
+test('catalog guidance distinguishes static file discovery from browser progress',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const result=JSON.parse(modelReceipt({sequence:1,error:null,bounded_snapshot:'Page',fields:[safeDiscoveryField(0)]},{type:'snapshot'},root));
+  assert.match(result.discovery_detail,/Read\/grep needed records/);
+  assert.match(result.discovery_detail,/not every page turn by turn/);
+  assert.match(result.discovery_detail,/not browser progress/);
+  assert.match(result.discovery_detail,/no-progress model-call limit still applies/);
+  assert.equal(result.control_catalog.page_size,4);
+});
