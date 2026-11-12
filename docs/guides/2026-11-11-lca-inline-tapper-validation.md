@@ -106,3 +106,55 @@ request/key and matching authorized context. An unknown receipt cannot be
 silently cleared or rebound across a changed gateway incarnation. Session storage
 contains a temporary copy of user task text and reviewed values, not transport
 credentials; it is not secret detection, so passwords must not be entered there.
+
+## 2026-11-12: bounded real FWD attempts (not accepted)
+
+Both attempts used the formal LCA embedded composer, synthetic business inputs,
+reviewed requirements, and the existing `qwen-max` → `dashscope/qwen-max` mapping.
+Neither obtained a verified quote. No application, payment or AIA run was made.
+
+| Attempt | Model calls | Input tokens | Output tokens | Verified provider cost (USD) | Outcome |
+| --- | ---: | ---: | ---: | ---: | --- |
+| First, task `f8357f84246f43aa801d42c1a42d634c` | 5 | 46,234 | 1,458 | 0.0833056 | First navigation returned unknown; stopped |
+| Second, task `1e6e3d6a93464c158de201c57fb8256b` | 25 | 315,173 | 5,067 | 0.5367056 | `budget_calls`; zero accepted browser plans/actions |
+
+All 30 calls settled. This FWD grant's verified provider cost totals **$0.6200112**;
+its 30-call allowance is exhausted even though its dollar ceiling was not reached.
+AIA used **zero calls** from its separate grant. Conservative per-call rounded
+budget charges total $0.620025, distinct from provider cost above. The cumulative
+reconciled TAP API accounting across the recorded trials is **140 calls,
+2,080,209 input + 25,030 output = 2,105,239 tokens, $2.42895160**. This is not an
+accounting of all assistant credits or all models used in development.
+
+The first launcher omitted the explicitly required local upstream proxy. The
+original navigation remains **unknown**, not retroactively “not dispatched.”
+Commit `02611388` requires an explicit reachable IPv4 loopback HTTP upstream
+before real-inline resources/model work and passes it into the actual worker.
+A separate zero-model controlled fixture and a separate read-only FWD navigation
+with the existing proxy succeeded. Neither proves the precise cause of the old
+unknown receipt nor counts as quotation acceptance.
+
+The second run stopped after its remaining 25 calls without a valid browser plan
+or action. Bounded read-only investigation of an isolated copy of its retained
+owned database found 25 reservation events, 25 settlements, a session-start event
+and a coding-result event. The public snapshot's 52 generic `activity` entries
+are privacy projections of those records, **not 52 tool calls**. Tool transcripts
+and validation messages were not persisted; the temporary OpenCode workspace had
+already been removed. The specific model/tool error cannot be reconstructed from
+retained evidence, so no selector/contract failure is claimed as the cause.
+
+Zero-fee follow-ups `c450bafb` and `b1d78653` retain at most 32 allowlisted tool
+status/category records without raw arguments, prompts, outputs or error text.
+A budget-independent guard stops before a fifth model forward if four requests
+have no accepted browser progress. Only the first accepted plan or an increased
+successful-action count resets the window; repeated plan edits do not. Unknown
+outcomes keep their existing priority. Diagnostics are optional and revalidated;
+a malformed artifact cannot replace the authoritative `no_progress` stop.
+
+Verification: 17 Node tests, 77 related Python tests (three skipped), then eight
+final focused tests covering the guard, failed diagnostic collection, sanitization
+and unknown priority; Ruff, MyPy and diff checks passed. A deterministic 25-turn
+mailbox fixture forwarded only four times. These changes have **not** been
+validated with another real-model FWD or AIA run. No further provider expenditure
+was made for this fix; synthetic formal-LCA acceptance above remains a separate
+claim.
