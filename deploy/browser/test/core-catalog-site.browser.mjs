@@ -35,6 +35,12 @@ test('filled catalog form has eight neutral identities and correct scroll/click 
   const origin=await ownedSite(t,true);
   const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:900,height:600}});await page.goto(origin+'/review');
+  for (const name of ['Account','Amount']) {
+    const input=page.getByLabel(name,{exact:true});
+    assert.equal(await input.isVisible(),true);
+    const box=await input.boundingBox();
+    assert.ok(box && box.x+box.width/2>0 && box.x+box.width/2<900 && box.y+box.height/2>0 && box.y+box.height/2<600, `${name} center must initially be in viewport`);
+  }
   const initial=await page.getByRole('button',{name:'Check request',exact:true}).boundingBox();
   assert.ok(initial.y>600);
   await page.getByLabel('Account',{exact:true}).fill('AC-42');

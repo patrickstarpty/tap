@@ -30,8 +30,7 @@ http.createServer((request, response) => {
   if (url.pathname === '/review' && process.env.TAP_CORE_SITE_CATALOG === '1') {
     const neutral = ['Ask a question', 'Option 2', 'Option 3', 'Option 4', 'Option 5']
       .map(label => `<button type="button" onclick="document.body.dataset.wrongAction='true'">${label}</button>`).join('');
-    body = body.replace('<h1>Request review</h1>', '<h1>Request review</h1><p>' + 'Neutral background information. '.repeat(400) + '</p>')
-      .replace('<button type="submit">', neutral + '<button type="submit">');
+    body = body.replace('<button type="submit">', '<p>' + 'Neutral background information. '.repeat(400) + '</p>' + neutral + '<button type="submit">');
   }
   if (url.pathname === '/lookup') {
     const customer = url.searchParams.get('customer') ?? '';
