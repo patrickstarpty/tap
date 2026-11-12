@@ -313,6 +313,46 @@ for (const scenario of cases) {
 
     if (scenario.status !== "succeeded") {
       expect(snapshot.browserRun?.status === "passed").toBe(false);
+      if (process.env.TAPPER_BROWSER_CORE_LCA_DIAGNOSTICS === "1") {
+        expect(snapshot.status).toBe("failed");
+        expect(
+          snapshot.events?.some(
+            (event) =>
+              event.kind === "task.failed" &&
+              event.payload.reason === "no_progress",
+          ),
+        ).toBe(true);
+        expect(page.url()).toBe(topLevelUrl);
+        expect(admissionRequests).toBe(1);
+        await page.reload();
+        const persisted = await page.request.get(
+          new URL(taskPath, origin).href,
+        );
+        expect(persisted.ok()).toBe(true);
+        const reloaded = (await persisted.json()) as CoreSnapshot;
+        expect(reloaded.status).toBe("failed");
+        expect(reloaded.taskId).toBe(taskId);
+        expect(reloaded.budgetUsed).toEqual(snapshot.budgetUsed);
+        expect(admissionRequests).toBe(1);
+        writeFileSync(
+          `${evidenceDir}/diagnostics-inline-journey.json`,
+          JSON.stringify(
+            {
+              provider: "synthetic",
+              taskId,
+              taskStatus: "failed",
+              reason: "no_progress",
+              topLevelUrlUnchanged: page.url() === topLevelUrl,
+              conversationAdmissions: admissionRequests,
+              reloadedSameTask: true,
+              imported: false,
+              replayed: false,
+            },
+            null,
+            2,
+          ),
+        );
+      }
       if (scenario.status === "awaiting_input") {
         expect(snapshot.browserInputRequest?.question).toBeTruthy();
       }

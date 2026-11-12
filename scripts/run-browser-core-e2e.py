@@ -241,12 +241,31 @@ def catalog_fixture_tool(request, observation, page_call_ids, *, offset=None):
     )
 
 
+def diagnostics_fixture_actions(actions):
+    """Negative fixture: no business write can be admitted by the pure selector gate."""
+    return [
+        actions[0],
+        actions[1],
+        {"type": "snapshot", "step": "operate"},
+        {"native_diagnostics_read": True},
+        *[
+            {
+                "type": "click",
+                "step": "operate",
+                "selector": "aria/DIAGNOSTIC_CANARY_DO_NOT_PERSIST",
+            }
+            for _ in range(5)
+        ],
+    ]
+
+
 class SyntheticModel(BaseHTTPRequestHandler):
     stages: dict[str, int] = {}
     calls: dict[str, int] = {}
     observed: set[str] = set()
     reviewed_bridge = False
     catalog_bridge = False
+    diagnostics_bridge = False
     catalog_evidence: dict = {}
 
     def do_GET(self) -> None:
@@ -469,6 +488,8 @@ class SyntheticModel(BaseHTTPRequestHandler):
                 actions[catalog_start:catalog_start] = [
                     {"native_catalog_pages": [1, 5]}
                 ]
+            if name == "form" and self.diagnostics_bridge:
+                actions = diagnostics_fixture_actions(actions)
             command = None
             if stage < len(actions):
                 if (
@@ -489,6 +510,18 @@ class SyntheticModel(BaseHTTPRequestHandler):
                         "arguments": json.dumps({"action": actions[stage]}),
                     },
                 }
+                if actions[stage].get("native_diagnostics_read"):
+                    observation = observations[-1] if observations else {}
+                    file = observation.get("control_catalog", {}).get("file")
+                    if not isinstance(file, str):
+                        self.send_error(422, "diagnostic fixture catalog unavailable")
+                        return
+                    tool["function"] = {
+                        "name": "read",
+                        "arguments": json.dumps(
+                            {"filePath": file, "offset": 1, "limit": 4}
+                        ),
+                    }
                 if (
                     catalog_start is not None
                     and catalog_start <= stage <= catalog_start + 1
@@ -619,6 +652,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--opencode-binary", type=Path)
     parser.add_argument("--lca-bridge", action="store_true")
     parser.add_argument("--lca-catalog", action="store_true")
+    parser.add_argument("--lca-diagnostics", action="store_true")
     parser.add_argument("--lca-inline-real", action="store_true")
     parser.add_argument("--authorize-real-run", action="store_true")
     parser.add_argument("--required-upstream-proxy")
@@ -655,6 +689,17 @@ def parse_args() -> argparse.Namespace:
         and args.case == "form"
     ):
         parser.error("catalog requires explicit owned synthetic local form LCA bridge")
+    if args.lca_diagnostics and (
+        not args.lca_bridge
+        or args.lca_catalog
+        or args.mode != "synthetic"
+        or args.execution_mode != "local"
+        or args.site != "owned"
+        or args.case != "form"
+    ):
+        parser.error(
+            "LCA diagnostics acceptance requires isolated synthetic local owned form bridge"
+        )
     if args.lca_bridge and (args.mode != "synthetic" or args.execution_mode != "local"):
         parser.error("LCA bridge acceptance requires zero-cost synthetic local mode")
     if args.lca_inline_real and (
@@ -870,6 +915,8 @@ def export_evidence(env: dict[str, str], directory: Path) -> None:
                             "action.reserved",
                             "action.settled",
                             "browser.coding_result",
+                            "browser.tool_diagnostics",
+                            "browser.no_progress",
                             "browser.stop_confirmed",
                             "task.dispatch_blocked",
                         }
@@ -1008,6 +1055,74 @@ def cancel_active_on_failure(env: dict[str, str], directory: Path) -> None:
             time.sleep(0.5)
     (directory / "failure-cancel.json").write_text(
         json.dumps({"receipts": receipts, "still_running": pending}, indent=2)
+    )
+
+
+def verify_diagnostics_evidence(directory: Path) -> None:
+    """Read the fresh-store SQL export only after runtime/owned processes stopped."""
+    snapshot = json.loads((directory / "form-snapshot.json").read_text())
+    task = snapshot["taskId"]
+    audit = json.loads((directory / f"{task}-audit.json").read_text())
+    rows = [
+        event["payload"]
+        for event in audit["events"]
+        if event["kind"] == "browser.tool_diagnostics"
+    ]
+    assert snapshot["status"] == audit["status"] == "failed"
+    assert any(event["kind"] == "browser.no_progress" for event in audit["events"])
+    assert len(rows) == 1 and rows[0]["diagnostics_available"] is True
+    diagnostics = rows[0]["diagnostics"]
+    assert diagnostics and len(diagnostics) <= 32
+    assert all(
+        set(item) == {"sequence", "tool", "status", "category"} for item in diagnostics
+    )
+    assert any(
+        item["tool"] == "read" and item["status"] == "completed" for item in diagnostics
+    )
+    assert any(
+        item["tool"] == "tap_browser" and item["category"] == "server_rejected"
+        for item in diagnostics
+    )
+    assert "DIAGNOSTIC_CANARY" not in json.dumps(rows) and "aria/" not in json.dumps(
+        rows
+    )
+    ledger = json.loads((directory / "browser-session-ledger.json").read_text())
+    assert all(
+        row["request"]["type"] in {"snapshot", "navigate"} for row in ledger["actions"]
+    )
+    assert all(row["status"] == "completed" for row in ledger["actions"])
+    assert all(row["stop_receipt"]["stopped"] is True for row in ledger["sessions"])
+    reserved = [
+        event["payload"]["action_id"]
+        for event in audit["events"]
+        if event["kind"] == "action.reserved"
+    ]
+    settled = [
+        event["payload"]["action_id"]
+        for event in audit["events"]
+        if event["kind"] == "action.settled"
+    ]
+    assert 0 < len(reserved) <= 12 and len(set(reserved)) == len(reserved)
+    assert sorted(reserved) == sorted(settled)
+    assert audit["budget_used"]["model_calls"] == len(reserved)
+    (directory / "diagnostics-durable-safe-summary.json").write_text(
+        json.dumps(
+            {
+                "task_id": task,
+                "task_status": "failed",
+                "reason": "no_progress",
+                "provider": "synthetic",
+                "paid_calls": 0,
+                "fresh_store_export_after_runtime_and_process_stop": True,
+                "diagnostic_events": rows,
+                "business_writes": 0,
+                "model_reservations": len(reserved),
+                "model_settlements": len(settled),
+                "configured_call_cap": 12,
+                "owned_session_stopped": True,
+            },
+            indent=2,
+        )
     )
 
 
@@ -1261,6 +1376,9 @@ def main() -> int:
             for case in synthetic_cases()
             if args.case is None or case["name"] == args.case
         ]
+    if args.lca_diagnostics:
+        scenarios[0]["status"] = "failed"
+        env["TAPPER_BROWSER_CORE_LCA_DIAGNOSTICS"] = "1"
     case_file = state / "cases.json"
     case_file.write_text(json.dumps(scenarios), encoding="utf-8")
     env["TAPPER_BROWSER_CORE_CASES"] = str(case_file)
@@ -1539,6 +1657,7 @@ def main() -> int:
         if args.mode == "synthetic":
             env["TAPPER_BROWSER_CORE_SYNTHETIC"] = "1"
             SyntheticModel.reviewed_bridge = args.lca_bridge
+            SyntheticModel.diagnostics_bridge = args.lca_diagnostics
             SyntheticModel.catalog_bridge = args.lca_catalog
             SyntheticModel.catalog_evidence = {}
             model = ThreadingHTTPServer(("127.0.0.1", 0), SyntheticModel)
@@ -1691,6 +1810,8 @@ def main() -> int:
         try:
             export_evidence(env, artifacts)
             export_ok = True
+            if success and args.lca_diagnostics:
+                verify_diagnostics_evidence(artifacts)
             if success and env["TAPPER_BROWSER_CORE_RUN_CANCEL"] == "1":
                 verify_cancel_evidence(artifacts)
         except BaseException as error:
