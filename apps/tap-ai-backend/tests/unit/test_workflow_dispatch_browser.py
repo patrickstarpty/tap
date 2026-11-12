@@ -448,7 +448,7 @@ async def test_absent_terminal_diagnostics_are_not_invented(evidence):
 
 
 def test_public_diagnostic_event_resanitizes_and_preserves_kind():
-    from tap.modules.workflows.application.queries import project_event
+    from tap.modules.workflows.application.queries import _event_texts, project_event
 
     event = SimpleNamespace(
         event_id="e",
@@ -462,12 +462,16 @@ def test_public_diagnostic_event_resanitizes_and_preserves_kind():
             "schema_version": "SECRET",
             "diagnostics_available": True,
             "raw": "SECRET",
+            "selector": "SECRET",
+            "input": "SECRET",
+            "error": "SECRET",
             "diagnostics": [
                 {"tool": "read", "status": "completed", "category": "none", "path": "SECRET"}
             ],
         },
     )
-    projected = project_event(event)
+    assert _event_texts(event) == ()
+    projected = project_event(event, redact=lambda value: value)
     assert projected["kind"] == "browser.tool_diagnostics"
     assert projected["attempt"] == 2
     assert projected["payload"]["diagnostics"][0]["tool"] == "read"

@@ -104,6 +104,8 @@ for _kind in (
 
 
 def _event_texts(event: WorkflowEvent) -> tuple[str, ...]:
+    if event.kind == "browser.tool_diagnostics":
+        return ()
     raw = event.payload
     fields = _BROWSER_TEXT if event.kind.startswith("browser.") else (_TEXT_FIELDS.get(event.kind),)
     values = [
@@ -155,7 +157,12 @@ def project_event(
     text_field = _TEXT_FIELDS.get(event.kind)
     if text_field is not None and redact is not None and type(raw.get(text_field)) is str:
         payload[text_field] = redact(cast(str, raw[text_field])[:2000])[:2000]
-    if event.kind.startswith("browser.") and event.kind in _PUBLIC_FIELDS and redact is not None:
+    if (
+        event.kind.startswith("browser.")
+        and event.kind != "browser.tool_diagnostics"
+        and event.kind in _PUBLIC_FIELDS
+        and redact is not None
+    ):
         for field in _BROWSER_TEXT:
             if isinstance(raw.get(field), str):
                 payload[field] = redact(cast(str, raw[field])[:2000])[:2000]

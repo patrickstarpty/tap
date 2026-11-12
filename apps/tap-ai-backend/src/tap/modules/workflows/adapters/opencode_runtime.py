@@ -170,6 +170,7 @@ class DockerCodingContainer:
             "exec set-goal",
             "exec run",
             "exec collect",
+            "exec diagnostics",
             "docker stop",
             "docker rm",
         }
@@ -1234,7 +1235,10 @@ class CodingRuntime:
                         except Exception:
                             return {"diagnostics": [], "diagnostics_unavailable": True}
                         remember_diagnostics(artifacts)
-                        return {"diagnostics": sanitize_diagnostics(artifacts.get("diagnostics"))}
+                        return {
+                            "diagnostics": sanitize_diagnostics(diagnostic_cache),
+                            "diagnostics_unavailable": not diagnostics_available,
+                        }
 
                     async def prompt_once(text: str) -> tuple[dict[str, Any], dict[str, Any]]:
                         await bounded_stage(container.set_goal(text))
@@ -1296,17 +1300,17 @@ class CodingRuntime:
                                 },
                             )
                         if progress.stalled_reason:
-                            return CodingResult(
+                            result = CodingResult(
                                 "failed",
                                 provider_session_id=provider_session,
                                 usage=gate.snapshot(),
                                 terminal_evidence={
                                     "failure": progress.stalled_reason,
-                                    "diagnostics": sanitize_diagnostics(
-                                        collected.get("diagnostics")
-                                    ),
+                                    "diagnostics": sanitize_diagnostics(diagnostic_cache),
+                                    "diagnostics_unavailable": not diagnostics_available,
                                 },
                             )
+                            return result
                         input_request = collected.get("input_request")
                         if isinstance(input_request, dict):
                             if (
@@ -1619,6 +1623,13 @@ class CodingRuntime:
                             remember_diagnostics(await collector())
                     except (Exception, asyncio.CancelledError):
                         pass
+                if result is not None and "diagnostics" in result.terminal_evidence:
+                    result.terminal_evidence.update(
+                        {
+                            "diagnostics": sanitize_diagnostics(diagnostic_cache),
+                            "diagnostics_unavailable": not diagnostics_available,
+                        }
+                    )
                 try:
                     if container is not None and not stopped:
                         stopped = await _finish_cleanup(container.stop())

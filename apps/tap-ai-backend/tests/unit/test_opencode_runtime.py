@@ -1780,7 +1780,7 @@ async def test_repeated_missing_target_stops_model_forwarding_repairs_and_bundle
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("collect_fails", [False, True])
+@pytest.mark.parametrize("collect_fails", [False, True, "missing"])
 @pytest.mark.parametrize("snapshots", [False, True])
 async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
     monkeypatch, collect_fails, snapshots
@@ -1851,6 +1851,8 @@ async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
             raise AssertionError("unbounded provider loop")
 
         async def collect(self):
+            if collect_fails == "missing":
+                return {}
             if collect_fails:
                 raise ValueError("SECRET artifact error")
             return {"diagnostics": [{**diagnostic, "raw_arguments": "SECRET"}]}
@@ -1873,6 +1875,7 @@ async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
     assert result.terminal_evidence == {
         "failure": "no_progress",
         "diagnostics": [] if collect_fails else [diagnostic],
+        "diagnostics_unavailable": bool(collect_fails),
     }
     assert "SECRET" not in str(result.terminal_evidence)
     assert any(kind == "browser.no_progress" for kind, *_ in journal.events)
@@ -1887,6 +1890,23 @@ async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
     assert durable[0]["diagnostics"] == ([] if collect_fails else [diagnostic])
     assert "SECRET" not in str(durable)
     assert browser.canceled
+    from types import SimpleNamespace
+
+    from test_workflow_dispatch_browser import runtime as dispatch_runtime
+
+    dispatch, _, persisted, _ = dispatch_runtime(result)
+    await dispatch._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease",
+        "node",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    payload = next(payload for kind, payload in persisted.events if kind == "browser.coding_result")
+    assert payload["diagnostics_available"] == durable[0]["diagnostics_available"]
+    assert payload["diagnostics"] == durable[0]["diagnostics"]
 
 
 def test_generation_prompt_uses_reviewed_contract_attributes_without_value_coercion():
@@ -2190,3 +2210,15 @@ async def test_final_diagnostics_survive_early_exit_without_changing_stop(
     assert durable[0]["attempt"] == 2
     assert durable[0]["diagnostics_available"] is (not diagnostic_failure)
     assert "SECRET" not in str(durable)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_command_stage_accepts_bounded_local_command():
+    import sys
+
+    from tap.modules.workflows.adapters.opencode_runtime import DockerCodingContainer
+
+    output = await DockerCodingContainer._command(
+        (sys.executable, "-c", 'print("{}")'), stage="exec diagnostics", timeout=1, max_stdout=12000
+    )
+    assert json.loads(output) == {}
