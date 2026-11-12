@@ -445,3 +445,15 @@ performed exactly one click and a successful `CLICKED` readback. This bypasses
 CodingRuntime/BudgetGate and does not prove model autonomy or financial guard
 integration. No external page or paid provider was used. The remaining seven
 AIA calls/$0.539062 were not touched; recorded API costs are unchanged.
+
+Independent review found the initial gate too late in the full CodingRuntime:
+control handback observations and required-input refresh could run before
+BrowserProgress handled the selector. Follow-up `6fe93858` shares one pure gate
+and places it before those runtime pre-actions, with unknown still higher
+priority. Failure-first actual CodingRuntime tests cover existing required reads
+and control handback: zero browser/control/refresh calls for invalid syntax,
+followed by valid observation/ref continuation. Runtime + BrowserProgress suite:
+158 passed; Ruff/diff passed. MyPy reports two pre-existing runtime errors
+(unused-ignore and no-any-return), also reproduced on the prior HEAD file under
+the same environment; no new errors were introduced. A complete repository gate
+was not rerun and these baseline type failures are not reported as green.
