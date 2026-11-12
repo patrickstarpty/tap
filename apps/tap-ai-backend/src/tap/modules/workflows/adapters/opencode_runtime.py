@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Literal, Protocol, cast
+from typing import Any, Callable, Coroutine, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from tap.modules.access.domain.context import ProjectScopeContext
@@ -542,15 +542,15 @@ class BrowserControlWait:
         self.model_epoch = epoch
         return epoch
 
-    async def forward(
+    async def forward[T](
         self,
         request_id: str,
-        work: Callable[[int], Any],
+        work: Callable[[int], Coroutine[Any, Any, T]],
         reserve: Callable[[int, str], Any],
         settle: Callable[[str, str], Any],
         *,
         track_epoch: bool = True,
-    ) -> Any:
+    ) -> T:
         while True:
             epoch = await self._active()
             if track_epoch:
@@ -616,7 +616,7 @@ class CodingRuntime:
         return CodingResult(
             cast(Literal["passed", "failed", "canceled", "unknown"], status),
             provider_session_id,
-            bundle_ref or receipt.get("bundle_id"),  # type: ignore[arg-type]
+            bundle_ref or receipt.get("bundle_id"),
             receipt.get("execution_id"),
             usage or {},
             receipt,
