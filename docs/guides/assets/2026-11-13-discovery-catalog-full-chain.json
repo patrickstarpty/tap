@@ -1,0 +1,101 @@
+{
+  "source_commit": "d4e63c1db4d3b62e6e183a6009e620296bec5fda",
+  "provider": "owned synthetic; real OpenCode 1.19.5",
+  "paid_provider_calls": 0,
+  "external_sites": false,
+  "production_path": [
+    "formal LCA iframe composer",
+    "workflow admission",
+    "CodingRuntime",
+    "BudgetGate",
+    "native OpenCode tools",
+    "HTTP browser worker",
+    "controlled Chromium",
+    "explicit LCA import/edit/save/replay"
+  ],
+  "journey": {
+    "provider": "synthetic",
+    "topLevelUrlUnchanged": true,
+    "conversationAdmissions": 1,
+    "taskId": "9b6c97cd2e864e92bcde07f63cb5fbf3",
+    "runId": "d1a1ce3f0e1147288150f7a71f7e0661",
+    "modelCallsBeforeImport": 11,
+    "modelCallsAfterReplay": 11
+  },
+  "catalog": {
+    "observation_sequence": 9,
+    "catalog_count": 8,
+    "target_absent_inline": true,
+    "native_read_offsets": [
+      1,
+      5
+    ],
+    "native_page_record_counts": [
+      4,
+      4
+    ],
+    "selector_from_native_read": true,
+    "native_read_batches": 1
+  },
+  "provider_requests": {
+    "probe": 1,
+    "form": 10
+  },
+  "budget": {
+    "model_calls": 11,
+    "configured_cap": 12,
+    "reserved": 11,
+    "settled": 11,
+    "reservation_ids_match": true,
+    "synthetic_meter_cost_micros": 1100,
+    "actual_provider_charge_usd": 0,
+    "over_limit_negative_exercised": false
+  },
+  "aa_actions": {
+    "read": 6,
+    "click": 1,
+    "finish": 1,
+    "preflight": 2,
+    "fill": 2,
+    "navigate": 1
+  },
+  "aa_all_actions_completed": true,
+  "owned_session_stopped": true,
+  "lca": {
+    "run_id": "d1a1ce3f0e1147288150f7a71f7e0661",
+    "technical_status": "passed",
+    "canonical_count": 11,
+    "canonical_statuses": {
+      "passed": 11
+    },
+    "contract_acceptance": {
+      "status": "passed",
+      "fields": [
+        {
+          "id": "account",
+          "status": "passed",
+          "reason": ""
+        },
+        {
+          "id": "amount",
+          "status": "passed",
+          "reason": ""
+        }
+      ],
+      "reason": ""
+    }
+  },
+  "source_evidence_sha256": {
+    "synthetic-model.json": "2ae3e89b573b2db9b9fcc6f719208ef0ffbd08d55d200ef5bef89138153591fe",
+    "usage-manifest.json": "aad19136453ea3a1ee9b90dfb0dd4a2108b6c612cb308d5ff8b7fa6508d04a2f",
+    "form-inline-lca-journey.json": "e2e119c55ef04bf6aad358781e9605dc538222cfb4c5600cbf828450f865d1ae",
+    "form-lca-bridge-run.json": "ef4f640b04c733441a9ed66394cd67e028451603b3944aee6c52a7e37500e1e6"
+  },
+  "limits": [
+    "synthetic decisions, not real model autonomy",
+    "not FWD/AIA quotation acceptance",
+    "success within unchanged budget; no new full-stack budget-exhaustion negative",
+    "native file reads do not create browser progress",
+    "LCA explicit replay is separate from the single AA business click"
+  ]
+}

@@ -291,3 +291,20 @@ center 回退，继续核对身份、敏感状态和最终 hit-test；全屏遮�
 不应为了测试通过放宽止损。四页保留为分页协议证据；另用两页真实原生读取
 加同一guard逐轮核验，在原窗口内完成唯一点击。目录提示明确文件读不是业务
 进展，应定向read/grep，不把可分页误解成可以无限空转。
+
+### Full-chain follow-through
+
+The catalog protocol test is now complemented by a formal LCA → production
+CodingRuntime/BudgetGate → native OpenCode → controlled browser → explicit
+import/edit/replay test (`d4e63c1d`). Two native reads share one provider response,
+so the original 12-call cap remains unchanged; 11 reservations/settlements match.
+The current contract and all 11 replay actions passed with synthetic decisions.
+See the [validation record](2026-11-11-lca-inline-tapper-validation.md#full-production-chain-catalog-acceptance-2026-11-13).
+
+Two test-environment gaps were caught rather than hidden: workspace pnpm does not
+install the browser runtime's separate npm lockfile; and Playwright.fill in a
+fixture is not equivalent to production controlled fill. The latter requires
+viewport hit checks. Keep inputs visible for a directory-focused fixture, and test
+it with the production dispatcher. Preserve old UNKNOWN evidence and use a new
+owner after a demonstrated setup correction. Do not infer real-model autonomy
+from a complete synthetic production path.

@@ -516,3 +516,58 @@ This is the real guard class in the protocol handler, not full
 CodingRuntime/BudgetGate. An older report flag compared every case with CLICKED;
 reporting now compares each case's actual expected readback, with four regression
 tests. Original evidence was retained rather than silently rewritten.
+
+## Full production-chain catalog acceptance (2026-11-13)
+
+The opt-in `--lca-catalog` formal LCA journey passed on `d4e63c1d` using real
+OpenCode 1.19.5, the production CodingRuntime and BudgetGate, and an owned
+synthetic provider/site. This closes the earlier protocol-driver integration gap,
+not the separate real-model FWD/AIA acceptance gap. The screened
+[full-chain evidence](assets/2026-11-13-discovery-catalog-full-chain.json) records
+source hashes, task/run identities, budget reconciliation and canonical results.
+
+- The same submitted intent produced one conversation admission. The LCA top-level
+  URL stayed unchanged. Eight safe controls were advertised from observation 9;
+  the desired submit control was absent inline. One provider response requested
+  two actual native `read` calls, offsets 1/5, four records each. The click selector
+  came only from the returned directory records, not a Python file-read bypass.
+- The provider recorded one planning probe and ten coding requests. All **11**
+  persisted model reservations had exactly matching settlements and matched
+  `budgetUsed.model_calls=11`, below the unchanged cap of 12. The meter recorded
+  1,100 synthetic cost micros; **actual paid-provider spend was zero**. This is a
+  successful within-budget integration test, not a new budget-exhaustion negative.
+- The AA ledger contained exactly one completed business click, two completed
+  fills and no failed/unknown actions. Its session stop was confirmed. Native file
+  reads did not create browser-action progress or relax the existing guard.
+- Explicit preview/import, real editor assertion addition, save and deterministic
+  replay passed. All 11 canonical actions passed; current `account` and `amount`
+  contract checks passed. Model usage remained 11 before import and after replay.
+  That explicitly requested LCA replay is separate from the AA business execution.
+
+Two preparation failures are retained, not reclassified as success. The new
+independent worktree initially lacked `deploy/browser`'s separately locked npm
+package: inspector initialization failed before any model call. Installing that
+lockfile fixed the environment. The next run stopped at controlled-fill UNKNOWN
+with four synthetic calls because the optional fixture's long background placed
+inputs outside the viewport. An owned production `createLiveControl` test proved
+the old layout rejects before any completed write; the fixture was changed to keep
+inputs visible while retaining the offscreen, second-page submit. Three Chromium
+regressions now cover both layouts and actual controlled fills/click. Historical
+UNKNOWN records were not retried or rewritten; successful acceptance used a new
+owner. No product actionability or safety rules were weakened.
+
+Reproduction in a clean, fixed worktree requires independent `uv sync --frozen`,
+`pnpm install --frozen-lockfile`, and `npm ci --prefix deploy/browser`, plus verified
+existing parser/object-store image receipts. Run:
+
+```sh
+PYTHONPATH=apps/tap-ai-backend/src:apps/backend/src .venv/bin/python \
+  scripts/run-browser-core-e2e.py --mode synthetic --execution-mode local \
+  --site owned --case form --lca-bridge --lca-catalog \
+  --opencode-binary /path/to/pinned/opencode-1.19.5/opencode
+```
+
+The strict catalog flag rejects any other mode/site/case combination before
+resource startup. The 30 focused Python regressions and three actual Chromium
+fixture tests passed. No real provider, external website, new paid allowance or
+real-model quotation claim is involved. The remaining AIA allowance was untouched.
