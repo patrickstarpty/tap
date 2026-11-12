@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 import uvicorn
 from fastapi import FastAPI
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from tap_platform.access import AccessPrincipal
 from tap_platform.browser_automation.http import create_browser_router
 from tap_platform.browser_automation.local import LocalBrowserRuntime
@@ -31,7 +31,7 @@ from tap_platform.browser_automation.objects import (
     BrowserObjectStore,
 )
 from tap_platform.browser_automation.service import BrowserService
-from tap_platform.browser_automation.store import BrowserStore, metadata
+from tap_platform.browser_automation.store import BrowserStore, actions, metadata
 from tap_platform.browser_automation.worker import BrowserWorker
 
 from tap.modules.workflows.adapters.browser_client import BrowserApiClient
@@ -70,6 +70,28 @@ SCENARIOS = {
     "server_rejected": [REJECTED_PLAN],
     "corrected": [REJECTED_PLAN, *ACTIONS],
     "preplan_write": [{"type": "click", "step": "click", "selector": "#go"}],
+    "controlled_preflight": [
+        {
+            "type": "plan",
+            "steps": [
+                {"id": "open", "keyword": "Given", "title": "Open owned form"},
+                {"id": "edit", "keyword": "When", "title": "Fill owned input"},
+                {"id": "result", "keyword": "Then", "title": "Verify current input"},
+            ],
+        },
+        {"type": "navigate", "step": "open", "url": "http://example.test/"},
+        {"type": "fill", "step": "edit", "selector": "#missing", "value": "Ada"},
+        {"type": "snapshot", "step": "edit"},
+        {"type": "fill", "step": "edit", "selector": "#name", "value": "Ada"},
+        {
+            "type": "read",
+            "step": "result",
+            "selector": "#name",
+            "name": "name",
+            "attribute": "value",
+            "equals": "Ada",
+        },
+    ],
     "outside_start": [
         {"type": "navigate", "url": "http://example.test/not-authorized"}
     ],
@@ -83,7 +105,7 @@ class QuietHandler(BaseHTTPRequestHandler):
 
 class Site(QuietHandler):
     def do_GET(self):
-        body = b"""<title>Owned protocol fixture</title><button id="go" onclick="document.querySelector('#result').textContent='CLICKED'">Continue</button><p id="result">READY</p>"""
+        body = b"""<title>Owned protocol fixture</title><label>Name<input id="name"></label><button id="go" onclick="document.querySelector('#result').textContent='CLICKED'">Continue</button><p id="result">READY</p>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -107,7 +129,7 @@ async def scenario(name, root, browser, worker, binary):
         "completed_actions": 0,
         "server_rejections": 0,
         "dom_clicked": False,
-        "dispatched_operations": [],
+        "requested_operations": [],
         "discovery_observations": 0,
     }
     script = SCENARIOS[name]
@@ -182,8 +204,13 @@ async def scenario(name, root, browser, worker, binary):
         node_binary=Path(shutil.which("node")),
         client_path=ROOT / "deploy/browser/opencode-client.mjs",
     )
+    controlled = name == "controlled_preflight"
     session = await browser.session(
-        name, ["http://example.test"], 90, f"session-{name}"
+        name,
+        ["http://example.test"],
+        90,
+        f"session-{name}",
+        **({"control_version": "browser-control-v1"} if controlled else {}),
     )
     assert session["status"] == "active"
 
@@ -203,10 +230,32 @@ async def scenario(name, root, browser, worker, binary):
     )
 
     async def execute(action, key):
-        state["dispatched_operations"].append(action["type"])
+        state["requested_operations"].append(action["type"])
         result = await browser.action(
-            session["session_id"], action, key, deadline_seconds=20
+            session["session_id"],
+            {**action, **({"expected_epoch": 0} if controlled else {})},
+            key,
+            deadline_seconds=20,
         )
+        if controlled and result.get("status") == "preflight_rejected":
+            with worker.service.store.engine.connect() as connection:
+                rows = connection.execute(
+                    select(actions.c.request).where(
+                        actions.c.session_id == session["session_id"]
+                    )
+                ).all()
+            state["preflight_feedback"] = {
+                "status": "preflight_rejected",
+                "category": result.get("category"),
+                "business_action_admitted": result.get("business_action_admitted"),
+                "actual_fill_rows_at_rejection": sum(
+                    row.request.get("type") == "fill" for row in rows
+                ),
+            }
+        if controlled and action["type"] == "read":
+            state["corrected_value_verified"] = (
+                result.get("observation", {}).get("extracted", {}).get("value") == "Ada"
+            )
         if result.get("status") == "completed":
             state["completed_actions"] += 1
             if action["type"] == "read":
@@ -281,7 +330,7 @@ async def scenario(name, root, browser, worker, binary):
         if name in {"normal", "corrected"}:
             assert state["accepted_plans"] == 1, state
             assert state["dom_clicked"] and state["completed_actions"] == 4, state
-            assert state["dispatched_operations"] == [
+            assert state["requested_operations"] == [
                 "navigate",
                 "snapshot",
                 "click",
@@ -302,13 +351,33 @@ async def scenario(name, root, browser, worker, binary):
                 d["category"] == "validation_error" for d in state["diagnostics"]
             ), state
         if name in {"server_rejected", "preplan_write", "outside_start"}:
-            assert state["dispatched_operations"] == [], state
+            assert state["requested_operations"] == [], state
             assert state["accepted_plans"] == state["completed_actions"] == 0, state
         if name in {"server_rejected", "corrected", "preplan_write", "outside_start"}:
             assert state["server_rejections"] == 1, state
             assert any(
                 d["category"] == "server_rejected" for d in state["diagnostics"]
             ), state
+        if controlled:
+            with worker.service.store.engine.connect() as connection:
+                rows = connection.execute(
+                    select(actions.c.request, actions.c.status)
+                    .where(actions.c.session_id == session["session_id"])
+                    .order_by(actions.c.sequence)
+                ).all()
+            state["actual_action_receipts"] = [
+                {"operation": row.request["type"], "status": row.status} for row in rows
+            ]
+            feedback = state.get("preflight_feedback", {})
+            assert feedback.get("business_action_admitted") is False, state
+            assert feedback.get("actual_fill_rows_at_rejection") == 0, state
+            assert feedback.get("category") == "target_missing", state
+            assert (
+                state["corrected_value_verified"] and state["server_rejections"] == 1
+            ), state
+            fills = [row for row in rows if row.request["type"] == "fill"]
+            assert len(fills) == 1 and fills[0].status == "completed", state
+            assert not state["unknown"], state
         return state
     finally:
         if running and not running.done():
