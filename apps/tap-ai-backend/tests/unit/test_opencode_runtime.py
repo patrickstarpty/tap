@@ -1537,8 +1537,8 @@ async def test_live_business_evidence_survives_missing_script_without_reexecutin
     result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1)
     assert result.status == "passed"
     assert result.terminal_evidence["result"]["outputs"] == [{"quote": "42"}]
-    assert result.terminal_evidence["script_status"] == "failed"
-    assert browser.limits == [] and browser.registered == []
+    assert result.execution_ref == "live-a"
+    assert browser.limits == [] and len(browser.registered) == 1
     assert [a["type"] for a in browser.actions] == ["read", "read", "finish"]
 
 
@@ -1777,12 +1777,30 @@ async def test_repeated_missing_target_stops_model_forwarding_repairs_and_bundle
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("collect_fails", [False, True])
+@pytest.mark.parametrize("snapshots", [False, True])
 async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
-    monkeypatch, collect_fails
+    monkeypatch, collect_fails, snapshots
 ):
     calls = []
     journal = Journal()
-    browser = SessionBrowser()
+
+    class ObservingBrowser(SessionBrowser):
+        async def action(self, session, action, key, **_kwargs):
+            assert action["type"] == "snapshot"
+            sequence = int(key.removeprefix("snapshot-")) + 1
+            return {
+                "status": "completed",
+                "session_id": session,
+                "action_id": key,
+                "observation": {
+                    "session_id": session,
+                    "sequence": sequence,
+                    "url": "https://example.com/",
+                    "bounded_snapshot": "Same page",
+                },
+            }
+
+    browser = ObservingBrowser()
     diagnostic = {
         "sequence": 1,
         "tool": "tap_browser",
@@ -1793,6 +1811,22 @@ async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
     class LoopContainer(MailContainer):
         async def run_prompt(self):
             for index in range(25):
+                if snapshots:
+                    ident = f"snapshot-{index}"
+                    path = self.root / "requests" / f"{ident}.json"
+                    path.write_text(
+                        json.dumps(
+                            {
+                                "id": ident,
+                                "kind": "browser",
+                                "deadline_at": time.time() + 10,
+                                "payload": {"type": "snapshot"},
+                            }
+                        )
+                    )
+                    path.chmod(0o600)
+                    while not (self.root / "responses" / f"{ident}.json").exists():
+                        await asyncio.sleep(0.001)
                 ident = f"model-{index}"
                 path = self.root / "requests" / f"{ident}.json"
                 path.write_text(
@@ -1849,3 +1883,54 @@ def test_generation_prompt_uses_reviewed_contract_attributes_without_value_coerc
     assert "acceptance_contract.fields" in prompt
     assert "checked, selected_label, text" in prompt
     assert "readback_value" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compile_fails", [False, True])
+async def test_live_script_postprocessing_never_reexecutes_business(monkeypatch, compile_fails):
+    from tap.modules.workflows.application import direct_browser
+
+    browser = LiveReceiptBrowser()
+
+    class NoScriptContainer(LiveReadContainer):
+        async def collect(self):
+            return {}
+
+    original = direct_browser.compile_replay
+
+    def compile_verified(result):
+        assert browser.actions[-1]["type"] == "finish"
+        assert result.status == "passed"
+        if compile_fails:
+            raise ValueError("Unsupported replay action")
+        return original(result)
+
+    monkeypatch.setattr(direct_browser, "compile_replay", compile_verified)
+    result = await CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True),
+        browser=browser,
+        store=Journal(),
+        container_factory=lambda _config, root: NoScriptContainer(root),
+    ).run("task-a", request(replay=False), {}, None, "lease", "node", 1)
+    assert result.status == "passed"
+    assert [action["type"] for action in browser.actions] == ["read", "read", "finish"]
+    assert browser.limits == []
+    assert len(browser.registered) == (0 if compile_fails else 1)
+    if compile_fails:
+        assert result.terminal_evidence["script_status"] == "failed"
+    else:
+        assert result.execution_ref == "live-a"
+
+
+def test_live_prompt_defers_script_to_verified_server_postprocessing():
+    prompt = CodingRuntime._generation_prompt(
+        "Inspect",
+        "https://example.com/",
+        "Read outputs",
+        ["https://example.com"],
+        {},
+        live_browser=True,
+    )
+    assert "navigate once to the exact frozen Start URL without a step" in prompt
+    assert "Do not write flow.spec.ts" in prompt
+    assert "Save /workspace/flow.spec.ts" not in prompt

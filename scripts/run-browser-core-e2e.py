@@ -365,6 +365,14 @@ class SyntheticModel(BaseHTTPRequestHandler):
                         "target_texts": ["Amount"],
                     },
                 ]
+            if name == "form" and self.reviewed_bridge:
+                # Observe the frozen entry before BDD, then execute the business once.
+                discovery = actions.pop(1)
+                discovery.pop("step")
+                actions[0]["steps"] = [
+                    step for step in actions[0]["steps"] if step["id"] != "inspect"
+                ]
+                actions.insert(0, discovery)
             command = None
             if stage < len(actions):
                 if (
@@ -399,7 +407,7 @@ class SyntheticModel(BaseHTTPRequestHandler):
                         )
                         + "\nEOF"
                     )
-                else:
+                elif not (name == "form" and self.reviewed_bridge):
                     command = (
                         "cat > flow.spec.ts <<'EOF'\n" + synthetic_script(name) + "EOF"
                     )

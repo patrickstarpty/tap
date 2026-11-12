@@ -173,7 +173,10 @@ class BrowserArtifactAdapter:
             sequence = event.payload.get("observation_sequence")
             step_id = event.payload.get("step_id")
             if (
-                event.kind == "browser.action_finished"
+                (
+                    event.kind == "browser.action_finished"
+                    or (event.kind == "browser.discovery_finished" and step_id == "tap_discovery")
+                )
                 and type(sequence) is int
                 and sequence > 0
                 and isinstance(step_id, str)

@@ -216,3 +216,42 @@ def test_required_upstream_verified_and_in_actual_worker_environment(monkeypatch
         {"TAP_BROWSER_EXECUTION_MODE": "local", "TAP_BROWSER_LOCAL_UPSTREAM_PROXY": proxy}
     )
     assert env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] == proxy
+
+
+def test_reviewed_bridge_fixture_observes_before_plan_and_never_writes_script():
+    import io
+    import json
+
+    module = runner()
+    model = module.SyntheticModel
+    model.reviewed_bridge = True
+    model.stages, model.calls, model.observed = {}, {}, set()
+    emitted = []
+    for _ in range(15):
+        body = json.dumps(
+            {
+                "messages": [{"role": "user", "content": "Core form: account=AC-42 amount=120"}],
+                "tools": [{"function": {"name": "tap_browser"}}],
+            }
+        ).encode()
+        handler = object.__new__(model)
+        handler.path = "/v1/chat/completions"
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile, handler.wfile = io.BytesIO(body), io.BytesIO()
+        handler.send_response = lambda *_args: None
+        handler.send_header = lambda *_args: None
+        handler.end_headers = lambda: None
+        handler.do_POST()
+        chunk = json.loads(handler.wfile.getvalue().decode().split("\n")[0][6:])
+        tools = chunk["choices"][0]["delta"].get("tool_calls", [])
+        if not tools:
+            break
+        function = tools[0]["function"]
+        assert function["name"] == "tap_browser"
+        emitted.append(json.loads(function["arguments"])["action"])
+    else:
+        raise AssertionError("fixture never completed")
+    assert emitted[0]["type"] == "navigate" and "step" not in emitted[0]
+    assert emitted[1]["type"] == "plan"
+    assert sum(action["type"] == "navigate" for action in emitted) == 1
+    assert sum(action["type"] == "click" for action in emitted) == 1

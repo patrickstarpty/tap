@@ -115,7 +115,9 @@ def test_browser_transport_error_preserves_application_read_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping():
+@pytest.mark.parametrize("event_kind", ["browser.action_finished", "browser.discovery_finished"])
+async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping(event_kind):
+    step_id = "tap_discovery" if event_kind == "browser.discovery_finished" else "open"
     events = [
         WorkflowEvent(
             "plan",
@@ -124,7 +126,7 @@ async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping()
             "node",
             1,
             "browser.plan_created",
-            {"steps": [{"id": "open", "keyword": "Given", "title": "Open"}]},
+            {"steps": [{"id": step_id, "keyword": "Given", "title": "Open"}]},
             datetime.now(UTC),
         ),
         WorkflowEvent(
@@ -133,8 +135,8 @@ async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping()
             2,
             "node",
             1,
-            "browser.action_finished",
-            {"action_id": "logical-a1", "step_id": "open", "observation_sequence": 3},
+            event_kind,
+            {"action_id": "logical-a1", "step_id": step_id, "observation_sequence": 3},
             datetime.now(UTC),
         ),
     ]
@@ -150,7 +152,7 @@ async def test_lca_projection_uses_authorized_snapshot_and_server_step_mapping()
 
         async def request(self, method, path, body):
             assert method == "POST" and path == "/executions/run/lca-draft"
-            assert body["action_steps"] == {"observation:3": "open"}
+            assert body["action_steps"] == {"observation:3": step_id}
             assert body["plan"] == events[0].payload["steps"]
             return {
                 "source": {

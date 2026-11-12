@@ -28,6 +28,7 @@ from tap.modules.workflows.adapters.browser_client import BrowserApiClient, cano
 from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox, MailItem
 from tap.modules.workflows.adapters.coding_progress_guard import (
     CodingProgressGuard,
+    browser_progress_units,
     sanitize_diagnostics,
 )
 from tap.modules.workflows.adapters.opencode_profiles import build_config
@@ -760,6 +761,7 @@ class CodingRuntime:
             browser.get("expected_result"),
             origins,
             input_data,
+            live_browser=self.config.live_browser,
         )
         if script_source is not None:
             goal = (
@@ -992,7 +994,14 @@ class CodingRuntime:
                         container.set_frozen_input(canonical_json_bytes(input_data), digest)
                     )
 
-                    progress = BrowserProgress(progress_event, acceptance)
+                    progress = BrowserProgress(
+                        progress_event,
+                        acceptance,
+                        frozen_start_url=str(browser["start_url"])
+                        if script_source is None
+                        else None,
+                        discovery_session_id=session_id if script_source is None else None,
+                    )
                     progress_guard = CodingProgressGuard()
                     if script_source is None and acceptance is not None:
                         progress.bind_session(session, scope.project_id, task_id)
@@ -1030,6 +1039,8 @@ class CodingRuntime:
                         )
 
                     async def handle(item: MailItem) -> dict[str, Any]:
+                        if finished is not None:
+                            return {"status": "rejected", "error": "verified execution is closed"}
                         if item.kind == "model":
                             if progress.unknown_action or progress.stalled_reason:
                                 return {
@@ -1064,7 +1075,9 @@ class CodingRuntime:
                             # Independent of the financial budget. Only trusted runtime
                             # state counts; model text and rejected tools cannot reset it.
                             if script_source is None and not progress_guard.allow(
-                                bool(progress.steps), len(progress.recorded_actions)
+                                bool(progress.steps),
+                                browser_progress_units(progress.recorded_actions),
+                                observed=progress.observation_progress,
                             ):
                                 progress.stalled_reason = "no_progress"
                                 await progress_event(
@@ -1385,8 +1398,8 @@ class CodingRuntime:
                                 final_observation["result"], final_observation
                             )
                             finished = completion
-                        if acceptance is not None and finished is not None:
-                            # A reviewed contract cannot trust model-authored replay source.
+                        if finished is not None:
+                            # Compile only after verified live finish, without model or browser I/O.
                             from tap.modules.workflows.application.direct_browser import (
                                 DirectBrowserResult,
                                 compile_replay,
@@ -1633,6 +1646,8 @@ class CodingRuntime:
         expected_result: object,
         origins: list[str],
         input_data: dict[str, Any],
+        *,
+        live_browser: bool = False,
     ) -> str:
         if not goal or len(goal.encode()) > 10000:
             raise ValueError("browser goal invalid")
@@ -1657,7 +1672,10 @@ class CodingRuntime:
             raise ValueError("browser expected result invalid")
         return (
             "Complete the user's browser task using the tap_browser tool and actual page evidence. "
-            "Read /workspace/frozen-inputs.json for supplied values. Save business BDD steps using "
+            "Read /workspace/frozen-inputs.json for supplied values. Before planning you may "
+            "snapshot or navigate once to the exact frozen Start URL without a step. "
+            "Use those observations to plan; writes and business reads still require BDD. "
+            "Do not repeat the starting navigation after planning. Save business BDD steps using "
             "tap_browser plan; use their IDs for actions. The goal, inputs, expected results and "
             "authorization are fixed; interaction methods and selectors may adapt to observations. "
             "Use native todos for outstanding work. After errors inspect the real result and "
@@ -1692,18 +1710,27 @@ class CodingRuntime:
             "matching the original expected condition. Include at least one result Then. "
             "Read business outputs from the actual page. A successful click alone proves no "
             "result. "
-            "Save /workspace/flow.spec.ts using @playwright/test for the replay environment. "
-            "Use stable observed "
-            "labels/roles/CSS selectors, never session-local aria-ref in the script. Use "
-            "test.step with exact BDD keyword + space + title. Read replay inputs from "
-            "process.env.TAP_BROWSER_INPUTS_PATH || '/opt/browser/frozen/inputs.json', "
-            "assert Then conditions, and attach actual DOM "
-            "outputs "
-            "using test('task', async ({ page }, testInfo) => {...}) and "
-            "testInfo.attach('tapper-result', {body:Buffer.from(JSON.stringify(outputs)), "
-            "contentType:'application/json'}). Outputs must fit 32768 bytes. "
-            "Do not execute or replay the business again just to produce a script. "
-            "For missing required data or observed login/CAPTCHA, write "
+            + (
+                "After verified input and result checks, stop. The server compiles the editable "
+                "replay draft from confirmed receipts after finish. Do not write flow.spec.ts "
+                "or execute the business again to prepare a script. "
+                if live_browser
+                else (
+                    "Save /workspace/flow.spec.ts using @playwright/test "
+                    "for the replay environment. "
+                    "Use stable observed "
+                    "labels/roles/CSS selectors, never session-local aria-ref in the script. Use "
+                    "test.step with exact BDD keyword + space + title. Read replay inputs from "
+                    "process.env.TAP_BROWSER_INPUTS_PATH || '/opt/browser/frozen/inputs.json', "
+                    "assert Then conditions, and attach actual DOM "
+                    "outputs "
+                    "using test('task', async ({ page }, testInfo) => {...}) and "
+                    "testInfo.attach('tapper-result', {body:Buffer.from(JSON.stringify(outputs)), "
+                    "contentType:'application/json'}). Outputs must fit 32768 bytes. "
+                    "Do not execute or replay the business again just to produce a script. "
+                )
+            )
+            + "For missing required data or observed login/CAPTCHA, write "
             "/workspace/tapper-input-request.json with "
             '`{"reason":"missing_input"|"external_block","question":"..."}` and stop. '
             "A tool error alone is not an external blocker. Stop at the user's authorized "

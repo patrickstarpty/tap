@@ -51,3 +51,23 @@ def test_completed_transport_rejection_categories_survive_persistence_sanitizer(
         )
         assert result[0]["category"] == category
         assert result[0]["status"] == "completed"
+
+
+def test_only_first_trusted_discovery_observation_resets_window():
+    guard = CodingProgressGuard()
+    for _ in range(4):
+        assert guard.allow(False, 0)
+    for _ in range(4):
+        assert guard.allow(False, 0, observed=True)
+    assert not guard.allow(False, 0, observed=True)
+
+
+def test_snapshots_waits_and_repeated_read_do_not_create_progress_units():
+    from tap.modules.workflows.adapters.coding_progress_guard import browser_progress_units
+
+    actions = [{"type": "snapshot"}, {"type": "wait"}] * 20
+    assert browser_progress_units(actions) == 0
+    actions += [{"type": "read", "step": "verify", "name": "amount"}] * 20
+    assert browser_progress_units(actions) == 1
+    actions += [{"type": "read", "step": "verify2", "name": "age"}, {"type": "click"}]
+    assert browser_progress_units(actions) == 3
