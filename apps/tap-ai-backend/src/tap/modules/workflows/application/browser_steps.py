@@ -269,6 +269,21 @@ class BrowserProgress:
                 "error": "Previous browser action outcome is unknown; do not retry",
                 "status": "unknown",
             }
+        selector = payload.get("selector")
+        # Reject only this known unsupported DSL, not arbitrary locator syntax.
+        # Do not infer pre-actuation safety from a later parser/runtime exception.
+        if isinstance(selector, str) and selector.lstrip().startswith("aria/"):
+            return {
+                "status": "rejected",
+                "code": "unsupported_selector_syntax",
+                "business_action_admitted": False,
+                "error": (
+                    "Unsupported aria/ selector syntax; nothing was dispatched. "
+                    "Take a fresh snapshot and use aria-ref=<current snapshot ref> "
+                    "or an exact returned selector. Existing CSS, text= and role= "
+                    "locators are unchanged; this is not general selector validation."
+                ),
+            }
         if payload.get("type") == "plan":
             raw = payload.get("steps")
             if not isinstance(raw, list) or not 1 <= len(raw) <= 24:

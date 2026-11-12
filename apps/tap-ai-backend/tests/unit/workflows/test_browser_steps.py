@@ -1268,3 +1268,86 @@ async def test_preflight_rejection_not_cleared_by_untrusted_snapshot(mutation):
     )
     await progress.handle({"type": "snapshot", "step": "input"}, "snapshot", execute)
     assert progress._preflight_rejection is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selector", ["aria/Get in touch", "  aria/Private value"])
+async def test_unsupported_selector_rejected_before_dispatch_without_progress(selector):
+    events = []
+
+    async def emit(kind, body):
+        events.append((kind, body))
+
+    progress = BrowserProgress(emit)
+    calls = []
+
+    async def execute(action):
+        calls.append(action)
+        raise AssertionError("invalid selector must never reach runtime")
+
+    await progress.handle(
+        {"type": "plan", "steps": [{"id": "act", "keyword": "When", "title": "Act"}]},
+        "plan",
+        execute,
+    )
+    baseline = len(events)
+    result = await progress.handle(
+        {"type": "fill", "selector": selector, "value": "private-secret", "step": "act"},
+        "invalid",
+        execute,
+    )
+    assert result["status"] == "rejected" and result["code"] == "unsupported_selector_syntax"
+    assert result["business_action_admitted"] is False
+    assert not calls and not progress.recorded_actions and not progress.used
+    assert progress.last_sequence == 0 and not progress.unknown_action
+    assert len(events) == baseline
+    assert selector not in str(result) and "private-secret" not in str(result)
+    progress.unknown_action = True
+    assert (
+        await progress.handle(
+            {"type": "fill", "selector": selector, "step": "act"}, "unknown", execute
+        )
+    )["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "aria-ref=e1",
+        "aria-ref=f8e59",
+        "aria-ref=e1 >> text=Child",
+        'css=[data-url="aria/Label"]',
+        "text=aria/Label",
+        'role=button[name="Get in touch"]',
+        "#age",
+        '[ref="e3"]',
+    ],
+)
+async def test_selector_gate_preserves_existing_locator_syntax(selector):
+    async def emit(*args):
+        pass
+
+    progress = BrowserProgress(emit)
+    calls = []
+
+    async def execute(action):
+        calls.append(action)
+        return {
+            "status": "completed",
+            "observation": {
+                "sequence": 1,
+                "url": "https://example.test",
+                "bounded_snapshot": "Actual",
+            },
+        }
+
+    await progress.handle(
+        {"type": "plan", "steps": [{"id": "act", "keyword": "When", "title": "Act"}]},
+        "plan",
+        execute,
+    )
+    await progress.handle(
+        {"type": "snapshot", "selector": selector, "step": "act"}, "valid", execute
+    )
+    assert calls[0]["selector"] == selector
