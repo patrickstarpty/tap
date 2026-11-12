@@ -174,6 +174,15 @@ def http_server(handler):
     return server
 
 
+def fixture_result_check(action, observation):
+    expected = action.get("equals")
+    actual = observation.get("extracted", {}).get("value")
+    return {
+        "expected_result": expected,
+        "result_verified": actual == expected if isinstance(expected, str) else None,
+    }
+
+
 async def scenario(name, root, browser, worker, binary):
     state = {
         "provider_requests": 0,
@@ -184,7 +193,8 @@ async def scenario(name, root, browser, worker, binary):
         "accepted_plans": 0,
         "completed_actions": 0,
         "server_rejections": 0,
-        "dom_clicked": False,
+        "expected_result": None,
+        "result_verified": None,
         "requested_operations": [],
         "discovery_observations": 0,
     }
@@ -433,9 +443,8 @@ async def scenario(name, root, browser, worker, binary):
         if result.get("status") == "completed":
             state["completed_actions"] += 1
             if action["type"] == "read":
-                state["dom_clicked"] = (
-                    result.get("observation", {}).get("extracted", {}).get("value")
-                    == "CLICKED"
+                state.update(
+                    fixture_result_check(action, result.get("observation", {}))
                 )
         return result
 
@@ -522,7 +531,7 @@ async def scenario(name, root, browser, worker, binary):
         assert state["tool_responses"] == len(script), state
         if name in {"normal", "corrected"}:
             assert state["accepted_plans"] == 1, state
-            assert state["dom_clicked"] and state["completed_actions"] == 4, state
+            assert state["result_verified"] and state["completed_actions"] == 4, state
             assert state["requested_operations"] == [
                 "navigate",
                 "snapshot",
@@ -610,7 +619,9 @@ async def scenario(name, root, browser, worker, binary):
             ), state
             assert len(clicks) == 1 and clicks[0].status == "completed", state
             assert clicks[0].request["selector"] == observed_target["selector"], state
-            assert state["dom_clicked"] and state["current_observed_ref_used"], state
+            assert state["result_verified"] and state["current_observed_ref_used"], (
+                state
+            )
             assert state["server_rejections"] == 1 and not state["unknown"], state
         if controlled:
             with worker.service.store.engine.connect() as connection:
