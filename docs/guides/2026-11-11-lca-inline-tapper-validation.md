@@ -334,3 +334,39 @@ passed. The new Chromium matrix executes production inspector dispatch/catch,
 but uses in-memory socket transport, not a standalone Unix-socket integration.
 No full repository gate was rerun for this narrow patch. Each real run has an
 uncut H.264/yuv420p/faststart failure recording, fully decoded and honestly labeled.
+
+### Strict preflight feedback and one remaining-budget real run
+
+Patch `3cf3b161` retains only verifiable, same-session/epoch preflight failure as
+an explicit `preflight_rejected` tool response. The actual input action is not
+admitted and no business receipt is invented. A newer successful same-epoch
+snapshot is required before another write. Generic 409, missing proof, mismatch,
+timeout and unknown remain fatal. Cross-epoch human handback recovery is not
+implemented by this narrow change.
+
+Zero-cost validation: 144 focused client/progress regressions plus two transport
+negatives, ten no-progress tests, Ruff/MyPy and independent review passed.
+`scripts/verify-opencode-protocol.py --cases controlled_preflight` exercised real
+OpenCode 1.19.5/native tool/mailbox/HTTP/SQLite/worker/controlled Chromium with an
+owned synthetic provider: eight local model requests, six tools, zero fill rows
+when preflight rejected, then fresh observation and exactly one corrected fill
+plus successful value read. This harness bypasses CodingRuntime/BudgetGate; the
+four-turn guard is separately tested with actual BrowserProgress state, not
+claimed as financial integration from this fixture.
+
+The authorized next real run used fixed `3cf3b161`, the formal LCA entry, the same
+business-only reviewed profile and an 18-call/$0.757282 cap. Task
+`94bc6b98c0894f3d870660ac3cad4b85` stopped after navigate completed → snapshot
+completed → click unknown. The model chose the fresh observation's Buy Now
+button reference, but the controlled actuator's hit test failed after scroll
+preparation: `target_obscured_or_outside_viewport`. The receipt contains no
+unwritten proof; its unknown state is preserved. The preflight recovery path
+was not reached, and no verified quotation was obtained. No automatic retry or
+manual rescue was performed; the owned session confirmed stopped.
+
+Five reservations settled with verified usage: 57,756 input / 878 output tokens,
+actual $0.0980288, conservative deduction 98,031 micros. Across the three AIA
+runs: 17 calls, actual $0.3407408; remaining original allowance 13 calls/$0.659251,
+with zero in-flight reservation. The updated recorded TAP API experiment total
+is 157 calls, 2,305,809 tokens/$2.76969240, not all assistant credits. The uncut
+failure video is labeled `aia-real-lca-obscured-click-unknown-20261112.mp4`.
