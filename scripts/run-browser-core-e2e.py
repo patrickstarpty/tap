@@ -157,11 +157,97 @@ def synthetic_script(name: str) -> str:
     raise ValueError("unknown synthetic scenario")
 
 
+def catalog_fixture_tool(request, observation, page_call_ids, *, offset=None):
+    """Scripted fixture consumes native read returns, never the directory file."""
+    catalog = observation.get("control_catalog", {})
+    if (
+        catalog.get("page_size"),
+        catalog.get("line_count"),
+        catalog.get("catalog_count"),
+        catalog.get("omitted"),
+    ) != (4, 8, 8, 0):
+        raise ValueError("catalog fixture metadata mismatch")
+    inline = {
+        key: observation.get(key) for key in ("related_fields", "discovery_candidates")
+    }
+    if "Check request" in json.dumps(inline):
+        raise ValueError("catalog target must require native directory reading")
+    proof = {
+        "observation_sequence": observation.get("sequence"),
+        "catalog_count": 8,
+        "target_absent_inline": True,
+    }
+    if offset is not None:
+        schema = next(
+            (
+                tool["function"].get("parameters", {})
+                for tool in request["tools"]
+                if tool["function"]["name"] == "read"
+            ),
+            {},
+        )
+        if (
+            offset not in (1, 5)
+            or not {"filePath", "offset", "limit"}
+            <= schema.get("properties", {}).keys()
+            or not isinstance(catalog.get("file"), str)
+        ):
+            raise ValueError("catalog native read schema mismatch")
+        return (
+            "read",
+            {"filePath": catalog["file"], "offset": offset, "limit": 4},
+            proof,
+        )
+    pages = {}
+    for message in request["messages"]:
+        if (
+            message.get("role") != "tool"
+            or message.get("tool_call_id") not in page_call_ids
+        ):
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "\n".join(
+                part["text"]
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+        if not isinstance(content, str):
+            raise ValueError("catalog native read content missing")
+        records = []
+        for line in content.splitlines():
+            match = re.match(r"^\s*(?:\d+[:|]\s*)?(\{.*\})\s*$", line)
+            if match:
+                item = json.loads(match.group(1))
+                if isinstance(item, dict) and isinstance(item.get("selector"), str):
+                    records.append(item)
+        pages[message["tool_call_id"]] = records
+    if len(pages) != 2 or any(len(pages.get(key, [])) != 4 for key in page_call_ids):
+        raise ValueError("catalog native pages incomplete")
+    records = [row for key in page_call_ids for row in pages[key]]
+    matches = [row for row in records if row.get("label") == "Check request"]
+    if len(matches) != 1 or len({row["selector"] for row in records}) != 8:
+        raise ValueError("catalog target is not uniquely observed")
+    return (
+        "tap_browser",
+        {"selector": matches[0]["selector"]},
+        {
+            **proof,
+            "native_read_offsets": [1, 5],
+            "native_page_record_counts": [4, 4],
+            "selector_from_native_read": True,
+            "native_read_batches": 1,
+        },
+    )
+
+
 class SyntheticModel(BaseHTTPRequestHandler):
     stages: dict[str, int] = {}
     calls: dict[str, int] = {}
     observed: set[str] = set()
     reviewed_bridge = False
+    catalog_bridge = False
+    catalog_evidence: dict = {}
 
     def do_GET(self) -> None:
         if self.path != "/stats":
@@ -373,6 +459,16 @@ class SyntheticModel(BaseHTTPRequestHandler):
                     step for step in actions[0]["steps"] if step["id"] != "inspect"
                 ]
                 actions.insert(0, discovery)
+            catalog_start = None
+            if name == "form" and self.catalog_bridge:
+                catalog_start = next(
+                    index
+                    for index, action in enumerate(actions)
+                    if action.get("type") == "click"
+                )
+                actions[catalog_start:catalog_start] = [
+                    {"native_catalog_pages": [1, 5]}
+                ]
             command = None
             if stage < len(actions):
                 if (
@@ -393,6 +489,47 @@ class SyntheticModel(BaseHTTPRequestHandler):
                         "arguments": json.dumps({"action": actions[stage]}),
                     },
                 }
+                if (
+                    catalog_start is not None
+                    and catalog_start <= stage <= catalog_start + 1
+                ):
+                    page_ids = [
+                        f"call_{name}_{catalog_start}_page1",
+                        f"call_{name}_{catalog_start}_page2",
+                    ]
+                    try:
+                        observation = observations[-1] if observations else {}
+                        if stage == catalog_start:
+                            tool = []
+                            for page_index, offset in enumerate((1, 5)):
+                                native_name, arguments, proof = catalog_fixture_tool(
+                                    request, observation, page_ids, offset=offset
+                                )
+                                tool.append(
+                                    {
+                                        "index": page_index,
+                                        "id": page_ids[page_index],
+                                        "type": "function",
+                                        "function": {
+                                            "name": native_name,
+                                            "arguments": json.dumps(arguments),
+                                        },
+                                    }
+                                )
+                        else:
+                            native_name, arguments, proof = catalog_fixture_tool(
+                                request, observation, page_ids
+                            )
+                            tool["function"] = {
+                                "name": native_name,
+                                "arguments": json.dumps(
+                                    {"action": {**actions[stage], **arguments}}
+                                ),
+                            }
+                    except (ValueError, KeyError, TypeError):
+                        self.send_error(422, "catalog fixture evidence invalid")
+                        return
+                    self.catalog_evidence.update(proof)
             elif stage == len(actions):
                 if name == "cancel":
                     command = "sleep 90"
@@ -436,7 +573,10 @@ class SyntheticModel(BaseHTTPRequestHandler):
                 {
                     "index": 0,
                     "delta": (
-                        {"role": "assistant", "tool_calls": [tool]}
+                        {
+                            "role": "assistant",
+                            "tool_calls": tool if isinstance(tool, list) else [tool],
+                        }
                         if tool
                         else {"role": "assistant", "content": "Done."}
                     ),
@@ -478,6 +618,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--opencode-binary", type=Path)
     parser.add_argument("--lca-bridge", action="store_true")
+    parser.add_argument("--lca-catalog", action="store_true")
     parser.add_argument("--lca-inline-real", action="store_true")
     parser.add_argument("--authorize-real-run", action="store_true")
     parser.add_argument("--required-upstream-proxy")
@@ -506,6 +647,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--acceptance-contract-file", type=Path)
     args = parser.parse_args()
+    if args.lca_catalog and not (
+        args.lca_bridge
+        and args.mode == "synthetic"
+        and args.execution_mode == "local"
+        and args.site == "owned"
+        and args.case == "form"
+    ):
+        parser.error("catalog requires explicit owned synthetic local form LCA bridge")
     if args.lca_bridge and (args.mode != "synthetic" or args.execution_mode != "local"):
         parser.error("LCA bridge acceptance requires zero-cost synthetic local mode")
     if args.lca_inline_real and (
@@ -999,6 +1148,7 @@ def main() -> int:
     state.chmod(0o700)
     artifacts.chmod(0o700)
     env = helpers.isolated_env(project, state, helpers.free_ports(8))
+    env["TAP_CORE_SITE_CATALOG"] = "1" if args.lca_catalog else "0"
     env["DOCKER_CONTEXT"] = helpers.local_docker(env)
     context = env["DOCKER_CONTEXT"]
     browser_port = helpers.free_ports(1)[0]
@@ -1389,6 +1539,8 @@ def main() -> int:
         if args.mode == "synthetic":
             env["TAPPER_BROWSER_CORE_SYNTHETIC"] = "1"
             SyntheticModel.reviewed_bridge = args.lca_bridge
+            SyntheticModel.catalog_bridge = args.lca_catalog
+            SyntheticModel.catalog_evidence = {}
             model = ThreadingHTTPServer(("127.0.0.1", 0), SyntheticModel)
             model_thread = Thread(target=model.serve_forever, daemon=True)
             model_thread.start()
@@ -1492,6 +1644,12 @@ def main() -> int:
                     raise RuntimeError(
                         "native browser fixture did not receive a page observation"
                     )
+        if (
+            args.lca_catalog
+            and SyntheticModel.catalog_evidence.get("selector_from_native_read")
+            is not True
+        ):
+            raise RuntimeError("catalog native read provenance missing")
         success = True
     except BaseException as error:
         (artifacts / "failure.txt").write_text(
@@ -1508,6 +1666,7 @@ def main() -> int:
                     {
                         "calls": SyntheticModel.calls,
                         "stages": SyntheticModel.stages,
+                        "catalog": SyntheticModel.catalog_evidence,
                         "observed": sorted(SyntheticModel.observed),
                     },
                     indent=2,

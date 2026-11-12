@@ -80,6 +80,19 @@ SCENARIOS = {
     "server_rejected": [REJECTED_PLAN],
     "corrected": [REJECTED_PLAN, *ACTIONS],
     "preplan_write": [{"type": "click", "step": "click", "selector": "#go"}],
+    "control_catalog_batched": [
+        {"type": "navigate", "url": "http://example.test/catalog-bounded"},
+        PLAN,
+        {"native_catalog_page": 1},
+        {"type": "click", "step": "click", "selector": "CATALOG_OBSERVED_SELECTOR"},
+        {
+            "type": "read",
+            "step": "result",
+            "selector": "#result",
+            "name": "result",
+            "equals": "STARTED",
+        },
+    ],
     "control_catalog_bounded": [
         {"type": "navigate", "url": "http://example.test/catalog-bounded"},
         PLAN,
@@ -229,8 +242,13 @@ async def scenario(name, root, browser, worker, binary):
         "discovery_observations": 0,
     }
     script = SCENARIOS[name]
-    catalog_case = name in {"control_catalog", "control_catalog_bounded"}
-    bounded_catalog = name == "control_catalog_bounded"
+    catalog_case = name in {
+        "control_catalog",
+        "control_catalog_bounded",
+        "control_catalog_batched",
+    }
+    bounded_catalog = name in {"control_catalog_bounded", "control_catalog_batched"}
+    batched_catalog = name == "control_catalog_batched"
     expected_catalog_labels = (
         ["Ask a question", *[f"Option {i}" for i in range(2, 8)], "Start request"]
         if bounded_catalog
@@ -242,6 +260,8 @@ async def scenario(name, root, browser, worker, binary):
     catalog_records = []
     read_call_ids = set()
     processed_read_ids = set()
+    native_pages = {}
+    native_page_order = []
 
     class Model(QuietHandler):
         def do_POST(self):
@@ -313,11 +333,18 @@ async def scenario(name, root, browser, worker, binary):
                                     ):
                                         records.append(item)
                             assert records, "native_read_return_missing_catalog_records"
-                            catalog_records.extend(records)
-                            state.setdefault("native_page_record_counts", []).append(
-                                len(records)
-                            )
+                            native_pages[call_id] = records
                             processed_read_ids.add(call_id)
+                    catalog_records[:] = [
+                        row
+                        for key in native_page_order
+                        for row in native_pages.get(key, [])
+                    ]
+                    state["native_page_record_counts"] = [
+                        len(native_pages[key])
+                        for key in native_page_order
+                        if key in native_pages
+                    ]
                     if "native_catalog_page" in action:
                         assert catalog.get("page_size") == 4, "catalog_metadata_missing"
                         schema = next(
@@ -338,6 +365,7 @@ async def scenario(name, root, browser, worker, binary):
                             action["native_catalog_page"]
                         )
                         read_call_ids.add(f"call_{index}")
+                        native_page_order.append(f"call_{index}")
                     elif action.get("selector") == "CATALOG_OBSERVED_SELECTOR":
                         matches = [
                             entry
@@ -364,6 +392,27 @@ async def scenario(name, root, browser, worker, binary):
                         ),
                     },
                 }
+                if batched_catalog and native_tool == "read":
+                    second_id = f"call_{index}_page2"
+                    read_call_ids.add(second_id)
+                    native_page_order.append(second_id)
+                    state["native_read_offsets"].append(5)
+                    tool = [
+                        tool,
+                        {
+                            "index": 1,
+                            "id": second_id,
+                            "type": "function",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps(
+                                    {**native_arguments, "offset": 5}
+                                ),
+                            },
+                        },
+                    ]
+                    state["native_read_batches"] = 1
+                    state["json_arguments"] += 1
             else:
                 state["text_responses"] += 1
                 if name == "plain_text":
@@ -384,7 +433,13 @@ async def scenario(name, root, browser, worker, binary):
                         "delta": {
                             "role": "assistant",
                             **(
-                                {"tool_calls": [tool]} if tool else {"content": content}
+                                {
+                                    "tool_calls": tool
+                                    if isinstance(tool, list)
+                                    else [tool]
+                                }
+                                if tool
+                                else {"content": content}
                             ),
                         },
                         "finish_reason": "tool_calls" if tool else "stop",
@@ -593,7 +648,9 @@ async def scenario(name, root, browser, worker, binary):
         state["unknown"] = progress.unknown_action
         (root / name / "safe-summary.json").write_text(json.dumps(state, indent=2))
         assert state["provider_requests"] <= 10, state
-        assert state["json_arguments"] == state["tool_responses"], state
+        assert state["json_arguments"] == state["tool_responses"] + (
+            1 if batched_catalog else 0
+        ), state
         assert state["tool_responses"] == len(script), state
         if name in {"normal", "corrected"}:
             assert state["accepted_plans"] == 1, state
@@ -674,10 +731,11 @@ async def scenario(name, root, browser, worker, binary):
                     check
                     for check in checks
                     if check["has_plan"]
-                    and check["tool_responses_before_turn"] in {2, 3, 4}
+                    and check["tool_responses_before_turn"]
+                    in ({2, 3} if batched_catalog else {2, 3, 4})
                 ]
                 assert (
-                    len(read_window) == 3
+                    len(read_window) == (2 if batched_catalog else 3)
                     and len({check["progress_units"] for check in read_window}) == 1
                 ), state
                 assert (

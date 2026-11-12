@@ -27,6 +27,12 @@ const pages = {
 http.createServer((request, response) => {
   const url = new URL(request.url, 'http://example.test');
   let body = pages[url.pathname];
+  if (url.pathname === '/review' && process.env.TAP_CORE_SITE_CATALOG === '1') {
+    const neutral = ['Ask a question', 'Option 2', 'Option 3', 'Option 4', 'Option 5']
+      .map(label => `<button type="button" onclick="document.body.dataset.wrongAction='true'">${label}</button>`).join('');
+    body = body.replace('<h1>Request review</h1>', '<h1>Request review</h1><p>' + 'Neutral background information. '.repeat(400) + '</p>')
+      .replace('<button type="submit">', neutral + '<button type="submit">');
+  }
   if (url.pathname === '/lookup') {
     const customer = url.searchParams.get('customer') ?? '';
     const region = url.searchParams.get('region') ?? '';
