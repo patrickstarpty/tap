@@ -1049,3 +1049,60 @@ async def test_readonly_fill_failure_does_not_block_legal_same_target_recovery(r
     ).get("error")
     assert len(calls) == 2
     assert progress.stalled_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("category", ["target_missing", "target_ambiguous"])
+async def test_controlled_pre_actuation_failure_allows_correction_not_success(category):
+    events = []
+
+    async def emit(kind, payload):
+        events.append((kind, payload))
+
+    progress = BrowserProgress(emit)
+    calls = []
+
+    async def execute(action):
+        calls.append(action)
+        failed = len(calls) == 1
+        return {
+            "status": "failed" if failed else "completed",
+            "observation": {
+                "sequence": len(calls),
+                "url": "https://example.com",
+                "error": "controlled target ambiguous before actuation" if failed else None,
+                "write_started": False if failed else True,
+                "extracted": {
+                    "pre_actuation_failure": {
+                        "phase": "target_resolution",
+                        "category": category,
+                    }
+                }
+                if failed
+                else {},
+            },
+        }
+
+    await progress.handle(
+        {
+            "type": "plan",
+            "steps": [
+                {"id": "choose", "keyword": "When", "title": "Choose product"},
+            ],
+        },
+        "plan",
+        execute,
+    )
+    result = await progress.handle(
+        {"type": "click", "step": "choose", "selector": "text=Choose"}, "bad", execute
+    )
+    assert result["error"]
+    assert not progress.unknown_action
+    assert not progress.recorded_actions
+    assert events[-1][1]["outcome"] == "failed"
+    await progress.handle(
+        {"type": "click", "step": "choose", "selector": "#unique"}, "corrected", execute
+    )
+    assert len(calls) == 2
+    assert len(progress.recorded_actions) == 1
+    assert events[-1][1]["outcome"] == "completed"
