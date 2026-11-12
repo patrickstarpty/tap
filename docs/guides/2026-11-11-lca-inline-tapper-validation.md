@@ -237,3 +237,57 @@ response data were not copied into repository documentation. This independent
 tool probe is also separate from the native OpenCode protocol matrix above,
 which bypasses CodingRuntime/BudgetGate; the financial/no-progress protection
 continues to have its own deterministic runtime regression, not a new paid test.
+
+## 2026-11-12: observe first, compile after verified execution
+
+Independent review approved fixed source `3edd7e86`. The formal LCA embedded
+synthetic form journey then passed: task `baebdb4277a749a695af4665224d47fd`, edited
+LCA run `6ffab9b975b744ae98955d723a5d2850`. One conversation admission, unchanged
+top-level URL, 11/11 canonical actions, eight BDD groups, and both current
+account/amount requirements passed. Import/replay model counts remained **10 → 10**.
+
+The frozen entry was navigated once before planning. The server-injected Given
+“Observe the authorized starting page (system discovery)” retained its real
+navigation receipt in explicit review/import. The live ledger has 13 completed
+operations including preflights and verification reads, exactly one navigation
+and one click; finish is sequence 13 with **zero later dispatches**. Script
+compilation performs no model/browser I/O. There was no automatic business rerun;
+the user-facing test explicitly requested one edited LCA replay after saving.
+The harness added a real exact-text assertion under Then, not just a timeout edit.
+
+The boundary is deliberately narrow: pre-plan snapshot and one exact frozen-start
+navigation only, with same-session/fresh-sequence/receipt checks. Writes and
+business read proofs still need BDD; unknown has priority. A preserved system Given
+uses one of the 24 plan slots and cannot dispatch again. Only the first trusted
+observation earns a bootstrap progress reset; repeated snapshots/waits or the
+same business read do not extend the four-turn no-progress window.
+
+Verified live finish now precedes deterministic script compilation. Unresolved
+session-local selectors, unsupported actions or selection without recorded
+semantic guards fail closed: verified business outputs remain available, but no
+replayable bundle/execution is claimed and no business operation is repeated.
+This supersedes the earlier pre-plan rejection prerequisite, not the authorization,
+contract, sensitive-input, unknown-outcome or budget protections.
+
+[Formal safe evidence](assets/2026-11-12-lca-preplan-acceptance.json) and the
+[seven-case native protocol matrix](assets/2026-11-12-opencode-preplan-matrix.json)
+keep their scopes separate. The latter uses real OpenCode/native tools/HTTP/worker/
+Chromium with an owned scripted provider, but bypasses CodingRuntime/BudgetGate.
+Its pre-plan write and non-frozen URL cases had zero dispatch. The full product
+run uses the normal workflow; the dedicated runtime regression separately proves
+repeated fresh snapshots cannot buy a fifth unproductive provider forward.
+
+The uncut UI recording `tap-preplan-lca-full-acceptance-3edd7e86.mp4` is 21.60 seconds,
+H.264/yuv420p/faststart, fully decoded without errors. Actual frames at 3 and 12
+seconds were inspected and show the embedded composer/execution, not a blank
+iframe. The acceptance program reported passed and exported all evidence; its
+outer interactive shell subsequently rejected assignment to zsh's read-only
+`status` variable. This reporting-wrapper error did not rerun or invalidate the
+completed acceptance.
+
+Affected gates: 73 browser-progress Python tests, 32 native schema/tool Node tests,
+35 compiler/BDD tests, 19 diagnostic Node tests, prompt/guard/artifact/fixture
+regressions and Ruff/MyPy passed. One older expectation that absent handwritten
+script must fail was updated to verified deterministic compilation; both success
+and compiler-failure/no-repeat paths passed. No paid provider or external website
+was used. This is not FWD/AIA autonomous quotation acceptance.

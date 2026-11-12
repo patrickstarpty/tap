@@ -1,0 +1,105 @@
+{
+  "provider": "synthetic",
+  "topLevelUrlUnchanged": true,
+  "conversationAdmissions": 1,
+  "taskId": "baebdb4277a749a695af4665224d47fd",
+  "runId": "6ffab9b975b744ae98955d723a5d2850",
+  "modelCallsBeforeImport": 10,
+  "modelCallsAfterReplay": 10,
+  "commit": "3edd7e86baaf05aaedd7dddcce052e53027b0e0a",
+  "executionStatus": "passed",
+  "canonicalPassed": 11,
+  "canonicalTotal": 11,
+  "bddGroups": 8,
+  "contractAcceptance": {
+    "status": "passed",
+    "fields": [
+      {
+        "id": "account",
+        "status": "passed",
+        "reason": ""
+      },
+      {
+        "id": "amount",
+        "status": "passed",
+        "reason": ""
+      }
+    ],
+    "reason": ""
+  },
+  "liveOperations": [
+    {
+      "sequence": 1,
+      "operation": "navigate",
+      "status": "completed"
+    },
+    {
+      "sequence": 2,
+      "operation": "preflight",
+      "status": "completed"
+    },
+    {
+      "sequence": 3,
+      "operation": "fill",
+      "status": "completed"
+    },
+    {
+      "sequence": 4,
+      "operation": "preflight",
+      "status": "completed"
+    },
+    {
+      "sequence": 5,
+      "operation": "fill",
+      "status": "completed"
+    },
+    {
+      "sequence": 6,
+      "operation": "read",
+      "status": "completed"
+    },
+    {
+      "sequence": 7,
+      "operation": "read",
+      "status": "completed"
+    },
+    {
+      "sequence": 8,
+      "operation": "read",
+      "status": "completed"
+    },
+    {
+      "sequence": 9,
+      "operation": "read",
+      "status": "completed"
+    },
+    {
+      "sequence": 10,
+      "operation": "click",
+      "status": "completed"
+    },
+    {
+      "sequence": 11,
+      "operation": "read",
+      "status": "completed"
+    },
+    {
+      "sequence": 12,
+      "operation": "read",
+      "status": "completed"
+    },
+    {
+      "sequence": 13,
+      "operation": "finish",
+      "status": "completed"
+    }
+  ],
+  "postFinishDispatches": 0,
+  "autoBusinessReplays": 0,
+  "explicitEditedLcaReplays": 1,
+  "video": "tap-preplan-lca-full-acceptance-3edd7e86.mp4",
+  "videoSha256": "00bed4af22d5ef0c8de215a325766fe64a5d574f863e9a3ffcb274fe2503ae17",
+  "videoDecode": "passed",
+  "paidCalls": 0,
+  "externalSites": false
+}
