@@ -571,3 +571,36 @@ The strict catalog flag rejects any other mode/site/case combination before
 resource startup. The 30 focused Python regressions and three actual Chromium
 fixture tests passed. No real provider, external website, new paid allowance or
 real-model quotation claim is involved. The remaining AIA allowance was untouched.
+
+## Real AIA run after catalog integration: failed, stopped (2026-11-12 UTC)
+
+A separately approved, single AIA run on `d548068d` used the existing real
+`qwen-max` → `dashscope/qwen-max` gateway, a new 30-call/USD 1 grant and the five
+reviewed synthetic inputs. The old seven-call allowance was not combined with it.
+The task `0d59312ada3e4234bc7deeb0f3e6cae2` **failed with `no_progress`**; it did
+not verify inputs or produce a quote. No import/replay or further paid attempt was
+performed. [Screened evidence](assets/2026-11-12-aia-catalog-real-no-progress.json)
+records the precise result and accounting.
+
+Seven unique model reservations exactly matched seven verified settlements:
+85,950 input tokens, 1,326 output tokens, USD 0.1460064 actual cost. The conservative
+budget debit was 146,010 micros. The unused new allowance is 23 calls/USD 0.853990,
+not permission for an automatic retry. The old seven calls/USD 0.539062 remain
+untouched. The owned browser stop was confirmed and the bounded forensic database
+copy was stopped; original data was preserved.
+
+Durable evidence shows snapshot → navigation → accepted BDD plan → snapshot →
+no-progress stop. All three browser operations completed, with **zero click/fill
+or other business writes**. The source observations contained 62 fields, including
+50 safe discovery identities and Buy Now. This proves source discoverability,
+not that the model read the catalog: the actual native-read usage and tool-error
+categories cannot be recovered. The runtime has bounded terminal diagnostics, but
+the persisted coding-result/attempt projection omitted them. Do not infer model
+motive, claim a repeated missing-button cause, or call this quotation success.
+The next justified engineering step is a zero-fee persistence regression for the
+already-sanitized diagnostics, not another paid trial without evidence.
+
+The uncut real LCA video is labelled **failed/no progress**, H.264/yuv420p with
+faststart, 78.92 seconds, full-decode zero errors. Actual LCA and Tapper task frames
+were inspected. Its digest and Library identity are in the screened evidence;
+this is not a successful quotation demonstration.

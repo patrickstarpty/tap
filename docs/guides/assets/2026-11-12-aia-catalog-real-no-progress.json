@@ -1,0 +1,126 @@
+{
+  "source_commit": "d548068d96ea86f4874c745b571989d02b0ea03f",
+  "task_id": "0d59312ada3e4234bc7deeb0f3e6cae2",
+  "provider": "real Qwen Max via existing DashScope gateway",
+  "status": "failed",
+  "failure": "no_progress",
+  "quote_verified": false,
+  "contract_verified": false,
+  "source_actions": [
+    [
+      "snapshot",
+      "completed"
+    ],
+    [
+      "navigate",
+      "completed"
+    ],
+    [
+      "snapshot",
+      "completed"
+    ]
+  ],
+  "business_write_count": 0,
+  "stop_confirmed": true,
+  "usage": {
+    "model_calls": 7,
+    "all_reserved_model_calls_settled": true,
+    "prompt_tokens": 85950,
+    "completion_tokens": 1326,
+    "provider_cost_usd": "0.1460064",
+    "budget_charged_micros": 146010,
+    "model_alias": "qwen-max",
+    "model": "dashscope/qwen-max"
+  },
+  "new_grant_limit": {
+    "calls": 30,
+    "usd": "1.00"
+  },
+  "remaining_unused_new_grant": {
+    "calls": 23,
+    "usd": "0.85399"
+  },
+  "old_allowance_untouched": {
+    "calls": 7,
+    "usd": "0.539062"
+  },
+  "no_retry": true,
+  "diagnostic_limit": "Persisted events omit terminal tool diagnostics; actual native read usage and tool rejection categories cannot be recovered.",
+  "video": {
+    "file_name": "AIA-Qwen-Max-real-no-progress-20261112.mp4",
+    "library_file_id": "libfile_2afb7248f2cc81919606b8d14aec95c2",
+    "duration_seconds": 78.92,
+    "codec": "H264",
+    "pixel_format": "yuv420p",
+    "faststart": true,
+    "full_decode_errors": 0,
+    "sha256": "e372a6297f80e64d4cc5d16cdc2e2feeb0a691a1b61be1ddd405b764b6335deb",
+    "actual_ui_frames_inspected": [
+      1,
+      5,
+      30,
+      77
+    ],
+    "label": "Real failed no-progress run; not quotation acceptance"
+  },
+  "forensics": {
+    "task_id": "0d59312ada3e4234bc7deeb0f3e6cae2",
+    "read_only_database_copy": true,
+    "diagnostics_persisted": false,
+    "native_read_presence": "not_recoverable_from_persisted_events",
+    "events": [
+      {
+        "sequence": 11,
+        "event": "browser.discovery_finished",
+        "operation": "snapshot",
+        "outcome": "completed",
+        "category": null
+      },
+      {
+        "sequence": 13,
+        "event": "browser.discovery_finished",
+        "operation": "navigate",
+        "outcome": "completed",
+        "category": null
+      },
+      {
+        "sequence": 16,
+        "event": "browser.plan_created",
+        "operation": null,
+        "outcome": null,
+        "category": null
+      },
+      {
+        "sequence": 24,
+        "event": "browser.action_finished",
+        "operation": "snapshot",
+        "outcome": "completed",
+        "category": null
+      },
+      {
+        "sequence": 27,
+        "event": "browser.no_progress",
+        "operation": null,
+        "outcome": null,
+        "category": "no_progress"
+      }
+    ],
+    "model_settlements": 7,
+    "settlement_keys": [
+      "status",
+      "cost_usd",
+      "prompt_tokens",
+      "usage_verified",
+      "completion_tokens"
+    ],
+    "attempt_error_keys": [
+      "reason"
+    ]
+  },
+  "observation_discovery": {
+    "fields": 62,
+    "safe_identity_count": 50,
+    "buy_now_in_safe_identity_source": true,
+    "actual_model_catalog_read_proven": false
+  }
+}

@@ -308,3 +308,14 @@ viewport hit checks. Keep inputs visible for a directory-focused fixture, and te
 it with the production dispatcher. Preserve old UNKNOWN evidence and use a new
 owner after a demonstrated setup correction. Do not infer real-model autonomy
 from a complete synthetic production path.
+
+### Real-provider diagnostic durability remains a separate boundary
+
+The separately approved AIA catalog run failed with `no_progress` after seven
+settled real calls (USD 0.1460064), before any business write. Buy Now was present
+in the safe candidate source, but no durable native-tool transcript proves which
+catalog records the model consumed. Bounded diagnostics produced inside a runtime
+are insufficient if the persisted result projection drops them. Preserve that
+uncertainty; do not invent a selector/entrypoint explanation or spend another
+round to investigate it. The next narrow check should exercise sanitized terminal
+diagnostics through the real persistence boundary with a local synthetic provider.
