@@ -1134,3 +1134,148 @@ async def test_legacy_write_failure_requires_explicit_no_write_proof(
     if write_started == "exception":
         assert "phase=runtime_observe type=TypeError" in caplog.text
         assert "secret-test-password" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_type", ["click", "fill", "select", "press", "navigate"]
+)
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing",
+        "ambiguous",
+        "none",
+        "true",
+        "null",
+        "malformed",
+        "spoof",
+        "error_spoof",
+        "session_spoof",
+        "category_spoof",
+        "false_like",
+        "exception",
+    ],
+)
+async def test_controlled_write_requires_strict_pre_actuation_proof(
+    tmp_path, action_type, case
+):
+    store, objects, service, principal, _ = setup(tmp_path)
+    category = "target_ambiguous" if case == "ambiguous" else "target_missing"
+    proof = {"phase": "target_resolution", "category": category}
+    if case == "malformed":
+        proof = {"phase": "target_resolution", "category": category, "value": "private"}
+    if case == "category_spoof":
+        proof = {"phase": "target_resolution", "category": "other"}
+    if case == "spoof":
+        proof = {"phase": "after_dispatch", "category": category}
+
+    class InspectorRuntime(Runtime):
+        async def start_inspector(
+            self, task_id, allowed_origins, deadline, *, session_id, **options
+        ):
+            return InspectorHandle(
+                task_id, "browser", "network", "proxy", allowed_origins, session_id
+            )
+
+        async def observe(self, handle, action):
+            if action["type"] == "preflight":
+                return BrowserObservation(
+                    handle.session_id,
+                    1,
+                    "https://example.com",
+                    "Page",
+                    "snapshot",
+                    (),
+                    None,
+                    None,
+                    extracted={
+                        "preflight": {
+                            "safe": True,
+                            "operation": action["operation"],
+                            "selector": "#missing",
+                            "target": {},
+                        }
+                    },
+                )
+            if case == "exception":
+                raise RuntimeError("after dispatch")
+            return BrowserObservation(
+                "other-session" if case == "session_spoof" else handle.session_id,
+                1,
+                "https://example.com",
+                "Page",
+                "snapshot",
+                (),
+                None,
+                "controlled target ambiguous before actuation"
+                if case == "ambiguous"
+                else "other error"
+                if case == "error_spoof"
+                else "controlled target missing before actuation",
+                extracted=None if case == "none" else {"pre_actuation_failure": proof},
+                write_started=True
+                if case == "true"
+                else None
+                if case == "null"
+                else 0
+                if case == "false_like"
+                else False,
+            )
+
+    session = service.create_session(
+        principal,
+        {
+            "task_id": "task-a",
+            "allowed_origins": ["https://example.com"],
+            "deadline_seconds": 60,
+            "control_version": "browser-control-v1",
+        },
+        "session-key",
+    )
+    worker = BrowserWorker(
+        service,
+        InspectorRuntime(BrowserEvidenceSink(store, objects)),
+        "project-a",
+        "owner-a",
+    )
+    await worker.tick()
+    await worker.drain()
+    body = {"type": action_type, "selector": "#missing", "expected_epoch": 0}
+    if action_type in {"fill", "select", "press"}:
+        preflight = service.create_action(
+            principal,
+            session["session_id"],
+            {
+                "type": "preflight",
+                "operation": action_type,
+                "selector": "#missing",
+                "expected_epoch": 0,
+            },
+            "preflight-key",
+        )
+        await worker.tick()
+        await worker.drain()
+        body["preflight_action_id"] = preflight["action_id"]
+    if action_type in {"fill", "select"}:
+        body["value"] = "synthetic"
+    if action_type == "press":
+        body["key"] = "Enter"
+    if action_type == "navigate":
+        body.pop("selector")
+        body["url"] = "https://example.com"
+    action = service.create_action(principal, session["session_id"], body, "action-key")
+    await worker.tick()
+    await worker.drain()
+    receipt = service.get_action(principal, session["session_id"], action["action_id"])
+    expected = (
+        "failed"
+        if case in {"missing", "ambiguous"} and action_type != "navigate"
+        else "unknown"
+    )
+    assert receipt["status"] == expected
+
+    if action_type in {"fill", "select", "press"} and case != "exception":
+        assert receipt["observation"]["extracted"] is None
+        assert receipt["observation"]["bounded_snapshot"] == ""
+        assert "synthetic" not in json.dumps(receipt)

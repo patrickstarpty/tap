@@ -25,6 +25,35 @@ from .service import BrowserService
 from .store import now
 
 
+def _pre_actuation_failure(
+    request: dict[str, Any], observation: BrowserObservation, session_id: str
+) -> bool:
+    """Accept only the inspector's narrow, fixed target-resolution failure proof."""
+    if (
+        observation.session_id != session_id
+        or request.get("type") not in {"click", "fill", "select", "press"}
+        or not isinstance(request.get("selector"), str)
+        or not request["selector"]
+        or observation.write_started is not False
+        or not isinstance(observation.extracted, dict)
+    ):
+        return False
+    proof = observation.extracted.get("pre_actuation_failure")
+    if not isinstance(proof, dict) or set(proof) != {"phase", "category"}:
+        return False
+    errors = {
+        "target_missing": "controlled target missing before actuation",
+        "target_ambiguous": "controlled target ambiguous before actuation",
+    }
+    category = proof.get("category")
+    return (
+        proof.get("phase") == "target_resolution"
+        and isinstance(category, str)
+        and category in errors
+        and observation.error == errors[category]
+    )
+
+
 class Runtime(Protocol):
     async def start_inspector(
         self,
@@ -325,6 +354,9 @@ class BrowserWorker:
             phase = "runtime_observe"
             observation = await self.runtime.observe(handle, request)
             phase = "validate_observation"
+            no_actuation = handle.session_id == row[
+                "session_id"
+            ] and _pre_actuation_failure(request, observation, row["session_id"])
             if request.get("type") != "preflight":
                 self._frame_capture_at.pop(row["session_id"], None)
                 self.service.frames.delete(row["session_id"])
@@ -371,10 +403,14 @@ class BrowserWorker:
                     if row["request"].get("type")
                     not in {"snapshot", "read", "screenshot", "wait", "preflight"}
                     and not (
-                        observation.write_started is False
-                        and not (
-                            session
-                            and session.get("control_version") == "browser-control-v1"
+                        no_actuation
+                        or (
+                            observation.write_started is False
+                            and not (
+                                session
+                                and session.get("control_version")
+                                == "browser-control-v1"
+                            )
                         )
                     )
                     else "failed"
