@@ -1,0 +1,206 @@
+{
+  "owned_comparison": {
+    "fixture": "owned sticky footer; identical HTML and viewport; new initial DOM before each attempt",
+    "controlled": "target_obscured_or_outside_viewport",
+    "controlledGeometry": {
+      "rect": {
+        "x": 0,
+        "y": 760,
+        "width": 160,
+        "height": 40
+      },
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "scrollY": 440,
+      "center": {
+        "x": 80,
+        "y": 780
+      },
+      "hitTag": "DIV",
+      "hitIsTarget": false,
+      "hitId": "cover",
+      "clicks": 0
+    },
+    "standard": "passed",
+    "standardGeometry": {
+      "rect": {
+        "x": 0,
+        "y": 380,
+        "width": 160,
+        "height": 40
+      },
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "scrollY": 820,
+      "center": {
+        "x": 80,
+        "y": 400
+      },
+      "hitTag": "BUTTON",
+      "hitIsTarget": true,
+      "hitId": "go",
+      "clicks": 1
+    }
+  },
+  "new_aia_readonly_diagnosis": {
+    "scope": "new isolated readonly diagnosis; navigate/observe/scroll only; no click/input/quote/model; not a replay of original unknown",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "proxy": "explicit_existing_loopback",
+    "observations": [
+      {
+        "phase": "initial",
+        "scrollY": 0,
+        "target": {
+          "tag": "BUTTON",
+          "role": null,
+          "position": "static",
+          "zIndex": "auto",
+          "rect": {
+            "x": 476,
+            "y": 2046.03125,
+            "width": 328,
+            "height": 48
+          }
+        },
+        "center": {
+          "x": 640,
+          "y": 799
+        },
+        "hit": {
+          "tag": "DIV",
+          "role": null,
+          "position": "static",
+          "zIndex": "auto",
+          "rect": {
+            "x": 40,
+            "y": 710.96875,
+            "width": 1200,
+            "height": 89.03125
+          }
+        },
+        "hitIsTarget": false,
+        "visibleRect": {
+          "top": 2046.03125,
+          "bottom": 800
+        },
+        "fixedAncestors": [
+          {
+            "tag": "DIV",
+            "role": "alert",
+            "position": "fixed",
+            "zIndex": "1030",
+            "rect": {
+              "x": 0,
+              "y": 710.96875,
+              "width": 1280,
+              "height": 89.03125
+            }
+          }
+        ]
+      },
+      {
+        "phase": "production_nearest_one_frame",
+        "scrollY": 1294,
+        "target": {
+          "tag": "BUTTON",
+          "role": null,
+          "position": "static",
+          "zIndex": "auto",
+          "rect": {
+            "x": 476,
+            "y": 752.03125,
+            "width": 328,
+            "height": 48
+          }
+        },
+        "center": {
+          "x": 640,
+          "y": 776.03125
+        },
+        "hit": {
+          "tag": "DIV",
+          "role": null,
+          "position": "static",
+          "zIndex": "auto",
+          "rect": {
+            "x": 64,
+            "y": 727.96875,
+            "width": 863,
+            "height": 56.03125
+          }
+        },
+        "hitIsTarget": false,
+        "visibleRect": {
+          "top": 752.03125,
+          "bottom": 800
+        },
+        "fixedAncestors": [
+          {
+            "tag": "DIV",
+            "role": "alert",
+            "position": "fixed",
+            "zIndex": "1030",
+            "rect": {
+              "x": 0,
+              "y": 710.96875,
+              "width": 1280,
+              "height": 89.03125
+            }
+          }
+        ]
+      },
+      {
+        "phase": "readonly_center_one_frame",
+        "scrollY": 1670,
+        "target": {
+          "tag": "BUTTON",
+          "role": null,
+          "position": "static",
+          "zIndex": "auto",
+          "rect": {
+            "x": 476,
+            "y": 376.03125,
+            "width": 328,
+            "height": 48
+          }
+        },
+        "center": {
+          "x": 640,
+          "y": 400.03125
+        },
+        "hit": {
+          "tag": "BUTTON",
+          "role": null,
+          "position": "static",
+          "zIndex": "auto",
+          "rect": {
+            "x": 476,
+            "y": 376.03125,
+            "width": 328,
+            "height": 48
+          }
+        },
+        "hitIsTarget": true,
+        "visibleRect": {
+          "top": 376.03125,
+          "bottom": 424.03125
+        },
+        "fixedAncestors": []
+      }
+    ],
+    "targetCount": 1,
+    "status": "observed"
+  },
+  "limits": [
+    "No AIA click, input, quotation or model request in diagnosis",
+    "Original unknown receipt unchanged",
+    "Current-page geometry reproduces mechanism, not proof of exact original overlay state"
+  ]
+}

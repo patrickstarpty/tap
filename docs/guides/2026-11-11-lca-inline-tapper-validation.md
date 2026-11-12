@@ -370,3 +370,26 @@ runs: 17 calls, actual $0.3407408; remaining original allowance 13 calls/$0.6592
 with zero in-flight reservation. The updated recorded TAP API experiment total
 is 157 calls, 2,305,809 tokens/$2.76969240, not all assistant credits. The uncut
 failure video is labeled `aia-real-lca-obscured-click-unknown-20261112.mp4`.
+
+### Zero-cost controlled click geometry diagnosis
+
+The original unknown ledger has no screenshot/geometry evidence. A new isolated
+read-only AIA context reproduced the same error mechanism without clicking or
+entering data: nearest scrolling placed the unique Buy Now button at y752/h48,
+whose center y776 was intercepted by a fixed bottom alert panel y711–800. Center
+scrolling alone moved that same button to y376/h48; its center hit the button.
+This does not retrospectively establish the original unknown action's outcome.
+
+An identical owned HTML/viewport comparison showed production nearest scrolling
+failed with zero clicks while standard Playwright `locator.click` without force
+repositioned and clicked once. [Safe geometry evidence](assets/2026-11-12-controlled-click-geometry.json)
+contains only bounds/roles and explicit limitations, not private page data.
+
+Patch `17452cec` permits one bounded center-scroll fallback only for agent clicks
+when nearest positioning fails hit testing. It retains the exact element and
+rechecks identity, document, type, sensitivity and actionability before clicking;
+it never forces, removes an overlay or resolves another target. Human screenshot
+proof behavior is not given this fallback, and no unknown result is downgraded.
+Eight failure-first geometry cases plus the existing controlled/human safety
+matrix passed, 88/88 total, including full-overlay and target-mutation refusals.
+No provider calls occurred in these diagnostics or fixtures.
