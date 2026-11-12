@@ -448,3 +448,106 @@ test('only discovery navigation and snapshot may omit a planned step', async t =
   fs.writeFileSync(path.join(root,'responses',file),JSON.stringify({error:'server policy decides discovery'}),{mode:0o600});
   assert.equal(JSON.parse(await pending).error,'server policy decides discovery');
 });
+
+const safeDiscoveryField = (i, label=`Choice ${i}`) => ({selector:`#old-${i}`,label:'PRIVATE_OLD_LABEL',value:'PRIVATE_VALUE',href:'https://private.test',
+  discovery_identity:{selector:`html > body > button:nth-of-type(${i+1})`,tag:'button',role:'button',label}});
+
+test('discovery catalog contains only producer identities in source order with four-line pages', async t=>{
+  const {root}=await setup(t); const {modelReceipt}=await import('../browser-tools.mjs');
+  const fields=Array.from({length:110},(_,i)=>safeDiscoveryField(i));
+  const encoded=modelReceipt({status:'completed',sequence:9,error:null,bounded_snapshot:'Page',fields},{type:'snapshot'},root);
+  const result=JSON.parse(encoded), catalog=result.control_catalog;
+  assert.equal(catalog.observed_fields_count,110); assert.equal(catalog.eligible_count,100);
+  assert.equal(catalog.catalog_count,100); assert.equal(catalog.line_count,100); assert.equal(catalog.omitted,10);
+  assert.equal(catalog.page_size,4); assert.equal(catalog.source_limit,100); assert.equal(catalog.source_bounded,true);
+  const raw=fs.readFileSync(catalog.file,'utf8'), lines=raw.trimEnd().split('\n');
+  assert.equal(lines.length,100); assert.ok(Buffer.byteLength(raw)<=100*1024);
+  assert.equal(fs.statSync(catalog.file).mode & 0o077,0);
+  assert.deepEqual(lines.map(line=>JSON.parse(line).selector),fields.slice(0,100).map(field=>field.discovery_identity.selector));
+  assert.ok(!raw.includes('PRIVATE')); assert.ok(!raw.includes('href'));
+  assert.ok(result.discovery_candidates.length<=3); assert.ok(Buffer.byteLength(encoded)<=8000);
+});
+
+test('catalog byte limits preserve complete unicode JSON lines and never shorten selectors',async t=>{
+  const {root}=await setup(t); const {modelReceipt}=await import('../browser-tools.mjs');
+  const fields=[safeDiscoveryField(0,'漢😀"\\'.repeat(400)),safeDiscoveryField(1),safeDiscoveryField(2)];
+  fields[1].discovery_identity.selector='漢'.repeat(500);
+  fields[2].discovery_identity.selector='[data-x="'+ '\\'.repeat(600)+'"]';
+  const encoded=modelReceipt({error:null,bounded_snapshot:'😀'.repeat(6000),fields},{type:'snapshot'},root);
+  const result=JSON.parse(encoded),lines=fs.readFileSync(result.control_catalog.file,'utf8').trimEnd().split('\n');
+  assert.equal(lines.length,1); assert.ok(lines.every(line=>Buffer.byteLength(line+'\n')<=1024));
+  const first=JSON.parse(lines[0]); assert.equal(first.selector,fields[0].discovery_identity.selector);
+  assert.equal(first.label_truncated,true); assert.ok(Buffer.byteLength(encoded)<=8000);
+});
+
+test('legacy fields never become discovery identities and contextual targets retain priority',async t=>{
+  const {root}=await setup(t); const {modelReceipt}=await import('../browser-tools.mjs');
+  const fields=[{tag:'a',selector:'#legacy',label:'PRIVATE_LEGACY'},...Array.from({length:20},(_,i)=>safeDiscoveryField(i)),
+    {context:'action_target',selector:'#current',tag:'input',label:'Date',readonly:true,scope_candidates:[{selector:'#calendar',tag:'table',relation:'labelled_popup'}]}];
+  const result=JSON.parse(modelReceipt({error:null,bounded_snapshot:'Calendar',fields},{type:'click',selector:'#current'},root));
+  const raw=fs.readFileSync(result.control_catalog.file,'utf8');
+  assert.ok(!raw.includes('PRIVATE_LEGACY')); assert.equal(result.control_catalog.catalog_count,20);
+  assert.equal(result.related_fields[0].selector,'#current'); assert.equal(result.scope_candidates[0].selector,'#calendar');
+});
+
+for(const failure of ['blocked','symlink']) test(`storage ${failure} cannot leak giant fields or change known outcome`,async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const folder=path.join(root,'.tap-browser-observations');
+  if(failure==='blocked') fs.writeFileSync(folder,'occupied'); else fs.symlinkSync(root,folder);
+  const encoded=modelReceipt({status:'completed',error:null,sequence:3,bounded_snapshot:'漢'.repeat(9000),fields:Array.from({length:100},(_,i)=>safeDiscoveryField(i)),extracted:{name:'quote',value:'😀'.repeat(5000)}},{type:'read'},root);
+  const result=JSON.parse(encoded); assert.ok(Buffer.byteLength(encoded)<=8000);
+  assert.equal(result.status,'completed');assert.equal(result.error,null);assert.equal(result.sequence,3);
+  assert.ok(result.evidence_storage_error);assert.equal(result.control_catalog.unavailable,true);
+  assert.equal(result.control_catalog.file,undefined);assert.equal(result.fields,undefined);
+  assert.equal(result.read_result_omitted,true);assert.ok(!encoded.includes('PRIVATE'));
+});
+
+test('oversized exact read is kept intact in evidence and model status uses bounded pointer',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const receipt={status:'completed',error:null,sequence:7,extracted:{name:'quote',value:'😀'.repeat(5000)}};
+  const encoded=modelReceipt(receipt,{type:'read'},root), result=JSON.parse(encoded);
+  assert.ok(Buffer.byteLength(encoded)<=8000);assert.equal(result.status,'completed');assert.equal(result.read_result_omitted,true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(result.evidence_file,'utf8')),receipt);
+});
+
+test('long quote page preserves generic candidate source order without CTA promotion',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const fields=['Get in touch','Learn about cover','Policy information','Terms','Buy Now'].map((label,i)=>safeDiscoveryField(i,label));
+  const snapshot='Get in touch '+ 'Neutral informational content '.repeat(600)+' Buy Now';
+  const result=JSON.parse(modelReceipt({sequence:10,error:null,bounded_snapshot:snapshot,fields},{type:'snapshot'},root));
+  assert.ok(result.snapshot_truncated);assert.ok(!result.bounded_snapshot.includes('Buy Now'));
+  const rows=fs.readFileSync(result.control_catalog.file,'utf8').trimEnd().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(rows.map(row=>row.label),fields.map(field=>field.discovery_identity.label));
+  assert.equal(rows[4].label,'Buy Now');assert.equal(Boolean(result.discovery_candidates?.some(row=>row.label==='Buy Now')),false);
+});
+
+test('catalog-only write failure advertises unavailable without old-field fallback',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const write=fs.writeFileSync;
+  t.mock.method(fs,'writeFileSync',(filename,...args)=>{
+    if(String(filename).endsWith('.jsonl')) throw new Error('private storage reason');
+    return write(filename,...args);
+  });
+  const result=JSON.parse(modelReceipt({status:'completed',error:null,bounded_snapshot:'Page',fields:[safeDiscoveryField(0)]},{type:'snapshot'},root));
+  assert.ok(fs.existsSync(result.evidence_file));assert.equal(result.control_catalog.unavailable,true);
+  assert.equal(result.control_catalog.file,undefined);assert.equal(result.discovery_candidates,undefined);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));assert.ok(!JSON.stringify(result).includes('private storage reason'));
+});
+
+
+test('small evidence failure also omits raw fields and marks unavailable catalog',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  fs.writeFileSync(path.join(root,'.tap-browser-observations'),'occupied');
+  const result=JSON.parse(modelReceipt({status:'failed',error:'Known failure',sequence:8,bounded_snapshot:'Page',fields:[safeDiscoveryField(0)]},{type:'click'},root));
+  assert.equal(result.fields,undefined);assert.equal(result.fields_omitted,true);
+  assert.equal(result.control_catalog.observation_sequence,8);
+  assert.equal(result.control_catalog.unavailable,true);assert.equal(result.status,'failed');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+});
+
+test('untrusted oversized metadata cannot escape final UTF8 cap',async t=>{
+  const {root}=await setup(t);const {modelReceipt}=await import('../browser-tools.mjs');
+  const receipt={status:'unknown',error:'failed',control_catalog:{anything:'漢'.repeat(12000),file:'x'.repeat(12000)},extracted:{value:'😀'.repeat(5000)}};
+  const encoded=modelReceipt(receipt,{type:'read'},root);
+  assert.ok(Buffer.byteLength(encoded)<=8000);assert.equal(JSON.parse(encoded).status,'unknown');
+});

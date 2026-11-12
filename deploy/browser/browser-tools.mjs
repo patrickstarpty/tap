@@ -107,30 +107,128 @@ function modelSourceView(receipt) {
   return view;
 }
 
+const jsonBytes = value => Buffer.byteLength(JSON.stringify(value) ?? 'null', 'utf8');
+const DISCOVERY_LIMIT = 100;
+const discoveryNote = 'Bounded source-order observed candidates, not clickability or business proof. '
+  + 'Read control_catalog.file with offset and limit=4 (one JSON object per line, no header). '
+  + 'This catalog belongs to this static observation sequence; re-observe after DOM changes.';
+
+function discoveryCatalog(fields, folder, available, sequence) {
+  const observed = Array.isArray(fields) ? fields : [];
+  const rows = [];
+  let eligible = 0;
+  for (const field of observed.slice(0, DISCOVERY_LIMIT)) {
+    const source = field?.discovery_identity;
+    if (!source || typeof source !== 'object' || Array.isArray(source)
+      || typeof source.selector !== 'string' || !source.selector
+      || typeof source.tag !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(source.tag)
+      || (source.role !== undefined && (typeof source.role !== 'string' || !snapshotRoles.has(source.role)))) continue;
+    eligible++;
+    const row = {selector:source.selector,tag:source.tag,
+      ...(source.role === undefined ? {} : {role:source.role})};
+    // Preserve complete target identity; never turn a truncated selector into a target.
+    if (Buffer.byteLength(row.selector,'utf8') > 1000 || jsonBytes(row) + 1 > 1024) continue;
+    if (typeof source.label === 'string' && source.label) {
+      const points = [...source.label];
+      let low = 0, high = points.length;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        const candidate = {...row,label:points.slice(0,mid).join(''),label_truncated:true};
+        if (jsonBytes(candidate) + 1 <= 1024) low = mid; else high = mid - 1;
+      }
+      if (low) row.label = points.slice(0,low).join('');
+      if (low < points.length || source.label_truncated === true) row.label_truncated = true;
+      // A marker itself must also fit when selector identity nearly fills the line.
+      if (jsonBytes(row) + 1 > 1024) { delete row.label; delete row.label_truncated; }
+    }
+    rows.push(row);
+  }
+  const metadata = {observed_fields_count:observed.length,eligible_count:eligible,
+    catalog_count:0,omitted:observed.length,source_limit:DISCOVERY_LIMIT,source_bounded:true,
+    page_size:4,line_count:0,observation_sequence:Number.isInteger(sequence) && sequence >= 0 ? sequence : null};
+  if (!available) return {metadata:{...metadata,unavailable:true},rows:[]};
+  const file = path.join(folder,`${crypto.randomBytes(16).toString('hex')}.jsonl`);
+  try {
+    const folderState = fs.lstatSync(folder);
+    if (folderState.isSymbolicLink() || !folderState.isDirectory()) throw new Error('unsafe catalog directory');
+    const text = rows.map(row=>JSON.stringify(row)+'\n').join('');
+    if (Buffer.byteLength(text,'utf8') > 100*1024) throw new Error('catalog size invalid');
+    fs.writeFileSync(file,text,{flag:'wx',mode:0o600});
+    return {metadata:{...metadata,catalog_count:rows.length,omitted:observed.length-rows.length,file,line_count:rows.length},rows};
+  } catch {
+    return {metadata:{...metadata,unavailable:true},rows:[]};
+  }
+}
+
+function boundedModelView(view, evidenceFile, storageError = false) {
+  if (jsonBytes(view) <= 8000) return JSON.stringify(view);
+  // Whole values are either present or explicitly omitted, never shortened into
+  // a false readback. The saved receipt remains the full source-redacted fact.
+  const result = {details_omitted:true,read_result_omitted:Boolean(view.extracted || view.outputs || view.result_data),
+    observation_detail:'Model view exceeded its byte budget. Read evidence_file for exact facts; do not repeat the browser action.'};
+  for (const key of ['status','code','action_id','session_id','sequence','control_epoch','operation','business_action_admitted','write_started']) {
+    if (view[key] !== undefined && jsonBytes(view[key]) <= 300) result[key] = view[key];
+  }
+  if (Object.hasOwn(view,'error')) result.error = view.error === null ? null
+    : typeof view.error === 'string' && jsonBytes(view.error) <= 300 ? view.error
+    : 'Browser reported an error; inspect available evidence. Do not repeat the action.';
+  if (evidenceFile) result.evidence_file = evidenceFile;
+  if (view.control_catalog) {
+    const catalog = view.control_catalog;
+    result.control_catalog = {};
+    for (const key of ['observed_fields_count','eligible_count','catalog_count','omitted','source_limit','page_size','line_count','observation_sequence']) {
+      if (Number.isSafeInteger(catalog[key]) && catalog[key] >= 0) result.control_catalog[key] = catalog[key];
+    }
+    if (catalog.source_bounded === true) result.control_catalog.source_bounded = true;
+    if (catalog.unavailable === true) result.control_catalog.unavailable = true;
+    if (typeof catalog.file === 'string' && Buffer.byteLength(catalog.file,'utf8') <= 2048) result.control_catalog.file = catalog.file;
+    else if (catalog.file !== undefined) result.control_catalog.unavailable = true;
+  }
+  if (storageError) {
+    result.evidence_storage_error = 'Local evidence unavailable. Do not repeat the action.';
+    result.observation_detail = 'Exact omitted facts are unavailable because local evidence storage failed. Do not repeat the browser action.';
+  }
+  if (jsonBytes(result) > 8000) {
+    delete result.evidence_file;
+    if (result.control_catalog) { delete result.control_catalog.file; result.control_catalog.unavailable = true; }
+    result.evidence_storage_error = 'Evidence path could not fit the model response. Do not repeat the action.';
+  }
+  if (jsonBytes(result) > 8000) {
+    return JSON.stringify({status:typeof view.status === 'string' && view.status.length <= 80 ? view.status : 'unknown',
+      error:view.error === null ? null : 'Browser details unavailable. Do not repeat the action.',
+      details_omitted:true,read_result_omitted:true,evidence_storage_error:'Bounded evidence metadata unavailable.'});
+  }
+  return JSON.stringify(result);
+}
+
 // Keep source-redacted page evidence on disk; send a compact model view.
 // This is a tool view, not a second conversation compressor.
 export function modelReceipt(receipt, action, directory) {
   receipt = modelSourceView(receipt);
-  if (!receipt || typeof receipt !== 'object' || !('bounded_snapshot' in receipt)) return JSON.stringify(receipt);
+  if (!receipt || typeof receipt !== 'object') return jsonBytes(receipt) <= 8000 ? JSON.stringify(receipt) : JSON.stringify({error:'Oversized non-object browser response',details_omitted:true});
+  if (!('bounded_snapshot' in receipt) && jsonBytes(receipt) <= 8000) return JSON.stringify(receipt);
   const folder = path.join(directory, '.tap-browser-observations');
   const file = path.join(folder, `${crypto.randomBytes(16).toString('hex')}.json`);
   try {
     fs.mkdirSync(folder, {recursive:true, mode:0o700});
-    if (fs.lstatSync(folder).isSymbolicLink()) throw new Error('unsafe browser evidence directory');
+    if (fs.lstatSync(folder).isSymbolicLink() || !fs.lstatSync(folder).isDirectory()) throw new Error('unsafe browser evidence directory');
     fs.writeFileSync(file, JSON.stringify(receipt, null, 2), {flag:'wx', mode:0o600});
   } catch {
     // The browser already acted. Never replace its known outcome with a storage exception.
-    return JSON.stringify({...receipt, evidence_storage_error:'Source-redacted receipt returned because local evidence could not be saved. Do not repeat the action.'});
+    const catalog = discoveryCatalog(receipt.fields,folder,false,receipt.sequence);
+    const {fields:omittedFields,related_fields:omittedRelated,scope_candidates:omittedScopes,discovery_candidates:omittedCandidates,...availableFacts} = receipt;
+    return boundedModelView({...availableFacts,control_catalog:catalog.metadata,fields_omitted:Boolean(omittedFields?.length || omittedRelated?.length || omittedScopes?.length || omittedCandidates?.length),evidence_storage_error:'Source-redacted receipt returned because local evidence could not be saved. Do not repeat the action.'},null,true);
   }
   const {fields, bounded_snapshot, ...facts} = receipt;
+  const catalog = discoveryCatalog(fields,folder,true,receipt.sequence);
   const reading = action.type === 'read' && !receipt.error;
   const scopedSnapshot = action.type === 'snapshot' && Boolean(action.selector) && !receipt.error;
-  const view = {...facts, bounded_snapshot:scopedSnapshot ? String(bounded_snapshot || '').slice(0,6000) : '', related_fields:[], related_fields_omitted:0, scope_candidates:[], scope_candidates_omitted:0, evidence_file:file,
+  const view = {...facts, control_catalog:catalog.metadata, discovery_detail:discoveryNote, discovery_candidates:[], bounded_snapshot:scopedSnapshot ? String(bounded_snapshot || '').slice(0,6000) : '', related_fields:[], related_fields_omitted:0, scope_candidates:[], scope_candidates_omitted:0, evidence_file:file,
     observation_detail:reading ? 'The current read and source-redacted observation are stored in evidence_file.'
       : 'Fresh action receipts already contain current observations. Full source-redacted controls are in evidence_file. URLs omit credentials, query and fragment. Use exact returned selectors or current refs. associated_selection_state is a proven local name/enum binding; selected_label is null until one unique visible choice is selected. Read selected_label with exact equals. state_attributes are observed allowlisted state; empty differs from absent. visible_control means in the viewport, not associated. For readonly date widgets open the observed widget, then choose current year, month and day controls instead of fill. When details_omitted, options_truncated, popup_text_truncated, related_fields_omitted, scope_candidates_omitted or documents_omitted is present, inspect evidence_file or snapshot the existing select/popup selector. options_total counts observed native options; omitted options are not absent. A textbox-scoped snapshot cannot show a sibling popup. scope_candidates are observation ranges, not a business binding; snapshot an exact returned scope to observe its current controls.',
     snapshot_truncated:Boolean(bounded_snapshot),
   };
-  const fits = () => JSON.stringify(view).length < 7900;
+  const fits = () => jsonBytes(view) < 7900;
   const compact = object => Object.fromEntries(Object.entries(object).filter(([,value])=>value !== null && value !== undefined));
   const priority = field => field.context === 'action_target' || field.selector === action.selector ? 0
     : field.tag === 'select' ? 1
@@ -150,23 +248,23 @@ export function modelReceipt(receipt, action, directory) {
   const targetField = candidates.find(field=>field.context === 'action_target' || field.selector === action.selector);
   const reservedFields = (scopedSnapshot ? (targetField ? [targetField] : []) : candidates.slice(0,3))
     .filter(field=>usableSelector(field.selector));
-  const identityReserve = JSON.stringify(reservedFields.map(identity)).length - 2;
+  const identityReserve = jsonBytes(reservedFields.map(identity)) - 2;
   const reservedScopes = [...new Map(reservedFields.flatMap(field=>field.scope_candidates || [])
     .filter(scope=>usableSelector(scope.selector))
     .map(scope=>[scope.selector,scope])).values()].slice(0,2);
-  const scopeReserve = JSON.stringify(reservedScopes).length - 2;
-  const withoutDocuments = JSON.stringify({...view,documents:[]}).length;
+  const scopeReserve = jsonBytes(reservedScopes) - 2;
+  const withoutDocuments = jsonBytes({...view,documents:[]});
   // Reserve whole scope identities only when they fit without reducing the
   // requested snapshot. Document display is lower priority than usable scopes.
   const targetReserve = identityReserve + (withoutDocuments + identityReserve + scopeReserve < 7900 ? scopeReserve : 0);
   if (Array.isArray(view.documents)) {
-    while (view.documents.length && JSON.stringify(view).length + targetReserve >= 7900) {
+    while (view.documents.length && jsonBytes(view) + targetReserve >= 7900) {
       view.documents = view.documents.slice(0,-1);
       view.documents_omitted = (view.documents_omitted || 0) + 1;
     }
   }
-  while (scopedSnapshot && view.bounded_snapshot.length && JSON.stringify(view).length + targetReserve >= 7900) {
-    view.bounded_snapshot = view.bounded_snapshot.slice(0,Math.max(0,view.bounded_snapshot.length - (JSON.stringify(view).length + targetReserve - 7899)));
+  while (scopedSnapshot && view.bounded_snapshot.length && jsonBytes(view) + targetReserve >= 7900) {
+    view.bounded_snapshot = view.bounded_snapshot.slice(0,Math.max(0,view.bounded_snapshot.length - (jsonBytes(view) + targetReserve - 7899)));
   }
   const seenScopes = new Set();
   const offerScopes = field => {
@@ -257,12 +355,18 @@ export function modelReceipt(receipt, action, directory) {
   if (!scopedSnapshot) view.bounded_snapshot = reading ? '' : String(bounded_snapshot || '').slice(0,6000);
   view.snapshot_truncated = view.bounded_snapshot.length < String(bounded_snapshot || '').length;
   // JSON escaping, document metadata and omission markers share the same cap.
-  while (JSON.stringify(view).length >= 8000 && view.bounded_snapshot.length) {
-    const overflow = JSON.stringify(view).length - 7999;
+  while (jsonBytes(view) >= 8000 && view.bounded_snapshot.length) {
+    const overflow = jsonBytes(view) - 7999;
     view.bounded_snapshot = view.bounded_snapshot.slice(0,Math.max(0,view.bounded_snapshot.length-overflow));
     view.snapshot_truncated = true;
   }
-  return JSON.stringify(view);
+  for (const candidate of catalog.rows.slice(0,3)) {
+    view.discovery_candidates ||= [];
+    view.discovery_candidates.push(candidate);
+    if (!fits()) {view.discovery_candidates.pop();break;}
+  }
+  if (!view.discovery_candidates?.length) delete view.discovery_candidates;
+  return boundedModelView(view,file);
 }
 
 export default async function BrowserTools() {
