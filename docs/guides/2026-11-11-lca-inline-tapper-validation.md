@@ -457,3 +457,62 @@ followed by valid observation/ref continuation. Runtime + BrowserProgress suite:
 (unused-ignore and no-any-return), also reproduced on the prior HEAD file under
 the same environment; no new errors were introduced. A complete repository gate
 was not rerun and these baseline type failures are not reported as green.
+
+### Bounded neutral discovery catalog (zero-cost follow-up)
+
+The producer now adds a separate privacy-checked discovery identity only for
+already observed bounded fields. Complete structural CSS (including verified
+frame boundaries) does not copy IDs, names or aria-label attributes; labels
+exclude protected, invisible and editable content and unsafe external label
+references. Password/hidden/sensitive controls fail closed. No values, options,
+hrefs or business state enter this directory. Existing field order/context and
+execution contracts remain unchanged; legacy observations without these new
+identities are not expanded.
+
+Each observation can advertise a private JSONL catalog in source order, never
+ranked by site, goal or CTA. It contains at most 100 complete records, at most
+1,024 UTF-8 bytes per line/100 KiB total, with four-line pages and explicit counts,
+omissions, observation sequence and bounded-source coverage. This is not a full
+DOM inventory, actionability guarantee, authorization or business assertion.
+Selectors are never shortened; optional labels may be explicitly truncated.
+Current target/scope/associated-state details retain priority; inline directory
+entries use only remaining space. All model-view paths, including storage
+failure and oversized facts, stay within 8,000 UTF-8 bytes. Exact omitted facts
+remain in successfully written source-redacted evidence; failed storage is
+explicit, never a raw-field fallback or a reason to repeat the action.
+
+Final local gates: 37 Chromium producer/privacy/observation/scope cases and 43
+native presentation tests passed. The two prior MyPy errors were fixed with
+only generic return typing and removal of an unused ignore: MyPy/Ruff/format
+passed, and 82 runtime/control regressions passed (three optional pinned tests
+excluded). No full repository gate or production deployment is implied.
+
+Real pinned OpenCode 1.19.5/native `read` used offsets 1, 5, 9 and 13, four records
+each, to recover all 16 owned-fixture candidates in source order without gaps
+or duplicates. The desired later control was absent from inline controls; its
+selector came only from the native-read response, not a Python file-read bypass.
+Actual HTTP/SQLite/worker/Chromium execution clicked once and verified `STARTED`.
+The scripted provider used exactly ten local responses/eight tools within the
+75-second bound. Reproduce using `scripts/verify-opencode-protocol.py` with its
+required pinned `--opencode-binary`, `--evidence` and `--cases control_catalog`.
+This is deterministic protocol/browser evidence, not model autonomy or
+CodingRuntime/BudgetGate coverage. No real provider or external website was
+called. AIA's remaining seven calls/$0.539062 are unchanged.
+
+Final review identified that four separate file-read model turns followed by a
+click would exceed the unchanged production no-progress window. The four-page
+fixture remains [protocol coverage only](assets/2026-11-12-discovery-catalog-protocol.json),
+not proof that production can finish that serial sequence. Directory guidance
+now recommends targeted read/grep and explicitly states that file reads are not
+browser progress; no guard or budget was relaxed.
+
+The additional [bounded fixture](assets/2026-11-12-discovery-catalog-bounded.json),
+`--cases control_catalog_bounded` at `944b98de`, used eight controls and two native
+read pages (offsets 1 and 5). The actual unchanged CodingProgressGuard was checked
+on every model turn: file reads left progress units 1→1→1, then the unique click
+and verified result advanced 2→3. Eight synthetic responses/six tools completed
+within the original limit, with `expected_result=STARTED` and `result_verified=true`.
+This is the real guard class in the protocol handler, not full
+CodingRuntime/BudgetGate. An older report flag compared every case with CLICKED;
+reporting now compares each case's actual expected readback, with four regression
+tests. Original evidence was retained rather than silently rewritten.

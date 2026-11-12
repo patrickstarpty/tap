@@ -1,0 +1,121 @@
+{
+  "script_commit": "2a4c85389da05f982ac40106a6e5e4bb5a295adb",
+  "application_commit": "09f07ad0",
+  "raw_evidence_sha256": "93f65a2aae296c46135c5a94c0fc59a64dc5006236676ce6c02bbe6801025dc3",
+  "application_path": "HTTP/SQLite/BrowserWorker/LocalBrowserRuntime/Chromium",
+  "model_forwarding": "test handler to owned HTTP synthetic provider; not CodingRuntime/BudgetGate",
+  "paid_calls": 0,
+  "external_sites": false,
+  "owned_resources_stopped": true,
+  "actual_ledger_assertions_passed": {
+    "click_count": 1,
+    "clicked_selector_matches_native_read_target": true,
+    "result": "STARTED"
+  },
+  "case": {
+    "provider_requests": 10,
+    "text_responses": 2,
+    "tool_responses": 8,
+    "json_arguments": 8,
+    "json_text_responses": 0,
+    "accepted_plans": 1,
+    "completed_actions": 3,
+    "server_rejections": 0,
+    "requested_operations": [
+      "navigate",
+      "click",
+      "read"
+    ],
+    "discovery_observations": 1,
+    "goal_absent_from_inline_controls": true,
+    "native_read_offsets": [
+      1,
+      5,
+      9,
+      13
+    ],
+    "native_page_record_counts": [
+      4,
+      4,
+      4,
+      4
+    ],
+    "selector_from_native_read": true,
+    "catalog_result_verified": true,
+    "terminal": "complete",
+    "diagnostics": [
+      {
+        "sequence": 1,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 2,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 3,
+        "tool": "read",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 4,
+        "tool": "read",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 5,
+        "tool": "read",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 6,
+        "tool": "read",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 7,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 8,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      }
+    ],
+    "unknown": false,
+    "native_directory_pages_read": 4,
+    "native_directory_records_read": 16,
+    "catalog_metadata": {
+      "observed_fields_count": 16,
+      "eligible_count": 16,
+      "catalog_count": 16,
+      "omitted": 0,
+      "source_limit": 100,
+      "source_bounded": true,
+      "page_size": 4,
+      "line_count": 16
+    },
+    "native_one_based_offsets_verified": true,
+    "catalog_source_order_complete_without_duplicates": true,
+    "expected_result": "STARTED",
+    "result_verified": true
+  },
+  "report_correction": {
+    "commit": "5375f7fa8ea3846a1bba66da1a7d8a595986f600",
+    "original_summary": "/tmp/tap-opencode-control-catalog-safe-summary-20261113.json",
+    "legacy_dom_clicked": false,
+    "reason": "Legacy report compared every fixture to CLICKED; catalog actually expected and read STARTED. Original raw evidence remains unchanged.",
+    "validation": "4 report-only unit tests passed; no new browser/provider run."
+  }
+}

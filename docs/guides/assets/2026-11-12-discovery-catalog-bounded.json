@@ -1,0 +1,152 @@
+{
+  "script_commit": "944b98de935269a3f71e478037ac2ea731598500",
+  "raw_evidence_sha256": "dcc2a6194b5412fe54e136cba79d7df1f33dc8d1820ce8ecadefb4a9b7393ca1",
+  "paid_calls": 0,
+  "external_sites": false,
+  "owned_resources_stopped": true,
+  "guard_scope": "Actual unchanged CodingProgressGuard invoked on each model mailbox turn; not full CodingRuntime/BudgetGate. Four-page prior proof remains protocol-only.",
+  "case": {
+    "provider_requests": 8,
+    "text_responses": 2,
+    "tool_responses": 6,
+    "json_arguments": 6,
+    "json_text_responses": 0,
+    "accepted_plans": 1,
+    "completed_actions": 3,
+    "server_rejections": 0,
+    "expected_result": "STARTED",
+    "result_verified": true,
+    "requested_operations": [
+      "navigate",
+      "click",
+      "read"
+    ],
+    "discovery_observations": 1,
+    "guard_checks": [
+      {
+        "tool_responses_before_turn": 0,
+        "has_plan": false,
+        "progress_units": 0,
+        "observed": false,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 0,
+        "has_plan": false,
+        "progress_units": 0,
+        "observed": false,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 1,
+        "has_plan": false,
+        "progress_units": 1,
+        "observed": true,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 2,
+        "has_plan": true,
+        "progress_units": 1,
+        "observed": true,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 3,
+        "has_plan": true,
+        "progress_units": 1,
+        "observed": true,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 4,
+        "has_plan": true,
+        "progress_units": 1,
+        "observed": true,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 5,
+        "has_plan": true,
+        "progress_units": 2,
+        "observed": true,
+        "allowed": true
+      },
+      {
+        "tool_responses_before_turn": 6,
+        "has_plan": true,
+        "progress_units": 3,
+        "observed": true,
+        "allowed": true
+      }
+    ],
+    "goal_absent_from_inline_controls": true,
+    "native_read_offsets": [
+      1,
+      5
+    ],
+    "native_page_record_counts": [
+      4,
+      4
+    ],
+    "selector_from_native_read": true,
+    "catalog_result_verified": true,
+    "terminal": "complete",
+    "diagnostics": [
+      {
+        "sequence": 1,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 2,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 3,
+        "tool": "read",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 4,
+        "tool": "read",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 5,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      },
+      {
+        "sequence": 6,
+        "tool": "tap_browser",
+        "status": "completed",
+        "category": "none"
+      }
+    ],
+    "unknown": false,
+    "native_directory_pages_read": 2,
+    "native_directory_records_read": 8,
+    "catalog_metadata": {
+      "observed_fields_count": 8,
+      "eligible_count": 8,
+      "catalog_count": 8,
+      "omitted": 0,
+      "source_limit": 100,
+      "source_bounded": true,
+      "page_size": 4,
+      "line_count": 8
+    },
+    "native_one_based_offsets_verified": true,
+    "catalog_source_order_complete_without_duplicates": true,
+    "catalog_actual_click_count": 1,
+    "guard_scope": "Actual CodingProgressGuard on each protocol model request; not full CodingRuntime/BudgetGate",
+    "native_file_reads_did_not_reset_progress": true
+  }
+}
