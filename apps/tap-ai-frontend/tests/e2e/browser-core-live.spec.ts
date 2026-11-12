@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { verifyRealQuoteProof } from "./browser-core-real-proof";
 
 type CoreCase = {
   name: string;
@@ -82,7 +83,9 @@ for (const scenario of cases) {
     expect(runtime.workflowEnabled).toBe(true);
     const root = `/api/v1/projects/${encodeURIComponent(runtime.projectId)}`;
 
-    const inlineBridge = process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1";
+    const inlineReal = process.env.TAPPER_BROWSER_CORE_LCA_INLINE_REAL === "1";
+    const inlineBridge =
+      process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" || inlineReal;
     const hostUrl = process.env.TAPPER_BROWSER_CORE_LCA_URL;
     let admissionRequests = 0;
     page.on("request", (request) => {
@@ -426,6 +429,53 @@ for (const scenario of cases) {
         )
       ).status(),
     ).toBeGreaterThanOrEqual(400);
+    if (inlineReal) {
+      expect(acceptanceContract).toBeDefined();
+      verifyRealQuoteProof(
+        run.outputs,
+        acceptanceContract!.fields,
+        process.env.TAPPER_BROWSER_CORE_QUOTE_OUTPUT!,
+      );
+      expect(page.url()).toBe(topLevelUrl);
+      expect(admissionRequests).toBe(1);
+      const conversationResponse = await page.request.get(
+        `${root}/conversations/${conversationId}`,
+      );
+      expect(conversationResponse.ok()).toBe(true);
+      const conversation = (await conversationResponse.json()) as {
+        turns: { workflowTaskId: string | null }[];
+      };
+      expect(
+        conversation.turns.map((turn) => turn.workflowTaskId).filter(Boolean),
+      ).toEqual([taskId]);
+      writeFileSync(
+        `${evidenceDir}/live-inline-lca-journey.json`,
+        JSON.stringify(
+          {
+            provider: "real",
+            modelAlias: process.env.TAPPER_BROWSER_CORE_MODEL_ALIAS,
+            topLevelUrlUnchanged: true,
+            conversationAdmissions: admissionRequests,
+            taskId,
+            executionId: run.executionId,
+            bundleId: run.bundleId,
+            inputSha256: run.inputSha256,
+            reviewedFields: acceptanceContract!.fields.map((field) => field.id),
+            quoteOutput: process.env.TAPPER_BROWSER_CORE_QUOTE_OUTPUT,
+            modelCalls: snapshot.budgetUsed?.model_calls,
+            imported: false,
+            replayed: false,
+          },
+          null,
+          2,
+        ),
+      );
+      await page.screenshot({
+        path: `${evidenceDir}/live-inline-lca-ui.png`,
+        fullPage: true,
+      });
+      return;
+    }
     if (
       process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" &&
       scenario.name === "form"

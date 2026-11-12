@@ -469,6 +469,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--opencode-binary", type=Path)
     parser.add_argument("--lca-bridge", action="store_true")
+    parser.add_argument("--lca-inline-real", action="store_true")
+    parser.add_argument("--authorize-real-run", action="store_true")
+    parser.add_argument("--quote-output-name", default="quote")
 
     parser.add_argument(
         "--case",
@@ -495,6 +498,21 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.lca_bridge and (args.mode != "synthetic" or args.execution_mode != "local"):
         parser.error("LCA bridge acceptance requires zero-cost synthetic local mode")
+    if args.lca_inline_real and (
+        not args.authorize_real_run
+        or args.lca_bridge
+        or args.mode != "real"
+        or args.site != "public"
+        or args.execution_mode != "local"
+        or args.acceptance_contract_file is None
+        or not args.acceptance_contract_file.is_file()
+        or args.max_model_calls is None
+        or not 1 <= args.max_model_calls <= 30
+        or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", args.quote_output_name)
+    ):
+        parser.error(
+            "inline real acceptance requires explicit authorization, real public local mode, reviewed contract and <=30 calls"
+        )
     if args.execution_mode == "local" and (
         args.opencode_binary is None
         or not args.opencode_binary.is_absolute()
@@ -912,6 +930,13 @@ def model_execution_settings(mode: str, values: dict[str, str]) -> dict[str, str
 def main() -> int:
     args = parse_args()
     model_settings = model_execution_settings(args.mode, dict(os.environ))
+    if (
+        args.lca_inline_real
+        and model_settings["TAP_BROWSER_CODING_MODEL_ALIAS"] != "qwen-max"
+    ):
+        raise ValueError(
+            "inline real acceptance requires explicitly configured qwen-max"
+        )
     reviewed_contract = (
         load_reviewed_contract(args.acceptance_contract_file)
         if args.acceptance_contract_file is not None
@@ -974,7 +999,7 @@ def main() -> int:
             else "0",
         }
     )
-    if args.lca_bridge:
+    if args.lca_bridge or args.lca_inline_real:
         env.update(
             {
                 "TAP_LCA_ENABLED": "true",
@@ -984,13 +1009,22 @@ def main() -> int:
                 "TAP_LCA_GATEWAY_TOKEN": uuid.uuid4().hex + uuid.uuid4().hex,
                 "TAP_LCA_BACKEND_URL": env["TAP_BROWSER_API_ORIGIN"],
                 "TAP_WEB_PORT": str(helpers.free_ports(1)[0]),
-                "TAPPER_BROWSER_CORE_LCA_BRIDGE": "1",
+                "TAPPER_BROWSER_CORE_LCA_BRIDGE": "1" if args.lca_bridge else "0",
+                "TAPPER_BROWSER_CORE_LCA_INLINE_REAL": "1"
+                if args.lca_inline_real
+                else "0",
+                "TAPPER_BROWSER_CORE_QUOTE_OUTPUT": args.quote_output_name,
+                "TAPPER_BROWSER_CORE_MODEL_ALIAS": model_settings[
+                    "TAP_BROWSER_CODING_MODEL_ALIAS"
+                ],
             }
         )
-    if args.lca_bridge:
+    if args.lca_bridge or args.lca_inline_real:
         env["VITE_TAPPER_URL"] = env["TAPPER_WEB_BASE_URL"]
         env["VITE_TAP_WEB_URL"] = f"http://127.0.0.1:{env['TAP_WEB_PORT']}"
-        env["TAPPER_BROWSER_CORE_LCA_URL"] = env["VITE_TAP_WEB_URL"] + "/?module=low-code"
+        env["TAPPER_BROWSER_CORE_LCA_URL"] = (
+            env["VITE_TAP_WEB_URL"] + "/?module=low-code"
+        )
     upstream_proxy = os.environ.get("TAP_BROWSER_LOCAL_UPSTREAM_PROXY")
     if upstream_proxy and args.execution_mode == "local":
         env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] = upstream_proxy
@@ -1020,7 +1054,7 @@ def main() -> int:
                 "expected": args.expected,
                 "outputPattern": args.output_pattern,
                 "status": "succeeded",
-                "replay": True,
+                "replay": not args.lca_inline_real,
             }
         ]
     else:
@@ -1036,6 +1070,7 @@ def main() -> int:
         json.dumps(
             {
                 "mode": args.mode,
+                "entrypoint": "lca-inline-real" if args.lca_inline_real else "existing",
                 "execution_mode": args.execution_mode,
                 "model_settings": model_settings,
                 "site": args.site,
@@ -1315,7 +1350,7 @@ def main() -> int:
             [
                 ".venv/bin/uvicorn",
                 "tap_platform.app:app"
-                if args.lca_bridge
+                if args.lca_bridge or args.lca_inline_real
                 else "tap_platform.browser_automation.http:app",
                 "--host",
                 "127.0.0.1",
@@ -1382,7 +1417,7 @@ def main() -> int:
                 env["TAPPER_API_BASE_URL"] + "/health/ready", app, app_log, api=True
             )
             helpers.wait_ready(env["TAPPER_WEB_BASE_URL"] + "/", app, app_log)
-            if args.lca_bridge:
+            if args.lca_bridge or args.lca_inline_real:
                 helpers.wait_ready(env["TAPPER_BROWSER_CORE_LCA_URL"], app, app_log)
             phase = "chat-browser-e2e"
             run_playwright(

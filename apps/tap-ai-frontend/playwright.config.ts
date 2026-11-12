@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: "./tests/e2e",
   outputDir: "./test-results",
   preserveOutput:
-    process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1"
+    process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" ||
+    process.env.TAPPER_BROWSER_CORE_LCA_INLINE_REAL === "1"
       ? "always"
       : "failures-only",
   fullyParallel: false,
@@ -19,11 +20,13 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
     trace:
-      process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1"
+      process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" ||
+      process.env.TAPPER_BROWSER_CORE_LCA_INLINE_REAL === "1"
         ? "on"
         : "retain-on-failure",
     video:
-      process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1"
+      process.env.TAPPER_BROWSER_CORE_LCA_BRIDGE === "1" ||
+      process.env.TAPPER_BROWSER_CORE_LCA_INLINE_REAL === "1"
         ? "on"
         : "retain-on-failure",
     screenshot: "only-on-failure",
