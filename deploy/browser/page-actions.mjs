@@ -89,7 +89,7 @@ export async function readSelectedLabel(page, action) {
 const fieldSelector = 'output,[role="status"],input,select,textarea,button,a[href],[role="combobox"],[role="radio"],[role="checkbox"],[role="option"],[role="slider"],[contenteditable="true"]';
 
 // Runs only our fixed read-only DOM collector; never changes the AI ref map.
-function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect = false} = {}) {
+function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect = false, discoveryOnly = false} = {}) {
   const unique = selector => document.querySelectorAll(selector).length === 1;
   const selectorFor = node => {
     if (node.id && unique(`#${CSS.escape(node.id)}`)) return `#${CSS.escape(node.id)}`;
@@ -109,6 +109,61 @@ function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect
     return `body > ${parts.join(' > ')}`;
   };
   if (selectorOnly) return selectorFor(nodes);
+  // Independent low-information catalog identity. Never reuse IDs, names,
+  // aria-label, editable values, option text or the legacy label collector.
+  const discoveryIdentity = (node, frameBoundary = false) => {
+    const tags = new Set('html body div span section article main header footer nav aside form fieldset legend label input select textarea button a output ul ol li table thead tbody tfoot tr th td p h1 h2 h3 h4 h5 h6 dialog details summary figure figcaption strong em small b i u br iframe'.split(' '));
+    const roles = new Set('button link textbox combobox radio checkbox option slider status dialog alertdialog listbox menu menuitem grid gridcell tab tabpanel heading spinbutton switch searchbox tree treeitem list listitem group radiogroup'.split(' '));
+    const protectedNode = 'input[type="hidden" i],input[type="password" i],[autocomplete*="password" i],[autocomplete*="one-time-code" i],[autocomplete*="cc-" i],[autocomplete~="username" i],[autocomplete~="webauthn" i],[data-secret],[data-sensitive],[data-private],[hidden],[inert],[aria-hidden="true" i],object,embed';
+    const visible = element => {
+      if (!element?.getClientRects().length) return false;
+      for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (style.visibility !== 'visible' || style.display === 'none' || Number(style.opacity) === 0
+          || style.contentVisibility === 'hidden') return false;
+      }
+      return true;
+    };
+    const safe = element => element && visible(element) && !element.closest(protectedNode)
+      && !element.querySelector(protectedNode + ',iframe');
+    if (!node || node.ownerDocument !== document || node.getRootNode() !== document || !safe(node)) return null;
+    if (node.tagName === 'IFRAME' && !frameBoundary) return null;
+    const parts = [];
+    for (let element = node; element; element = element.parentElement) {
+      const tag = element.tagName.toLowerCase();
+      if (!tags.has(tag) || parts.length >= 64) return null;
+      const siblings = [...(element.parentElement?.children || [element])].filter(item => item.tagName === element.tagName);
+      parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(element) + 1})`);
+    }
+    const selector = parts.join(' > ');
+    if (new TextEncoder().encode(selector).length > 1000 || document.querySelectorAll(selector).length !== 1
+      || document.querySelector(selector) !== node) return null;
+    const tag = node.tagName.toLowerCase();
+    const role = node.getAttribute('role');
+    const result = {selector,tag,...(roles.has(role)?{role}:{})};
+    if (frameBoundary) return result;
+    const references = (node.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+    const sources = references.length ? references.map(id=>document.getElementById(id)) : [...(node.labels || [])];
+    if (sources.some(source=>!safe(source))) return null;
+    if (!sources.length && (tag === 'button' || tag === 'a' || role === 'button' || role === 'link')) sources.push(node);
+    const editable = 'input,textarea,select,option,[contenteditable]:not([contenteditable="false" i])';
+    const staticText = source => {
+      if (source.matches(editable) || source.isContentEditable) return '';
+      const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT);
+      const pieces = [];let count = 0;
+      for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+        if (++count > 64) return '';
+        const parent = text.parentElement;
+        if (!parent || !visible(parent) || parent.closest(editable) || parent.isContentEditable) continue;
+        pieces.push(text.textContent);
+      }
+      return pieces.join(' ').replace(/\s+/g,' ').trim();
+    };
+    const label = sources.map(staticText).join(' ').replace(/\s+/g,' ').trim();
+    if (label && label.length <= 120) result.label = label;
+    return result;
+  };
+  if (discoveryOnly) return discoveryIdentity(nodes, true);
   const visible = node => node?.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
   const related = new Map();
   const add = (node, relation) => { if (visible(node) && !related.has(node)) related.set(node, relation); };
@@ -195,7 +250,9 @@ function collectFields(nodes, {target = null, selectorOnly = false, scopedSelect
     .sort((a, b) => Number(a.tagName === 'A') - Number(b.tagName === 'A')));
   return ordered.slice(0, 100).map(node => {
     const popupText = popups.has(node) ? (node.innerText || '').trim() : null;
+    const discovery = discoveryIdentity(node);
     return {
+    ...(discovery ? {discovery_identity:discovery} : {}),
     tag: node.tagName.toLowerCase(), name: node.getAttribute('name'), id: node.id,
     type: node.getAttribute('type'), role: node.getAttribute('role'), selector: selectorFor(node),
     ...(related.has(node) ? {context: related.get(node)} : {}),
@@ -233,19 +290,34 @@ export async function observeFields(page, action = {}) {
       try {
         // A frame-local CSS selector must include every verified frame boundary.
         const prefixes = [];
+        const discoveryPrefixes = [];
+        let discoveryFramesSafe = true;
         for (let current = frame; current.parentFrame(); current = current.parentFrame()) {
           const element = await current.frameElement();
-          try { prefixes.unshift(await element.evaluate(collectFields, {selectorOnly:true})); }
+          try {
+            prefixes.unshift(await element.evaluate(collectFields, {selectorOnly:true}));
+            const identity = await element.evaluate(collectFields, {discoveryOnly:true});
+            if (!identity) discoveryFramesSafe = false;
+            else discoveryPrefixes.unshift(identity.selector);
+          }
           finally { await element.dispose(); }
         }
         const prefix = prefixes.map(selector => `${selector} >> internal:control=enter-frame >> `).join('');
+        const discoveryPrefix = discoveryPrefixes.map(selector => `${selector} >> internal:control=enter-frame >> `).join('');
         const fields = await frame.locator(fieldSelector).evaluateAll(collectFields, {target:frame === targetFrame ? target : null, scopedSelect:action.type === 'snapshot' && Boolean(action.selector)});
         const states = await frame.locator('input[type="hidden"]').evaluateAll(associatedControlState, {target:frame === targetFrame ? target : null});
         const ordered = [...fields.filter(field=>field.context === 'action_target'), ...states, ...fields.filter(field=>field.context !== 'action_target')];
-        results.push(...ordered.map(field => ({...field, selector:prefix + field.selector,
-          ...(field.association ? {association:{...field.association,group_selector:prefix + field.association.group_selector}} : {}),
-          ...(field.scope_candidates ? {scope_candidates:field.scope_candidates.map(scope=>({...scope,selector:prefix + scope.selector})).filter(scope=>scope.selector.length <= 1000)} : {}),
-        })));
+        results.push(...ordered.map(field => {
+          const {discovery_identity, ...legacy} = field;
+          const selector = discovery_identity ? discoveryPrefix + discovery_identity.selector : '';
+          const discovery = discoveryFramesSafe && discovery_identity && new TextEncoder().encode(selector).length <= 1000
+            ? {...discovery_identity,selector} : null;
+          return {...legacy, selector:prefix + field.selector,
+            ...(discovery ? {discovery_identity:discovery} : {}),
+            ...(field.association ? {association:{...field.association,group_selector:prefix + field.association.group_selector}} : {}),
+            ...(field.scope_candidates ? {scope_candidates:field.scope_candidates.map(scope=>({...scope,selector:prefix + scope.selector})).filter(scope=>scope.selector.length <= 1000)} : {}),
+          };
+        }));
       } catch { /* A detached frame has no current observable controls. */ }
     }
     return [...results.filter(field => field.context), ...results.filter(field => !field.context)].slice(0, 100);
