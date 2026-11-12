@@ -94,7 +94,7 @@ export function toolDiagnostics(messages, expectedUserId) {
       const error = typeof part.state?.error === 'string' ? part.state.error.slice(0, 4096) : '';
       let category = 'none';
       if (status === 'error') {
-        category = /invalid (?:arguments|input)|validation|schema|ZodError/i.test(error) ? 'validation_error'
+        category = /invalid (?:arguments|input|browser (?:selector|step|value|key)|BDD plan|snapshot selector|target constraints|scope constraint|output name|read (?:condition|timeout))|unsupported browser action|browser action (?:requires absolute URL|exceeds size cap)|validation|schema|ZodError/i.test(error) ? 'validation_error'
           : /EACCES|permission denied/i.test(error) ? 'permission_denied'
           : /timed? out|timeout/i.test(error) ? 'tool_timeout' : 'tool_error';
       }

@@ -235,3 +235,10 @@ test('completed browser tool can carry a rejected server result without leaking 
   assert.equal(diagnostics({error:'SECRET'}).status,'completed');
   assert.ok(!JSON.stringify(diagnostics({error:'SECRET'})).includes('SECRET'));
 });
+
+test('native browserctl selector validation is classified without retaining its message', () => {
+  const history = [{info:{id:'u',role:'user'},parts:[]},
+    {info:{role:'assistant',parentID:'u'},parts:[{type:'tool',tool:'tap_browser',
+      state:{status:'error',error:'invalid browser selector'}}]}];
+  assert.equal(toolDiagnostics(history,'u')[0].category,'validation_error');
+});
