@@ -45,14 +45,14 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN = {
     "type": "plan",
     "steps": [
-        {"id": "open", "keyword": "Given", "title": "Open owned fixture"},
         {"id": "click", "keyword": "When", "title": "Click owned button"},
         {"id": "result", "keyword": "Then", "title": "Read changed result"},
     ],
 }
 ACTIONS = [
+    {"type": "navigate", "url": "http://example.test/"},
+    {"type": "snapshot"},
     PLAN,
-    {"type": "navigate", "step": "open", "url": "http://example.test/"},
     {"type": "click", "step": "click", "selector": "#go"},
     {
         "type": "read",
@@ -69,6 +69,10 @@ SCENARIOS = {
     "schema_error": [{"type": "click", "step": "click"}],
     "server_rejected": [REJECTED_PLAN],
     "corrected": [REJECTED_PLAN, *ACTIONS],
+    "preplan_write": [{"type": "click", "step": "click", "selector": "#go"}],
+    "outside_start": [
+        {"type": "navigate", "url": "http://example.test/not-authorized"}
+    ],
 }
 
 
@@ -103,6 +107,8 @@ async def scenario(name, root, browser, worker, binary):
         "completed_actions": 0,
         "server_rejections": 0,
         "dom_clicked": False,
+        "dispatched_operations": [],
+        "discovery_observations": 0,
     }
     script = SCENARIOS[name]
 
@@ -184,10 +190,20 @@ async def scenario(name, root, browser, worker, binary):
     async def emit(kind, _payload):
         if kind == "browser.plan_created":
             state["accepted_plans"] += 1
+        if (
+            kind == "browser.discovery_finished"
+            and _payload.get("outcome") == "completed"
+        ):
+            state["discovery_observations"] += 1
 
-    progress = BrowserProgress(emit)
+    progress = BrowserProgress(
+        emit,
+        frozen_start_url="http://example.test/",
+        discovery_session_id=session["session_id"],
+    )
 
     async def execute(action, key):
+        state["dispatched_operations"].append(action["type"])
         result = await browser.action(
             session["session_id"], action, key, deadline_seconds=20
         )
@@ -264,7 +280,14 @@ async def scenario(name, root, browser, worker, binary):
         assert state["tool_responses"] == len(script), state
         if name in {"normal", "corrected"}:
             assert state["accepted_plans"] == 1, state
-            assert state["dom_clicked"] and state["completed_actions"] == 3, state
+            assert state["dom_clicked"] and state["completed_actions"] == 4, state
+            assert state["dispatched_operations"] == [
+                "navigate",
+                "snapshot",
+                "click",
+                "read",
+            ], state
+            assert state["discovery_observations"] == 2, state
         if name == "plain_text":
             assert (
                 state["tool_responses"]
@@ -278,9 +301,10 @@ async def scenario(name, root, browser, worker, binary):
             assert any(
                 d["category"] == "validation_error" for d in state["diagnostics"]
             ), state
-        if name == "server_rejected":
+        if name in {"server_rejected", "preplan_write", "outside_start"}:
+            assert state["dispatched_operations"] == [], state
             assert state["accepted_plans"] == state["completed_actions"] == 0, state
-        if name in {"server_rejected", "corrected"}:
+        if name in {"server_rejected", "corrected", "preplan_write", "outside_start"}:
             assert state["server_rejections"] == 1, state
             assert any(
                 d["category"] == "server_rejected" for d in state["diagnostics"]
