@@ -203,3 +203,37 @@ prompt-phase deadline and separately bounded container startup. No
 Docker stack or external model key is needed. The final diagnostic unit suite
 passed 19 Node tests; affected Python prompt/guard/unknown regressions and
 Ruff/MyPy checks passed. FWD/AIA autonomous quote acceptance remains unproven.
+
+### Separate official Playwright MCP tool comparison
+
+A separate zero-model probe compared TAP's native tool with official
+`@playwright/mcp@0.0.85` on the same owned calculator HTML and Google Chrome
+`157.0.8103.51`. Both filled Units=3, clicked Calculate exactly once and observed
+`Result: 21.00`, Clicks=1. TAP used Playwright 1.62.1; the official package used
+1.66.0-alpha-2026-11-09. TAP mapped its test origin to the same loopback HTML;
+origins/network paths were not identical. This is not a performance/token or
+model-autonomy comparison.
+
+The normal TAP path had five tool calls including the required plan and exact
+DOM read assertion. Official MCP had four browser calls **plus two actual
+snapshot-file reads**. Its small response byte count excludes those additional
+reads and is not model token usage. Additional pre-plan TAP snapshot/navigation
+attempts were both rejected with zero browser dispatch. This demonstrates an
+extra TAP protocol prerequisite, not the root cause of the earlier 25-call
+failure, whose tool transcript is unavailable.
+
+This comparison used actual native tools and Chromium, but TAP observations were
+wrapped by a test adapter rather than the full HTTP/API/database service. It did
+not run OpenCode. One TAP navigation failed with `ERR_PROXY_CONNECTION_FAILED`;
+a new owned session subsequently succeeded, without establishing the failure's
+cause or general stability. Teardown stopped the session, but no EvidenceSink was
+configured, so full screenshot/trace/video archiving and replay were **not**
+validated. No FWD/AIA or autonomous-model result is claimed.
+
+The bounded source report and scripts remain at
+`/tmp/tap-browser-comparison-20261112/REPORT.md` with `compare.py`,
+`tap-tool-driver.mjs`, `fixture.html` and `evidence.json`. Raw tool parameters and
+response data were not copied into repository documentation. This independent
+tool probe is also separate from the native OpenCode protocol matrix above,
+which bypasses CodingRuntime/BudgetGate; the financial/no-progress protection
+continues to have its own deterministic runtime regression, not a new paid test.
