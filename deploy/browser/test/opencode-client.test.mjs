@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
-import { terminalMessages, terminalFailure, linkedChildren, validateFrozenInput, waitForDaemon, waitForServeReadiness } from '../opencode-client.mjs';
+import { sanitizeToolDiagnostics, toolDiagnostics, terminalMessages, terminalFailure, linkedChildren, validateFrozenInput, waitForDaemon, waitForServeReadiness } from '../opencode-client.mjs';
 
 const requiredServePaths = ['/session', '/session/{sessionID}/message', '/session/{sessionID}/prompt_async',
   '/session/{sessionID}/children', '/session/{sessionID}/abort', '/event'];
@@ -118,7 +118,7 @@ test('failed terminal classifies tool error without persisting raw output or sec
     category: 'missing_frozen_input', tool: 'bash', summary: 'Frozen browser inputs are unavailable in the coding container.',
   });
   assert.deepEqual(terminalFailure([user, { ...failed, parts: [{ type: 'tool', tool: 'bad secret=abc', state: { status: 'error', error: 'sk-private' } }] }], 'msg_current'), {
-    category: 'tool_error', tool: 'unknown', summary: 'OpenCode tool reported an error.',
+    category: 'tool_error', tool: 'other', summary: 'OpenCode tool reported an error.',
   });
 });
 
@@ -185,4 +185,38 @@ test('terminal budget reason is reported without raw provider data', () => {
   const user = {info:{id:'u',role:'user'},parts:[]};
   const failure = {info:{role:'assistant',parentID:'u',error:{name:'APIError',data:{statusCode:402,responseBody:JSON.stringify({error:{type:'tap_budget_exhausted',code:'budget_cost',retryable:false,message:'private'}})}}},parts:[]};
   assert.deepEqual(terminalFailure([user,failure],'u'),{category:'budget_cost',tool:null,summary:'Task stopped: budget_cost'});
+});
+
+
+test('tool diagnostics are bounded fixed categories without arguments or secrets', () => {
+  const user = {info:{id:'u',role:'user'},parts:[]};
+  const parts = Array.from({length:40}, (_, i) => ({type:'tool', tool:i === 0 ? 'secret_api_key' : 'tap_browser',
+    state:{status:'error', error:'Invalid arguments: secret_token=ABC', input:{secret:'ABC'}}}));
+  const messages = [user,{info:{role:'assistant',parentID:'u'},parts}];
+  const diagnostics = toolDiagnostics(messages,'u');
+  assert.equal(diagnostics.length,32);
+  assert.deepEqual(diagnostics[0],{sequence:1,tool:'other',status:'error',category:'validation_error'});
+  assert.deepEqual(diagnostics[31],{sequence:32,tool:'tap_browser',status:'error',category:'validation_error'});
+  assert.equal(JSON.stringify(diagnostics).includes('secret'),false);
+  assert.equal(JSON.stringify(diagnostics).includes('ABC'),false);
+  assert.deepEqual(toolDiagnostics(messages,'other'),[]);
+});
+
+test('tool diagnostic categories preserve outcomes and automatic continuation', () => {
+  const user = {info:{id:'u',role:'user'},parts:[]};
+  const tools = ['EACCES private','timeout private','other private'].map(error => ({type:'tool',tool:'read',state:{status:'error',error}}));
+  const first = {info:{role:'assistant',parentID:'u'},parts:tools};
+  const compact = {info:{id:'c',role:'user'},parts:[{type:'compaction',auto:true}]};
+  const summary = {info:{role:'assistant',parentID:'c'},parts:[]};
+  const resume = {info:{id:'r',role:'user'},parts:[{type:'text',synthetic:true,metadata:{compaction_continue:true}}]};
+  const last = {info:{role:'assistant',parentID:'r'},parts:[{type:'tool',tool:'tap_browser',state:{status:'completed',output:'private'}},{type:'tool',tool:'bash',state:{status:'running'}}]};
+  assert.deepEqual(toolDiagnostics([user,first,compact,summary,resume,last],'u').map(item => [item.status,item.category]),
+    [['error','permission_denied'],['error','tool_timeout'],['error','tool_error'],['completed','none'],['pending','none']]);
+});
+
+
+test('persisted diagnostic input is reprojected to the fixed field allowlist', () => {
+  assert.deepEqual(sanitizeToolDiagnostics([{sequence:'private',tool:'secret',status:'secret',category:'secret',input:'secret'}]),
+    [{sequence:1,tool:'other',status:'pending',category:'none'}]);
+  assert.deepEqual(sanitizeToolDiagnostics({secret:'secret'}),[]);
 });

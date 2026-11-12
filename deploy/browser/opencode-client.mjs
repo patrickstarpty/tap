@@ -70,6 +70,41 @@ function taskAssistants(messages, expectedUserId) {
   return assistants;
 }
 
+const DIAGNOSTIC_TOOLS = new Set(['tap_browser', 'read', 'write', 'edit', 'bash', 'glob', 'grep', 'task', 'todowrite', 'webfetch']);
+const DIAGNOSTIC_CATEGORIES = new Set(['none', 'validation_error', 'permission_denied', 'tool_timeout', 'tool_error']);
+
+export function sanitizeToolDiagnostics(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 32).map((item, index) => ({
+    sequence: index + 1,
+    tool: DIAGNOSTIC_TOOLS.has(item?.tool) ? item.tool : 'other',
+    status: ['completed', 'error'].includes(item?.status) ? item.status : 'pending',
+    category: DIAGNOSTIC_CATEGORIES.has(item?.category) ? item.category : 'none',
+  }));
+}
+
+export function toolDiagnostics(messages, expectedUserId) {
+  const assistants = taskAssistants(messages, expectedUserId);
+  const result = [];
+  for (const item of assistants || []) {
+    for (const part of item?.parts || []) {
+      if (part?.type !== 'tool') continue;
+      const status = ['completed', 'error'].includes(part.state?.status) ? part.state.status : 'pending';
+      // Inspect only for fixed classifications; never retain model/tool text.
+      const error = typeof part.state?.error === 'string' ? part.state.error.slice(0, 4096) : '';
+      let category = 'none';
+      if (status === 'error') {
+        category = /invalid (?:arguments|input)|validation|schema|ZodError/i.test(error) ? 'validation_error'
+          : /EACCES|permission denied/i.test(error) ? 'permission_denied'
+          : /timed? out|timeout/i.test(error) ? 'tool_timeout' : 'tool_error';
+      }
+      result.push({tool: part.tool, status, category});
+      if (result.length === 32) return sanitizeToolDiagnostics(result);
+    }
+  }
+  return sanitizeToolDiagnostics(result);
+}
+
 export function terminalMessages(messages, expectedUserId) {
   const assistants = taskAssistants(messages, expectedUserId);
   if (!assistants) return 'incomplete';
@@ -99,7 +134,7 @@ export function terminalFailure(messages, expectedUserId) {
   for (const item of assistants) {
     for (const part of item?.parts || []) {
       if (part?.type !== 'tool' || part.state?.status !== 'error') continue;
-      const tool = typeof part.tool === 'string' && /^[a-z][a-z0-9_-]{0,39}$/.test(part.tool) ? part.tool : 'unknown';
+      const tool = DIAGNOSTIC_TOOLS.has(part.tool) ? part.tool : 'other';
       const error = typeof part.state.error === 'string' ? part.state.error : '';
       if (error.includes('/opt/browser/frozen/inputs.json') && /ENOENT|No such file or directory|File not found/i.test(error)) {
         return { category: 'missing_frozen_input', tool, summary: 'Frozen browser inputs are unavailable in the coding container.' };
@@ -266,6 +301,13 @@ async function run() {
   const baseline = new Set(initial.value.map(item => item.id));
   const messageId = 'msg_' + crypto.randomBytes(12).toString('hex');
   const idle = new Set();
+  let diagnostics = [];
+  const persistDiagnostics = () => {
+    const pending = workspaceFile('tool-diagnostics-' + crypto.randomBytes(12).toString('hex') + '.pending.json');
+    fs.writeFileSync(pending, JSON.stringify(diagnostics), {mode: 0o600, flag: 'wx'});
+    fs.renameSync(pending, workspaceFile('tool-diagnostics.json'));
+  };
+  persistDiagnostics();
   let assistantSeen = false;
   const controller = new AbortController();
   const stream = await fetch(ORIGIN + '/event', { headers: { authorization: credentials() }, signal: controller.signal });
@@ -298,10 +340,12 @@ async function run() {
     while (Date.now() < deadline) {
       const [messages, rawChildren] = await Promise.all([api('GET', `/session/${sessionId}/message`), api('GET', `/session/${sessionId}/children`)]);
       if (messages.status !== 200 || rawChildren.status !== 200) throw new Error('session observation unavailable');
+      diagnostics = toolDiagnostics(messages.value, messageId);
+      persistDiagnostics();
       const children = linkedChildren(messages.value, rawChildren.value, sessionId, baseline);
       if (children !== null) {
         const root = terminalMessages(messages.value, messageId);
-        if (root === 'failed') return { session_id: sessionId, message_id: messageId, terminal: 'failed',
+        if (root === 'failed') return { session_id: sessionId, message_id: messageId, terminal: 'failed', diagnostics,
           failure: terminalFailure(messages.value, messageId) || { category: 'unknown', tool: null, summary: 'OpenCode failed without classified error.' } };
         if (root === 'complete' && idle.has(sessionId)) {
           let finished = true;
@@ -310,13 +354,13 @@ async function run() {
             const user = childMessages.value?.filter(item => item?.info?.role === 'user').at(-1)?.info?.id;
             if (childMessages.status !== 200 || !idle.has(childId) || !user || terminalMessages(childMessages.value, user) !== 'complete') finished = false;
           }
-          if (finished) return { session_id: sessionId, message_id: messageId, terminal: 'complete' };
+          if (finished) return { session_id: sessionId, message_id: messageId, terminal: 'complete', diagnostics };
         }
       }
       await sleep(200);
     }
     await api('POST', `/session/${sessionId}/abort`, {});
-    return { session_id: sessionId, message_id: messageId, terminal: 'incomplete' };
+    return { session_id: sessionId, message_id: messageId, terminal: 'incomplete', diagnostics };
   } finally {
     controller.abort();
     await watch;
@@ -326,6 +370,13 @@ async function run() {
 function collect() {
   verifiedIdentity();
   const result = {};
+  const diagnosticPath = workspaceFile('tool-diagnostics.json');
+  if (fs.existsSync(diagnosticPath)) {
+    const stat = fs.lstatSync(diagnosticPath);
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.size <= 12000) {
+      try { result.diagnostics = sanitizeToolDiagnostics(JSON.parse(fs.readFileSync(diagnosticPath, 'utf8'))); } catch {}
+    }
+  }
   const scriptPath = workspaceFile('flow.spec.ts');
   if (fs.existsSync(scriptPath)) {
     const stat = fs.lstatSync(scriptPath);

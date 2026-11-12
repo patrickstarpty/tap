@@ -272,7 +272,7 @@ class LocalCodingContainer:
 
     async def run_prompt(self) -> dict[str, Any]:
         return await self._client(
-            "run", timeout=max(0.01, self._deadline - time.monotonic()), max_stdout=4000
+            "run", timeout=max(0.01, self._deadline - time.monotonic()), max_stdout=12000
         )
 
     async def collect(self) -> dict[str, Any]:
