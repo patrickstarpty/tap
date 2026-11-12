@@ -8,6 +8,7 @@ from typing import Any, Protocol, cast
 
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.workflows.application.browser_artifacts import BrowserArtifactAdapter
+from tap.modules.workflows.domain.coding_diagnostics import sanitize_diagnostics
 from tap.modules.workflows.domain.models import WorkflowEvent
 from tap.modules.workflows.ports.browser import BrowserReadError
 
@@ -34,6 +35,7 @@ def replay_from(*, snapshot_sequence: int, client_sequence: int | None) -> int:
 
 
 _PUBLIC_FIELDS: dict[str, tuple[str, ...]] = {
+    "browser.tool_diagnostics": (),
     "task.created": ("status",),
     "task.claimed": ("status",),
     "task.route_decided": (),
@@ -144,6 +146,12 @@ def project_event(
             value = _public_value(raw[field])
             if value is not None:
                 payload[field] = value
+    if event.kind == "browser.tool_diagnostics":
+        payload = {
+            "schema_version": 1,
+            "diagnostics_available": raw.get("diagnostics_available") is True,
+            "diagnostics": sanitize_diagnostics(raw.get("diagnostics")),
+        }
     text_field = _TEXT_FIELDS.get(event.kind)
     if text_field is not None and redact is not None and type(raw.get(text_field)) is str:
         payload[text_field] = redact(cast(str, raw[text_field])[:2000])[:2000]

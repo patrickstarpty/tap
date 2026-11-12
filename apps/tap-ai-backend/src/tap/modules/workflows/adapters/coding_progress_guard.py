@@ -1,5 +1,9 @@
 """Budget-independent bound on coding turns without accepted browser progress."""
 
+from tap.modules.workflows.domain.coding_diagnostics import (
+    sanitize_diagnostics as sanitize_diagnostics,
+)
+
 
 class CodingProgressGuard:
     """Only server-accepted first plan and completed actions reset the window."""
@@ -37,47 +41,3 @@ def browser_progress_units(actions: list[dict[str, object]]) -> int:
         a.get("type") in {"navigate", "click", "fill", "select", "press", "scroll"} for a in actions
     )
     return len(reads) + writes
-
-
-def sanitize_diagnostics(value: object) -> list[dict[str, object]]:
-    """Treat coding workspace output as untrusted; persist no free-form strings."""
-    tools = {
-        "tap_browser",
-        "read",
-        "write",
-        "edit",
-        "bash",
-        "glob",
-        "grep",
-        "task",
-        "todowrite",
-        "webfetch",
-    }
-    statuses = {"completed", "error", "pending"}
-    categories = {
-        "none",
-        "validation_error",
-        "permission_denied",
-        "tool_timeout",
-        "tool_error",
-        "server_rejected",
-        "unknown_outcome",
-    }
-    result: list[dict[str, object]] = []
-    if not isinstance(value, list):
-        return result
-    for item in value[:32]:
-        if not isinstance(item, dict):
-            continue
-        tool, status, category = item.get("tool"), item.get("status"), item.get("category")
-        result.append(
-            {
-                "sequence": len(result) + 1,
-                "tool": tool if isinstance(tool, str) and tool in tools else "other",
-                "status": status if isinstance(status, str) and status in statuses else "pending",
-                "category": category
-                if isinstance(category, str) and category in categories
-                else "none",
-            }
-        )
-    return result

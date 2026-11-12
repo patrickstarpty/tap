@@ -386,3 +386,89 @@ async def test_automatic_route_freezes_intent_before_coding_and_uses_updated_bud
         admitted, (SimpleNamespace(kind=store.events[0][0], payload=store.events[0][1]),)
     )
     assert restored == routed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_status", ["passed", "failed", "unknown", "canceled", "blocked"])
+@pytest.mark.parametrize("nested", [False, True])
+async def test_terminal_diagnostics_are_durable_and_resanitized(result_status, nested):
+    diagnostics = [
+        {"tool": "read", "status": "completed", "category": "none", "arguments": "SECRET"},
+        {"tool": "SECRET", "status": "SECRET", "category": "SECRET", "sequence": "SECRET"},
+    ] * 20
+    evidence = (
+        {"model_terminal": {"diagnostics": diagnostics}} if nested else {"diagnostics": diagnostics}
+    )
+    selected, _, store, _ = runtime(CodingResult(result_status, terminal_evidence=evidence))
+    await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    payload = next(payload for kind, payload in store.events if kind == "browser.coding_result")
+    assert payload["diagnostics_available"] is True
+    assert len(payload["diagnostics"]) == 32
+    assert payload["diagnostics"][0] == {
+        "sequence": 1,
+        "tool": "read",
+        "status": "completed",
+        "category": "none",
+    }
+    assert payload["diagnostics"][1] == {
+        "sequence": 2,
+        "tool": "other",
+        "status": "pending",
+        "category": "none",
+    }
+    assert "SECRET" not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evidence", [{}, {"diagnostics": None}, {"diagnostics": [], "diagnostics_unavailable": True}]
+)
+async def test_absent_terminal_diagnostics_are_not_invented(evidence):
+    selected, _, store, _ = runtime(CodingResult("unknown", terminal_evidence=evidence))
+    await selected._run_node(
+        SimpleNamespace(),
+        "task-a",
+        "lease-a",
+        "node-a",
+        {"kind": "browser", "goal": "Read page", "browser": {}},
+        {"events": (), "nodes": []},
+        root=True,
+    )
+    payload = next(payload for kind, payload in store.events if kind == "browser.coding_result")
+    assert payload["diagnostics_available"] is False
+    assert payload["diagnostics"] == []
+
+
+def test_public_diagnostic_event_resanitizes_and_preserves_kind():
+    from tap.modules.workflows.application.queries import project_event
+
+    event = SimpleNamespace(
+        event_id="e",
+        task_id="t",
+        sequence=1,
+        node_id="n",
+        attempt=2,
+        kind="browser.tool_diagnostics",
+        occurred_at=datetime.now(UTC),
+        payload={
+            "schema_version": "SECRET",
+            "diagnostics_available": True,
+            "raw": "SECRET",
+            "diagnostics": [
+                {"tool": "read", "status": "completed", "category": "none", "path": "SECRET"}
+            ],
+        },
+    )
+    projected = project_event(event)
+    assert projected["kind"] == "browser.tool_diagnostics"
+    assert projected["attempt"] == 2
+    assert projected["payload"]["diagnostics"][0]["tool"] == "read"
+    assert "SECRET" not in json.dumps(projected)

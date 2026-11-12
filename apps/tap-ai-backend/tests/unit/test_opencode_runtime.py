@@ -1180,7 +1180,11 @@ async def test_gate_shutdown_waits_for_inflight_durable_settlement_before_termin
         assert result.terminal_evidence["stop_confirmed"] is True
         assert time.monotonic() - started < 4
         assert journal.settled.is_set()
-        assert [event[0] for event in journal.events] == ["reserved", "settled"]
+        assert [event[0] for event in journal.events] == [
+            "reserved",
+            "settled",
+            "browser.tool_diagnostics",
+        ]
     finally:
         release.set()
         server.shutdown()
@@ -1872,6 +1876,16 @@ async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
     }
     assert "SECRET" not in str(result.terminal_evidence)
     assert any(kind == "browser.no_progress" for kind, *_ in journal.events)
+    durable = [
+        payload
+        for kind, *rest in journal.events
+        if kind == "browser.tool_diagnostics"
+        for payload in rest
+    ]
+    assert len(durable) == 1
+    assert durable[0]["diagnostics_available"] is (not collect_fails)
+    assert durable[0]["diagnostics"] == ([] if collect_fails else [diagnostic])
+    assert "SECRET" not in str(durable)
     assert browser.canceled
 
 
@@ -2111,3 +2125,68 @@ async def test_runtime_rejects_unsupported_selector_before_handback_and_required
         runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1), 3
     )
     assert result.status != "passed" and result.usage["calls"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["exception", "cancel", "unknown"])
+@pytest.mark.parametrize("diagnostic_failure", [False, True, "timeout", "persist"])
+async def test_final_diagnostics_survive_early_exit_without_changing_stop(
+    failure, diagnostic_failure
+):
+    class Browser(SessionBrowser):
+        async def cancel_session(self, *args, **kwargs):
+            await super().cancel_session(*args, **kwargs)
+            return {"status": "unknown" if failure == "unknown" else "canceled"}
+
+    class Container(MailContainer):
+        async def run_prompt(self):
+            if failure == "cancel":
+                raise asyncio.CancelledError()
+            raise ValueError("fixture failure")
+
+        async def collect_diagnostics(self):
+            assert not self.stopped
+            if diagnostic_failure == "timeout":
+                await asyncio.sleep(10)
+            if diagnostic_failure is True:
+                raise ValueError("SECRET")
+            return {
+                "diagnostics": [
+                    {"tool": "read", "status": "completed", "category": "none", "raw": "SECRET"}
+                ]
+            }
+
+    class DiagnosticJournal(Journal):
+        async def append_event(self, *args):
+            if diagnostic_failure == "persist" and args[-2] == "browser.tool_diagnostics":
+                raise ValueError("SECRET")
+            await super().append_event(*args)
+
+    journal = DiagnosticJournal()
+    browser = Browser()
+    runtime = CodingRuntime(
+        CodingConfig.for_test(),
+        browser=browser,
+        store=journal,
+        container_factory=lambda _config, root: Container(root),
+    )
+    if failure == "exception":
+        with pytest.raises(ValueError, match="fixture failure"):
+            await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 2)
+    else:
+        result = await runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 2)
+        assert result.status == ("canceled" if failure == "cancel" else "unknown")
+    assert browser.canceled
+    durable = [
+        payload
+        for kind, *rest in journal.events
+        if kind == "browser.tool_diagnostics"
+        for payload in rest
+    ]
+    if diagnostic_failure == "persist":
+        assert durable == []
+        return
+    assert len(durable) == 1
+    assert durable[0]["attempt"] == 2
+    assert durable[0]["diagnostics_available"] is (not diagnostic_failure)
+    assert "SECRET" not in str(durable)

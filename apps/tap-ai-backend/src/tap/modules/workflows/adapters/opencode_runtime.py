@@ -417,6 +417,25 @@ class DockerCodingContainer:
             raise ValueError("OpenCode artifact receipt invalid")
         return result
 
+    async def collect_diagnostics(self) -> dict[str, Any]:
+        if self.container_id is None:
+            return {"diagnostics_unavailable": True}
+        raw = await self._command(
+            (
+                "docker",
+                "exec",
+                self.container_id,
+                "node",
+                "/opt/tapper/opencode-client.mjs",
+                "collect-diagnostics",
+            ),
+            timeout=1,
+            max_stdout=12000,
+            stage="exec diagnostics",
+        )
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {"diagnostics_unavailable": True}
+
     async def stop(self) -> bool:
         if self._stopped or not self._run_attempted:
             return True
@@ -934,6 +953,16 @@ class CodingRuntime:
         stopped = False
         primary_error: BaseException | None = None
         gate: BudgetGate | None = None
+        diagnostic_cache: list[dict[str, object]] = []
+        diagnostics_available = False
+
+        def remember_diagnostics(value: dict[str, Any]) -> None:
+            nonlocal diagnostic_cache, diagnostics_available
+            if isinstance(value.get("diagnostics"), list) and not value.get(
+                "diagnostics_unavailable"
+            ):
+                diagnostic_cache = sanitize_diagnostics(value["diagnostics"])
+                diagnostics_available = True
 
         async def progress_event(kind: str, payload: dict[str, Any]) -> None:
             identity = str(payload.get("action_id") or payload.get("revision"))
@@ -1204,6 +1233,7 @@ class CodingRuntime:
                             artifacts = await bounded_stage(container.collect())
                         except Exception:
                             return {"diagnostics": [], "diagnostics_unavailable": True}
+                        remember_diagnostics(artifacts)
                         return {"diagnostics": sanitize_diagnostics(artifacts.get("diagnostics"))}
 
                     async def prompt_once(text: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1231,6 +1261,7 @@ class CodingRuntime:
                                 if not await bounded_stage(mailbox.serve_once(handle)):
                                     await asyncio.sleep(0.02)
                             terminal = await running
+                            remember_diagnostics(terminal)
                             if progress.unknown_action or progress.stalled_reason:
                                 return terminal, (
                                     await stopped_diagnostics()
@@ -1238,6 +1269,7 @@ class CodingRuntime:
                                     else {}
                                 )
                             collected = await bounded_stage(container.collect())
+                            remember_diagnostics(collected)
                             return terminal, collected
                         finally:
                             if not running.done():
@@ -1578,6 +1610,15 @@ class CodingRuntime:
                 primary_error = error
                 raise
             finally:
+                # run_prompt has settled/canceled before this point. Read only the
+                # bounded diagnostic artifact, independently of exhausted task budget.
+                collector = getattr(container, "collect_diagnostics", None)
+                if callable(collector) and not stopped:
+                    try:
+                        async with asyncio.timeout(1):
+                            remember_diagnostics(await collector())
+                    except (Exception, asyncio.CancelledError):
+                        pass
                 try:
                     if container is not None and not stopped:
                         stopped = await _finish_cleanup(container.stop())
@@ -1646,6 +1687,21 @@ class CodingRuntime:
                             )
                     finally:
                         mailbox.close()
+                        # Never collect again or postpone shutdown for optional diagnostics.
+                        # This single final event uses the existing task/attempt lease fence.
+                        try:
+                            async with asyncio.timeout(1):
+                                await progress_event(
+                                    "browser.tool_diagnostics",
+                                    {
+                                        "schema_version": 1,
+                                        "diagnostics_available": diagnostics_available,
+                                        "diagnostics": sanitize_diagnostics(diagnostic_cache),
+                                    },
+                                )
+                        except (Exception, asyncio.CancelledError):
+                            # Lease/storage failure must not replace the original outcome.
+                            pass
 
     @staticmethod
     def _generation_prompt(

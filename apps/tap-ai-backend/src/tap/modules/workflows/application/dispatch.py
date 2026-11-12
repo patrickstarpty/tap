@@ -22,6 +22,7 @@ from tap.modules.chat.application.workflow_bridge import WorkflowChatPort
 from tap.modules.chat.domain.conversations import FrozenBrowserIntent
 from tap.modules.workflows.application.native_graph import NativeChatGateway, NativeWorkflowGraph
 from tap.modules.workflows.domain.browser_intent import effective_request
+from tap.modules.workflows.domain.coding_diagnostics import sanitize_diagnostics
 from tap.modules.workflows.domain.commands import WorkflowDispatchBlocked, WorkflowLimitExceeded
 from tap.modules.workflows.domain.delegation import DelegationRequest, child_result_summary
 from tap.modules.workflows.ports.coding import CodingRuntimePort
@@ -483,6 +484,14 @@ class NativeWorkflowRuntime:
             "usage": result.usage,
             "replay_model_calls": result.replay_model_calls,
         }
+        diagnostic_source = receipt
+        if "diagnostics" not in receipt and isinstance(receipt.get("model_terminal"), dict):
+            diagnostic_source = receipt["model_terminal"]
+        payload["diagnostics_available"] = (
+            isinstance(diagnostic_source.get("diagnostics"), list)
+            and diagnostic_source.get("diagnostics_unavailable") is not True
+        )
+        payload["diagnostics"] = sanitize_diagnostics(diagnostic_source.get("diagnostics"))
         if receipt.get("script_status") == "failed":
             payload["script_status"] = "failed"
             payload["script_error"] = str(receipt.get("script_error", ""))[:1000]
