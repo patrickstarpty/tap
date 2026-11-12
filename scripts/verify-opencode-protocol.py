@@ -36,6 +36,10 @@ from tap_platform.browser_automation.store import BrowserStore, actions, metadat
 from tap_platform.browser_automation.worker import BrowserWorker
 
 from tap.modules.workflows.adapters.browser_client import BrowserApiClient
+from tap.modules.workflows.adapters.coding_progress_guard import (
+    CodingProgressGuard,
+    browser_progress_units,
+)
 from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox
 from tap.modules.workflows.adapters.local_opencode import LocalCodingContainer
 from tap.modules.workflows.adapters.opencode_profiles import build_config
@@ -76,6 +80,19 @@ SCENARIOS = {
     "server_rejected": [REJECTED_PLAN],
     "corrected": [REJECTED_PLAN, *ACTIONS],
     "preplan_write": [{"type": "click", "step": "click", "selector": "#go"}],
+    "control_catalog_bounded": [
+        {"type": "navigate", "url": "http://example.test/catalog-bounded"},
+        PLAN,
+        *[{"native_catalog_page": offset} for offset in (1, 5)],
+        {"type": "click", "step": "click", "selector": "CATALOG_OBSERVED_SELECTOR"},
+        {
+            "type": "read",
+            "step": "result",
+            "selector": "#result",
+            "name": "result",
+            "equals": "STARTED",
+        },
+    ],
     "control_catalog": [
         {"type": "navigate", "url": "http://example.test/catalog"},
         PLAN,
@@ -147,8 +164,16 @@ class QuietHandler(BaseHTTPRequestHandler):
 class Site(QuietHandler):
     def do_GET(self):
         body = b"""<title>Owned protocol fixture</title><label>Name<input id="name"></label><button id="go" onclick="document.querySelector('#result').textContent='CLICKED'">Continue</button><p id="result">READY</p>"""
-        if self.path == "/catalog":
-            labels = CATALOG_LABELS
+        if self.path in {"/catalog", "/catalog-bounded"}:
+            labels = (
+                CATALOG_LABELS
+                if self.path == "/catalog"
+                else [
+                    "Ask a question",
+                    *[f"Option {i}" for i in range(2, 8)],
+                    "Start request",
+                ]
+            )
             controls = "".join(
                 '<button onclick="document.querySelector(&quot;#result&quot;).textContent=&quot;'
                 + ("STARTED" if label == "Start request" else "WRONG")
@@ -159,6 +184,11 @@ class Site(QuietHandler):
             )
             body = (
                 "<title>Owned neutral directory</title>"
+                + (
+                    "<p>" + "Neutral background information. " * 400 + "</p>"
+                    if self.path == "/catalog-bounded"
+                    else ""
+                )
                 + controls
                 + '<p id="result">READY</p>'
             ).encode()
@@ -199,6 +229,14 @@ async def scenario(name, root, browser, worker, binary):
         "discovery_observations": 0,
     }
     script = SCENARIOS[name]
+    catalog_case = name in {"control_catalog", "control_catalog_bounded"}
+    bounded_catalog = name == "control_catalog_bounded"
+    expected_catalog_labels = (
+        ["Ask a question", *[f"Option {i}" for i in range(2, 8)], "Start request"]
+        if bounded_catalog
+        else CATALOG_LABELS
+    )
+    expected_offsets = [1, 5] if bounded_catalog else [1, 5, 9, 13]
     observed_target = {}
     catalog = {}
     catalog_records = []
@@ -223,7 +261,7 @@ async def scenario(name, root, browser, worker, binary):
                 state["json_arguments"] += 1
                 action = dict(script[index])
                 native_tool = "tap_browser"
-                if name == "control_catalog":
+                if catalog_case:
                     for message in request.get("messages", []):
                         if message.get("role") != "tool":
                             continue
@@ -392,11 +430,17 @@ async def scenario(name, root, browser, worker, binary):
 
     progress = BrowserProgress(
         emit,
-        frozen_start_url="http://example.test/catalog"
-        if name == "control_catalog"
-        else "http://example.test/",
+        frozen_start_url=(
+            "http://example.test/catalog-bounded"
+            if bounded_catalog
+            else "http://example.test/catalog"
+            if catalog_case
+            else "http://example.test/"
+        ),
         discovery_session_id=session["session_id"],
     )
+
+    guard = CodingProgressGuard()
 
     async def execute(action, key):
         state["requested_operations"].append(action["type"])
@@ -421,7 +465,7 @@ async def scenario(name, root, browser, worker, binary):
                     row.request.get("type") == "fill" for row in rows
                 ),
             }
-        if name == "control_catalog" and action["type"] == "read":
+        if catalog_case and action["type"] == "read":
             state["catalog_result_verified"] = (
                 result.get("observation", {}).get("extracted", {}).get("value")
                 == "STARTED"
@@ -450,6 +494,28 @@ async def scenario(name, root, browser, worker, binary):
 
     async def handle(item):
         if item.kind == "model":
+            if bounded_catalog:
+                units = browser_progress_units(progress.recorded_actions)
+                allowed = guard.allow(
+                    bool(progress.steps), units, observed=progress.observation_progress
+                )
+                state.setdefault("guard_checks", []).append(
+                    {
+                        "tool_responses_before_turn": state["tool_responses"],
+                        "has_plan": bool(progress.steps),
+                        "progress_units": units,
+                        "observed": progress.observation_progress,
+                        "allowed": allowed,
+                    }
+                )
+                if not allowed:
+                    return {
+                        "status": 409,
+                        "contentType": "application/json",
+                        "bodyBase64": base64.b64encode(
+                            b'{"error":{"code":"no_progress","retryable":false}}'
+                        ).decode(),
+                    }
 
             def forward():
                 req = Request(
@@ -560,7 +626,7 @@ async def scenario(name, root, browser, worker, binary):
             assert any(
                 d["category"] == "server_rejected" for d in state["diagnostics"]
             ), state
-        if name == "control_catalog":
+        if catalog_case:
             with worker.service.store.engine.connect() as connection:
                 rows = connection.execute(
                     select(actions.c.request, actions.c.status)
@@ -584,21 +650,43 @@ async def scenario(name, root, browser, worker, binary):
                 )
             }
             assert state["goal_absent_from_inline_controls"], state
-            assert state["native_directory_pages_read"] == 4, state
-            assert state["native_read_offsets"] == [1, 5, 9, 13], state
-            assert state["native_page_record_counts"] == [4, 4, 4, 4], state
-            assert [entry["label"] for entry in catalog_records] == CATALOG_LABELS, (
-                "catalog source order or coverage changed"
+            assert state["native_directory_pages_read"] == len(expected_offsets), state
+            assert state["native_read_offsets"] == expected_offsets, state
+            assert state["native_page_record_counts"] == [4] * len(expected_offsets), (
+                state
             )
-            assert len({entry["selector"] for entry in catalog_records}) == 16, (
-                "catalog duplicate or missing selector"
-            )
+            assert [
+                entry["label"] for entry in catalog_records
+            ] == expected_catalog_labels, "catalog source order or coverage changed"
+            assert len({entry["selector"] for entry in catalog_records}) == len(
+                expected_catalog_labels
+            ), "catalog duplicate or missing selector"
             state["native_one_based_offsets_verified"] = True
             state["catalog_source_order_complete_without_duplicates"] = True
             state["catalog_actual_click_count"] = len(clicks)
             assert len(clicks) == 1 and clicks[0].status == "completed", state
             assert clicks[0].request["selector"] == observed_target["selector"], state
             assert state.get("catalog_result_verified") and not state["unknown"], state
+            if bounded_catalog:
+                checks = state["guard_checks"]
+                assert all(check["allowed"] for check in checks), state
+                read_window = [
+                    check
+                    for check in checks
+                    if check["has_plan"]
+                    and check["tool_responses_before_turn"] in {2, 3, 4}
+                ]
+                assert (
+                    len(read_window) == 3
+                    and len({check["progress_units"] for check in read_window}) == 1
+                ), state
+                assert (
+                    checks[-1]["progress_units"] > read_window[-1]["progress_units"]
+                ), state
+                state["guard_scope"] = (
+                    "Actual CodingProgressGuard on each protocol model request; not full CodingRuntime/BudgetGate"
+                )
+                state["native_file_reads_did_not_reset_progress"] = True
         if name == "unsupported_selector":
             with worker.service.store.engine.connect() as connection:
                 rows = connection.execute(
