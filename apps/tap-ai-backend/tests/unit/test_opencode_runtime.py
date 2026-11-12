@@ -1934,3 +1934,180 @@ def test_live_prompt_defers_script_to_verified_server_postprocessing():
     assert "navigate once to the exact frozen Start URL without a step" in prompt
     assert "Do not write flow.spec.ts" in prompt
     assert "Save /workspace/flow.spec.ts" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handback", [False, True])
+async def test_runtime_rejects_unsupported_selector_before_handback_and_required_reads(
+    monkeypatch, handback
+):
+    from tap.modules.workflows.adapters import opencode_runtime as module
+    from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox, MailItem
+    from tap.modules.workflows.application.browser_steps import BrowserProgress
+
+    browser_calls, control_calls, refresh_calls, captured = [], [], [], []
+    finished = asyncio.Event()
+    original_progress = BrowserProgress
+
+    def progress_factory(*args, **kwargs):
+        from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
+
+        contract = BrowserAcceptanceContract.model_validate(
+            {
+                "version": 1,
+                "reviewed": True,
+                "fields": [
+                    {
+                        "id": "account",
+                        "value": "AC42",
+                        "readback_value": "AC42",
+                        "attribute": "value",
+                        "target_texts": ["Account"],
+                    }
+                ],
+            }
+        )
+        progress = original_progress(args[0], contract, **kwargs)
+        progress.session_id = "session-a"
+        progress.steps = {
+            "verify": {"id": "verify", "keyword": "Then", "title": "Verify", "expected_result": ""}
+        }
+        progress.documents = {
+            "frame-a": {
+                "frame_id": "frame-a",
+                "document_id": "doc-a",
+                "url": "https://example.com/",
+            }
+        }
+        progress.required_reads = {
+            "account": (
+                {
+                    "type": "read",
+                    "selector": "#account",
+                    "name": "account",
+                    "attribute": "value",
+                    "equals": "AC42",
+                    "step": "verify",
+                },
+                {"source_frame_id": "frame-a", "source_document_id": "doc-a"},
+            )
+        }
+        original_refresh = progress.refresh_required_inputs
+
+        async def refresh(*refresh_args, **refresh_kwargs):
+            refresh_calls.append(True)
+            return await original_refresh(*refresh_args, **refresh_kwargs)
+
+        progress.refresh_required_inputs = refresh
+        captured.append(progress)
+        return progress
+
+    class Browser(SessionBrowser):
+        async def session(self, *args, **kwargs):
+            return {"status": "active", "session_id": "session-a"}
+
+        async def action(self, sid, action, key, **kwargs):
+            browser_calls.append(action)
+            return {
+                "status": "completed",
+                "session_id": sid,
+                "action_id": key,
+                "control_epoch": 0,
+                "observation": {
+                    "session_id": sid,
+                    "sequence": len(browser_calls),
+                    "url": "https://example.com/",
+                    "bounded_snapshot": "button [ref=e1]",
+                    "documents": [
+                        {
+                            "frame_id": "frame-a",
+                            "document_id": "doc-b",
+                            "url": "https://example.com/",
+                        }
+                    ],
+                },
+            }
+
+    async def before_action(_self):
+        control_calls.append(True)
+        return 0, not (handback and len(control_calls) == 1)
+
+    class Container(MailContainer):
+        async def run_prompt(self):
+            await finished.wait()
+            return {"terminal": "failed", "session_id": "ses_test"}
+
+    async def serve(mailbox, handler):
+        if finished.is_set():
+            return False
+        progress = captured[0]
+        baseline = (len(progress.recorded_actions), set(progress.used), progress.last_sequence)
+        result = await handler(
+            MailItem(
+                "invalid",
+                "browser",
+                time.time() + 10,
+                {"type": "click", "selector": "aria/Get in touch", "step": "verify"},
+            )
+        )
+        assert result["code"] == "unsupported_selector_syntax"
+        assert result["status"] == "rejected" and result["business_action_admitted"] is False
+        assert browser_calls == [] and control_calls == [] and refresh_calls == []
+        assert (
+            len(progress.recorded_actions),
+            set(progress.used),
+            progress.last_sequence,
+        ) == baseline
+        await handler(
+            MailItem("fresh", "browser", time.time() + 10, {"type": "snapshot", "step": "verify"})
+        )
+        # Handback observation is intentionally not processed as the requested action.
+        if handback:
+            await handler(
+                MailItem(
+                    "fresh-current",
+                    "browser",
+                    time.time() + 10,
+                    {"type": "snapshot", "step": "verify"},
+                )
+            )
+        await handler(
+            MailItem(
+                "valid",
+                "browser",
+                time.time() + 10,
+                {"type": "click", "selector": "aria-ref=e1", "step": "verify"},
+            )
+        )
+        assert [a["type"] for a in browser_calls] == (
+            ["snapshot", "snapshot", "click"] if handback else ["snapshot", "click"]
+        )
+        assert not progress.unknown_action
+        progress.unknown_action = True
+        counts = (len(browser_calls), len(control_calls), len(refresh_calls))
+        unknown = await handler(
+            MailItem(
+                "unknown",
+                "browser",
+                time.time() + 10,
+                {"type": "click", "selector": "aria/Label", "step": "verify"},
+            )
+        )
+        assert unknown["status"] == "unknown" and "code" not in unknown
+        assert counts == (len(browser_calls), len(control_calls), len(refresh_calls))
+        finished.set()
+        return True
+
+    monkeypatch.setattr(module, "BrowserProgress", progress_factory)
+    monkeypatch.setattr(module.BrowserControlWait, "before_action", before_action)
+    monkeypatch.setattr(CodingMailbox, "serve_once", serve)
+    runtime = CodingRuntime(
+        replace(CodingConfig.for_test(), live_browser=True, control_enabled=True),
+        browser=Browser(),
+        store=Journal(),
+        container_factory=lambda _, root: Container(root),
+    )
+    result = await asyncio.wait_for(
+        runtime.run("task-a", request(replay=False), {}, None, "lease", "node", 1), 3
+    )
+    assert result.status != "passed" and result.usage["calls"] == 0

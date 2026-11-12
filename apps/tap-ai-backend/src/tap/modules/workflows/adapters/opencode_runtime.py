@@ -32,7 +32,7 @@ from tap.modules.workflows.adapters.coding_progress_guard import (
     sanitize_diagnostics,
 )
 from tap.modules.workflows.adapters.opencode_profiles import build_config
-from tap.modules.workflows.application.browser_steps import BrowserProgress
+from tap.modules.workflows.application.browser_steps import BrowserProgress, selector_rejection
 from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
 from tap.modules.workflows.ports.coding import CodingResult
 from tap.platform.coding.gateway import BudgetGate, CallRecord
@@ -1152,6 +1152,14 @@ class CodingRuntime:
                             return {
                                 "error": "Script synthesis has no browser access; use evidence."
                             }
+                        if progress.unknown_action:
+                            return {
+                                "status": "unknown",
+                                "error": "Previous browser action outcome is unknown; do not retry",
+                            }
+                        rejection = selector_rejection(item.payload)
+                        if rejection is not None:
+                            return rejection
                         if progress.stalled_reason:
                             return {"status": "rejected", "error": progress.stalled_reason}
 
