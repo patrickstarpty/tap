@@ -104,7 +104,7 @@ async function actuateBound(binding, action) {
     },{proof:binding.proof.handle,expires});
     await binding.proof.checkStyles();
   }
-  return binding.element.evaluate(async (node,{action,selector,expires,sensitiveSelector,proof,pageScroll})=>{
+  return binding.element.evaluate(async (node,{action,selector,expires,sensitiveSelector,proof,pageScroll,allowCenterFallback})=>{
     const sensitive=()=>node.matches(sensitiveSelector);
     const identity=()=>node.isConnected&&node.ownerDocument===document&&document.querySelector(selector)===node;
     const current=()=>{
@@ -113,16 +113,18 @@ async function actuateBound(binding, action) {
       if(sensitive()) throw new Error('sensitive target unavailable');
       if(proof)proof.check(node,true);
     };
+    const receivesHit=()=>{
+      const rect=node.getBoundingClientRect();
+      const x=Math.max(0,Math.min(innerWidth-1,rect.x+rect.width/2));
+      const y=Math.max(0,Math.min(innerHeight-1,rect.y+rect.height/2));
+      const hit=document.elementFromPoint(x,y);
+      return !!hit&&node.contains(hit);
+    };
     const actionable=(checkHit=true)=>{
       const rect=node.getBoundingClientRect(),style=getComputedStyle(node);
       const editing=action.type==='fill'||action.type==='select';
-      if(!rect.width||!rect.height||style.visibility!=='visible'||node.matches(':disabled')||(editing&&node.readOnly)||node.closest('[inert]')) throw new Error('target not actionable');
-      if(checkHit&&action.type!=='scroll') {
-        const x=Math.max(0,Math.min(innerWidth-1,rect.x+rect.width/2));
-        const y=Math.max(0,Math.min(innerHeight-1,rect.y+rect.height/2));
-        const hit=document.elementFromPoint(x,y);
-        if(!hit||!node.contains(hit)) throw new Error('target obscured or outside viewport');
-      }
+      if(!rect.width||!rect.height||style.visibility!=='visible'||node.matches(':disabled')||node.getAttribute('aria-disabled')==='true'||(editing&&node.readOnly)||node.closest('[inert]')) throw new Error('target not actionable');
+      if(checkHit&&action.type!=='scroll'&&!receivesHit()) throw new Error('target obscured or outside viewport');
     };
     current();actionable(action.type!=='click');
     if(action.type==='click'&&!proof) {
@@ -136,6 +138,18 @@ async function actuateBound(binding, action) {
       });
       current();
       if(node.type!==type) throw new Error('bound target type changed');
+      actionable(false);
+      if(allowCenterFallback&&!receivesHit()) {
+        // A fixed header/footer can cover the nearest edge. Reposition the same
+        // retained node once; never force, hide the blocker, or resolve anew.
+        current();Element.prototype.scrollIntoView.call(node,{block:'center',inline:'center',behavior:'instant'});
+        await new Promise((resolve,reject)=>{
+          const timeout=setTimeout(()=>reject(new Error('controlled scroll did not settle')),1000);
+          requestAnimationFrame(()=>{clearTimeout(timeout);resolve();});
+        });
+        current();
+        if(node.type!==type) throw new Error('bound target type changed');
+      }
       actionable();
     }
     const after=()=>{if(!identity()||sensitive()) throw new Error('controlled action outcome unknown');};
@@ -184,7 +198,7 @@ async function actuateBound(binding, action) {
       else Element.prototype.scrollBy.call(node,{left:action.delta_x,top:action.delta_y,behavior:'instant'});
     } else throw new Error('unsupported controlled write');
     return null;
-  },{action:{type:action.type,value:action.value,delta_x:action.delta_x,delta_y:action.delta_y},selector:binding.selector,expires,sensitiveSelector,proof:binding.proof?.handle??null,pageScroll:binding.pageScroll??false});
+  },{action:{type:action.type,value:action.value,delta_x:action.delta_x,delta_y:action.delta_y},selector:binding.selector,expires,sensitiveSelector,proof:binding.proof?.handle??null,pageScroll:binding.pageScroll??false,allowCenterFallback:action.actor_kind==='agent'&&!binding.proof});
 }
 async function actuateNavigation(page, action) {
   const url=new URL(action.url);
