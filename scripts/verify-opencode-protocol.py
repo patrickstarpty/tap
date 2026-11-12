@@ -43,6 +43,11 @@ from tap.modules.workflows.adapters.opencode_runtime import CodingConfig
 from tap.modules.workflows.application.browser_steps import BrowserProgress
 
 ROOT = Path(__file__).resolve().parents[1]
+CATALOG_LABELS = [
+    "Ask a question",
+    *[f"Option {i}" for i in range(2, 16)],
+    "Start request",
+]
 PLAN = {
     "type": "plan",
     "steps": [
@@ -71,6 +76,19 @@ SCENARIOS = {
     "server_rejected": [REJECTED_PLAN],
     "corrected": [REJECTED_PLAN, *ACTIONS],
     "preplan_write": [{"type": "click", "step": "click", "selector": "#go"}],
+    "control_catalog": [
+        {"type": "navigate", "url": "http://example.test/catalog"},
+        PLAN,
+        *[{"native_catalog_page": offset} for offset in (1, 5, 9, 13)],
+        {"type": "click", "step": "click", "selector": "CATALOG_OBSERVED_SELECTOR"},
+        {
+            "type": "read",
+            "step": "result",
+            "selector": "#result",
+            "name": "result",
+            "equals": "STARTED",
+        },
+    ],
     "unsupported_selector": [
         {
             "type": "plan",
@@ -129,6 +147,21 @@ class QuietHandler(BaseHTTPRequestHandler):
 class Site(QuietHandler):
     def do_GET(self):
         body = b"""<title>Owned protocol fixture</title><label>Name<input id="name"></label><button id="go" onclick="document.querySelector('#result').textContent='CLICKED'">Continue</button><p id="result">READY</p>"""
+        if self.path == "/catalog":
+            labels = CATALOG_LABELS
+            controls = "".join(
+                '<button onclick="document.querySelector(&quot;#result&quot;).textContent=&quot;'
+                + ("STARTED" if label == "Start request" else "WRONG")
+                + '&quot;">'
+                + label
+                + "</button>"
+                for label in labels
+            )
+            body = (
+                "<title>Owned neutral directory</title>"
+                + controls
+                + '<p id="result">READY</p>'
+            ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -157,6 +190,10 @@ async def scenario(name, root, browser, worker, binary):
     }
     script = SCENARIOS[name]
     observed_target = {}
+    catalog = {}
+    catalog_records = []
+    read_call_ids = set()
+    processed_read_ids = set()
 
     class Model(QuietHandler):
         def do_POST(self):
@@ -175,6 +212,94 @@ async def scenario(name, root, browser, worker, binary):
                 state["tool_responses"] += 1
                 state["json_arguments"] += 1
                 action = dict(script[index])
+                native_tool = "tap_browser"
+                if name == "control_catalog":
+                    for message in request.get("messages", []):
+                        if message.get("role") != "tool":
+                            continue
+                        content = message.get("content")
+                        if isinstance(content, list):
+                            content = "\n".join(
+                                part["text"]
+                                for part in content
+                                if isinstance(part, dict)
+                                and isinstance(part.get("text"), str)
+                            )
+                        if not isinstance(content, str):
+                            continue
+                        if not catalog:
+                            try:
+                                receipt = json.loads(content)
+                            except ValueError:
+                                receipt = {}
+                            if isinstance(receipt, dict) and isinstance(
+                                receipt.get("control_catalog"), dict
+                            ):
+                                catalog.update(receipt["control_catalog"])
+                                state["goal_absent_from_inline_controls"] = (
+                                    "Start request"
+                                    not in json.dumps(
+                                        {
+                                            key: receipt.get(key)
+                                            for key in (
+                                                "related_fields",
+                                                "discovery_candidates",
+                                            )
+                                        }
+                                    )
+                                )
+                        call_id = message.get("tool_call_id")
+                        if (
+                            call_id in read_call_ids
+                            and call_id not in processed_read_ids
+                        ):
+                            records = []
+                            for line in content.splitlines():
+                                found = re.match(
+                                    r"^\s*(?:\d+[:|]\s*)?(\{.*\})\s*$", line
+                                )
+                                if found:
+                                    item = json.loads(found.group(1))
+                                    if isinstance(item, dict) and isinstance(
+                                        item.get("selector"), str
+                                    ):
+                                        records.append(item)
+                            assert records, "native_read_return_missing_catalog_records"
+                            catalog_records.extend(records)
+                            state.setdefault("native_page_record_counts", []).append(
+                                len(records)
+                            )
+                            processed_read_ids.add(call_id)
+                    if "native_catalog_page" in action:
+                        assert catalog.get("page_size") == 4, "catalog_metadata_missing"
+                        schema = next(
+                            tool["function"]["parameters"]
+                            for tool in request["tools"]
+                            if tool["function"]["name"] == "read"
+                        )
+                        assert {"filePath", "offset", "limit"} <= schema[
+                            "properties"
+                        ].keys(), "native_read_schema_changed"
+                        native_tool = "read"
+                        native_arguments = {
+                            "filePath": catalog["file"],
+                            "offset": action["native_catalog_page"],
+                            "limit": catalog["page_size"],
+                        }
+                        state.setdefault("native_read_offsets", []).append(
+                            action["native_catalog_page"]
+                        )
+                        read_call_ids.add(f"call_{index}")
+                    elif action.get("selector") == "CATALOG_OBSERVED_SELECTOR":
+                        matches = [
+                            entry
+                            for entry in catalog_records
+                            if entry.get("label") == "Start request"
+                        ]
+                        assert len(matches) == 1, "catalog_goal_not_uniquely_observed"
+                        action["selector"] = matches[0]["selector"]
+                        observed_target["selector"] = action["selector"]
+                        state["selector_from_native_read"] = True
                 if action.get("selector") == "CURRENT_OBSERVED_REF":
                     action["selector"] = observed_target["selector"]
                     state["current_observed_ref_used"] = True
@@ -183,8 +308,12 @@ async def scenario(name, root, browser, worker, binary):
                     "id": f"call_{index}",
                     "type": "function",
                     "function": {
-                        "name": "tap_browser",
-                        "arguments": json.dumps({"action": action}),
+                        "name": native_tool,
+                        "arguments": json.dumps(
+                            native_arguments
+                            if native_tool == "read"
+                            else {"action": action}
+                        ),
                     },
                 }
             else:
@@ -253,7 +382,9 @@ async def scenario(name, root, browser, worker, binary):
 
     progress = BrowserProgress(
         emit,
-        frozen_start_url="http://example.test/",
+        frozen_start_url="http://example.test/catalog"
+        if name == "control_catalog"
+        else "http://example.test/",
         discovery_session_id=session["session_id"],
     )
 
@@ -280,6 +411,11 @@ async def scenario(name, root, browser, worker, binary):
                     row.request.get("type") == "fill" for row in rows
                 ),
             }
+        if name == "control_catalog" and action["type"] == "read":
+            state["catalog_result_verified"] = (
+                result.get("observation", {}).get("extracted", {}).get("value")
+                == "STARTED"
+            )
         if controlled and action["type"] == "read":
             state["corrected_value_verified"] = (
                 result.get("observation", {}).get("extracted", {}).get("value") == "Ada"
@@ -415,6 +551,45 @@ async def scenario(name, root, browser, worker, binary):
             assert any(
                 d["category"] == "server_rejected" for d in state["diagnostics"]
             ), state
+        if name == "control_catalog":
+            with worker.service.store.engine.connect() as connection:
+                rows = connection.execute(
+                    select(actions.c.request, actions.c.status)
+                    .where(actions.c.session_id == session["session_id"])
+                    .order_by(actions.c.sequence)
+                ).all()
+            clicks = [row for row in rows if row.request["type"] == "click"]
+            state["native_directory_pages_read"] = len(processed_read_ids)
+            state["native_directory_records_read"] = len(catalog_records)
+            state["catalog_metadata"] = {
+                key: catalog.get(key)
+                for key in (
+                    "observed_fields_count",
+                    "eligible_count",
+                    "catalog_count",
+                    "omitted",
+                    "source_limit",
+                    "source_bounded",
+                    "page_size",
+                    "line_count",
+                )
+            }
+            assert state["goal_absent_from_inline_controls"], state
+            assert state["native_directory_pages_read"] == 4, state
+            assert state["native_read_offsets"] == [1, 5, 9, 13], state
+            assert state["native_page_record_counts"] == [4, 4, 4, 4], state
+            assert [entry["label"] for entry in catalog_records] == CATALOG_LABELS, (
+                "catalog source order or coverage changed"
+            )
+            assert len({entry["selector"] for entry in catalog_records}) == 16, (
+                "catalog duplicate or missing selector"
+            )
+            state["native_one_based_offsets_verified"] = True
+            state["catalog_source_order_complete_without_duplicates"] = True
+            state["catalog_actual_click_count"] = len(clicks)
+            assert len(clicks) == 1 and clicks[0].status == "completed", state
+            assert clicks[0].request["selector"] == observed_target["selector"], state
+            assert state.get("catalog_result_verified") and not state["unknown"], state
         if name == "unsupported_selector":
             with worker.service.store.engine.connect() as connection:
                 rows = connection.execute(
