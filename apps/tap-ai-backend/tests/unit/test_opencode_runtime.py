@@ -1773,3 +1773,69 @@ async def test_repeated_missing_target_stops_model_forwarding_repairs_and_bundle
     assert not made[0].collected
     assert made[0].prompt_canceled is not complete_after_rejection
     assert made[0].stopped and browser.canceled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collect_fails", [False, True])
+async def test_provider_no_progress_stops_25_turn_loop_before_fifth_forward(
+    monkeypatch, collect_fails
+):
+    calls = []
+    journal = Journal()
+    browser = SessionBrowser()
+    diagnostic = {
+        "sequence": 1,
+        "tool": "tap_browser",
+        "status": "error",
+        "category": "validation_error",
+    }
+
+    class LoopContainer(MailContainer):
+        async def run_prompt(self):
+            for index in range(25):
+                ident = f"model-{index}"
+                path = self.root / "requests" / f"{ident}.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "id": ident,
+                            "kind": "model",
+                            "deadline_at": time.time() + 10,
+                            "payload": {
+                                "bodyBase64": base64.b64encode(b'{"messages":[]}').decode()
+                            },
+                        }
+                    )
+                )
+                path.chmod(0o600)
+                while not (self.root / "responses" / f"{ident}.json").exists():
+                    await asyncio.sleep(0.001)
+            raise AssertionError("unbounded provider loop")
+
+        async def collect(self):
+            if collect_fails:
+                raise ValueError("SECRET artifact error")
+            return {"diagnostics": [{**diagnostic, "raw_arguments": "SECRET"}]}
+
+    def forward(*_args, **_kwargs):
+        calls.append(1)
+        return {"status": 200, "bodyBase64": "", "contentType": "application/json"}
+
+    monkeypatch.setattr(CodingRuntime, "_forward_gate", staticmethod(forward))
+    frozen = request(replay=False)
+    frozen["budget_limit"]["model_calls"] = 25
+    result = await CodingRuntime(
+        CodingConfig.for_test(),
+        browser=browser,
+        store=journal,
+        container_factory=lambda _config, root: LoopContainer(root),
+    ).run("task-a", frozen, {}, None, "lease", "node", 1)
+    assert len(calls) == 4
+    assert result.status == "failed"
+    assert result.terminal_evidence == {
+        "failure": "no_progress",
+        "diagnostics": [] if collect_fails else [diagnostic],
+    }
+    assert "SECRET" not in str(result.terminal_evidence)
+    assert any(kind == "browser.no_progress" for kind, *_ in journal.events)
+    assert browser.canceled

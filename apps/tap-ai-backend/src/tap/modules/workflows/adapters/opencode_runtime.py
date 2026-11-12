@@ -26,6 +26,10 @@ from urllib.parse import urlsplit
 from tap.modules.access.domain.context import ProjectScopeContext
 from tap.modules.workflows.adapters.browser_client import BrowserApiClient, canonical_json_bytes
 from tap.modules.workflows.adapters.coding_mailbox import CodingMailbox, MailItem
+from tap.modules.workflows.adapters.coding_progress_guard import (
+    CodingProgressGuard,
+    sanitize_diagnostics,
+)
 from tap.modules.workflows.adapters.opencode_profiles import build_config
 from tap.modules.workflows.application.browser_steps import BrowserProgress
 from tap.modules.workflows.domain.acceptance_contract import BrowserAcceptanceContract
@@ -379,7 +383,7 @@ class DockerCodingContainer:
         raw = await self._command(
             ("docker", "exec", self.container_id, "node", "/opt/tapper/opencode-client.mjs", "run"),
             timeout=600,
-            max_stdout=4000,
+            max_stdout=12000,
             stage="exec run",
         )
         result = json.loads(raw)
@@ -989,6 +993,7 @@ class CodingRuntime:
                     )
 
                     progress = BrowserProgress(progress_event, acceptance)
+                    progress_guard = CodingProgressGuard()
                     if script_source is None and acceptance is not None:
                         progress.bind_session(session, scope.project_id, task_id)
                     control = (
@@ -1055,6 +1060,23 @@ class CodingRuntime:
                                     "status": 400,
                                     "contentType": "application/json",
                                     "bodyBase64": "",
+                                }
+                            # Independent of the financial budget. Only trusted runtime
+                            # state counts; model text and rejected tools cannot reset it.
+                            if script_source is None and not progress_guard.allow(
+                                bool(progress.steps), len(progress.recorded_actions)
+                            ):
+                                progress.stalled_reason = "no_progress"
+                                await progress_event(
+                                    "browser.no_progress",
+                                    {"category": "no_progress", "limit": 4},
+                                )
+                                return {
+                                    "status": 409,
+                                    "contentType": "application/json",
+                                    "bodyBase64": base64.b64encode(
+                                        b'{"error":{"type":"tap_no_progress","code":"no_progress","retryable":false}}'
+                                    ).decode(),
                                 }
                             claimed = item.payload.get("claimedSessionId")
                             if claimed is not None and not isinstance(claimed, str):
@@ -1155,6 +1177,14 @@ class CodingRuntime:
                             )
                         return await progress.handle(item.payload, item.identifier, execute)
 
+                    async def stopped_diagnostics() -> dict[str, Any]:
+                        # Optional artifacts must never override the authoritative stop.
+                        try:
+                            artifacts = await bounded_stage(container.collect())
+                        except Exception:
+                            return {"diagnostics": [], "diagnostics_unavailable": True}
+                        return {"diagnostics": sanitize_diagnostics(artifacts.get("diagnostics"))}
+
                     async def prompt_once(text: str) -> tuple[dict[str, Any], dict[str, Any]]:
                         await bounded_stage(container.set_goal(text))
                         running = asyncio.create_task(container.run_prompt())
@@ -1164,7 +1194,13 @@ class CodingRuntime:
                                     # Stop before another model turn after a terminal browser
                                     # failure or a write whose outcome is unknown.
                                     running.cancel()
-                                    return {"terminal": "failed"}, {}
+                                    await asyncio.gather(running, return_exceptions=True)
+                                    diagnostics = (
+                                        await stopped_diagnostics()
+                                        if progress.stalled_reason == "no_progress"
+                                        else {}
+                                    )
+                                    return {"terminal": "failed"}, diagnostics
                                 if await task_stop_requested():
                                     running.cancel()
                                     raise asyncio.CancelledError("workflow cancel requested")
@@ -1175,7 +1211,11 @@ class CodingRuntime:
                                     await asyncio.sleep(0.02)
                             terminal = await running
                             if progress.unknown_action or progress.stalled_reason:
-                                return terminal, {}
+                                return terminal, (
+                                    await stopped_diagnostics()
+                                    if progress.stalled_reason == "no_progress"
+                                    else {}
+                                )
                             collected = await bounded_stage(container.collect())
                             return terminal, collected
                         finally:
@@ -1185,6 +1225,8 @@ class CodingRuntime:
 
                     for repair in range(self.config.max_repairs + 1):
                         terminal, collected = await prompt_once(goal)
+                        if "diagnostics" in terminal:
+                            terminal["diagnostics"] = sanitize_diagnostics(terminal["diagnostics"])
                         provider_session = (
                             str(terminal.get("session_id")) if terminal.get("session_id") else None
                         )
@@ -1205,7 +1247,12 @@ class CodingRuntime:
                                 "failed",
                                 provider_session_id=provider_session,
                                 usage=gate.snapshot(),
-                                terminal_evidence={"failure": progress.stalled_reason},
+                                terminal_evidence={
+                                    "failure": progress.stalled_reason,
+                                    "diagnostics": sanitize_diagnostics(
+                                        collected.get("diagnostics")
+                                    ),
+                                },
                             )
                         input_request = collected.get("input_request")
                         if isinstance(input_request, dict):
