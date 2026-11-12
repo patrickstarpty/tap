@@ -49,7 +49,11 @@ async def test_controlled_value_action_preflights_without_exposing_value():
             {
                 "action_id": "pre",
                 "status": "completed",
-                "observation": {"extracted": {"preflight": {"safe": True}}},
+                "session_id": "s",
+                "operation": "preflight",
+                "actor_kind": "agent",
+                "control_epoch": 2,
+                "observation": {"session_id": "s", "extracted": {"preflight": {"safe": True}}},
             },
             {"status": "completed"},
         ]

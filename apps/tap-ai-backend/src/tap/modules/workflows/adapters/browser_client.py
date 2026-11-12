@@ -395,6 +395,40 @@ class BrowserApiClient:
             proof = await self.action(
                 session_id, preflight, preflight_key, deadline_seconds=deadline_seconds
             )
+            observation = proof.get("observation")
+            marker = (
+                observation.get("extracted", {}).get("pre_actuation_failure")
+                if isinstance(observation, dict) and isinstance(observation.get("extracted"), dict)
+                else None
+            )
+            errors = {
+                "target_missing": "controlled target missing before actuation",
+                "target_ambiguous": "controlled target ambiguous before actuation",
+            }
+            category = marker.get("category") if isinstance(marker, dict) else None
+            if (
+                proof.get("status") == "failed"
+                and isinstance(observation, dict)
+                and observation.get("write_started") is False
+                and isinstance(marker, dict)
+                and set(marker) == {"phase", "category"}
+                and marker.get("phase") == "target_resolution"
+                and isinstance(category, str)
+                and category in errors
+                and observation.get("error") == errors[category]
+                and type(observation.get("sequence")) is int
+                and observation["sequence"] >= 0
+            ):
+                return {
+                    "status": "preflight_rejected",
+                    "business_action_admitted": False,
+                    "operation": action["type"],
+                    "session_id": session_id,
+                    "control_epoch": action["expected_epoch"],
+                    "preflight_action_id": proof["action_id"],
+                    "observation_sequence": observation["sequence"],
+                    "category": category,
+                }
             if (
                 proof.get("status") != "completed"
                 or proof.get("observation", {})
@@ -407,11 +441,26 @@ class BrowserApiClient:
             action = {**action, "preflight_action_id": self._id(str(proof["action_id"]))}
         receipt = await self.request("POST", f"/sessions/{session_id}/actions", action, key)
         action_id = self._id(str(receipt["action_id"]))
-        return await self.poll(
+        result = await self.poll(
             f"/sessions/{session_id}/actions/{action_id}",
             frozenset({"completed", "failed", "unknown", "rejected"}),
             deadline=time.monotonic() + deadline_seconds,
         )
+        if action.get("type") == "preflight" and "expected_epoch" in action:
+            observation = result.get("observation")
+            if (
+                result.get("action_id") != action_id
+                or result.get("session_id") != session_id
+                or result.get("operation") != "preflight"
+                or result.get("actor_kind") != "agent"
+                or type(result.get("control_epoch")) is not int
+                or type(action.get("expected_epoch")) is not int
+                or result.get("control_epoch") != action.get("expected_epoch")
+                or not isinstance(observation, dict)
+                or observation.get("session_id") != session_id
+            ):
+                raise BrowserApiError(409, "browser preflight receipt binding invalid")
+        return result
 
     async def cancel_session(
         self, session_id: str, *, deadline_seconds: int = 30

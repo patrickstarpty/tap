@@ -1108,3 +1108,163 @@ async def test_controlled_pre_actuation_failure_allows_correction_not_success(ca
     assert len(calls) == 2
     assert len(progress.recorded_actions) == 1
     assert events[-1][1]["outcome"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_preflight_rejected_is_not_business_action_and_requires_fresh_snapshot():
+    events = []
+    calls = []
+
+    async def emit(kind, payload):
+        events.append((kind, payload))
+
+    progress = BrowserProgress(emit)
+    progress.session_id = "session-a"
+
+    async def execute(action):
+        calls.append(action)
+        if len(calls) == 1:
+            return {
+                "status": "preflight_rejected",
+                "business_action_admitted": False,
+                "operation": "fill",
+                "session_id": "session-a",
+                "control_epoch": 0,
+                "preflight_action_id": "preflight-a",
+                "observation_sequence": 2,
+                "category": "target_missing",
+            }
+        return {
+            "status": "completed",
+            "session_id": "session-a",
+            "control_epoch": 0,
+            "observation": {
+                "session_id": "session-a",
+                "sequence": len(calls) + 2,
+                "url": "https://example.com",
+                "bounded_snapshot": "observed actual target",
+            },
+        }
+
+    await progress.handle(
+        {
+            "type": "plan",
+            "steps": [{"id": "input", "keyword": "When", "title": "Input", "expected_result": ""}],
+        },
+        "plan",
+        execute,
+    )
+    result = await progress.handle(
+        {"type": "fill", "selector": "#missing", "value": "secret", "step": "input"}, "a1", execute
+    )
+    assert result["status"] == "rejected" and result["code"] == "preflight_rejected"
+    assert not progress.unknown_action and not progress.recorded_actions and not progress.used
+    assert "secret" not in str(result)
+    denied = await progress.handle(
+        {"type": "fill", "selector": "#guessed", "value": "secret", "step": "input"}, "a2", execute
+    )
+    assert denied["status"] == "rejected" and len(calls) == 1
+    await progress.handle(
+        {"type": "snapshot", "selector": "#actual", "step": "input"}, "a3", execute
+    )
+    await progress.handle(
+        {"type": "fill", "selector": "#actual", "value": "secret", "step": "input"}, "a4", execute
+    )
+    assert len(calls) == 3 and len(progress.recorded_actions) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation", ["session", "sequence", "epoch", "operation", "category", "admitted", "extra"]
+)
+async def test_preflight_rejected_malformed_envelope_stops(mutation):
+    async def emit(*args):
+        pass
+
+    progress = BrowserProgress(emit)
+    progress.session_id = "session-a"
+    receipt = {
+        "status": "preflight_rejected",
+        "business_action_admitted": False,
+        "operation": "fill",
+        "session_id": "session-a",
+        "control_epoch": 0,
+        "preflight_action_id": "preflight-a",
+        "observation_sequence": 2,
+        "category": "target_missing",
+    }
+    field, value = {
+        "session": ("session_id", "other"),
+        "sequence": ("observation_sequence", True),
+        "epoch": ("control_epoch", True),
+        "operation": ("operation", "select"),
+        "category": ("category", "other"),
+        "admitted": ("business_action_admitted", True),
+        "extra": ("private", "secret"),
+    }[mutation]
+    receipt[field] = value
+
+    async def execute(action):
+        return receipt
+
+    await progress.handle(
+        {
+            "type": "plan",
+            "steps": [{"id": "input", "keyword": "When", "title": "Input", "expected_result": ""}],
+        },
+        "plan",
+        execute,
+    )
+    with pytest.raises(ValueError, match="preflight rejection binding invalid"):
+        await progress.handle(
+            {"type": "fill", "selector": "#target", "value": "secret", "step": "input"},
+            "a1",
+            execute,
+        )
+    assert progress.unknown_action and not progress.recorded_actions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["stale", "epoch", "session", "empty", "failed"])
+async def test_preflight_rejection_not_cleared_by_untrusted_snapshot(mutation):
+    async def emit(*args):
+        pass
+
+    progress = BrowserProgress(emit)
+    progress.session_id = "session-a"
+    progress._preflight_rejection = (2, 0, "session-a")
+    receipt = {
+        "status": "completed",
+        "session_id": "session-a",
+        "control_epoch": 0,
+        "observation": {
+            "session_id": "session-a",
+            "sequence": 3,
+            "url": "https://example.com",
+            "bounded_snapshot": "Target",
+        },
+    }
+    if mutation == "stale":
+        receipt["observation"]["sequence"] = 2
+    if mutation == "epoch":
+        receipt["control_epoch"] = 1
+    if mutation == "session":
+        receipt["observation"]["session_id"] = "other"
+    if mutation == "empty":
+        receipt["observation"]["bounded_snapshot"] = ""
+    if mutation == "failed":
+        receipt["status"] = "failed"
+
+    async def execute(action):
+        return receipt
+
+    await progress.handle(
+        {
+            "type": "plan",
+            "steps": [{"id": "input", "keyword": "When", "title": "Input", "expected_result": ""}],
+        },
+        "plan",
+        execute,
+    )
+    await progress.handle({"type": "snapshot", "step": "input"}, "snapshot", execute)
+    assert progress._preflight_rejection is not None

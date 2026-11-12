@@ -346,3 +346,112 @@ async def test_new_sessions_and_frozen_bundles_use_public_web_without_domain_set
     assert [path for path, _ in posted] == ["/sessions", "/bundles"]
     assert all(body["network_mode"] == "public_web" for _, body in posted)
     assert all(body["allowed_origins"] == ["https://example.com"] for _, body in posted)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["fill", "select", "press"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "valid",
+        "unknown",
+        "write",
+        "error",
+        "session",
+        "epoch",
+        "id",
+        "actor",
+        "operation",
+        "proof",
+        "sequence",
+    ],
+)
+async def test_controlled_preflight_rejection_never_admits_business_action(operation, mutation):
+    from tap.modules.workflows.adapters.browser_client import BrowserApiError
+
+    proof = {
+        "action_id": "preflight-a",
+        "operation": "preflight",
+        "actor_kind": "agent",
+        "session_id": "session-a",
+        "control_epoch": 0,
+        "status": "failed",
+        "observation": {
+            "session_id": "session-a",
+            "sequence": 1,
+            "write_started": False,
+            "error": "controlled target missing before actuation",
+            "extracted": {
+                "pre_actuation_failure": {
+                    "phase": "target_resolution",
+                    "category": "target_missing",
+                }
+            },
+        },
+    }
+    mutations = {
+        "unknown": ("status", "unknown"),
+        "session": ("session_id", "other"),
+        "epoch": ("control_epoch", 1),
+        "id": ("action_id", "other"),
+        "actor": ("actor_kind", "human"),
+        "operation": ("operation", "fill"),
+    }
+    if mutation in mutations:
+        field, value = mutations[mutation]
+        proof[field] = value
+    if mutation == "write":
+        proof["observation"]["write_started"] = True
+    if mutation == "error":
+        proof["observation"]["error"] = "private error"
+    if mutation == "proof":
+        proof["observation"]["extracted"] = {}
+    if mutation == "sequence":
+        proof["observation"]["sequence"] = True
+    seen = []
+
+    class Client(BrowserApiClient):
+        async def request(self, method, route, body=None, key=None):
+            seen.append(body)
+            return {"action_id": "preflight-a"}
+
+        async def poll(self, *args, **kwargs):
+            return proof
+
+    client = Client("http://127.0.0.1:8002", "project-a", "x" * 16)
+    action = {
+        "type": operation,
+        "selector": "#private",
+        "expected_epoch": 0,
+        "key" if operation == "press" else "value": "private-value",
+    }
+    if mutation == "valid":
+        result = await client.action("session-a", action, "key")
+        assert result["status"] == "preflight_rejected"
+        assert result["business_action_admitted"] is False
+        assert "private" not in json.dumps(result)
+    else:
+        with pytest.raises(BrowserApiError):
+            await client.action("session-a", action, "key")
+    assert len(seen) == 1 and seen[0]["type"] == "preflight"
+    assert "value" not in seen[0] and "key" not in seen[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["conflict", "timeout"])
+async def test_preflight_transport_failure_is_never_recoverable_rejection(failure):
+    from tap.modules.workflows.adapters.browser_client import BrowserApiError
+
+    class Client(BrowserApiClient):
+        async def request(self, *args, **kwargs):
+            if failure == "conflict":
+                raise BrowserApiError(409, "conflict")
+            raise TimeoutError("timeout")
+
+    client = Client("http://127.0.0.1:8002", "project-a", "x" * 16)
+    with pytest.raises(BrowserApiError if failure == "conflict" else TimeoutError):
+        await client.action(
+            "session-a",
+            {"type": "fill", "selector": "#x", "value": "secret", "expected_epoch": 0},
+            "key",
+        )

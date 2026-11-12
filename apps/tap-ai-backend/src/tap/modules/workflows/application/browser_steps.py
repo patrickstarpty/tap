@@ -81,6 +81,7 @@ class BrowserProgress:
         self.unknown_action = False
         self.stalled_reason: str | None = None
         self._missing_targets: dict[str, tuple[int, int]] = {}
+        self._preflight_rejection: tuple[int, int, str] | None = None
 
     def bind_session(self, session: dict[str, Any], project_id: str, task_id: str) -> None:
         if self.acceptance is None:
@@ -379,6 +380,23 @@ class BrowserProgress:
                 return {"error": "Do not repeat discovery navigation to populate a business step"}
         action = {key: value for key, value in payload.items() if key != "step"}
         selector = action.get("selector")
+        if self._preflight_rejection is not None and action.get("type") in {
+            "navigate",
+            "click",
+            "fill",
+            "select",
+            "press",
+            "scroll",
+        }:
+            return {
+                "status": "rejected",
+                "code": "fresh_observation_required",
+                "error": (
+                    "Input preflight rejected before business action admission. "
+                    "Take a successful newer snapshot in this session before any further write; "
+                    "correct the target from that observation."
+                ),
+            }
         if (
             action.get("type") in _TARGET_WRITES
             and isinstance(selector, str)
@@ -433,11 +451,74 @@ class BrowserProgress:
             "input": "[hidden]" if "value" in action else str(action.get("key", ""))[:100],
         }
         await self.emit(event_prefix + "_started", details)
+        previously_used = step_id in self.used
         if not discovery:
             self.used.add(step_id)
         started = time.monotonic()
         try:
             receipt = await execute(action)
+            if receipt.get("status") == "preflight_rejected":
+                expected_session = self.session_id or self.discovery_session_id
+                sequence = receipt.get("observation_sequence")
+                epoch = receipt.get("control_epoch")
+                prior_sequence = (
+                    self._preflight_rejection[0]
+                    if self._preflight_rejection
+                    else self.last_sequence
+                )
+                if (
+                    set(receipt)
+                    != {
+                        "status",
+                        "business_action_admitted",
+                        "operation",
+                        "session_id",
+                        "control_epoch",
+                        "preflight_action_id",
+                        "observation_sequence",
+                        "category",
+                    }
+                    or action.get("type") not in {"fill", "select", "press"}
+                    or receipt.get("operation") != action.get("type")
+                    or receipt.get("business_action_admitted") is not False
+                    or not expected_session
+                    or receipt.get("session_id") != expected_session
+                    or type(sequence) is not int
+                    or sequence <= max(self.last_sequence, prior_sequence)
+                    or type(epoch) is not int
+                    or epoch < 0
+                    or not isinstance(receipt.get("preflight_action_id"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", receipt["preflight_action_id"])
+                    or receipt.get("category") not in {"target_missing", "target_ambiguous"}
+                ):
+                    self.unknown_action = True
+                    raise ValueError("preflight rejection binding invalid")
+                self._preflight_rejection = (sequence, epoch, expected_session)
+                if not previously_used:
+                    self.used.discard(step_id)
+                await self.emit(
+                    event_prefix + "_finished",
+                    {
+                        "action_id": action_id,
+                        "operation": action["type"],
+                        "step_id": step_id,
+                        "outcome": "rejected",
+                        "code": "preflight_rejected",
+                        "business_action_admitted": False,
+                        "category": receipt["category"],
+                    },
+                )
+                return {
+                    "status": "rejected",
+                    "code": "preflight_rejected",
+                    "category": receipt["category"],
+                    "business_action_admitted": False,
+                    "error": (
+                        "Input preflight rejected before business action admission. "
+                        "Take a successful newer snapshot in this session, "
+                        "then correct the target from that observation."
+                    ),
+                }
             observation = receipt.get("observation")
             self.unknown_action = receipt.get("status") == "unknown"
             if receipt.get("status") not in {"completed", "failed"} or not isinstance(
@@ -496,6 +577,18 @@ class BrowserProgress:
         )
         sequence = observation.get("sequence")
         fresh_sequence = type(sequence) is int and sequence > self.last_sequence
+        if self._preflight_rejection is not None and action.get("type") == "snapshot" and completed:
+            rejected_sequence, rejected_epoch, rejected_session = self._preflight_rejection
+            if (
+                type(sequence) is int
+                and sequence > rejected_sequence
+                and receipt.get("session_id") == rejected_session
+                and observation.get("session_id") == rejected_session
+                and type(receipt.get("control_epoch")) is int
+                and receipt.get("control_epoch") == rejected_epoch
+                and bool(observation.get("bounded_snapshot") or observation.get("fields"))
+            ):
+                self._preflight_rejection = None
         if discovery:
             receipt_id = receipt.get("action_id")
             fresh_identity = (
