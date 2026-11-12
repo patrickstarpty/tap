@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { createDocumentProvenance } from './document-provenance.mjs';
-import {createLiveControl, serialDispatcher} from './live-control.mjs';
+import {createLiveControl, serialDispatcher, preActuationFailure} from './live-control.mjs';
 import net from 'node:net';
 import { observeFields, readValue, guardTarget, selectValue } from './page-actions.mjs';
 import { chromium } from '@playwright/test';
@@ -249,9 +249,15 @@ net.createServer(client => {
     if (!data.endsWith('\n')) return;
     received = true;
     try { client.end(JSON.stringify(await dispatch(JSON.parse(data)))); }
-    catch (error) { client.end(JSON.stringify({ session_id: process.env.TAP_BROWSER_SESSION,
-      sequence: ++sequence, url: bounded(page.url(), 2048), title: '', bounded_snapshot: '',
-      fields: [], documents: [], screenshot_ref: null, error: controlled ? controlledRequestFailure(error) : bounded(error.message, 1000) })); }
+    catch (error) {
+      const prewrite=controlled?preActuationFailure(error):null;
+      client.end(JSON.stringify({ session_id: process.env.TAP_BROWSER_SESSION,
+        sequence: ++sequence, url: bounded(page.url(), 2048), title: '', bounded_snapshot: '',
+        fields: [], documents: [], screenshot_ref: null,
+        ...(prewrite?{write_started:false,extracted:{pre_actuation_failure:prewrite}}:{}),
+        error: prewrite ? (prewrite.category==='target_missing'?'controlled target missing before actuation':'controlled target ambiguous before actuation')
+          : controlled ? controlledRequestFailure(error) : bounded(error.message, 1000) }));
+    }
   });
 }).listen(socketPath, () => fs.chmodSync(socketPath, 0o600));
 if (localRoot) process.once('SIGTERM', async () => {

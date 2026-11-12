@@ -21,6 +21,13 @@ async function revision(page) {
     return JSON.stringify([location.href,scrollX,scrollY,innerWidth,innerHeight,data.length,first,second]);
   });
 }
+// Object identity is private to this module: a matching message or forged
+// error properties cannot establish that an actuator was never entered.
+const targetResolutionFailures=new WeakMap();
+export function preActuationFailure(error) {
+  const category=error&&typeof error==='object'?targetResolutionFailures.get(error):undefined;
+  return category?{phase:'target_resolution',category}:null;
+}
 async function targetFor(page, action, retainElement=false) {
   let selector=action.selector;
   const pageScroll=action.type==='scroll'&&!selector;
@@ -40,7 +47,13 @@ async function targetFor(page, action, retainElement=false) {
   }
   if(typeof selector!=='string'||selector.length>2000) throw new Error('invalid target');
   const locator=page.locator(selector);
-  if(await locator.count()!==1) throw new Error('target missing or ambiguous');
+  const count=await locator.count();
+  if(count===0||count>1) {
+    const error=new Error('target missing or ambiguous');
+    targetResolutionFailures.set(error,count===0?'target_missing':'target_ambiguous');
+    throw error;
+  }
+  if(count!==1) throw new Error('invalid target count');
   const element=await locator.elementHandle();
   try {
     if(await element.ownerFrame()!==page.mainFrame()) throw new Error('nested frame target unsupported in live control');
