@@ -416,3 +416,32 @@ calls/$0.4609264, leaving 7 calls/$0.539062 of the original grant and no in-flig
 reservation. The recorded TAP API experiment total is 163 calls, 2,378,789 tokens
 and $2.88987800, not all assistant credits. The owned session confirmed stopped.
 The uncut failure recording is `aia-real-lca-selector-unknown-20261112.mp4`.
+
+### Zero-cost selector feedback follow-up
+
+[Safe forensic summary](assets/2026-11-12-selector-feedback-forensics.json) separates
+retained evidence from reconstruction. Both stored 16,000-character snapshots
+contained Get in touch and Buy Now. Re-evaluating the fixed compact modelReceipt
+on those observations retained the early Get in touch text but omitted Buy Now;
+its generic field had no context and was excluded from related_fields. The full
+source-redacted evidence file retained both. This is an offline projection, not
+a captured provider message. No full provider prompt/native file-read transcript
+survives, so whether the model inspected that file and why it chose the wrong
+entry remain unknown. The prompt/tool schema already explicitly prohibited
+`aria/Label`; missing instruction is not established.
+
+Patch `c242ee53` adds a narrow pre-execution rejection of the known unsupported
+leading `aria/` DSL, with fixed `unsupported_selector_syntax` and current-ref/
+returned-selector guidance. It does not rewrite the target, force a business
+entry, implement a full CSS parser or classify arbitrary exceptions as unwritten.
+Existing CSS/text/role/ref chains remain unchanged; unknown takes precedence.
+86 BrowserProgress regressions, Ruff/MyPy and diff checks passed.
+
+`scripts/verify-opencode-protocol.py --cases unsupported_selector` at `d0ff3cb2`
+ran real OpenCode/native tool/mailbox/HTTP/SQLite/worker/owned Chromium against a
+local synthetic provider. Nine synthetic responses/seven tools: unsupported
+selector rejected with zero click rows, then a fresh snapshot's current ref
+performed exactly one click and a successful `CLICKED` readback. This bypasses
+CodingRuntime/BudgetGate and does not prove model autonomy or financial guard
+integration. No external page or paid provider was used. The remaining seven
+AIA calls/$0.539062 were not touched; recorded API costs are unchanged.

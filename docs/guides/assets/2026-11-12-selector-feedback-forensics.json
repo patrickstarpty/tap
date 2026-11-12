@@ -1,0 +1,38 @@
+{
+  "task_id": "0d5c8edcd4704a70a07d2256eaaf7f5f",
+  "source_commit": "f692e363875ec66e8b32c85adbb940918a0d5475",
+  "original_unknown_unchanged": true,
+  "stored_snapshots": [
+    {
+      "sequence": 2,
+      "bounded_snapshot_characters": 16000,
+      "contains_get_in_touch": true,
+      "contains_buy_now": true
+    },
+    {
+      "sequence": 3,
+      "bounded_snapshot_characters": 16000,
+      "contains_get_in_touch": true,
+      "contains_buy_now": true
+    }
+  ],
+  "offline_model_receipt_projection": {
+    "method": "fixed modelReceipt re-evaluated on retained snapshot observations, not captured actual provider message",
+    "snapshot_characters": 4577,
+    "contains_get_in_touch": true,
+    "contains_buy_now": false,
+    "generic_fields_buy_now_index": 4,
+    "generic_field_context_absent": true,
+    "context_filter_excludes_generic_fields": true,
+    "full_source_redacted_evidence_file_retains_both": true
+  },
+  "prompt_and_tool_schema": {
+    "aria_slash_explicitly_invalid": true,
+    "current_ref_and_returned_selector_guidance_present": true
+  },
+  "limits": [
+    "No retained full provider prompt or native file-read transcript; cannot prove whether model read the full evidence file",
+    "Observed output was invalid aria/Get in touch; choice motivation is unknown",
+    "No real provider or website requests in this forensic reconstruction"
+  ]
+}
