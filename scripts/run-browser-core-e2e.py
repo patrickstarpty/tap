@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -471,6 +472,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lca-bridge", action="store_true")
     parser.add_argument("--lca-inline-real", action="store_true")
     parser.add_argument("--authorize-real-run", action="store_true")
+    parser.add_argument("--required-upstream-proxy")
     parser.add_argument("--quote-output-name", default="quote")
 
     parser.add_argument(
@@ -501,6 +503,7 @@ def parse_args() -> argparse.Namespace:
     if args.lca_inline_real and (
         not args.authorize_real_run
         or args.lca_bridge
+        or not args.required_upstream_proxy
         or args.mode != "real"
         or args.site != "public"
         or args.execution_mode != "local"
@@ -927,8 +930,43 @@ def model_execution_settings(mode: str, values: dict[str, str]) -> dict[str, str
     }
 
 
+def verify_required_upstream(value: str | None) -> str:
+    """Explicit local proxy requirement for this acceptance, not a product default."""
+    if not value:
+        raise ValueError("required loopback upstream proxy is missing")
+    try:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or not parsed.hostname
+            or not isinstance(
+                ipaddress.ip_address(parsed.hostname), ipaddress.IPv4Address
+            )
+            or not ipaddress.ip_address(parsed.hostname).is_loopback
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or parsed.port is None
+        ):
+            raise ValueError("invalid explicit loopback upstream proxy")
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=3):
+            pass
+    except (OSError, ValueError) as error:
+        raise ValueError(
+            "required loopback upstream proxy is invalid or unreachable"
+        ) from error
+    return value
+
+
 def main() -> int:
     args = parse_args()
+    required_proxy = (
+        verify_required_upstream(args.required_upstream_proxy)
+        if args.lca_inline_real or args.required_upstream_proxy is not None
+        else None
+    )
     model_settings = model_execution_settings(args.mode, dict(os.environ))
     if (
         args.lca_inline_real
@@ -1025,7 +1063,9 @@ def main() -> int:
         env["TAPPER_BROWSER_CORE_LCA_URL"] = (
             env["VITE_TAP_WEB_URL"] + "/?module=low-code"
         )
-    upstream_proxy = os.environ.get("TAP_BROWSER_LOCAL_UPSTREAM_PROXY")
+    upstream_proxy = required_proxy or os.environ.get(
+        "TAP_BROWSER_LOCAL_UPSTREAM_PROXY"
+    )
     if upstream_proxy and args.execution_mode == "local":
         env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] = upstream_proxy
     if args.mode == "real":
@@ -1071,6 +1111,7 @@ def main() -> int:
             {
                 "mode": args.mode,
                 "entrypoint": "lca-inline-real" if args.lca_inline_real else "existing",
+                "explicit_loopback_upstream_verified": required_proxy is not None,
                 "execution_mode": args.execution_mode,
                 "model_settings": model_settings,
                 "site": args.site,

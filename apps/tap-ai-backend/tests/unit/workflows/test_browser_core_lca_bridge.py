@@ -72,6 +72,8 @@ def real_inline_args(tmp_path):
         "--opencode-binary",
         str(binary),
         "--lca-inline-real",
+        "--required-upstream-proxy",
+        "http://127.0.0.1:12345",
         "--goal",
         "Request a synthetic quote only",
         "--start-url",
@@ -140,6 +142,7 @@ def test_inline_real_denial_precedes_resource_creation(monkeypatch, tmp_path):
 
 def test_inline_real_rejects_non_qwen_max_before_resources(monkeypatch, tmp_path):
     module = runner()
+    monkeypatch.setattr(module, "verify_required_upstream", lambda value: value)
     monkeypatch.setattr("sys.argv", real_inline_args(tmp_path) + ["--authorize-real-run"])
     monkeypatch.setattr(
         module,
@@ -151,3 +154,65 @@ def test_inline_real_rejects_non_qwen_max_before_resources(monkeypatch, tmp_path
     )
     with pytest.raises(ValueError, match="qwen-max"):
         module.main()
+
+
+@pytest.mark.parametrize(
+    "proxy",
+    [
+        None,
+        "http://example.org:7897",
+        "http://user:secret@127.0.0.1:7897",
+        "http://127.0.0.1:7897/path",
+        "http://127.0.0.1",
+        "http://[::1]:12345",
+    ],
+)
+def test_required_upstream_rejects_missing_or_nonlocal_config(proxy):
+    with pytest.raises(ValueError):
+        runner().verify_required_upstream(proxy)
+
+
+def test_required_upstream_unreachable_fails_before_models(monkeypatch, tmp_path):
+    module = runner()
+    args = real_inline_args(tmp_path) + [
+        "--authorize-real-run",
+        "--required-upstream-proxy",
+        "http://127.0.0.1:12345",
+    ]
+    monkeypatch.setattr("sys.argv", args)
+    monkeypatch.setattr(
+        module.socket,
+        "create_connection",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("unreachable")),
+    )
+    monkeypatch.setattr(
+        module,
+        "model_execution_settings",
+        lambda *a: pytest.fail("must not reach model configuration"),
+    )
+    with pytest.raises(ValueError, match="unreachable"):
+        module.main()
+
+
+def test_required_upstream_verified_and_in_actual_worker_environment(monkeypatch):
+    module = runner()
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    calls = []
+    monkeypatch.setattr(
+        module.socket,
+        "create_connection",
+        lambda address, timeout: (calls.append(address), Connection())[1],
+    )
+    proxy = module.verify_required_upstream("http://127.0.0.1:12345")
+    assert calls == [("127.0.0.1", 12345)]
+    env = module.selected_browser_env(
+        {"TAP_BROWSER_EXECUTION_MODE": "local", "TAP_BROWSER_LOCAL_UPSTREAM_PROXY": proxy}
+    )
+    assert env["TAP_BROWSER_LOCAL_UPSTREAM_PROXY"] == proxy
