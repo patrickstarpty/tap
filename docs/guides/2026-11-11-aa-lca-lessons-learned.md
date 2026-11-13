@@ -334,3 +334,46 @@ fields after sanitization. Read diagnostics independently of generated scripts,
 cap its time/bytes/records, and let stop and UNKNOWN remain authoritative when
 collection or persistence fails. The prior AIA diagnostic gap remains a historical
 limitation, not evidence we can recreate by inference.
+
+## 2026-11-13: native Playwright differential, not quotation acceptance
+
+The same owned Chromium page now reproduces three execution differences through
+`deploy/browser/test/native-playwright-baseline.browser.mjs`:
+
+- The controlled AA click reports a completed receipt, but a dropdown that opens
+  on `pointerdown` stays closed. Native Playwright `locator.click()` opens it with
+  a trusted pointer event and selects the requested choice. A DOM `node.click()`
+  is not equivalent to browser input; completed dispatch is not business success.
+- Native Playwright fills a contenteditable field. The current controlled writer
+  rejects it. The model must not be told that controlled fill supports it.
+- Native Playwright presses Enter to commit a field. Controlled press is explicitly
+  unsupported. Advertising it as a callable live action sends the model into a
+  predictable dead end rather than a website-specific problem.
+
+The controlled live model contract was narrowed to truthful current capabilities: input or
+textarea fill, native single-select selection, and separate observed clicks for
+custom dropdown/radio/checkbox controls followed by state readback. Unsupported
+press is rejected before mailbox dispatch. The trusted local and Docker coding
+launchers derive a fixed capability mode from the actual control_enabled config.
+The existing uncontrolled Playwright path retains its native schema and press
+dispatch; missing or unknown mode exposes only minimal controlled capabilities.
+The model/action cannot select or change the executor mode. This does not remove LCA keyboard
+support or claim the missing AA capabilities are implemented.
+
+All three real Chromium differential tests and 47 browser-tool unit tests passed.
+The broader browser unit run passed 147/149, with two local socket tests blocked
+by sandbox EPERM; both subsequently passed with authorized execution escalation
+(three tests in their two files). The final whole browser unit run passed 152/152;
+local/Docker coding-runtime Python regressions passed 103/103. Ruff and diff checks
+passed. No failing test was silently counted as passed.
+The first Chromium launch was blocked by the command sandbox; the same installed
+browser tests passed with an authorized execution escalation. No model provider,
+external website, paid trial, quotation or production-native-actuator acceptance
+was involved. In particular these are diagnostic tests, not evidence that the
+last AIA no-progress run failed for a pointer event reason.
+
+The native agent actuator still requires a deliberate integration design. Keep
+human frame/capability checks, controller epochs, sensitive-target protection and
+unknown-outcome no-retry behavior. Replacing the atomic bound-element DOM callback
+with asynchronous Playwright input changes its timing guarantees; do not silently
+remove those checks simply to make an owned demonstration pass.

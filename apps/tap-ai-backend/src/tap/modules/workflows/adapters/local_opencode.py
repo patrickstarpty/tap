@@ -107,6 +107,9 @@ class LocalCodingContainer:
             "TAP_CODING_WORKSPACE": str(self.workspace),
             "TAP_OPENCODE_BINARY": str(self.binary),
             "TAP_CODING_MAILBOX": str(self.mailbox_root),
+            "TAP_BROWSER_EXECUTION_MODE": (
+                "controlled-dom" if self.config.control_enabled else "playwright"
+            ),
             "TAP_CODING_PORT": str(serve_port),
             "TAP_MODEL_SHIM_PORT": str(shim_port),
             "TAP_CODING_SERVE_NONCE": secrets.token_hex(16),

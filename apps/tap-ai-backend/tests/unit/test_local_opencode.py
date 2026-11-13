@@ -6,6 +6,7 @@ import shutil
 import signal
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,9 @@ ROOT = Path(__file__).resolve().parents[4]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stopped_serve", [False, True])
+@pytest.mark.parametrize("controlled", [False, True])
 async def test_local_coding_uses_private_environment_and_owned_processes(
-    tmp_path, monkeypatch, stopped_serve
+    tmp_path, monkeypatch, stopped_serve, controlled
 ):
     assert importlib.util.find_spec(MODULE) is not None, "native coding adapter is missing"
     from tap.modules.workflows.adapters.local_opencode import LocalCodingContainer
@@ -46,7 +48,7 @@ http.createServer((req,res) => {
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-inherit")
     monkeypatch.setenv("OPENCODE_CONFIG", "/unrelated/config")
     adapter = LocalCodingContainer(
-        CodingConfig.for_test(),
+        replace(CodingConfig.for_test(), control_enabled=controlled),
         mailbox,
         opencode_binary=binary,
         node_binary=node,
@@ -89,6 +91,9 @@ http.createServer((req,res) => {
             ]
         }
         env = adapter.environment
+        assert env["TAP_BROWSER_EXECUTION_MODE"] == (
+            "controlled-dom" if controlled else "playwright"
+        )
         assert "OPENAI_API_KEY" not in env and "OPENCODE_CONFIG" not in env
         assert Path(env["HOME"]).is_relative_to(workspace.parent)
         assert env["TAP_CODING_PORT"] != env["TAP_MODEL_SHIM_PORT"]

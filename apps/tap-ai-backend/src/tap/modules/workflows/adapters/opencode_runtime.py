@@ -260,6 +260,9 @@ class DockerCodingContainer:
             "OPENCODE_SERVER_PASSWORD": password,
             "TAP_MODEL_SHIM_TOKEN": shim_token,
             "TAP_CODING_MAILBOX": "/mailbox",
+            "TAP_BROWSER_EXECUTION_MODE": (
+                "controlled-dom" if self.config.control_enabled else "playwright"
+            ),
             "TAP_CODING_DEADLINE_SECONDS": str(deadline_seconds),
             "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
             "OPENCODE_DISABLE_MODELS_FETCH": "1",

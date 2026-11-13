@@ -4,7 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-async function setup(t) {
+async function setup(t, mode) {
+  const oldMode=process.env.TAP_BROWSER_EXECUTION_MODE;
+  if(mode===undefined)delete process.env.TAP_BROWSER_EXECUTION_MODE;else process.env.TAP_BROWSER_EXECUTION_MODE=mode;
+  t.after(()=>{if(oldMode===undefined)delete process.env.TAP_BROWSER_EXECUTION_MODE;else process.env.TAP_BROWSER_EXECUTION_MODE=oldMode;});
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-native-tool-'));
   for (const name of ['requests', 'responses', 'acks']) fs.mkdirSync(path.join(root, name));
   const old = process.env.TAP_CODING_MAILBOX;
@@ -561,4 +564,45 @@ test('catalog guidance distinguishes static file discovery from browser progress
   assert.match(result.discovery_detail,/not browser progress/);
   assert.match(result.discovery_detail,/no-progress model-call limit still applies/);
   assert.equal(result.control_catalog.page_size,4);
+});
+
+test('live model contract only advertises supported controlled writes', async t => {
+  const {root,tool}=await setup(t);
+  const shapes=tool.args.action.oneOf;
+  const shape=type=>shapes.find(item=>item.properties.type.const===type);
+  assert.equal(shape('press'),undefined,'controlled press is not implemented');
+  assert.match(shape('fill').properties.value.description,/textarea.*input/);
+  assert.doesNotMatch(shape('fill').properties.value.description,/or contenteditable/);
+  assert.match(shape('select').properties.value.description,/native.*select/i);
+  assert.match(shape('select').properties.value.description,/click.*snapshot/i);
+  assert.doesNotMatch(tool.description,/Use select for native selects, radio/);
+  await assert.rejects(tool.execute({action:{type:'press',step:'edit',selector:'#name',key:'Enter'}}, {
+    abort:new AbortController().signal,ask:async()=>{throw Error('must reject before permissions');},
+  }), /controlled press unsupported/);
+  assert.deepEqual(fs.readdirSync(path.join(root,'requests')),[]);
+});
+
+for(const mode of ['controlled-dom','unknown']) test(`live ${mode} mode cannot advertise native press`,async t=>{
+  const {tool}=await setup(t,mode);
+  assert.equal(tool.args.action.oneOf.some(s=>s.properties.type.const==='press'),false);
+});
+
+test('native mode preserves press dispatch and captures capability at initialization',async t=>{
+  const {root,tool}=await setup(t,'playwright');
+  assert.ok(tool.args.action.oneOf.some(s=>s.properties.type.const==='press'));
+  assert.match(tool.description,/contenteditable/);
+  const asks=[];
+  process.env.TAP_BROWSER_EXECUTION_MODE='controlled-dom';
+  const action={type:'press',step:'submit',selector:'#field',key:'Enter'};
+  const pending=tool.execute({action},{directory:root,abort:new AbortController().signal,ask:async item=>asks.push(item)});
+  let file;
+  for(let i=0;i<100&&!file;i++){
+    file=fs.readdirSync(path.join(root,'requests')).find(name=>name.endsWith('.json'));
+    if(!file)await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.ok(file);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root,'requests',file))).payload,action);
+  fs.writeFileSync(path.join(root,'responses',file),JSON.stringify({sequence:1,error:null}),{mode:0o600});
+  await pending;
+  assert.deepEqual(asks[0].patterns,['press']);
 });

@@ -2222,3 +2222,24 @@ async def test_diagnostics_command_stage_accepts_bounded_local_command():
         (sys.executable, "-c", 'print("{}")'), stage="exec diagnostics", timeout=1, max_stdout=12000
     )
     assert json.loads(output) == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("controlled", [False, True])
+async def test_coding_launcher_freezes_browser_execution_mode(monkeypatch, tmp_path, controlled):
+    container = DockerCodingContainer(
+        replace(CodingConfig.for_test(), control_enabled=controlled), tmp_path
+    )
+    commands = []
+
+    async def command(argv, **_kwargs):
+        commands.append(argv)
+        if argv[:3] == ("docker", "image", "inspect"):
+            return container.config.image_id.encode()
+        raise RuntimeError("owned launch probe stopped")
+
+    monkeypatch.setattr(container, "_command", command)
+    with pytest.raises(RuntimeError, match="owned launch probe stopped"):
+        await container.start({}, "synthetic-token", 60)
+    mode = "controlled-dom" if controlled else "playwright"
+    assert f"TAP_BROWSER_EXECUTION_MODE={mode}" in commands[-1]
