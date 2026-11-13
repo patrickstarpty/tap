@@ -377,3 +377,40 @@ human frame/capability checks, controller epochs, sensitive-target protection an
 unknown-outcome no-retry behavior. Replacing the atomic bound-element DOM callback
 with asynchronous Playwright input changes its timing guarantees; do not silently
 remove those checks simply to make an owned demonstration pass.
+
+### Native input with the existing controller protocol: owned fixtures only
+
+The test-only `test/support/owned-native-harness.mjs` uses the existing
+`createLiveControl({page, observe})` callback to substitute native Playwright input
+for fixed, registered agent fixture operations. It is not imported by production
+code, is not copied by the browser Dockerfile, and adds no runtime activation
+switch. The default atomic actuator and human frame/capability path are unchanged.
+
+`test/owned-native-shell.browser.mjs` verifies native pointerdown, contenteditable,
+Enter and native select semantics; epoch ordering and stale writes; rejection of
+replaced/protected nodes and unregistered fixture inputs; and permanent blocking
+after native timeout or a forced error after one actual side effect. The fixture
+uses a fresh context and aborts its attempted external HTTP request. It exposes
+neither Page nor ElementHandle nor arbitrary HTML/URL inputs. It strips the old
+controller receipt rather than misrepresenting it as native atomic target proof.
+
+The first epoch test exposed a harness bug: asynchronous target validation before
+entering the controller queue let control_sync overtake a click. Moving the
+validation into the serialized observe boundary fixed the ordering. Final tests:
+9 owned native tests plus 80 existing live-control/target-resolution Chromium
+regressions, **89/89 passed**. This is not backend actor-authentication coverage,
+comprehensive browser network isolation, or a production integration acceptance.
+Popup/download handlers were not independently exercised in this pass.
+
+One passing diagnostic test deliberately demonstrates an unresolved protection
+failure, not a safety success: a normal input's focus handler adds data-sensitive
+during native fill, and the synthetic value is still written. Thus the controller
+protocol can remain intact while the original atomic target/sensitivity guarantee
+does not. Pre-dispatch checks cannot justify a production native cutover. These
+fixtures do not prove that this race caused the historical AIA failure.
+
+No real website, model provider, credentials, quotation submission or paid model
+calls were used. GPT-6 Astra statically reviewed the design and final test changes;
+the default production path remains unchanged. Production adoption still needs an
+explicitly reviewed scope and guarantee, rather than silently disabling existing
+controls. No FWD/AIA autonomous success is claimed.
