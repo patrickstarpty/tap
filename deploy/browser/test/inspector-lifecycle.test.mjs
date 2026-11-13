@@ -198,6 +198,8 @@ test('read provenance sequence matches its response even when the later snapshot
 });
 
 for(const [message,category] of [
+  ['controlled navigation wait timeout','navigation_wait_timeout'],
+  ['controlled navigation wait failed','navigation_wait_failed'],
   ['target not actionable','target_not_actionable'],
   ['target obscured or outside viewport','target_obscured_or_outside_viewport'],
   ['bound target changed','target_changed'],

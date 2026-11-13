@@ -671,3 +671,43 @@ Final affected gates: 140 Python runtime/dispatch/local/harness regressions,
 frontend TypeScript all passed. The final verifier also rechecked the archived
 full-chain result/event availability and node/attempt agreement after cleanup.
 No unrelated full repository test suite or additional paid trial was run.
+
+## Approved real AIA diagnostic run: stopped at navigation (2026-11-13)
+
+The separately approved 30-call/USD 1 run on `cc98ad62` stopped in
+`recovering`, not quotation success. Task `329923c38ec1495aa787924509036936`
+had one completed native read and a pending browser tool; the first navigation
+returned an unknown outcome. No input or premium was verified. The new durable
+diagnostic event survived, though the terminal coding result independently
+reported diagnostics unavailable. Neither representation proves a completed
+browser action. [Screened evidence](assets/2026-11-13-aia-navigation-unknown.json).
+
+Exactly two model reservations settled with verified usage: 11,389 input and
+139 output tokens, `qwen-max` / `dashscope/qwen-max`, USD 0.019112 actual cost
+(19,113 conservative budget micros). The browser stop is confirmed, no run
+process remains, and the isolated database was preserved because workflow status
+remains recovering. There was no automatic paid retry. An initial sandbox setup
+failure occurred before Compose startup and consumed zero model calls.
+
+A separate zero-model, read-only diagnostic used the production controller's
+navigation on a fresh browser via the existing upstream proxy. It opened AIA
+in 2.965 seconds and observed the expected title. This excludes neither a
+transient failure nor a problem in the production site-proxy boundary; it is
+not a replay or repair of the original unknown result. The historical generic
+error does not identify its native cause, so no timeout/click explanation is
+claimed and no security control was relaxed.
+
+A second zero-model, read-only diagnostic retained the actual LocalBrowserRuntime
+and production site-proxy path. On a fresh controlled session it reproduced a
+30.013-second `navigation_wait_timeout`, empty title and zero fields. Its owned
+cleanup confirmed stop. This narrows investigation to the proxy/navigation-wait
+boundary but does not establish the precise network cause or retroactively prove
+the original paid run's exception.
+
+The narrow diagnostic patch preserves fixed navigation-wait timeout/failure
+categories without native exception text, URL/query, stack or cause. It does not
+retry, change deadlines, relax safety, or treat unknown as success. Focused tests
+passed 40/40, full browser unit tests 157/157, and owned Chromium control tests
+77/77. The initial full unit run had two sandbox socket failures; the authorized
+loopback-capable run above passed. Independent static review found no blockers.
+No additional provider calls were made.

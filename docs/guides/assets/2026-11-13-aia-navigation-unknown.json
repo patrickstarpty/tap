@@ -1,0 +1,68 @@
+{
+  "source_commit": "cc98ad6231e5a5695f7b82d73f81faa9cb995808",
+  "task_id": "329923c38ec1495aa787924509036936",
+  "status": "recovering",
+  "acceptance_passed": false,
+  "reason": "first navigation outcome unknown; no inputs or quote verified",
+  "usage": {
+    "model_alias": "qwen-max",
+    "model": "dashscope/qwen-max",
+    "model_calls": 2,
+    "prompt_tokens": 11389,
+    "completion_tokens": 139,
+    "provider_cost_usd": "0.0191120",
+    "budget_charged_micros": 19113,
+    "all_reserved_model_calls_settled": true
+  },
+  "stop_confirmed": true,
+  "automatic_retry_authorized": false,
+  "diagnostics_events": [
+    {
+      "kind": "browser.tool_diagnostics",
+      "diagnostics_available": true,
+      "diagnostics": [
+        {
+          "tool": "read",
+          "status": "completed",
+          "category": "none",
+          "sequence": 1
+        },
+        {
+          "tool": "tap_browser",
+          "status": "pending",
+          "category": "none",
+          "sequence": 2
+        }
+      ]
+    }
+  ],
+  "read_only_followup": {
+    "scope": "new isolated read-only navigation diagnosis, not retry of prior unknown, no model/input/quote",
+    "events": [],
+    "result": "navigation_completed",
+    "elapsedMs": 2965,
+    "url": "https://www.aia.com.hk/en/products/health/cancer-care-essence",
+    "readyState": "interactive",
+    "title": "Cancer Care Essence | Critical Illness Protection | AIA Hong Kong"
+  },
+  "limitations": [
+    "Isolated follow-up uses the existing upstream directly, not the full production site-proxy boundary.",
+    "Generic unknown does not identify original native exception or prove timeout.",
+    "No successful LCA import/replay or real AA quotation acceptance.",
+    "New production-runtime timeout reproduces the failing boundary, not the exact cause of the earlier paid unknown outcome."
+  ],
+  "production_runtime_read_only_followup": {
+    "scope": "new isolated read-only production local-runtime navigation including site-proxy; no model/input/quote; not original unknown replay",
+    "elapsed_seconds": 30.013,
+    "url": "https://www.aia.com.hk/en/products/health/cancer-care-essence",
+    "title": "",
+    "error": "controlled action outcome unknown: navigation_wait_timeout",
+    "field_count": 0,
+    "cleanup": {
+      "task_id": "aia-readonly-nav-20261113",
+      "stopped": true,
+      "status": "canceled",
+      "evidence": []
+    }
+  }
+}

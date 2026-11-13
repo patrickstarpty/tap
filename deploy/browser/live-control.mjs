@@ -213,7 +213,12 @@ async function actuateNavigation(page, action) {
     if(expires!==null&&Date.now()>=expires) throw new Error('human capability expired');
     location.assign(url);
   },{url:action.url,expires});
-  await navigation;
+  try { await navigation; }
+  catch(error) {
+    // Fixed stage diagnostics only. Keep unknown/no-retry semantics, and never
+    // retain native exception text, its URL/query, stack or cause.
+    throw new Error(error?.name==='TimeoutError'?'controlled navigation wait timeout':'controlled navigation wait failed');
+  }
   return {url:action.url};
 }
 export function createLiveControl({page,observe,onControl=async()=>{},now=Date.now}) {

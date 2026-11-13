@@ -469,3 +469,16 @@ for(const readonly of [false,true]) test(`agent custom combobox select cannot pr
   await assert.rejects(control.dispatch({actor_kind:'agent',control_epoch:2,type:'select',selector:'[data-testid="product"]',value:'Product A'}),readonly?/target not actionable/:/controlled select target unsupported/);
   assert.equal(await page.getByTestId('product').inputValue(),'Product B');
 });
+
+test('failed navigation reports a fixed wait category and stays non-retryable',async t=>{
+  const {page,control,request}=await fixture(t);
+  let initiated=0;
+  await page.route('https://fixture.test/**',route=>{initiated++;return route.abort('connectionfailed');});
+  await assert.rejects(control.dispatch({...request,type:'navigate',url:'https://fixture.test/private-canary'}),error=>{
+    assert.equal(error.message,'controlled navigation wait failed');
+    assert.equal(error.stack.includes('private-canary'),false);
+    return true;
+  });
+  await assert.rejects(control.dispatch({type:'control_sync',controller_kind:'agent',control_epoch:2}),/blocked/);
+  assert.equal(initiated,1);
+});

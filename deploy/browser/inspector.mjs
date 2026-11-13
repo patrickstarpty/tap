@@ -47,6 +47,8 @@ await context.tracing.start({screenshots:true, snapshots:true});
 let traceActive = true;
 const bounded = (value, max = 16_000) => String(value || '').slice(0, max);
 const controlledFailureCategories = new Map([
+  ['controlled navigation wait timeout','navigation_wait_timeout'],
+  ['controlled navigation wait failed','navigation_wait_failed'],
   ['target not actionable','target_not_actionable'],
   ['target obscured or outside viewport','target_obscured_or_outside_viewport'],
   ['bound target changed','target_changed'],
